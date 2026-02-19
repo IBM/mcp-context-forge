@@ -48,7 +48,7 @@
                 {% elif team.relationship == 'public' %}
                 Public team • Owner: {{ team.created_by|default('Unknown') }}
                 {% else %}
-                {{ team.description|truncate(80) if team.description else "No description" }}
+                {{ (team.description | decode_html)|truncate(80) if team.description else "No description" }}
                 {% endif %}
             </p>
         </div>
@@ -132,7 +132,5 @@
     {% set table_name = 'teams' %}
     {# Use query_params from context, default to empty dict if not provided #}
     {% if query_params is not defined %}{% set query_params = {} %}{% endif %}
-    {% autoescape false %}
     {% include 'pagination_controls.html' %}
-    {% endautoescape %}
 </div>

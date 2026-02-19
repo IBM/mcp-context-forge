@@ -680,3 +680,368 @@ async def test_invalidate_team_clears_context_cache(auth_cache, mock_redis):
         await auth_cache.invalidate_team(email)
 
     assert not any(k.startswith(f"{email}:") for k in auth_cache._context_cache)
+
+
+# ============================================================================
+# Coverage improvement tests
+# ============================================================================
+
+
+class TestNoRedisPartialBranches:
+    """Cover all 'no Redis' partial branches where L1 misses and Redis is unavailable."""
+
+    @pytest.mark.asyncio
+    async def test_set_auth_context_no_redis(self, auth_cache):
+        """set_auth_context stores only in L1 when Redis is unavailable (branch 354->365)."""
+        ctx = CachedAuthContext(user={"email": "u@test.com"}, personal_team_id="t1", is_token_revoked=False)
+        await auth_cache.set_auth_context("u@test.com", "jti", ctx)
+        assert "u@test.com:jti" in auth_cache._context_cache
+
+    @pytest.mark.asyncio
+    async def test_invalidate_revocation_no_redis(self, auth_cache):
+        """invalidate_revocation works without Redis (branch 450->exit)."""
+        await auth_cache.invalidate_revocation("jti-1")
+        assert "jti-1" in auth_cache._revoked_jtis
+
+    @pytest.mark.asyncio
+    async def test_get_user_role_no_redis_miss(self, auth_cache):
+        """get_user_role L1 miss + no Redis = cache miss (branches 542->567, line 563)."""
+        result = await auth_cache.get_user_role("u@test.com", "team-1")
+        assert result is None
+        assert auth_cache._miss_count > 0
+
+    @pytest.mark.asyncio
+    async def test_set_user_role_no_redis(self, auth_cache):
+        """set_user_role stores only in L1 when Redis is unavailable (branch 592->600)."""
+        await auth_cache.set_user_role("u@test.com", "team-1", "admin")
+        assert "u@test.com:team-1" in auth_cache._role_cache
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_role_no_redis(self, auth_cache):
+        """invalidate_user_role works without Redis (branch 630->exit)."""
+        auth_cache._role_cache["u@test.com:team-1"] = CacheEntry(value="admin", expiry=time.time() + 10)
+        await auth_cache.invalidate_user_role("u@test.com", "team-1")
+        assert "u@test.com:team-1" not in auth_cache._role_cache
+
+    @pytest.mark.asyncio
+    async def test_invalidate_team_roles_no_redis_with_entries(self, auth_cache):
+        """invalidate_team_roles clears matching entries without Redis (branch 661->exit, line 657)."""
+        auth_cache._role_cache["u@test.com:team-1"] = CacheEntry(value="admin", expiry=time.time() + 10)
+        auth_cache._role_cache["other@test.com:team-1"] = CacheEntry(value="viewer", expiry=time.time() + 10)
+        auth_cache._role_cache["u@test.com:team-2"] = CacheEntry(value="dev", expiry=time.time() + 10)
+        await auth_cache.invalidate_team_roles("team-1")
+        assert "u@test.com:team-1" not in auth_cache._role_cache
+        assert "other@test.com:team-1" not in auth_cache._role_cache
+        assert "u@test.com:team-2" in auth_cache._role_cache
+
+    @pytest.mark.asyncio
+    async def test_get_user_teams_no_redis_miss(self, auth_cache):
+        """get_user_teams L1 miss + no Redis = cache miss (branches 704->728, line 724)."""
+        auth_cache._teams_list_enabled = True
+        result = await auth_cache.get_user_teams("u@test.com:True")
+        assert result is None
+        assert auth_cache._miss_count > 0
+
+    @pytest.mark.asyncio
+    async def test_set_user_teams_no_redis(self, auth_cache):
+        """set_user_teams stores only in L1 when Redis is unavailable (branch 748->759)."""
+        auth_cache._teams_list_enabled = True
+        await auth_cache.set_user_teams("u@test.com:True", ["team-1"])
+        assert "u@test.com:True" in auth_cache._teams_list_cache
+
+    @pytest.mark.asyncio
+    async def test_get_team_membership_valid_no_redis_miss(self, auth_cache):
+        """get_team_membership_valid L1 miss + no Redis = cache miss (branches 909->932, line 928)."""
+        result = await auth_cache.get_team_membership_valid("u@test.com", ["team-1"])
+        assert result is None
+        assert auth_cache._miss_count > 0
+
+    @pytest.mark.asyncio
+    async def test_set_team_membership_valid_no_redis(self, auth_cache):
+        """set_team_membership_valid stores only in L1 (branch 957->966)."""
+        await auth_cache.set_team_membership_valid("u@test.com", ["team-1"], True)
+        assert "u@test.com:team-1" in auth_cache._team_cache
+
+    @pytest.mark.asyncio
+    async def test_invalidate_team_membership_no_redis_with_entries(self, auth_cache):
+        """invalidate_team_membership clears matching entries (line 992)."""
+        auth_cache._team_cache["u@test.com:team-1"] = CacheEntry(value=True, expiry=time.time() + 10)
+        auth_cache._team_cache["u@test.com:team-2"] = CacheEntry(value=False, expiry=time.time() + 10)
+        auth_cache._team_cache["other@test.com:team-1"] = CacheEntry(value=True, expiry=time.time() + 10)
+        await auth_cache.invalidate_team_membership("u@test.com")
+        assert "u@test.com:team-1" not in auth_cache._team_cache
+        assert "u@test.com:team-2" not in auth_cache._team_cache
+        assert "other@test.com:team-1" in auth_cache._team_cache
+
+
+class TestTeamMembershipSyncMissAndSet:
+    """Cover get_team_membership_valid_sync miss and set_team_membership_valid_sync."""
+
+    def test_sync_cache_miss(self):
+        """get_team_membership_valid_sync returns None on miss (lines 844-845)."""
+        cache = AuthCache(enabled=True)
+        result = cache.get_team_membership_valid_sync("u@test.com", ["team-1"])
+        assert result is None
+        assert cache._miss_count > 0
+
+    def test_sync_set_and_get(self):
+        """set_team_membership_valid_sync stores value (lines 863-868)."""
+        cache = AuthCache(enabled=True)
+        cache.set_team_membership_valid_sync("u@test.com", ["team-1"], True)
+        result = cache.get_team_membership_valid_sync("u@test.com", ["team-1"])
+        assert result is True
+
+
+class TestIsTokenRevokedRedisError:
+    """Cover is_token_revoked Redis error path (lines 1063-1066)."""
+
+    @pytest.mark.asyncio
+    async def test_redis_error_returns_none(self):
+        cache = AuthCache(enabled=True)
+        redis = AsyncMock()
+        redis.sismember = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch.object(cache, "_get_redis_client", return_value=redis):
+            result = await cache.is_token_revoked("jti-1")
+        assert result is None
+
+
+class TestSyncRevokedTokensEdgeCases:
+    """Cover sync_revoked_tokens edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_sync_disabled(self):
+        """sync_revoked_tokens returns early when disabled (line 1080)."""
+        cache = AuthCache(enabled=False)
+        await cache.sync_revoked_tokens()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_sync_redis_sadd_fails(self, monkeypatch):
+        """sync_revoked_tokens handles Redis sadd failure (lines 1109-1110)."""
+        cache = AuthCache(enabled=True)
+        redis = AsyncMock()
+        redis.sadd = AsyncMock(side_effect=RuntimeError("boom"))
+
+        async def _to_thread(_func):
+            return {"jti-a"}
+
+        monkeypatch.setattr("mcpgateway.cache.auth_cache.asyncio.to_thread", _to_thread)
+        monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=redis))
+
+        await cache.sync_revoked_tokens()
+        assert "jti-a" in cache._revoked_jtis
+
+    @pytest.mark.asyncio
+    async def test_sync_db_load_fails(self, monkeypatch):
+        """sync_revoked_tokens handles DB load failure (lines 1114-1115)."""
+        cache = AuthCache(enabled=True)
+
+        async def _to_thread(_func):
+            raise RuntimeError("DB error")
+
+        monkeypatch.setattr("mcpgateway.cache.auth_cache.asyncio.to_thread", _to_thread)
+
+        await cache.sync_revoked_tokens()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_sync_no_redis_no_jtis(self, monkeypatch):
+        """sync_revoked_tokens with no Redis and empty jtis (branch 1106->1112)."""
+        cache = AuthCache(enabled=True)
+        cache._redis_checked = True
+        cache._redis_available = False
+
+        async def _to_thread(_func):
+            return set()
+
+        monkeypatch.setattr("mcpgateway.cache.auth_cache.asyncio.to_thread", _to_thread)
+
+        await cache.sync_revoked_tokens()
+
+
+class TestStatsAndReset:
+    """Cover stats() and reset_stats() methods."""
+
+    def test_stats_returns_all_fields(self):
+        """stats() returns complete dict (lines 1149-1152)."""
+        cache = AuthCache(enabled=True)
+        cache._hit_count = 5
+        cache._miss_count = 3
+        cache._redis_hit_count = 2
+        cache._redis_miss_count = 1
+        s = cache.stats()
+        assert s["enabled"] is True
+        assert s["hit_count"] == 5
+        assert s["miss_count"] == 3
+        assert s["hit_rate"] == 5.0 / 8.0
+        assert s["redis_hit_count"] == 2
+        assert s["redis_hit_rate"] == 2.0 / 3.0
+
+    def test_reset_stats_clears_counters(self):
+        """reset_stats() zeroes all counters (lines 1184-1187)."""
+        cache = AuthCache(enabled=True)
+        cache._hit_count = 10
+        cache._miss_count = 5
+        cache._redis_hit_count = 3
+        cache._redis_miss_count = 2
+        cache.reset_stats()
+        assert cache._hit_count == 0
+        assert cache._miss_count == 0
+        assert cache._redis_hit_count == 0
+        assert cache._redis_miss_count == 0
+
+
+class TestGetAuthCacheSingleton:
+    """Cover get_auth_cache already-initialized branch (1206->1208)."""
+
+    def test_get_auth_cache_returns_same_instance(self):
+        """get_auth_cache returns existing singleton."""
+        from mcpgateway.cache.auth_cache import get_auth_cache
+        c1 = get_auth_cache()
+        c2 = get_auth_cache()
+        assert c1 is c2
+
+
+class TestGetAuthContextNoRedis:
+    """Cover get_auth_context L1 miss + no Redis (branch 279->309)."""
+
+    @pytest.mark.asyncio
+    async def test_l1_miss_no_redis_returns_none(self, auth_cache):
+        """get_auth_context returns None when L1 misses and Redis is unavailable."""
+        result = await auth_cache.get_auth_context("u@test.com", "jti")
+        assert result is None
+        assert auth_cache._miss_count > 0
+
+
+class TestInvalidateUserNoRedis:
+    """Cover invalidate_user without Redis (branch 402->exit)."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_no_redis(self, auth_cache):
+        """invalidate_user clears L1 when Redis is unavailable."""
+        auth_cache._user_cache["u@test.com"] = CacheEntry(value={"email": "u@test.com"}, expiry=time.time() + 10)
+        auth_cache._context_cache["u@test.com:jti"] = CacheEntry(
+            value=CachedAuthContext(user={"email": "u@test.com"}), expiry=time.time() + 10
+        )
+        await auth_cache.invalidate_user("u@test.com")
+        assert "u@test.com" not in auth_cache._user_cache
+
+
+class TestInvalidateUserTeamsNoRedis:
+    """Cover invalidate_user_teams without Redis (branch 792->exit)."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_teams_no_redis(self, auth_cache):
+        """invalidate_user_teams clears L1 when Redis is unavailable."""
+        auth_cache._teams_list_cache["u@test.com:True"] = CacheEntry(value=["t1"], expiry=time.time() + 10)
+        await auth_cache.invalidate_user_teams("u@test.com")
+        assert "u@test.com:True" not in auth_cache._teams_list_cache
+
+
+class TestIsTokenRevokedNotFound:
+    """Cover is_token_revoked Redis available but not found (branches 1039->1066, 1054->1066)."""
+
+    @pytest.mark.asyncio
+    async def test_redis_not_found_returns_none(self):
+        """Token not in Redis sismember or exists → return None."""
+        cache = AuthCache(enabled=True)
+        redis = AsyncMock()
+        redis.sismember = AsyncMock(return_value=False)
+        redis.exists = AsyncMock(return_value=False)
+
+        with patch.object(cache, "_get_redis_client", return_value=redis):
+            result = await cache.is_token_revoked("unknown-jti")
+        assert result is None
+
+
+class TestSyncRevokedTokensLoadJtis:
+    """Cover sync_revoked_tokens _load_revoked_jtis (lines 1095-1097)."""
+
+    @pytest.mark.asyncio
+    async def test_load_jtis_from_db(self, monkeypatch):
+        """Actually exercise _load_revoked_jtis via asyncio.to_thread → DB mock."""
+        from unittest.mock import MagicMock as _MM
+        from contextlib import contextmanager
+
+        cache = AuthCache(enabled=True)
+        cache._redis_checked = True
+        cache._redis_available = False
+
+        @contextmanager
+        def _mock_session():
+            db = _MM()
+            db.execute.return_value = [("jti-db-1",), ("jti-db-2",)]
+            yield db
+
+        # Let asyncio.to_thread actually call the function
+        monkeypatch.setattr("mcpgateway.db.fresh_db_session", _mock_session)
+
+        await cache.sync_revoked_tokens()
+        assert "jti-db-1" in cache._revoked_jtis
+        assert "jti-db-2" in cache._revoked_jtis
+
+
+class TestIsTokenRevokedNoRedis:
+    """Cover is_token_revoked with no Redis (branch 1039->1066)."""
+
+    @pytest.mark.asyncio
+    async def test_no_redis_returns_none(self, auth_cache):
+        """is_token_revoked returns None when not in L1 and Redis unavailable."""
+        result = await auth_cache.is_token_revoked("unknown-jti")
+        assert result is None
+
+
+class TestGetRedisClientSecondException:
+    """Cover _get_redis_client exception when already checked (branch 231->235)."""
+
+    @pytest.mark.asyncio
+    async def test_exception_after_first_check(self, monkeypatch):
+        """Second exception in _get_redis_client returns None (already checked)."""
+        cache = AuthCache(enabled=True)
+        cache._redis_checked = True  # Already checked
+        cache._redis_available = True  # Was available before
+
+        # Now it raises
+        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(side_effect=RuntimeError("gone")))
+        result = await cache._get_redis_client()
+        assert result is None
+
+
+class TestRedisMissCounts:
+    """Cover Redis miss count increments for role/teams/membership."""
+
+    @pytest.mark.asyncio
+    async def test_get_user_role_redis_miss(self, auth_cache, mock_redis):
+        """Redis returns None for role → redis_miss_count incremented (line 563)."""
+        mock_redis.get = AsyncMock(return_value=None)
+        initial = auth_cache._redis_miss_count
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_role("u@test.com", "team-1")
+
+        assert result is None
+        assert auth_cache._redis_miss_count == initial + 1
+
+    @pytest.mark.asyncio
+    async def test_get_user_teams_redis_miss(self, auth_cache, mock_redis):
+        """Redis returns None for teams → redis_miss_count incremented (line 724)."""
+        auth_cache._teams_list_enabled = True
+        mock_redis.get = AsyncMock(return_value=None)
+        initial = auth_cache._redis_miss_count
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_teams("u@test.com:True")
+
+        assert result is None
+        assert auth_cache._redis_miss_count == initial + 1
+
+    @pytest.mark.asyncio
+    async def test_get_team_membership_redis_miss(self, auth_cache, mock_redis):
+        """Redis returns None for membership → redis_miss_count incremented (line 928)."""
+        mock_redis.get = AsyncMock(return_value=None)
+        initial = auth_cache._redis_miss_count
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_team_membership_valid("u@test.com", ["team-1"])
+
+        assert result is None
+        assert auth_cache._redis_miss_count == initial + 1

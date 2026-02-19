@@ -411,16 +411,16 @@ func handleTimezoneInfo(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.Res
 // handleCurrentWorldTimes returns current time in major cities
 func handleCurrentWorldTimes(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     cities := map[string]string{
-        "New York":     "America/New_York",
-        "Los Angeles":  "America/Los_Angeles",
-        "London":       "Europe/London",
-        "Paris":        "Europe/Paris",
-        "Tokyo":        "Asia/Tokyo",
-        "Sydney":       "Australia/Sydney",
-        "Dubai":        "Asia/Dubai",
-        "Singapore":    "Asia/Singapore",
-        "Mumbai":       "Asia/Kolkata",
-        "Hong Kong":    "Asia/Hong_Kong",
+        "New York":    "America/New_York",
+        "Los Angeles": "America/Los_Angeles",
+        "London":      "Europe/London",
+        "Paris":       "Europe/Paris",
+        "Tokyo":       "Asia/Tokyo",
+        "Sydney":      "Australia/Sydney",
+        "Dubai":       "Asia/Dubai",
+        "Singapore":   "Asia/Singapore",
+        "Mumbai":      "Asia/Kolkata",
+        "Hong Kong":   "Asia/Hong_Kong",
     }
 
     times := make(map[string]string)
@@ -875,7 +875,7 @@ func main() {
                 ind+"REST: /api/v1/* (REST API only, no MCP)\n\n"+
                 "Environment Variables:\n"+
                 ind+"AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
-            os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+            appName, appName, appName, appName, appName)
     }
 
     flag.Parse()
@@ -908,11 +908,11 @@ func main() {
     s := server.NewMCPServer(
         appName,
         appVersion,
-        server.WithToolCapabilities(false),        // No progress reporting needed
+        server.WithToolCapabilities(false), // No progress reporting needed
         server.WithResourceCapabilities(false, true), // Enable resource capabilities (no subscribe, list changed)
-        server.WithPromptCapabilities(true),       // Enable prompt capabilities (list changed)
-        server.WithLogging(),                      // Enable MCP protocol logging
-        server.WithRecovery(),                     // Recover from panics in handlers
+        server.WithPromptCapabilities(true),          // Enable prompt capabilities (list changed)
+        server.WithLogging(),                         // Enable MCP protocol logging
+        server.WithRecovery(),                        // Recover from panics in handlers
     )
 
     /* ----------------------- register tools ----------------------- */
@@ -920,10 +920,10 @@ func main() {
     getTimeTool := mcp.NewTool("get_system_time",
         mcp.WithDescription("Get current system time in specified timezone"),
         mcp.WithTitleAnnotation("Get System Time"),
-        mcp.WithReadOnlyHintAnnotation(true),      // This tool only reads, doesn't modify
-        mcp.WithDestructiveHintAnnotation(false),  // Not destructive - only returns time
-        mcp.WithIdempotentHintAnnotation(false),   // Not idempotent - returns different time each call
-        mcp.WithOpenWorldHintAnnotation(false),    // No external access - uses only local system time
+        mcp.WithReadOnlyHintAnnotation(true),     // This tool only reads, doesn't modify
+        mcp.WithDestructiveHintAnnotation(false), // Not destructive - only returns time
+        mcp.WithIdempotentHintAnnotation(false),  // Not idempotent - returns different time each call
+        mcp.WithOpenWorldHintAnnotation(false),   // No external access - uses only local system time
         mcp.WithString("timezone",
             mcp.Description("IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Defaults to UTC"),
         ),
@@ -934,10 +934,10 @@ func main() {
     convertTimeTool := mcp.NewTool("convert_time",
         mcp.WithDescription("Convert time between different timezones"),
         mcp.WithTitleAnnotation("Convert Time"),
-        mcp.WithReadOnlyHintAnnotation(true),      // This tool only converts, doesn't modify
-        mcp.WithDestructiveHintAnnotation(false),  // Not destructive - only converts time
-        mcp.WithIdempotentHintAnnotation(true),    // Idempotent - same input gives same output
-        mcp.WithOpenWorldHintAnnotation(false),    // No external access - pure computation
+        mcp.WithReadOnlyHintAnnotation(true),     // This tool only converts, doesn't modify
+        mcp.WithDestructiveHintAnnotation(false), // Not destructive - only converts time
+        mcp.WithIdempotentHintAnnotation(true),   // Idempotent - same input gives same output
+        mcp.WithOpenWorldHintAnnotation(false),   // No external access - pure computation
         mcp.WithString("time",
             mcp.Required(),
             mcp.Description("Time to convert in RFC3339 format or common formats like '2006-01-02 15:04:05'"),
@@ -1084,7 +1084,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("SSE server error: %v", err)
         }
 
@@ -1127,7 +1127,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("HTTP server error: %v", err)
         }
 
@@ -1184,7 +1184,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("DUAL server error: %v", err)
         }
 
@@ -1225,7 +1225,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("REST server error: %v", err)
         }
 
@@ -1246,6 +1246,15 @@ func effectiveAddr(addrFlag, listen string, port int) string {
         return addrFlag
     }
     return fmt.Sprintf("%s:%d", listen, port)
+}
+
+func serveHTTPWithTimeout(addr string, handler http.Handler) error {
+    srv := &http.Server{
+        Addr:              addr,
+        Handler:           handler,
+        ReadHeaderTimeout: 10 * time.Second,
+    }
+    return srv.ListenAndServe()
 }
 
 // registerHealthAndVersion adds health and version endpoints to the mux

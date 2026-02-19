@@ -44,7 +44,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
@@ -64,6 +64,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -533,7 +534,6 @@ class ResourceService:
                     "resource_name": db_resource.name,
                     "visibility": visibility,
                 },
-                db=db,
             )
 
             db_resource.team = self._get_team_name(db, db_resource.team_id)
@@ -553,7 +553,6 @@ class ResourceService:
                 custom_fields={
                     "resource_uri": resource.uri,
                 },
-                db=db,
             )
             raise ie
         except ResourceURIConflictError as rce:
@@ -571,7 +570,6 @@ class ResourceService:
                     "resource_uri": resource.uri,
                     "visibility": visibility,
                 },
-                db=db,
             )
             raise rce
         except Exception as e:
@@ -589,7 +587,6 @@ class ResourceService:
                 custom_fields={
                     "resource_uri": resource.uri,
                 },
-                db=db,
             )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
@@ -846,7 +843,6 @@ class ResourceService:
                 "visibility": visibility,
                 "conflict_strategy": conflict_strategy,
             },
-            db=db,
         )
 
         return stats
@@ -1009,7 +1005,7 @@ class ResourceService:
 
         # Apply team-based access control if user_email is provided OR token_teams is explicitly set
         # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email or token_teams is not None:
+        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams
@@ -1300,7 +1296,7 @@ class ResourceService:
 
         # Add visibility filtering if user context OR token_teams provided
         # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email or token_teams is not None:
+        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams
@@ -1967,7 +1963,7 @@ class ResourceService:
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
-    ) -> ResourceContent:
+    ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
         Args:
@@ -2163,6 +2159,9 @@ class ResourceService:
 
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
+
+                # Check if resource's gateway is in direct_proxy mode
+                # First, try to find the resource to get its gateway
                 # Check for template
 
                 if resource_db is None and uri is not None:  # and "{" in uri and "}" in uri:
@@ -2173,8 +2172,57 @@ class ResourceService:
                     if include_inactive:
                         query = select(DbResource).where(DbResource.uri == str(uri))
                     resource_db = db.execute(query).scalar_one_or_none()
-                    if resource_db:
-                        # resource_id = resource_db.id
+
+                    # Check for direct_proxy mode
+                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, resource_db.gateway, user, token_teams):
+                            raise ResourceNotFoundError(f"Resource not found: {uri}")
+
+                        logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
+
+                        try:  # First-Party
+                            # First-Party
+                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
+
+                            gateway = resource_db.gateway
+
+                            # Prepare headers with gateway auth
+                            headers = build_gateway_auth_headers(gateway)
+
+                            # Use MCP SDK to connect and read resource
+                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await session.initialize()
+
+                                    # Note: MCP SDK read_resource() only accepts uri; _meta is not supported
+                                    result = await session.read_resource(uri=uri)
+
+                                    # Convert MCP result to MCP-compliant content models
+                                    # result.contents is a list of TextResourceContents or BlobResourceContents
+                                    if result.contents:
+                                        first_content = result.contents[0]
+                                        if hasattr(first_content, "text"):
+                                            content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
+                                        elif hasattr(first_content, "blob"):
+                                            content = BlobResourceContents(
+                                                uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob
+                                            )
+                                        else:
+                                            content = TextResourceContents(uri=uri, text="")
+                                    else:
+                                        content = TextResourceContents(uri=uri, text="")
+
+                                    success = True
+                                    logger.info(f"[READ RESOURCE] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
+                                    # Skip the rest of the DB lookup logic
+
+                        except Exception as e:
+                            logger.exception(f"Error in direct_proxy mode for resource '{uri}': {e}")
+                            raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
+
+                    elif resource_db:
+                        # Normal cache mode - resource found in DB
                         content = resource_db.content
                     else:
                         # Check the inactivity first
@@ -2245,22 +2293,6 @@ class ResourceService:
                         if not server_match:
                             raise ResourceNotFoundError(f"Resource not found: {resource_uri or resource_id}")
 
-                # Release transaction before network calls to avoid idle-in-transaction during invoke_resource
-                db.commit()
-
-                # Call post-fetch hooks if registered
-                if has_post_fetch:
-                    # Create post-fetch payload
-                    post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    # Execute post-fetch hooks
-                    post_result, _ = await self._plugin_manager.invoke_hook(
-                        ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True
-                    )  # Pass contexts from pre-fetch
-
-                    # Use modified content if plugin changed it
-                    if post_result.modified_payload:
-                        content = post_result.modified_payload.content
-
                 # Set success attributes on span
                 if span:
                     span.set_attribute("success", True)
@@ -2273,8 +2305,18 @@ class ResourceService:
                 # Prefer returning first-class content models or objects with content-like attributes.
                 # ResourceContent and TextContent already imported at top level
 
-                # If content is already a Pydantic content model, return as-is
-                if isinstance(content, (ResourceContent, TextContent)):
+                # Release transaction before network calls to avoid idle-in-transaction during invoke_resource
+                db.commit()
+
+                # ═══════════════════════════════════════════════════════════════════════════
+                # RESOLVE CONTENT: Fetch actual content from gateway if needed
+                # ═══════════════════════════════════════════════════════════════════════════
+                # If content is a Pydantic content model, invoke gateway
+
+                # ResourceContents covers TextResourceContents and BlobResourceContents (MCP-compliant)
+                # ResourceContent is the legacy model for backwards compatibility
+
+                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     resource_response = await self.invoke_resource(
                         db=db,
                         resource_id=getattr(content, "id"),
@@ -2287,9 +2329,8 @@ class ResourceService:
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
-                    return content
-                # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
-                if hasattr(content, "text") or hasattr(content, "blob"):
+                # If content is any object that quacks like content
+                elif hasattr(content, "text") or hasattr(content, "blob"):
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
                             db=db,
@@ -2301,7 +2342,8 @@ class ResourceService:
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
                         )
-                        setattr(content, "blob", resource_response)
+                        if resource_response:
+                            setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
                             db=db,
@@ -2313,16 +2355,27 @@ class ResourceService:
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
                         )
-                        setattr(content, "text", resource_response)
-                    return content
+                        if resource_response:
+                            setattr(content, "text", resource_response)
                 # Normalize primitive types to ResourceContent
-                if isinstance(content, bytes):
-                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
-                if isinstance(content, str):
-                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
+                elif isinstance(content, bytes):
+                    content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
+                elif isinstance(content, str):
+                    content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
+                else:
+                    # Fallback to stringified content
+                    content = ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
 
-                # Fallback to stringified content
-                return ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
+                # ═══════════════════════════════════════════════════════════════════════════
+                # POST-FETCH HOOKS: Now called AFTER content is resolved from gateway
+                # ═══════════════════════════════════════════════════════════════════════════
+                if has_post_fetch:
+                    post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
+                    post_result, _ = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    if post_result.modified_payload:
+                        content = post_result.modified_payload.content
+
+                return content
             except Exception as e:
                 success = False
                 error_message = str(e)
@@ -2469,7 +2522,6 @@ class ResourceService:
                         "resource_uri": resource.uri,
                         "enabled": resource.enabled,
                     },
-                    db=db,
                 )
 
             resource.team = self._get_team_name(db, resource.team_id)
@@ -2485,7 +2537,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise e
         except ResourceLockConflictError:
@@ -2507,7 +2558,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise ResourceError(f"Failed to set resource state: {str(e)}")
 
@@ -2784,7 +2834,6 @@ class ResourceService:
                     "resource_uri": resource.uri,
                     "version": resource.version,
                 },
-                db=db,
             )
 
             return self.convert_resource_to_read(resource)
@@ -2801,7 +2850,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=pe,
-                db=db,
             )
             raise
         except IntegrityError as ie:
@@ -2819,7 +2867,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=ie,
-                db=db,
             )
             raise ie
         except ResourceURIConflictError as pe:
@@ -2836,7 +2883,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=pe,
-                db=db,
             )
             raise pe
         except Exception as e:
@@ -2852,7 +2898,6 @@ class ResourceService:
                     resource_type="resource",
                     resource_id=str(resource_id),
                     error=e,
-                    db=db,
                 )
                 raise e
 
@@ -2867,7 +2912,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
@@ -2984,7 +3028,6 @@ class ResourceService:
                     "resource_uri": resource_uri,
                     "purge_metrics": purge_metrics,
                 },
-                db=db,
             )
 
         except PermissionError as pe:
@@ -3000,7 +3043,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=pe,
-                db=db,
             )
             raise
         except ResourceNotFoundError as rnfe:
@@ -3015,7 +3057,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=rnfe,
-                db=db,
             )
             raise
         except Exception as e:
@@ -3031,7 +3072,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
@@ -3093,7 +3133,6 @@ class ResourceService:
                 "resource_uri": resource.uri,
                 "include_inactive": include_inactive,
             },
-            db=db,
         )
 
         return resource_read

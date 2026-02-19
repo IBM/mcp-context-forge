@@ -1,41 +1,79 @@
-# syntax=docker/dockerfile:1
-FROM python:3.11-slim AS base
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PATH="/app/.venv/bin:$PATH"
+# syntax=docker/dockerfile:1.7
+ARG PYTHON_VERSION=3.12
+
+###########################
+# Builder stage
+###########################
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1770180700 AS builder
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+
+# hadolint ignore=DL3041
+RUN set -euo pipefail \
+    && dnf upgrade -y \
+    && dnf install -y \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        binutils gcc gcc-c++ curl \
+        libjpeg-turbo-devel libpng-devel \
+        libxml2-devel libxslt-devel \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && dnf clean all
 
 WORKDIR /app
 
-# System deps for image processing and PowerPoint operations
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl \
-    libjpeg-dev libpng-dev \
-    libxml2-dev libxslt-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy metadata early for layer caching
 COPY pyproject.toml README.md ./
 
-# Create venv and install
-RUN python -m venv /app/.venv && \
-    /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
-    /app/.venv/bin/pip install -e .
+RUN set -euo pipefail \
+    && python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /app/.venv/bin/pip install --no-cache-dir . \
+    && /app/.venv/bin/pip uninstall --yes pip setuptools wheel \
+    && rm -rf /root/.cache
 
-# Copy source
 COPY src/ ./src/
 
 # Create directory for PowerPoint files
-RUN mkdir -p /app/presentations && \
-    chown -R 1001:1001 /app
+RUN mkdir -p /app/presentations \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app
 
-# Non-root user
-RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
-USER 1001
+###########################
+# Runtime stage
+###########################
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557 AS runtime
+
+ARG PYTHON_VERSION=3.12
+
+# hadolint ignore=DL3041
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
+    python${PYTHON_VERSION} \
+    ca-certificates \
+    shadow-utils \
+    libjpeg-turbo libpng \
+    libxml2 libxslt \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum
+
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
+
+RUN useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
+
+COPY --from=builder --chown=1001:0 /app /app
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | python -m pptx_server.server | head -1 || exit 1
+  CMD echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | python3 -m pptx_server.server | head -1 || exit 1
 
 EXPOSE 9000
-CMD ["python", "-m", "pptx_server.server"]
+USER 1001
+
+CMD ["python3", "-m", "pptx_server.server"]

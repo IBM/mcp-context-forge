@@ -246,6 +246,25 @@ class TestObservabilityRouterEndpoints:
         mock_db.invalidate.assert_called_once()
         mock_db.close.assert_called_once()
 
+    def test_get_db_rollback_and_invalidate_failure_ignored(self, monkeypatch):
+        """get_db suppresses invalidate failures during error cleanup."""
+        from mcpgateway.routers.observability import get_db
+
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = Exception("rollback error")
+        mock_db.invalidate.side_effect = Exception("invalidate error")
+        monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", lambda: mock_db)
+
+        gen = get_db()
+        next(gen)
+
+        with pytest.raises(RuntimeError):
+            gen.throw(RuntimeError("boom"))
+
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+        mock_db.close.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_list_traces_returns_service_results(self, allow_permission):
         """list_traces returns query results."""
@@ -420,3 +439,37 @@ class TestObservabilityRouterEndpoints:
             chunks = [chunk async for chunk in ndjson_resp.body_iterator]
             first_chunk = chunks[0]
             assert "trace_id" in (first_chunk.decode() if isinstance(first_chunk, bytes) else first_chunk)
+
+    @pytest.mark.asyncio
+    async def test_export_traces_parses_iso_start_end(self, allow_permission):
+        """export_traces parses ISO datetime strings in request body."""
+        from mcpgateway.routers.observability import export_traces
+
+        mock_db = MagicMock()
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_traces.return_value = []
+
+            await export_traces(
+                {"start_time": "2025-01-01T00:00:00Z", "end_time": "2025-01-02T00:00:00Z"},
+                format="json",
+                db=mock_db,
+                _user={"email": "admin", "db": mock_db},
+            )
+
+        kwargs = mock_service.return_value.query_traces.call_args.kwargs
+        assert isinstance(kwargs["start_time"], datetime)
+        assert isinstance(kwargs["end_time"], datetime)
+
+    @pytest.mark.asyncio
+    async def test_export_traces_wraps_failures_in_http_400(self, allow_permission):
+        """export_traces returns HTTP 400 when service query fails."""
+        from mcpgateway.routers.observability import export_traces
+
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_traces.side_effect = RuntimeError("boom")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await export_traces({}, format="json", db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
+
+        assert exc_info.value.status_code == 400
+        assert "Export failed:" in exc_info.value.detail

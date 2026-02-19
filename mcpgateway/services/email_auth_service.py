@@ -21,11 +21,17 @@ Examples:
 """
 
 # Standard
+import asyncio
 import base64
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import re
+import secrets
+import time
 from typing import Optional
+import urllib.parse
 import warnings
 
 # Third-Party
@@ -36,15 +42,20 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, utc_now
+from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, PasswordResetToken, utc_now
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
+from mcpgateway.services.email_notification_service import AuthEmailNotificationService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics import password_reset_completions_counter, password_reset_requests_counter
 from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Strong references to background tasks to prevent GC before completion
+_background_tasks: set[asyncio.Task] = set()
 
 _GET_ALL_USERS_LIMIT = 10000
 
@@ -57,6 +68,14 @@ class UsersListResult:
     next_cursor: Optional[str] = None
     pagination: Optional[PaginationMeta] = None
     links: Optional[PaginationLinks] = None
+
+
+@dataclass(frozen=True)
+class PasswordResetRequestResult:
+    """Result for forgot-password requests."""
+
+    rate_limited: bool
+    email_sent: bool
 
 
 class EmailValidationError(Exception):
@@ -134,7 +153,23 @@ class EmailAuthService:
         """
         self.db = db
         self.password_service = Argon2PasswordService()
+        self.email_notification_service = AuthEmailNotificationService()
+        self._role_service = None
         logger.debug("EmailAuthService initialized")
+
+    @property
+    def role_service(self):
+        """Lazy-initialized RoleService to avoid circular imports.
+
+        Returns:
+            RoleService: Instance of RoleService
+        """
+        if self._role_service is None:
+            # First-Party
+            from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+            self._role_service = RoleService(self.db)
+        return self._role_service
 
     def validate_email(self, email: str) -> bool:
         """Validate email address format.
@@ -275,6 +310,128 @@ class EmailAuthService:
 
         return True
 
+    @staticmethod
+    def _hash_reset_token(token: str) -> str:
+        """Hash a plaintext password-reset token using SHA-256.
+
+        Args:
+            token: Plaintext reset token.
+
+        Returns:
+            str: Hex-encoded SHA-256 digest.
+        """
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _minimum_reset_response_seconds() -> float:
+        """Get minimum forgot-password response duration.
+
+        Returns:
+            float: Minimum response duration in seconds.
+        """
+        min_ms = max(0, int(getattr(settings, "password_reset_min_response_ms", 250)))
+        return min_ms / 1000.0
+
+    @staticmethod
+    def _build_forgot_password_url() -> str:
+        """Build the absolute forgot-password page URL.
+
+        Returns:
+            str: Absolute forgot-password URL.
+        """
+        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
+        root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
+        return f"{app_domain}{root_path}/admin/forgot-password"
+
+    @staticmethod
+    def _build_reset_password_url(token: str) -> str:
+        """Build the absolute reset-password URL for a token.
+
+        Args:
+            token: Plaintext reset token.
+
+        Returns:
+            str: Absolute reset-password URL.
+        """
+        safe_token = urllib.parse.quote(token, safe="")
+        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
+        root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
+        return f"{app_domain}{root_path}/admin/reset-password/{safe_token}"
+
+    async def _invalidate_user_auth_cache(self, email: str) -> None:
+        """Invalidate cached authentication data for a user.
+
+        Args:
+            email: User email for cache invalidation.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            await asyncio.wait_for(asyncio.shield(auth_cache.invalidate_user(email)), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Auth cache invalidation timed out for %s - continuing", email)
+        except Exception as cache_error:  # nosec B110
+            logger.debug("Failed to invalidate auth cache for %s: %s", email, cache_error)
+
+    def _log_auth_event(
+        self,
+        event_type: str,
+        success: bool,
+        user_email: Optional[str],
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        details: Optional[dict] = None,
+    ) -> None:
+        """Persist a custom authentication/security event.
+
+        Args:
+            event_type: Event type identifier.
+            success: Whether the event succeeded.
+            user_email: Related user email, if available.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+            failure_reason: Failure detail when `success` is False.
+            details: Additional structured event payload.
+        """
+        try:
+            event = EmailAuthEvent(
+                user_email=user_email,
+                event_type=event_type,
+                success=success,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                failure_reason=failure_reason,
+                details=orjson.dumps(details).decode() if details else None,
+            )
+            self.db.add(event)
+            self.db.commit()
+        except Exception as exc:
+            self.db.rollback()
+            logger.warning("Failed to persist auth event %s for %s: %s", event_type, user_email, exc)
+
+    def _recent_password_reset_request_count(self, email: str, now: datetime) -> int:
+        """Count recent password-reset requests for rate limiting.
+
+        Args:
+            email: Email to count requests for.
+            now: Current UTC timestamp.
+
+        Returns:
+            int: Number of reset requests in the current rate-limit window.
+        """
+        window_minutes = int(getattr(settings, "password_reset_rate_window_minutes", 15))
+        window_start = now - timedelta(minutes=window_minutes)
+        stmt = (
+            select(func.count(EmailAuthEvent.id))  # pylint: disable=not-callable
+            .where(EmailAuthEvent.event_type == "PASSWORD_RESET_REQUESTED")
+            .where(EmailAuthEvent.user_email == email)
+            .where(EmailAuthEvent.timestamp >= window_start)
+        )
+        count = self.db.execute(stmt).scalar()
+        return int(count or 0)
+
     async def get_user_by_email(self, email: str) -> Optional[EmailUser]:
         """Get user by email address.
 
@@ -298,7 +455,18 @@ class EmailAuthService:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False) -> EmailUser:
+    async def create_user(
+        self,
+        email: str,
+        password: str,
+        full_name: Optional[str] = None,
+        is_admin: bool = False,
+        is_active: bool = True,
+        password_change_required: bool = False,
+        auth_provider: str = "local",
+        skip_password_validation: bool = False,
+        granted_by: Optional[str] = None,
+    ) -> EmailUser:
         """Create a new user with email authentication.
 
         Args:
@@ -306,8 +474,11 @@ class EmailAuthService:
             password: Plain text password (will be hashed)
             full_name: Optional full name for display
             is_admin: Whether user has admin privileges
+            is_active: Whether user account is active (default: True)
+            password_change_required: Whether user must change password on next login (default: False)
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
+            granted_by: Email of user creating this user (for role assignment audit trail)
 
         Returns:
             EmailUser: The created user object
@@ -321,10 +492,13 @@ class EmailAuthService:
             # user = await service.create_user(
             #     email="new@example.com",
             #     password="secure123",
-            #     full_name="New User"
+            #     full_name="New User",
+            #     is_active=True,
+            #     password_change_required=False
             # )
             # user.email          # Returns: 'new@example.com'
             # user.full_name      # Returns: 'New User'
+            # user.is_active      # Returns: True
         """
         # Normalize email to lowercase
         email = email.lower().strip()
@@ -343,7 +517,17 @@ class EmailAuthService:
         password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
-        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now())
+        user = EmailUser(
+            email=email,
+            password_hash=password_hash,
+            full_name=full_name,
+            is_admin=is_admin,
+            is_active=is_active,
+            password_change_required=password_change_required,
+            auth_provider=auth_provider,
+            password_changed_at=utc_now(),
+            admin_origin="api" if is_admin else None,
+        )
 
         try:
             self.db.add(user)
@@ -352,7 +536,8 @@ class EmailAuthService:
 
             logger.info(f"Created new user: {email}")
 
-            # Create personal team if enabled
+            # Create personal team first if enabled (needed for team-scoped role assignment)
+            personal_team_id = None
             if getattr(settings, "auto_create_personal_teams", True):
                 try:
                     # Import here to avoid circular imports
@@ -361,10 +546,47 @@ class EmailAuthService:
 
                     personal_team_service = PersonalTeamService(self.db)
                     personal_team = await personal_team_service.create_personal_team(user)
-                    logger.info(f"Created personal team '{personal_team.name}' for user {email}")
+                    personal_team_id = personal_team.id  # Get team_id directly from created team
+                    logger.info(f"Created personal team '{personal_team.name}' (ID: {personal_team_id}) for user {email}")
                 except Exception as e:
                     logger.warning(f"Failed to create personal team for {email}: {e}")
                     # Don't fail user creation if personal team creation fails
+
+            # Auto-assign dual roles using RoleService (after personal team creation)
+            try:
+                granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
+
+                # Determine global role based on admin status
+                global_role_name = settings.default_admin_role if is_admin else settings.default_user_role
+                global_role = await self.role_service.get_role_by_name(global_role_name, "global")
+
+                if global_role:
+                    try:
+                        await self.role_service.assign_role_to_user(user_email=email, role_id=global_role.id, scope="global", scope_id=None, granted_by=granter)
+                        logger.info(f"Assigned {global_role_name} role (global scope) to user {email}")
+                    except ValueError as e:
+                        logger.warning(f"Could not assign {global_role_name} role to {email}: {e}")
+                else:
+                    logger.warning(f"{global_role_name} role not found. User {email} created without global role.")
+
+                # Assign team owner role with team scope (if personal team exists)
+                if personal_team_id:
+                    team_owner_role_name = settings.default_team_owner_role
+                    team_owner_role = await self.role_service.get_role_by_name(team_owner_role_name, "team")
+
+                    if team_owner_role:
+                        try:
+                            await self.role_service.assign_role_to_user(user_email=email, role_id=team_owner_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                            logger.info(f"Assigned {team_owner_role_name} role (team scope: {personal_team_id}) to user {email}")
+                        except ValueError as e:
+                            logger.warning(f"Could not assign {team_owner_role_name} role to {email}: {e}")
+                    else:
+                        logger.warning(f"{team_owner_role_name} role not found. User {email} created without team owner role.")
+
+            except Exception as role_error:
+                logger.error(f"Failed to assign roles to user {email}: {role_error}")
+                # Don't fail user creation if role assignment fails
+                # User can be assigned roles manually later
 
             # Log registration event
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
@@ -425,24 +647,53 @@ class EmailAuthService:
                 logger.info(f"Authentication failed for {email}: account disabled")
                 return None
 
-            if user.is_account_locked():
+            is_protected_admin = user.is_admin and settings.protect_all_admins
+
+            if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
                 return None
+
+            # Clear lockout for protected admins so they can always attempt login
+            if is_protected_admin and user.is_account_locked():
+                logger.info(f"Clearing lockout for protected admin {email}")
+                user.reset_failed_attempts()
+                self.db.commit()
 
             # Verify password
             if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
-                # Increment failed attempts
-                max_attempts = getattr(settings, "max_failed_login_attempts", 5)
-                lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
+                # Increment failed attempts (skip for protected admins)
+                if not is_protected_admin:
+                    max_attempts = getattr(settings, "max_failed_login_attempts", 5)
+                    lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
 
-                is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
+                    is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
 
-                if is_locked:
-                    logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
-                    failure_reason = "Account locked due to too many failed attempts"
+                    if is_locked:
+                        logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
+                        failure_reason = "Account locked due to too many failed attempts"
+                        lockout_notifications_enabled = getattr(settings, "account_lockout_notification_enabled", True)
+                        if isinstance(lockout_notifications_enabled, bool) and lockout_notifications_enabled:
+                            locked_until_iso = user.locked_until.isoformat() if user.locked_until else "unknown"
+                            try:
+                                await self.email_notification_service.send_account_lockout_email(
+                                    to_email=user.email,
+                                    full_name=user.full_name,
+                                    locked_until_iso=locked_until_iso,
+                                    reset_url=self._build_forgot_password_url(),
+                                )
+                            except Exception as email_exc:
+                                logger.warning("Failed to send lockout notification for %s: %s", email, email_exc)
+                        self._log_auth_event(
+                            event_type="ACCOUNT_LOCKED",
+                            success=True,
+                            user_email=email,
+                            ip_address=ip_address,
+                            user_agent=user_agent,
+                            details={"locked_until": user.locked_until.isoformat() if user.locked_until else None},
+                        )
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
@@ -462,6 +713,240 @@ class EmailAuthService:
             auth_event = EmailAuthEvent.create_login_attempt(user_email=email, success=auth_success, ip_address=ip_address, user_agent=user_agent, failure_reason=failure_reason)
             self.db.add(auth_event)
             self.db.commit()
+
+    async def request_password_reset(self, email: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> PasswordResetRequestResult:
+        """Create a password reset token and send reset email when user exists.
+
+        The function intentionally returns generic outcomes to avoid account
+        enumeration while still allowing rate-limit enforcement.
+
+        Args:
+            email: User email requesting password reset.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            PasswordResetRequestResult: Reset request processing outcome.
+        """
+        start_time = time.monotonic()
+        normalized_email = (email or "").lower().strip()
+        now = utc_now()
+        _ = self._hash_reset_token(secrets.token_urlsafe(32))
+
+        rate_limit = int(getattr(settings, "password_reset_rate_limit", 5))
+        is_rate_limited = bool(normalized_email and self._recent_password_reset_request_count(normalized_email, now) >= rate_limit)
+        if is_rate_limited:
+            password_reset_requests_counter.labels(outcome="rate_limited").inc()
+            self._log_auth_event(
+                event_type="PASSWORD_RESET_RATE_LIMITED",
+                success=False,
+                user_email=normalized_email or None,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            remaining = self._minimum_reset_response_seconds() - (time.monotonic() - start_time)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            return PasswordResetRequestResult(rate_limited=True, email_sent=False)
+
+        user = await self.get_user_by_email(normalized_email) if normalized_email else None
+        self._log_auth_event(
+            event_type="PASSWORD_RESET_REQUESTED",
+            success=True,
+            user_email=normalized_email or None,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+        email_sent = False
+        if user and user.is_active:
+            token_plaintext = secrets.token_urlsafe(48)
+            token_hash = self._hash_reset_token(token_plaintext)
+            expires_minutes = int(getattr(settings, "password_reset_token_expiry_minutes", 60))
+            expires_at = now + timedelta(minutes=expires_minutes)
+
+            existing_stmt = select(PasswordResetToken).where(PasswordResetToken.user_email == user.email).where(PasswordResetToken.used_at.is_(None)).where(PasswordResetToken.expires_at > now)
+            for existing in self.db.execute(existing_stmt).scalars().all():
+                existing.used_at = now
+
+            token_record = PasswordResetToken(
+                user_email=user.email,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            self.db.add(token_record)
+            self.db.commit()
+
+            try:
+                email_sent = await self.email_notification_service.send_password_reset_email(
+                    to_email=user.email,
+                    full_name=user.full_name,
+                    reset_url=self._build_reset_password_url(token_plaintext),
+                    expires_minutes=expires_minutes,
+                )
+            except Exception as exc:
+                logger.warning("Failed to send password reset email to %s: %s", user.email, exc)
+
+            password_reset_requests_counter.labels(outcome="accepted").inc()
+            self._log_auth_event(
+                event_type="PASSWORD_RESET_EMAIL_SENT",
+                success=True,
+                user_email=user.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details={"token_hash": token_hash, "expires_at": expires_at.isoformat(), "email_sent": email_sent},
+            )
+        else:
+            password_reset_requests_counter.labels(outcome="accepted").inc()
+
+        remaining = self._minimum_reset_response_seconds() - (time.monotonic() - start_time)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        return PasswordResetRequestResult(rate_limited=False, email_sent=email_sent)
+
+    async def validate_password_reset_token(self, token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> PasswordResetToken:
+        """Validate a one-time password reset token.
+
+        Args:
+            token: Plaintext password reset token.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            PasswordResetToken: Matching valid reset token record.
+
+        Raises:
+            AuthenticationError: If token is missing, invalid, used, or expired.
+        """
+        if not token:
+            password_reset_completions_counter.labels(outcome="invalid_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, None, ip_address, user_agent, failure_reason="Missing token")
+            raise AuthenticationError("This reset link is invalid")
+
+        token_hash = self._hash_reset_token(token)
+        stmt = select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+        reset_token = self.db.execute(stmt).scalar_one_or_none()
+
+        if not reset_token:
+            password_reset_completions_counter.labels(outcome="invalid_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, None, ip_address, user_agent, failure_reason="Invalid token hash")
+            raise AuthenticationError("This reset link is invalid")
+
+        if not hmac.compare_digest(reset_token.token_hash, token_hash):
+            password_reset_completions_counter.labels(outcome="invalid_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, reset_token.user_email, ip_address, user_agent, failure_reason="Token hash mismatch")
+            raise AuthenticationError("This reset link is invalid")
+
+        if reset_token.is_used():
+            password_reset_completions_counter.labels(outcome="used_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, reset_token.user_email, ip_address, user_agent, failure_reason="Token already used")
+            raise AuthenticationError("This reset link has already been used")
+
+        if reset_token.is_expired():
+            password_reset_completions_counter.labels(outcome="expired_token").inc()
+            self._log_auth_event("PASSWORD_RESET_TOKEN_EXPIRED", False, reset_token.user_email, ip_address, user_agent, details={"token_hash": token_hash})
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, reset_token.user_email, ip_address, user_agent, failure_reason="Token expired")
+            raise AuthenticationError("This reset link has expired")
+
+        self._log_auth_event("PASSWORD_RESET_ATTEMPTED", True, reset_token.user_email, ip_address, user_agent)
+        return reset_token
+
+    async def reset_password_with_token(self, token: str, new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
+        """Complete password reset using a validated one-time token.
+
+        Args:
+            token: Plaintext password reset token.
+            new_password: New password value.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            bool: True when password reset completed successfully.
+
+        Raises:
+            AuthenticationError: If token or associated user is invalid.
+            PasswordValidationError: If new password violates policy or reuse checks.
+        """
+        reset_token = await self.validate_password_reset_token(token, ip_address=ip_address, user_agent=user_agent)
+        user = await self.get_user_by_email(reset_token.user_email)
+        if not user or not user.is_active:
+            password_reset_completions_counter.labels(outcome="invalid_user").inc()
+            raise AuthenticationError("This reset link is invalid")
+
+        self.validate_password(new_password)
+        if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+            password_reset_completions_counter.labels(outcome="reused_password").inc()
+            raise PasswordValidationError("New password must be different from current password")
+
+        now = utc_now()
+        user.password_hash = await self.password_service.hash_password_async(new_password)
+        user.password_change_required = False
+        user.password_changed_at = now
+        user.failed_login_attempts = 0
+        user.locked_until = None
+
+        reset_token.used_at = now
+        outstanding_stmt = select(PasswordResetToken).where(PasswordResetToken.user_email == user.email).where(PasswordResetToken.id != reset_token.id).where(PasswordResetToken.used_at.is_(None))
+        for outstanding in self.db.execute(outstanding_stmt).scalars().all():
+            outstanding.used_at = now
+
+        self.db.commit()
+
+        if getattr(settings, "password_reset_invalidate_sessions", True):
+            await self._invalidate_user_auth_cache(user.email)
+
+        email_sent = False
+        try:
+            email_sent = await self.email_notification_service.send_password_reset_confirmation_email(to_email=user.email, full_name=user.full_name)
+        except Exception as exc:
+            logger.warning("Failed to send password reset confirmation for %s: %s", user.email, exc)
+
+        password_reset_completions_counter.labels(outcome="success").inc()
+        self._log_auth_event(
+            event_type="PASSWORD_RESET_COMPLETED",
+            success=True,
+            user_email=user.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details={"email_sent": email_sent},
+        )
+        return True
+
+    async def unlock_user_account(self, email: str, unlocked_by: Optional[str] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> EmailUser:
+        """Clear lockout state for a user account.
+
+        Args:
+            email: User email to unlock.
+            unlocked_by: Admin/user identifier who performed unlock.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            EmailUser: Updated user record after unlock.
+
+        Raises:
+            ValueError: If the target user cannot be found.
+        """
+        normalized_email = email.lower().strip()
+        user = await self.get_user_by_email(normalized_email)
+        if not user:
+            raise ValueError(f"User {normalized_email} not found")
+
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.updated_at = utc_now()
+        self.db.commit()
+        self._log_auth_event(
+            event_type="ACCOUNT_UNLOCKED",
+            success=True,
+            user_email=user.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details={"unlocked_by": unlocked_by},
+        )
+        return user
 
     async def change_password(self, email: str, old_password: Optional[str], new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
         """Change a user's password.
@@ -523,22 +1008,9 @@ class EmailAuthService:
 
             # Invalidate auth cache for user
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                # Ensure cache invalidation runs before returning to avoid stale
-                # auth context being used by subsequent requests. Use a timeout
-                # to prevent blocking if Redis is slow or unresponsive.
-                # Shield the task to prevent cancellation on timeout - allows Redis
-                # operations to complete in background even if we stop waiting.
-                await asyncio.wait_for(asyncio.shield(auth_cache.invalidate_user(email)), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning(f"Auth cache invalidation timed out for {email} - continuing in background")
-            except Exception as cache_error:
-                logger.debug(f"Failed to invalidate auth cache on password change: {cache_error}")
+                await self._invalidate_user_auth_cache(email)
+            except Exception as cache_error:  # nosec B110 - best effort cache invalidation
+                logger.debug("Failed to invalidate auth cache on password change: %s", cache_error)
 
             logger.info(f"Password changed successfully for {email}")
 
@@ -982,23 +1454,38 @@ class EmailAuthService:
             logger.error(f"Error getting auth events: {e}")
             return []
 
-    async def update_user(self, email: str, full_name: Optional[str] = None, is_admin: Optional[bool] = None, password: Optional[str] = None) -> EmailUser:
+    async def update_user(
+        self,
+        email: str,
+        full_name: Optional[str] = None,
+        is_admin: Optional[bool] = None,
+        is_active: Optional[bool] = None,
+        password_change_required: Optional[bool] = None,
+        password: Optional[str] = None,
+        admin_origin_source: Optional[str] = None,
+    ) -> EmailUser:
         """Update user information.
 
         Args:
             email: User's email address (primary key)
             full_name: New full name (optional)
             is_admin: New admin status (optional)
+            is_active: New active status (optional)
+            password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
+            admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist
+            ValueError: If user doesn't exist, if protect_all_admins blocks the change, or if it would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
+            # Normalize email to match create_user() / get_user_by_email() behavior
+            email = email.lower().strip()
+
             # Get existing user
             stmt = select(EmailUser).where(EmailUser.email == email)
             result = self.db.execute(stmt)
@@ -1007,19 +1494,81 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
+            # Admin protection guard
+            if user.is_admin and user.is_active:
+                would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
+                if would_lose_admin:
+                    if settings.protect_all_admins:
+                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+                    if await self.is_last_active_admin(email):
+                        raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
 
             if is_admin is not None:
-                user.is_admin = is_admin
+                # Track admin_origin when status actually changes
+                if is_admin != user.is_admin:
+                    user.is_admin = is_admin
+                    user.admin_origin = admin_origin_source if is_admin else None
+
+                    # Sync global role assignment with is_admin flag:
+                    # Promotion: revoke default_user_role, assign default_admin_role
+                    # Demotion: revoke default_admin_role, assign default_user_role
+                    try:
+                        admin_role_name = settings.default_admin_role
+                        user_role_name = settings.default_user_role
+                        admin_role = await self.role_service.get_role_by_name(admin_role_name, "global")
+                        user_role = await self.role_service.get_role_by_name(user_role_name, "global")
+
+                        if is_admin:
+                            # Promotion: assign admin role, revoke user role
+                            if admin_role:
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
+                                if not existing or not existing.is_active:
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned {admin_role_name} role to {email}")
+                            else:
+                                logger.warning(f"{admin_role_name} role not found, cannot assign to {email}")
+
+                            if user_role:
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
+                                if revoked:
+                                    logger.info(f"Revoked {user_role_name} role from {email}")
+                        else:
+                            # Demotion: revoke admin role, assign user role
+                            if admin_role:
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
+                                if revoked:
+                                    logger.info(f"Revoked {admin_role_name} role from {email}")
+
+                            if user_role:
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
+                                if not existing or not existing.is_active:
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned {user_role_name} role to {email}")
+                            else:
+                                logger.warning(f"{user_role_name} role not found, cannot assign to {email}")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to sync global roles for {email}: {e}")
+                        # Don't fail user update if role sync fails
+
+            if is_active is not None:
+                user.is_active = is_active
 
             if password is not None:
-                if not self.validate_password(password):
-                    raise ValueError("Password does not meet security requirements")
+                self.validate_password(password)
                 user.password_hash = await self.password_service.hash_password_async(password)
-                user.password_change_required = False  # Clear password change requirement
-                user.password_changed_at = utc_now()  # Update password change timestamp
+                # Only clear password_change_required if it wasn't explicitly set
+                if password_change_required is None:
+                    user.password_change_required = False
+                user.password_changed_at = utc_now()
+
+            # Set password_change_required after password processing to allow explicit override
+            if password_change_required is not None:
+                user.password_change_required = password_change_required
 
             user.updated_at = datetime.now(timezone.utc)
 
@@ -1155,7 +1704,13 @@ class EmailAuthService:
                             # Multi-member team with no other owners - cannot delete user
                             raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
 
-            # Delete related auth events first
+            # Delete all role assignments for the user
+            try:
+                await self.role_service.delete_all_user_roles(email)
+            except Exception as e:
+                logger.warning(f"Failed to delete role assignments for {email}: {e}")
+
+            # Delete related auth events
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)
             self.db.execute(auth_events_stmt)
 
@@ -1169,15 +1724,13 @@ class EmailAuthService:
 
             # Invalidate all auth caches for deleted user
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
                 # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-                asyncio.create_task(auth_cache.invalidate_user(email))
-                asyncio.create_task(auth_cache.invalidate_user_teams(email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(email))
+                for coro in [auth_cache.invalidate_user(email), auth_cache.invalidate_user_teams(email), auth_cache.invalidate_team_membership(email)]:
+                    task = asyncio.create_task(coro)
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on user delete: {cache_error}")
 

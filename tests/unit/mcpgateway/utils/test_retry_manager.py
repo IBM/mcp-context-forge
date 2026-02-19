@@ -27,6 +27,15 @@ def client():
     return ResilientHttpClient(max_retries=settings.retry_max_attempts, base_backoff=settings.retry_base_delay, max_delay=settings.retry_max_delay, jitter_max=settings.retry_jitter_max)
 
 
+def test_client_init_uses_provided_limits():
+    """If client_args includes limits, ResilientHttpClient shouldn't override them."""
+    limits = httpx.Limits(max_connections=1, max_keepalive_connections=1, keepalive_expiry=1.0)
+    with patch("mcpgateway.utils.retry_manager.httpx.AsyncClient") as mock_async_client:
+        client = ResilientHttpClient(client_args={"limits": limits})
+        assert client.client_args["limits"] is limits
+        assert mock_async_client.call_args.kwargs["limits"] is limits
+
+
 @pytest.mark.asyncio
 async def test_successful_request_no_retry(client):
     with patch.object(client.client, "request", new=AsyncMock(return_value=httpx.Response(200))) as mock_req:

@@ -1696,8 +1696,10 @@ async def _run_streamable_http_to_stdio(
                     retry_delay = initial_retry_delay
 
                     async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data = line[6:]  # Remove "data: " prefix
+                        if line.startswith("data:"):
+                            data = line[5:]
+                            if data.startswith(" "):
+                                data = data[1:]
                             if data and process.stdin:
                                 process.stdin.write((data + "\n").encode())
                                 await process.stdin.drain()
@@ -1769,8 +1771,10 @@ async def _simple_streamable_http_pump(client: "Any", url: str, max_retries: int
                 retry_delay = initial_retry_delay
 
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]  # Remove "data: " prefix
+                    if line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         if data:
                             print(data)
                             LOGGER.debug(f"Received: {data}")
@@ -2094,13 +2098,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 receive (Receive): An awaitable that yields incoming ASGI events.
                 send (Send): An awaitable used to send ASGI events.
             """
-            if scope.get("type") == "http" and scope.get("path") == "/mcp" and streamable_manager:
-                # Let StreamableHTTPSessionManager handle session-oriented streaming
-                # await streamable_manager.handle_request(scope, receive, send)
-                await original_app(scope, receive, send)
-            else:
-                # Delegate everything else to the original FastAPI app
-                await original_app(scope, receive, send)
+            await original_app(scope, receive, send)
 
         # Replace the app used by uvicorn with the ASGI wrapper
         app = mcp_asgi_wrapper  # type: ignore[assignment]

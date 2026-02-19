@@ -1,0 +1,440 @@
+{{- $fullName := include "mcp-stack.fullname" . -}}
+{{- $gatewayHost := printf "%s-mcpgateway" $fullName -}}
+{{- $gatewayPort := .Values.mcpContextForge.service.port -}}
+{{- $registrationEnabled := .Values.testing.registration.enabled -}}
+{{- $registrationImage := printf "%s:%s" .Values.testing.registration.image.repository .Values.testing.registration.image.tag -}}
+
+{{- if and $registrationEnabled .Values.testing.fastTime.register.enabled .Values.mcpFastTimeServer.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-register-fast-time
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registration
+    app.kubernetes.io/part-of: testing
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.testing.registration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.testing.registration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/component: registration
+    spec:
+      restartPolicy: {{ .Values.testing.registration.restartPolicy }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: register-fast-time
+          image: {{ $registrationImage | quote }}
+          imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              python3 - <<'PY'
+              import time
+              import urllib.request
+
+              targets = [
+                  ("gateway", "http://{{ $gatewayHost }}:{{ $gatewayPort }}/health", 90),
+                  ("fast_time_server", "http://{{ $fullName }}-mcp-fast-time-server:80/health", 60),
+              ]
+
+              for name, url, tries in targets:
+                  for _ in range(tries):
+                      try:
+                          with urllib.request.urlopen(url, timeout=2) as response:
+                              if response.status == 200:
+                                  break
+                      except Exception:
+                          pass
+                      time.sleep(2)
+                  else:
+                      raise SystemExit(f"{name} failed health check: {url}")
+              PY
+
+              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256 2>/dev/null)"
+
+              python3 - <<'PY'
+              import json
+              import os
+              import time
+              import urllib.error
+              import urllib.request
+
+              gateway_name = "{{ .Values.testing.fastTime.register.gatewayName }}"
+              gateway_url = "http://{{ $fullName }}-mcp-fast-time-server:80{{ .Values.testing.fastTime.register.gatewayPath }}"
+              transport = "{{ .Values.testing.fastTime.register.transport }}"
+              create_virtual_server = "{{ .Values.testing.fastTime.register.createVirtualServer }}".lower() == "true"
+              virtual_server_id = "{{ .Values.testing.fastTime.register.virtualServerId }}"
+              virtual_server_name = "{{ .Values.testing.fastTime.register.virtualServerName }}"
+              virtual_server_description = "{{ .Values.testing.fastTime.register.virtualServerDescription }}"
+
+              token = os.environ["TOKEN"]
+              base = "http://{{ $gatewayHost }}:{{ $gatewayPort }}"
+
+              def api_request(method: str, path: str, payload=None):
+                  url = f"{base}{path}"
+                  body = json.dumps(payload).encode("utf-8") if payload is not None else None
+                  req = urllib.request.Request(url, data=body, method=method)
+                  req.add_header("Authorization", f"Bearer {token}")
+                  req.add_header("Content-Type", "application/json")
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read().decode("utf-8")
+                      if not raw:
+                          return {}
+                      return json.loads(raw)
+
+              gateways = api_request("GET", "/gateways")
+              for gateway in gateways:
+                  if gateway.get("name") == gateway_name:
+                      try:
+                          api_request("DELETE", f"/gateways/{gateway['id']}")
+                      except Exception:
+                          pass
+
+              created = api_request("POST", "/gateways", {"name": gateway_name, "url": gateway_url, "transport": transport})
+              gateway_id = created.get("id")
+
+              if create_virtual_server and gateway_id:
+                  for _ in range(30):
+                      time.sleep(1)
+                      try:
+                          tools = api_request("GET", "/tools")
+                          if any(tool.get("gatewayId") == gateway_id for tool in tools):
+                              break
+                      except Exception:
+                          pass
+
+                  tools = api_request("GET", "/tools")
+                  resources = api_request("GET", "/resources")
+                  prompts = api_request("GET", "/prompts")
+
+                  tool_ids = [tool["id"] for tool in tools if tool.get("gatewayId") == gateway_id]
+                  resource_ids = [resource["id"] for resource in resources]
+                  prompt_ids = [prompt["id"] for prompt in prompts]
+
+                  try:
+                      api_request("DELETE", f"/servers/{virtual_server_id}")
+                  except Exception:
+                      pass
+
+                  payload = {
+                      "server": {
+                          "id": virtual_server_id,
+                          "name": virtual_server_name,
+                          "description": virtual_server_description,
+                          "associated_tools": tool_ids,
+                          "associated_resources": resource_ids,
+                          "associated_prompts": prompt_ids,
+                      }
+                  }
+                  api_request("POST", "/servers", payload)
+
+              print("fast_time registration complete")
+              PY
+{{- end }}
+
+{{- if and .Values.testing.enabled $registrationEnabled .Values.testing.fastTest.register.enabled .Values.testing.fastTestServer.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-register-fast-test
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registration
+    app.kubernetes.io/part-of: testing
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.testing.registration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.testing.registration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/component: registration
+    spec:
+      restartPolicy: {{ .Values.testing.registration.restartPolicy }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: register-fast-test
+          image: {{ $registrationImage | quote }}
+          imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              python3 - <<'PY'
+              import time
+              import urllib.request
+
+              targets = [
+                  ("gateway", "http://{{ $gatewayHost }}:{{ $gatewayPort }}/health", 90),
+                  ("fast_test_server", "http://{{ $fullName }}-fast-test-server:{{ .Values.testing.fastTestServer.service.port }}/health", 60),
+              ]
+
+              for name, url, tries in targets:
+                  for _ in range(tries):
+                      try:
+                          with urllib.request.urlopen(url, timeout=2) as response:
+                              if response.status == 200:
+                                  break
+                      except Exception:
+                          pass
+                      time.sleep(2)
+                  else:
+                      raise SystemExit(f"{name} failed health check: {url}")
+              PY
+
+              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256 2>/dev/null)"
+
+              python3 - <<'PY'
+              import json
+              import os
+              import urllib.request
+
+              token = os.environ["TOKEN"]
+              base = "http://{{ $gatewayHost }}:{{ $gatewayPort }}"
+              gateway_name = "{{ .Values.testing.fastTest.register.gatewayName }}"
+              gateway_url = "http://{{ $fullName }}-fast-test-server:{{ .Values.testing.fastTestServer.service.port }}{{ .Values.testing.fastTest.register.gatewayPath }}"
+              transport = "{{ .Values.testing.fastTest.register.transport }}"
+
+              def api_request(method: str, path: str, payload=None):
+                  url = f"{base}{path}"
+                  body = json.dumps(payload).encode("utf-8") if payload is not None else None
+                  req = urllib.request.Request(url, data=body, method=method)
+                  req.add_header("Authorization", f"Bearer {token}")
+                  req.add_header("Content-Type", "application/json")
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read().decode("utf-8")
+                      return json.loads(raw) if raw else {}
+
+              gateways = api_request("GET", "/gateways")
+              for gateway in gateways:
+                  if gateway.get("name") == gateway_name:
+                      try:
+                          api_request("DELETE", f"/gateways/{gateway['id']}")
+                      except Exception:
+                          pass
+
+              api_request("POST", "/gateways", {"name": gateway_name, "url": gateway_url, "transport": transport})
+              print("fast_test registration complete")
+              PY
+{{- end }}
+
+{{- if and .Values.testing.enabled $registrationEnabled .Values.testing.a2a.register.enabled .Values.testing.a2aEchoAgent.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-register-a2a-echo
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registration
+    app.kubernetes.io/part-of: testing
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.testing.registration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.testing.registration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/component: registration
+    spec:
+      restartPolicy: {{ .Values.testing.registration.restartPolicy }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: register-a2a-echo
+          image: {{ $registrationImage | quote }}
+          imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              python3 - <<'PY'
+              import time
+              import urllib.request
+
+              targets = [
+                  ("gateway", "http://{{ $gatewayHost }}:{{ $gatewayPort }}/health", 90),
+                  ("a2a_echo_agent", "http://{{ $fullName }}-a2a-echo-agent:{{ .Values.testing.a2aEchoAgent.service.port }}/health", 60),
+              ]
+
+              for name, url, tries in targets:
+                  for _ in range(tries):
+                      try:
+                          with urllib.request.urlopen(url, timeout=2) as response:
+                              if response.status == 200:
+                                  break
+                      except Exception:
+                          pass
+                      time.sleep(2)
+                  else:
+                      raise SystemExit(f"{name} failed health check: {url}")
+              PY
+
+              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256 2>/dev/null)"
+
+              python3 - <<'PY'
+              import json
+              import os
+              import urllib.request
+
+              token = os.environ["TOKEN"]
+              base = "http://{{ $gatewayHost }}:{{ $gatewayPort }}"
+              agent_name = "{{ .Values.testing.a2a.register.name }}"
+
+              def api_request(method: str, path: str, payload=None):
+                  url = f"{base}{path}"
+                  body = json.dumps(payload).encode("utf-8") if payload is not None else None
+                  req = urllib.request.Request(url, data=body, method=method)
+                  req.add_header("Authorization", f"Bearer {token}")
+                  req.add_header("Content-Type", "application/json")
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read().decode("utf-8")
+                      return json.loads(raw) if raw else {}
+
+              agents = api_request("GET", "/a2a")
+              if isinstance(agents, dict):
+                  agents = agents.get("agents", agents.get("items", []))
+
+              for agent in agents:
+                  if agent.get("name") == agent_name and agent.get("id"):
+                      try:
+                          api_request("DELETE", f"/a2a/{agent['id']}")
+                      except Exception:
+                          pass
+
+              payload = {
+                  "agent": {
+                      "name": agent_name,
+                      "description": "{{ .Values.testing.a2a.register.description }}",
+                      "endpoint_url": "http://{{ $fullName }}-a2a-echo-agent:{{ .Values.testing.a2aEchoAgent.service.port }}{{ .Values.testing.a2a.register.endpointPath }}",
+                      "agent_type": "jsonrpc",
+                      "protocol_version": "{{ .Values.testing.a2a.register.protocolVersion }}",
+                      "capabilities": {"echo": True, "preferredTransport": "JSONRPC"},
+                      "tags": ["testing", "a2a", "echo"],
+                  },
+                  "visibility": "{{ .Values.testing.a2a.register.visibility }}",
+              }
+
+              api_request("POST", "/a2a", payload)
+              print("a2a echo registration complete")
+              PY
+{{- end }}
+
+{{- if and .Values.benchmark.enabled .Values.benchmark.register.enabled $registrationEnabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-register-benchmark
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registration
+    app.kubernetes.io/part-of: benchmark
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.testing.registration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.testing.registration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/component: registration
+    spec:
+      restartPolicy: {{ .Values.testing.registration.restartPolicy }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: register-benchmark
+          image: {{ $registrationImage | quote }}
+          imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              python3 - <<'PY'
+              import time
+              import urllib.request
+
+              url = "http://{{ $gatewayHost }}:{{ $gatewayPort }}/health"
+              for _ in range(90):
+                  try:
+                      with urllib.request.urlopen(url, timeout=2) as response:
+                          if response.status == 200:
+                              break
+                  except Exception:
+                      pass
+                  time.sleep(2)
+              else:
+                  raise SystemExit(f"gateway failed health check: {url}")
+              PY
+
+              sleep 5
+
+              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256 2>/dev/null)"
+
+              python3 - <<'PY'
+              import json
+              import os
+              import urllib.error
+              import urllib.request
+
+              token = os.environ["TOKEN"]
+              base = "http://{{ $gatewayHost }}:{{ $gatewayPort }}"
+              start_port = int("{{ .Values.benchmark.register.startPort }}")
+              server_count = int("{{ .Values.benchmark.register.serverCount }}")
+              gateway_prefix = "{{ .Values.benchmark.register.gatewayPrefix }}"
+              transport = "{{ .Values.benchmark.register.transport }}"
+
+              def api_request(method: str, path: str, payload=None):
+                  url = f"{base}{path}"
+                  body = json.dumps(payload).encode("utf-8") if payload is not None else None
+                  req = urllib.request.Request(url, data=body, method=method)
+                  req.add_header("Authorization", f"Bearer {token}")
+                  req.add_header("Content-Type", "application/json")
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read().decode("utf-8")
+                      return json.loads(raw) if raw else {}
+
+              for port in range(start_port, start_port + server_count):
+                  name = f"{gateway_prefix}{port}"
+                  payload = {
+                      "name": name,
+                      "url": f"http://{{ $fullName }}-benchmark-server:{port}/mcp",
+                      "transport": transport,
+                  }
+                  try:
+                      api_request("POST", "/gateways", payload)
+                  except urllib.error.HTTPError as exc:
+                      if exc.code != 409:
+                          raise
+
+              print("benchmark registration complete")
+              PY
+{{- end }}

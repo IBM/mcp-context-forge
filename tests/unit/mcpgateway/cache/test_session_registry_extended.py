@@ -54,6 +54,12 @@ class TestImportErrors:
 
             # Should set REDIS_AVAILABLE = False
             assert not mcpgateway.cache.session_registry.REDIS_AVAILABLE
+        # Reload again to avoid leaking import-error flags into other tests/workers.
+        import importlib
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
 
     def test_sqlalchemy_import_error_flag(self):
         """Test SQLALCHEMY_AVAILABLE flag when sqlalchemy import fails."""
@@ -68,6 +74,12 @@ class TestImportErrors:
 
             # Should set SQLALCHEMY_AVAILABLE = False
             assert not mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE
+        # Reload again to avoid leaking import-error flags into other tests/workers.
+        import importlib
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
 
 
 class TestNoneBackend:
@@ -1032,7 +1044,8 @@ class TestRespondTaskCancellation:
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep)
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for)
 
-        await registry._reap_stuck_tasks()
+        with pytest.raises(asyncio.CancelledError):
+            await registry._reap_stuck_tasks()
 
         assert "done" not in registry._stuck_tasks
         assert "pending" in registry._stuck_tasks

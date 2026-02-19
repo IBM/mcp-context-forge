@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: JSON.parse(localStorage.getItem('darkMode') || 'false') }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => localStorage.setItem('darkMode', val))"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -80,8 +80,8 @@
         const urlParams = new URLSearchParams(window.location.search);
         const prefix = tableName + '_';
         return {
-          page: parseInt(urlParams.get(prefix + 'page') || '1', 10),
-          perPage: parseInt(urlParams.get(prefix + 'size') || '10', 10),
+          page: Math.max(1, parseInt(urlParams.get(prefix + 'page'), 10) || 1),
+          perPage: Math.max(1, parseInt(urlParams.get(prefix + 'size'), 10) || 10),
           includeInactive: urlParams.get(prefix + 'inactive')
         };
       }
@@ -90,6 +90,8 @@
       // URL state takes precedence over checkbox state for shareability
       function buildTableUrl(tableName, baseUrl, additionalParams = {}) {
         const params = getPaginationParams(tableName);
+        const urlParams = new URLSearchParams(window.location.search);
+        const prefix = tableName + '_';
         const url = new URL(baseUrl, window.location.origin);
         url.searchParams.set('page', params.page);
         url.searchParams.set('per_page', params.perPage);
@@ -107,6 +109,16 @@
         // If include_inactive wasn't in additionalParams but is in URL, still use it
         if (!additionalParams.hasOwnProperty('include_inactive') && params.includeInactive !== null) {
           url.searchParams.set('include_inactive', params.includeInactive);
+        }
+
+        // Preserve namespaced search state for shareable URLs
+        const namespacedQuery = urlParams.get(prefix + 'q');
+        const namespacedTags = urlParams.get(prefix + 'tags');
+        if (namespacedQuery) {
+          url.searchParams.set('q', namespacedQuery);
+        }
+        if (namespacedTags) {
+          url.searchParams.set('tags', namespacedTags);
         }
 
         return url.pathname + url.search;
@@ -136,7 +148,25 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        window.history.replaceState({}, '', newUrl);
+        safeReplaceState({}, '', newUrl);
+      }
+
+      // One-time debug notice for restricted iframe contexts (e.g. sandboxed iframes)
+      var _restrictedContextLogged = false;
+      function _logRestrictedContext(e) {
+        if (!_restrictedContextLogged) {
+          _restrictedContextLogged = true;
+          console.debug('Running in restricted context — storage/history APIs unavailable:', e.message);
+        }
+      }
+
+      // Safe wrapper for history.replaceState — skips in restricted contexts
+      function safeReplaceState(data, title, url) {
+        try {
+          window.history.replaceState(data, title, url);
+        } catch (e) {
+          _logRestrictedContext(e);
+        }
       }
     </script>
 
@@ -251,6 +281,8 @@
   </head>
 
   <body class="bg-gray-100 dark:bg-gray-900">
+    {% set hidden_sections = ui_hidden_sections | default([]) %}
+    {% set hidden_header_items = ui_hidden_header_items | default([]) %}
     <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }">
 
       <!-- Mobile sidebar backdrop -->
@@ -312,6 +344,7 @@
         <nav class="flex-1 overflow-y-auto py-4 sidebar-scroll">
           <!-- Overview Section -->
           <div class="space-y-1 px-2 mb-4">
+            {% if 'overview' not in hidden_sections %}
             <a href="#overview" id="tab-overview" data-testid="overview-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -319,6 +352,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Overview</span>
             </a>
+            {% endif %}
           </div>
 
           <!-- MCP Section -->
@@ -326,6 +360,7 @@
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">MCP</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'gateways' not in hidden_sections %}
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -333,6 +368,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
               <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
+            {% endif %}
+            {% if 'servers' not in hidden_sections %}
             <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -340,6 +377,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
               <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
+            {% endif %}
+            {% if 'tools' not in hidden_sections %}
             <a href="#tools" id="tab-tools" data-testid="tools-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -356,6 +395,8 @@
               <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
             {% endif %}
+            {% endif %}
+            {% if 'prompts' not in hidden_sections %}
             <a href="#prompts" id="tab-prompts"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -363,6 +404,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
               <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
+            {% endif %}
+            {% if 'resources' not in hidden_sections %}
             <a href="#resources" id="tab-resources"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -370,6 +413,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
               <span x-show="!sidebarCollapsed">Resources</span>
             </a>
+            {% endif %}
+            {% if 'roots' not in hidden_sections %}
             <a href="#roots" id="tab-roots"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -377,6 +422,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
               <span x-show="!sidebarCollapsed">Roots</span>
             </a>
+            {% endif %}
+            {% if 'mcp-registry' not in hidden_sections %}
             <a href="#mcp-registry" id="tab-mcp-registry" data-testid="mcp-registry-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -384,10 +431,11 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
+            {% endif %}
           </div>
 
           <!-- Agents Section -->
-          {% if a2a_enabled or grpc_enabled %}
+          {% if ('agents' not in hidden_sections) and (a2a_enabled or grpc_enabled) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Agents</span>
           </div>
@@ -414,11 +462,12 @@
           {% endif %}
 
           <!-- LLM Section -->
-          {% if llmchat_enabled %}
+          {% if llmchat_enabled or 'settings' not in hidden_sections %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">LLM</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if llmchat_enabled %}
             <a href="#llm-chat" id="tab-llm-chat" data-testid="llm-chat-tab"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -426,6 +475,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
               <span x-show="!sidebarCollapsed">LLM Chat</span>
             </a>
+            {% endif %}
+            {% if 'settings' not in hidden_sections %}
             <a href="#llm-settings" id="tab-llm-settings"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -433,15 +484,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">LLM Settings</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and ('metrics' not in hidden_sections or performance_enabled or observability_enabled) %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'metrics' not in hidden_sections %}
             <a href="#metrics" id="tab-metrics"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -449,6 +502,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
+            {% endif %}
             {% if performance_enabled %}
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
@@ -470,12 +524,13 @@
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'plugins' not in hidden_sections %}
             <a href="#plugins" id="tab-plugins" data-testid="plugins-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -483,15 +538,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
           <!-- Organization Section -->
-          {% if email_auth_enabled %}
+          {% if email_auth_enabled and ('teams' not in hidden_sections or ('users' not in hidden_sections and is_admin) or 'tokens' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Organization</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'teams' not in hidden_sections %}
             <a href="#teams" id="tab-teams" data-testid="teams-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -499,7 +556,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
-            {% if is_admin %}
+            {% endif %}
+            {% if is_admin and 'users' not in hidden_sections %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -508,6 +566,7 @@
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
             {% endif %}
+            {% if 'tokens' not in hidden_sections %}
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -515,15 +574,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
               <span x-show="!sidebarCollapsed">API Tokens</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'export-import' not in hidden_sections %}
             <a href="#export-import" id="tab-export-import"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -531,6 +592,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
               <span x-show="!sidebarCollapsed">Export/Import</span>
             </a>
+            {% endif %}
+            {% if 'logs' not in hidden_sections %}
             <a href="#logs" id="tab-logs"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -538,6 +601,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
               <span x-show="!sidebarCollapsed">System Logs</span>
             </a>
+            {% endif %}
+            {% if 'version-info' not in hidden_sections %}
             <a href="#version-info" id="tab-version-info"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -545,6 +610,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
+            {% endif %}
+            {% if 'maintenance' not in hidden_sections %}
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -552,6 +619,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
         </nav>
@@ -560,6 +628,7 @@
         <div class="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
           <div class="flex items-center" :class="{ 'justify-center': sidebarCollapsed, 'justify-between': !sidebarCollapsed }">
             <!-- Dark mode toggle -->
+            {% if 'theme_toggle' not in hidden_header_items %}
             <button
               @click="darkMode = !darkMode"
               class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -567,6 +636,7 @@
             >
               <span x-text="darkMode ? '☀️' : '🌙'" class="text-lg"></span>
             </button>
+            {% endif %}
             <!-- Links (hidden when collapsed) -->
             <div x-show="!sidebarCollapsed" class="flex items-center space-x-2">
               <a href="https://ibm.github.io/mcp-context-forge/" target="_blank"
@@ -609,8 +679,19 @@
 
             <!-- Right side: team selector, user, logout -->
             <div class="flex items-center space-x-4">
+              <button
+                type="button"
+                id="global-search-trigger"
+                onclick="openGlobalSearchModal()"
+                class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:border-gray-400 dark:hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                title="Search across tools, prompts, resources, servers, gateways, and agents (Ctrl/Cmd+K)"
+              >
+                <span>Search</span>
+                <span class="hidden sm:inline text-xs text-gray-500 dark:text-gray-400">Ctrl/Cmd+K</span>
+              </button>
+
               <!-- Team Selector with Search and Infinite Scroll -->
-              {% if email_auth_enabled %}
+              {% if email_auth_enabled and 'team_selector' not in hidden_header_items %}
               <div
                 class="relative inline-block text-left"
                 x-data="{
@@ -710,14 +791,17 @@
               {% endif %}
 
               <!-- User Email -->
+              {% if 'user_identity' not in hidden_header_items %}
               <div class="text-sm text-gray-600 dark:text-gray-400 flex items-center hidden sm:flex">
                 <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
                 </svg>
                 {{ current_user }}
               </div>
+              {% endif %}
 
               <!-- Logout -->
+              {% if 'logout' not in hidden_header_items %}
               <form method="post" action="{{ root_path }}/admin/logout" class="inline">
                 <button
                   type="submit"
@@ -727,6 +811,7 @@
                   Logout
                 </button>
               </form>
+              {% endif %}
             </div>
           </div>
         </header>
@@ -736,10 +821,33 @@
           <!-- Notification content will be inserted here -->
         </div>
 
+        <!-- Global Search Modal -->
+        <div id="global-search-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+          <div class="absolute inset-0 bg-black/40" onclick="closeGlobalSearchModal()"></div>
+          <div class="relative max-w-3xl mx-auto mt-24 px-4">
+            <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden">
+              <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+                <input
+                  type="text"
+                  id="global-search-input"
+                  placeholder="Search across servers, gateways, tools, resources, prompts, and agents..."
+                  class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autocomplete="off"
+                />
+              </div>
+              <div id="global-search-results" class="max-h-[28rem] overflow-y-auto">
+                <div class="p-4 text-sm text-gray-500 dark:text-gray-400">
+                  Start typing to search all entities.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
-      {% if is_admin %}
+      {% if is_admin and 'logs' not in hidden_sections %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -866,7 +974,13 @@
                 id="log-stats"
                 class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300"
               >
-                <span class="text-sm">Loading...</span>
+                <div class="flex items-center justify-center p-4">
+                  <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span class="ml-2 text-gray-600 dark:text-gray-400">Loading logs...</span>
+                </div>
               </div>
 
               <!-- Log Table -->
@@ -954,7 +1068,7 @@
       </div>
       {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'export-import' not in hidden_sections %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1242,6 +1356,7 @@
                         <input
                           type="password"
                           id="import-rekey-secret"
+                          autocomplete="off"
                           placeholder="New encryption secret (optional)"
                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                         />
@@ -1383,14 +1498,19 @@
             </div>
           </div>
       </div>
+      {% endif %}
+
+      {% if is_admin and 'version-info' not in hidden_sections %}
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
+      {% if is_admin and 'maintenance' not in hidden_sections %}
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
       {% endif %}
@@ -1724,7 +1844,9 @@
             </div>
           </div>
         </div>
+        {% endif %}
 
+        {% if 'settings' not in hidden_sections %}
         <!-- LLM Settings Panel -->
       <div id="llm-settings-panel" class="tab-panel hidden">
         <div class="container mx-auto">
@@ -1867,7 +1989,7 @@
                           API Key
                           <span id="llm-provider-api-key-required" class="text-red-500 hidden">*</span>
                         </label>
-                        <input type="password" id="llm-provider-api-key" name="api_key" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Leave blank to keep existing">
+                        <input type="password" id="llm-provider-api-key" name="api_key" autocomplete="off" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Leave blank to keep existing">
                       </div>
                       <div>
                         <label for="llm-provider-api-base" class="block text-sm font-medium text-gray-700 dark:text-gray-300">API Base URL</label>
@@ -2028,18 +2150,18 @@
       </div>
       {% endif %}
 
+      {% if 'mcp-registry' not in hidden_sections %}
       <!-- MCP Registry Panel -->
       <div id="mcp-registry-panel" class="tab-panel hidden">
         <div class="container mx-auto">
           <!-- Server Grid (includes filters and overview) -->
           <div id="mcp-registry-servers">
-            <div class="text-center py-8">
-              <div
-                class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"
-              ></div>
-              <p class="mt-2 text-gray-600 dark:text-gray-400">
-                Loading MCP Registry servers...
-              </p>
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading MCP Registry servers...</span>
             </div>
           </div>
         </div>
@@ -2080,6 +2202,7 @@
                   <input
                     type="password"
                     id="modal-api-key"
+                    autocomplete="off"
                     class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Enter your API key"
                     required
@@ -2105,9 +2228,17 @@
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if 'servers' not in hidden_sections %}
       <!-- Catalog Panel (Virtual Servers) -->
       <div id="catalog-panel" class="tab-panel hidden">
+        {% if not catalog_enabled %}
+        <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6 dark:bg-yellow-800 dark:border-yellow-400 dark:text-yellow-200">
+          <p class="font-bold">Catalog is currently disabled</p>
+          <p class="text-sm">Set <code>MCPGATEWAY_CATALOG_ENABLED=true</code> to enable catalog-backed server operations.</p>
+        </div>
+        {% endif %}
         <div class="flex justify-between items-center mb-4">
           <div class="flex items-center space-x-10">
             <h2 class="text-2xl font-bold dark:text-gray-200">Virtual MCP Servers</h2>
@@ -2125,7 +2256,7 @@
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('catalog-search-input')?.value || '', tags: document.getElementById('catalog-tag-filter')?.value || ''}"
               hx-target="#servers-table"
               hx-swap="outerHTML"
               hx-indicator="#servers-loading"
@@ -2151,7 +2282,7 @@
                   type="text"
                   id="catalog-search-input"
                   data-testid="search-input"
-                  placeholder="Search servers via tags..."
+                  placeholder="Search servers..."
                   class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                   oninput="filterServerTable(this.value)"
                 />
@@ -2192,14 +2323,7 @@
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
-              <!-- Loading placeholder -->
-              <div class="flex items-center justify-center p-8">
-                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading servers...</span>
-              </div>
+
             </div>
           </div>
 
@@ -2252,9 +2376,7 @@
             {% set hx_indicator = '#servers-loading' %}
             {% set table_name = 'servers' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
 
@@ -2366,7 +2488,7 @@
                   <td
                     class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
                   >
-                    {{ server.description }}
+                    {{ server.description | decode_html }}
                   </td>
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300"
@@ -2446,8 +2568,8 @@
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if server.team %}
-                    <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ server.team|e|replace(' ', '<br />')|safe }}
+                    <span class="text-sm text-gray-900 dark:text-gray-100" style="display: block; white-space: normal; word-spacing: 9999px;">
+                      {{ server.team }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -3061,6 +3183,8 @@
 
 
 
+      {% endif %}
+      {% if 'tools' not in hidden_sections %}
       <!-- Tools Panel -->
       <div id="tools-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -3100,7 +3224,7 @@
               x-init="syncCheckboxFromUrl('tools', 'show-inactive-tools')"
               @change="updateInactiveUrlState('tools', $el.checked)"
               hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50, q: document.getElementById('tools-search-input')?.value || '', tags: document.getElementById('tools-tag-filter')?.value || ''}"
               hx-target="#tools-table"
               hx-swap="outerHTML"
               hx-indicator="#tools-loading"
@@ -3123,7 +3247,7 @@
                 <input
                   type="text"
                   id="tools-search-input"
-                  placeholder="Search tools via tags..."
+                  placeholder="Search tools..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -3147,14 +3271,7 @@
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
-              <!-- Loading placeholder -->
-              <div class="flex items-center justify-center p-8">
-                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading tools...</span>
-              </div>
+
             </div>
           </div>
 
@@ -3207,9 +3324,7 @@
             {% set hx_indicator = '#tools-loading' %}
             {% set table_name = 'tools' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
@@ -3707,6 +3822,7 @@
                   <input
                     type="text"
                     name="auth_username"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -3717,6 +3833,7 @@
                   <input
                     type="password"
                     name="auth_password"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -3729,6 +3846,7 @@
                   <input
                     type="password"
                     name="auth_token"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -3855,7 +3973,7 @@
         </div>
       </div>
       {% if toolops_enabled %}
-      <div id="tool-ops-panel" class="tab-panel">
+      <div id="tool-ops-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <div>
             <h2 class="text-2xl font-bold dark:text-gray-200">Tool Operations</h2>
@@ -3898,12 +4016,19 @@
               </div>
 
               <!-- This div will be the target for the HTMX initial load and subsequent swaps -->
-              <div id="tool-ops-main-content-wrapper" hx-get="{{ root_path }}/admin/tool-ops/partial" hx-trigger="load" hx-swap="innerHTML">
-                  <!-- Initial loading spinner will be here, and replaced by the partial's content -->
-                  <div id="tool-ops-loading-indicator" class="flex items-center justify-center p-4">
-                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mr-4"></div>
-                    <span class="text-gray-600 dark:text-gray-400">Loading tools...</span>
-                  </div>
+              <div id="tool-ops-main-content-wrapper" hx-get="{{ root_path }}/admin/tool-ops/partial" hx-trigger="load" hx-swap="innerHTML" hx-indicator="#tool-ops-loading-indicator">
+
+              </div>
+
+              <!-- Loading Indicator for HTMX -->
+              <div id="tool-ops-loading-indicator" class="htmx-indicator">
+                <div class="flex items-center justify-center p-4">
+                  <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span class="ml-2 text-gray-600 dark:text-gray-400">Loading tools...</span>
+                </div>
               </div>
 
             </div>
@@ -4092,6 +4217,8 @@
         </div>
       </div>
 
+      {% endif %}
+      {% if 'resources' not in hidden_sections %}
       <!-- Resources Panel -->
       <div id="resources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4110,7 +4237,7 @@
               x-init="syncCheckboxFromUrl('resources', 'show-inactive-resources')"
               @change="updateInactiveUrlState('resources', $el.checked)"
               hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50, q: document.getElementById('resources-search-input')?.value || '', tags: document.getElementById('resources-tag-filter')?.value || ''}"
               hx-target="#resources-table"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4133,7 +4260,7 @@
                 <input
                   type="text"
                   id="resources-search-input"
-                  placeholder="Search resources via tags..."
+                  placeholder="Search resources..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4160,11 +4287,19 @@
             >
               <!-- initial content will be swapped out by HTMX on load -->
             </div>
-            <!-- Loading indicator for resources HTMX requests -->
-            <div id="resources-loading" style="display:none">
-              <div class="spinner"></div>
+          </div>
+
+          <!-- Loading Indicator for HTMX -->
+          <div id="resources-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading resources...</span>
             </div>
           </div>
+
           <!-- Placeholder for out-of-band pagination controls (injected by partial) -->
           <div id="resources-pagination-controls"></div>
         </div>
@@ -4323,6 +4458,8 @@
         </div>
       </div>
 
+      {% endif %}
+      {% if 'prompts' not in hidden_sections %}
       <!-- Prompts Panel -->
       <div id="prompts-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4341,7 +4478,7 @@
               x-init="syncCheckboxFromUrl('prompts', 'show-inactive-prompts')"
               @change="updateInactiveUrlState('prompts', $el.checked)"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50, q: document.getElementById('prompts-search-input')?.value || '', tags: document.getElementById('prompts-tag-filter')?.value || ''}"
               hx-target="#prompts-table"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4364,7 +4501,7 @@
                 <input
                   type="text"
                   id="prompts-search-input"
-                  placeholder="Search prompts via tags..."
+                  placeholder="Search prompts..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4389,27 +4526,19 @@
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
             >
-              <!-- initial content will be swapped out by HTMX on load -->
-              <div class="text-center py-4 text-gray-500 dark:text-gray-400">
-                <svg class="animate-spin h-5 w-5 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-2">Loading prompts...</span>
-              </div>
-            </div>
 
-            <!-- Loading Indicator for HTMX (Prompts) -->
-            <div id="prompts-loading" class="htmx-indicator" style="display:none">
-              <div class="flex items-center justify-center p-4">
-                <svg class="animate-spin h-8 w-8 text-purple-600 dark:text-purple-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading prompts...</span>
-              </div>
             </div>
+          </div>
 
+          <!-- Loading Indicator for HTMX -->
+          <div id="prompts-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading prompts...</span>
+            </div>
           </div>
 
           <!-- Placeholder for out-of-band pagination controls (injected by partial) -->
@@ -4596,7 +4725,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% endif %}
       <!-- Overview Panel -->
+      {% if 'overview' not in hidden_sections %}
       <div id="overview-panel" class="tab-panel"
            hx-get="{{ root_path }}/admin/overview/partial"
            hx-trigger="load"
@@ -4611,7 +4742,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if 'gateways' not in hidden_sections %}
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4631,7 +4764,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
               hx-target="#gateways-table"
               hx-swap="outerHTML"
               hx-indicator="#gateways-loading"
@@ -4654,7 +4787,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <input
                   type="text"
                   id="gateways-search-input"
-                  placeholder="Search MCP servers..."
+                  placeholder="Search gateways..."
                   class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4679,14 +4812,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
-              <!-- Loading placeholder -->
-              <div class="flex items-center justify-center p-8">
-                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading gateways...</span>
-              </div>
+
             </div>
           </div>
 
@@ -4739,9 +4865,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             {% set hx_indicator = '#gateways-loading' %}
             {% set table_name = 'gateways' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800" style="display: none;">
@@ -4910,8 +5034,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if gateway.team %}
-                    <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ gateway.team|e|replace(' ', '<br />')|safe }}
+                    <span class="text-sm text-gray-900 dark:text-gray-100" style="display: block; white-space: normal; word-spacing: 9999px;">
+                      {{ gateway.team }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -5143,10 +5267,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       name="visibility"
                       value="public"
                       class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      id="gateway-visibility-public"
                       checked
                     />
                     <label
-                      for="edit-visibility-public"
+                      for="gateway-visibility-public"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                       >🌍Public</label
                     >
@@ -5156,10 +5281,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="radio"
                       name="visibility"
                       value="team"
+                      id="gateway-visibility-team"
                       class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                     />
                     <label
-                      for="edit-visibility-team"
+                      for="gateway-visibility-team"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                       >👥Team</label
                     >
@@ -5169,10 +5295,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="radio"
                       name="visibility"
                       value="private"
+                      id="gateway-visibility-private"
                       class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                     />
                     <label
-                      for="edit-visibility-private"
+                      for="gateway-visibility-private"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                       >🔒Private</label
                     >
@@ -5238,6 +5365,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_query_param_value"
                       id="auth-query-param-value-gw"
+                      autocomplete="off"
                       data-sensitive-label="API key"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -5261,6 +5389,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="text"
                     name="auth_username"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -5273,6 +5402,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_password"
                       id="auth-password-gw"
+                      autocomplete="off"
                       data-sensitive-label="password"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -5298,6 +5428,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_token"
                       id="auth-token-gw"
+                      autocomplete="off"
                       data-sensitive-label="token"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -5422,6 +5553,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <input
                       type="password"
                       name="oauth_client_secret"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Leave empty for auto-registration via DCR"
                     />
@@ -5440,6 +5572,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="text"
                       name="oauth_username"
                       id="oauth-username-gw"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="systemadmin@system.com"
                     />
@@ -5458,6 +5591,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="oauth_password"
                       id="oauth-password-gw"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Enter password"
                     />
@@ -5740,8 +5874,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% endif %}
       <!-- Teams Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and 'teams' not in hidden_sections %}
       <div id="teams-panel" class="tab-panel hidden">
           <!-- Header with Create Team Button -->
           <div class="flex justify-between items-center mb-8">
@@ -5821,23 +5956,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
 
           <!-- Loading indicator -->
-          <div id="teams-loading" class="htmx-indicator text-center py-4 hidden">
-            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="mt-2 text-sm text-gray-500">Loading teams...</p>
+          <div id="teams-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading teams...</span>
+            </div>
           </div>
 
           <!-- Teams List - loaded via initializeTeamManagement() when tab is shown -->
           <div id="unified-teams-list" class="space-y-4">
-            <div class="text-center py-8">
-              <div class="animate-pulse text-gray-500 dark:text-gray-400">
-                Loading teams...
-              </div>
-              <div class="text-xs text-gray-400 dark:text-gray-500 mt-2">
-                Note: Team management requires email authentication
-              </div>
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading teams...</span>
             </div>
           </div>
 
@@ -5847,7 +5983,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled and is_admin %}
+      {% if email_auth_enabled and is_admin and 'users' not in hidden_sections %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -5883,7 +6019,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     type="email"
                     name="email"
                     required
-                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm bg-gray-300 dark:bg-gray-700 dark:border-gray-600"
+                    autocomplete="off"
+                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm bg-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
                     placeholder="user@example.com"
                   />
                 </div>
@@ -5897,6 +6034,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     type="text"
                     name="full_name"
                     required
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm bg-gray-200 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                     placeholder="John Smith"
                   />
@@ -5915,8 +6053,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     name="password"
                     required
                     minlength="8"
+                    autocomplete="new-password"
                     oninput="validateNewUserPassword()"
-                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
                     placeholder="Strong password"
                   />
                   <!-- Password policy guidance (visible below password field) -->
@@ -6057,12 +6196,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </h3>
 
             <!-- Loading indicator -->
-            <div id="users-loading" class="htmx-indicator flex items-center justify-center p-8">
-              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              <span class="ml-3 text-gray-600 dark:text-gray-400">Loading users...</span>
+            <div id="users-loading" class="htmx-indicator">
+              <div class="flex items-center justify-center p-4">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading users...</span>
+              </div>
             </div>
 
             <!-- Users list container -->
@@ -6084,7 +6225,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- API Tokens Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and 'tokens' not in hidden_sections %}
       <div id="tokens-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -6093,6 +6234,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
             Create and manage personal API tokens with scoped access controls
           </p>
+          <div class="flex items-center">
+            <input
+              type="checkbox"
+              id="show-inactive-tokens"
+              class="mr-2 show-inactive-toggle"
+              name="include_inactive"
+              x-init="syncCheckboxFromUrl('tokens', 'show-inactive-tokens')"
+              @change="updateInactiveUrlState('tokens', $el.checked)"
+              hx-get="{{ root_path }}/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tokens').checked, per_page: document.querySelector('#tokens-pagination-controls select')?.value || 50}"
+              hx-target="#tokens-table"
+              hx-swap="innerHTML"
+              hx-indicator="#tokens-loading"
+              hx-trigger="change"
+            />
+            <label
+              for="show-inactive-tokens"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Show Inactive</label
+            >
+          </div>
         </div>
 
         <!-- Create Token Form -->
@@ -6125,6 +6287,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                 >
                   Expires In (Days)
+                  {% if require_token_expiration %}
+                  <span class="text-red-500">*</span>
+                  {% endif %}
                 </label>
                 <input
                   type="number"
@@ -6132,9 +6297,23 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   min="1"
                   max="365"
                   value="30"
+                  {% if require_token_expiration %}required{% endif %}
+                  {% if require_token_expiration %}
+                  oninvalid="this.setCustomValidity('Expiration is required by server policy. Please enter the number of days (e.g., 30, 90, 365).')"
+                  oninput="this.setCustomValidity('')"
+                  {% endif %}
                   class="mt-1 px-1.5 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   placeholder="30"
                 />
+                {% if require_token_expiration %}
+                <p class="mt-1 text-xs text-red-600 dark:text-red-400 font-medium">
+                  Token expiration is required by server policy (REQUIRE_TOKEN_EXPIRATION=true).
+                </p>
+                {% else %}
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Leave empty for tokens that never expire
+                </p>
+                {% endif %}
               </div>
             </div>
             <div>
@@ -6279,8 +6458,95 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
               Your API Tokens
             </h3>
-            <div id="tokens-list">
-              <p class="text-gray-500 dark:text-gray-400">Loading tokens...</p>
+
+            <!-- Search Bar -->
+            <div class="flex items-center space-x-2 mb-4">
+              <div class="relative">
+                <input
+                  type="text"
+                  id="tokens-search-input"
+                  placeholder="Search tokens by name..."
+                  class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <button
+                id="tokens-clear-search"
+                onclick="clearSearch('tokens')"
+                class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
+                Clear
+              </button>
+            </div>
+
+            <!-- Tokens table loaded via HTMX -->
+            <div id="tokens-table"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('tokens', '{{ root_path }}/admin/tokens/partial', {include_inactive: (document.getElementById('show-inactive-tokens')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 hx-trigger="load, refreshTokens"
+                 hx-swap="innerHTML"
+                 hx-indicator="#tokens-loading">
+              <!-- Loading placeholder -->
+              <div class="flex items-center justify-center p-4">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading tokens...</span>
+              </div>
+            </div>
+
+            <!-- Loading Indicator for HTMX -->
+            <div id="tokens-loading" class="htmx-indicator">
+              <div class="flex items-center justify-center p-4">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading tokens...</span>
+              </div>
+            </div>
+
+            <!-- Pagination Controls -->
+            {# ---- compute safe pagination values ---- #}
+            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else 0)) %}
+            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set has_prev = page > 1 %}
+            {% set has_next = (page * per_page) < total_items %}
+
+            {% set pagination = {
+              'page': page,
+              'per_page': per_page,
+              'total_items': total_items,
+              'total_pages': total_pages,
+              'has_prev': has_prev,
+              'has_next': has_next
+            } %}
+
+            {# build the refresh URL for controls #}
+            {% set controls_url = root_path + '/admin/tokens/partial'
+              + '?render=controls'
+              + '&page=' + page|string
+              + '&per_page=' + per_page|string
+              + '&include_inactive=' + (include_inactive|default(false)|string|lower)
+              + ('&team_id=' + selected_team_id if selected_team_id else '')
+              + ('&q=' + q if q else '') %}
+
+            <div id="tokens-pagination-controls"
+                hx-get="{{ controls_url }}"
+                hx-trigger="refreshControls"
+                hx-target="#tokens-pagination-controls"
+                hx-swap="outerHTML"
+                hx-indicator="#tokens-loading">
+
+              {# helpers used by pagination_controls.html #}
+              {% set base_url = root_path + '/admin/tokens/partial' %}
+              {% set hx_target = '#tokens-table' %}
+              {% set hx_indicator = '#tokens-loading' %}
+              {% set table_name = 'tokens' %}
+              {% set query_params = {'include_inactive': include_inactive} %}
+              {% if selected_team_id %}{% set _ = query_params.update({'team_id': selected_team_id}) %}{% endif %}
+              {% if q %}{% set _ = query_params.update({'q': q}) %}{% endif %}
+              {% include 'pagination_controls.html' %}
             </div>
           </div>
         </div>
@@ -6288,7 +6554,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- A2A Agents Panel -->
-      {% if a2a_enabled %}
+      {% if a2a_enabled and 'agents' not in hidden_sections %}
        <div id="a2a-agents-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -6307,7 +6573,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="syncCheckboxFromUrl('agents', 'show-inactive-a2a-agents')"
               @change="updateInactiveUrlState('agents', $el.checked)"
               hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50, q: document.getElementById('a2a-agents-search-input')?.value || '', tags: document.getElementById('a2a-agents-tag-filter')?.value || ''}"
               hx-target="#agents-table"
               hx-swap="outerHTML"
               hx-indicator="#agents-loading"
@@ -6330,7 +6596,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <input
                   type="text"
                   id="a2a-agents-search-input"
-                  placeholder="Search agents via tags..."
+                  placeholder="Search agents..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -6422,9 +6688,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {% set hx_indicator = '#agents-loading' %}
               {% set table_name = 'agents' %}
               {% set query_params = {'include_inactive': include_inactive} %}
-              {% autoescape false %}
               {% include 'pagination_controls.html' %}
-              {% endautoescape %}
             </div>
           </div>
         </div>
@@ -6531,7 +6795,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <td class="px-6 py-4 whitespace-nowrap">
                         <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
                       </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description }}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description | decode_html }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.endpointUrl }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                         {% if agent.tags %}
@@ -6679,6 +6943,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="text"
                     name="auth_username"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -6689,6 +6954,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="password"
                     name="auth_password"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -6702,6 +6968,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="password"
                     name="auth_token"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -6779,6 +7046,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_query_param_value"
                       id="auth-query-param-value-a2a"
+                      autocomplete="off"
                       data-sensitive-label="API key"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -6862,6 +7130,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <input
                       type="password"
                       name="oauth_client_secret"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Leave empty for auto-registration via DCR"
                     />
@@ -6880,6 +7149,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="text"
                       name="oauth_username"
                       id="oauth-username-a2a"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="systemadmin@system.com"
                     />
@@ -6898,6 +7168,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="oauth_password"
                       id="oauth-password-a2a"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Enter password"
                     />
@@ -7085,6 +7356,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   id="a2a-agent-auth-value"
                   name="auth_value"
                   placeholder="API key, token, etc."
+                  autocomplete="off"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -7227,7 +7499,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- gRPC Services Panel -->
-      {% if grpc_enabled %}
+      {% if grpc_enabled and 'agents' not in hidden_sections %}
       <div id="grpc-services-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -7243,7 +7515,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
             Register New gRPC Service
           </h3>
-          <form action="{{ root_path }}/grpc" method="POST" id="add-grpc-service-form">
+          <form method="POST" id="add-grpc-service-form">
             <div class="grid grid-cols-1 gap-7 sm:grid-cols-2">
               <!-- Service Name -->
               <div class="relative">
@@ -7380,6 +7652,25 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 </select>
               </div>
               {% endif %}
+
+              <!-- Visibility -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">Visibility</label>
+                <div class="flex items-center space-x-4">
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-public" checked />
+                    <label for="grpc-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Public</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-team" />
+                    <label for="grpc-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Team</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-private" />
+                    <label for="grpc-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Private</label>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="mt-6">
@@ -7390,7 +7681,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Register gRPC Service
               </button>
             </div>
+            <!-- Loading Indicator -->
+            <div
+              id="add-grpc-loading"
+              class="hidden text-sm text-gray-500 mt-2"
+            >
+              Submitting...
+            </div>
           </form>
+          <!-- Error Message Display -->
+          <div id="grpcFormError" class="mt-4 text-red-600 dark:text-red-400 hidden"></div>
         </div>
 
         <!-- Registered gRPC Services List -->
@@ -7408,7 +7708,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       {{ service.name }}
                     </h4>
                     <p class="text-sm text-gray-600 dark:text-gray-400">
-                      {{ service.description or "" }}
+                      {{ (service.description or "") | decode_html }}
                     </p>
                     <div class="mt-2 flex flex-wrap gap-2">
                       <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
@@ -7479,6 +7779,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
+      {% if 'roots' not in hidden_sections %}
       <!-- Roots Panel -->
       <div id="roots-panel" class="tab-panel hidden">
         <!-- List of roots ------------------------------------------------------->
@@ -7642,8 +7943,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </form>
         </div>
       </div>
+      {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'metrics' not in hidden_sections %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->
@@ -8382,6 +8684,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="text"
                           name="auth_username"
                           id="edit-auth-username"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
                       </div>
@@ -8394,6 +8697,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_password"
                           id="edit-auth-password"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                           placeholder="********"
                         />
@@ -8409,6 +8713,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_token"
                           id="edit-auth-token"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                           placeholder="********"
                         />
@@ -9571,6 +9876,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="auth_query_param_value"
                             id="auth-query-param-value-gw-edit"
+                            autocomplete="off"
                             data-sensitive-label="API key"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                           />
@@ -9594,6 +9900,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <input
                           type="text"
                           name="auth_username"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
                       </div>
@@ -9606,6 +9913,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_password"
                           id="auth-password-gw-edit"
+                          autocomplete="off"
                           data-sensitive-label="password"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                         />
@@ -9631,6 +9939,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_token"
                           id="auth-token-gw-edit"
+                          autocomplete="off"
                           data-sensitive-label="token"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                         />
@@ -9761,6 +10070,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_client_secret"
                             id="oauth-client-secret-gw-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Leave empty for auto-registration via DCR"
                           />
@@ -9782,6 +10092,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="text"
                             name="oauth_username"
                             id="oauth-username-gw-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="systemadmin@system.com"
                           />
@@ -9800,6 +10111,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_password"
                             id="oauth-password-gw-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Enter password"
                           />
@@ -10054,6 +10366,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <input
                             type="text"
                             name="auth_username"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                   focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                           />
@@ -10063,6 +10376,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <input
                             type="password"
                             name="auth_password"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                   focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                           />
@@ -10076,6 +10390,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <input
                             type="password"
                             name="auth_token"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                   focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                           />
@@ -10138,6 +10453,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               type="password"
                               name="auth_query_param_value"
                               id="auth-query-param-value-a2a-edit"
+                              autocomplete="off"
                               data-sensitive-label="API key"
                               class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                             />
@@ -10231,6 +10547,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_client_secret"
                             id="oauth-client-secret-a2a-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Leave empty for auto-registration via DCR"
                           />
@@ -10253,6 +10570,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="text"
                             name="oauth_username"
                             id="oauth-username-a2a-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="systemadmin@system.com"
                           />
@@ -10275,6 +10593,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_password"
                             id="oauth-password-a2a-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Enter password"
                           />
@@ -11338,6 +11657,122 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           </div>
         </div>
       </div>
+
+      <!-- Root Details Modal -->
+      <div
+        id="root-details-modal"
+        class="fixed z-10 inset-0 overflow-y-auto hidden"
+      >
+        <div
+          class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+        >
+          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+          </div>
+          <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+          >
+            <div
+              class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
+            >
+              <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                Root Details
+              </h3>
+              <div
+                class="mt-4 space-y-4 bg-white dark:bg-gray-400"
+                id="root-details"
+              ></div>
+            </div>
+            <div
+              class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"
+            >
+              <button
+                type="button"
+                onclick="closeModal('root-details-modal')"
+                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Root Edit Modal -->
+      <div
+        id="root-edit-modal"
+        class="fixed z-10 inset-0 overflow-y-auto hidden"
+      >
+        <div
+          class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+        >
+          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+          </div>
+          <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+          >
+            <div
+              class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
+            >
+              <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                Edit Root
+              </h3>
+              <div class="mt-4">
+                <form id="edit-root-form" method="POST">
+                  <div class="grid grid-cols-1 gap-7">
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >URI</label
+                      >
+                      <!-- URI is read-only -->
+                      <input
+                        type="text"
+                        name="uri"
+                        required
+                        id="edit-root-uri"
+                        readonly
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                    <div class="relative">
+                      <label
+                        class="block text-sm font-medium text-gray-700"
+                        for="edit-root-name"
+                        >Name</label
+                      >
+                      <input
+                        type="text"
+                        name="name"
+                        required
+                        id="edit-root-name"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                  </div>
+                  <div
+                    class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
+                  >
+                    <button
+                      type="button"
+                      onclick="closeModal('root-edit-modal')"
+                      class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     <!-- Scripts -->
     <script>
       // User creation form event handler
@@ -11382,6 +11817,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT = {{ mcpgateway_ui_tool_test_timeout | tojson }};
       window.CURRENT_USER = {{ current_user | tojson }};
       window.IS_ADMIN = {{ is_admin | tojson }};
+      window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
+      window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
+      window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
 
       // Display flash messages from URL parameters
       (function() {
@@ -11410,20 +11848,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            window.history.replaceState({}, '', cleanUrl);
+            safeReplaceState({}, '', cleanUrl);
           }, 5000);
         }
       })();
 
-      // Tag filtering functionality moved to admin.js
-      function clearTagFilter(entityType) {
-        const input = document.getElementById(entityType + '-tag-filter');
-        input.value = '';
-        // Use the corrected filterEntitiesByTags function from admin.js
-        if (typeof filterEntitiesByTags === 'function') {
-          filterEntitiesByTags(entityType, '');
-        }
-      }
+      // Tag filtering functionality is implemented in admin.js.
 
 
       // Team context switching functions
@@ -11507,13 +11937,17 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function createRowElement(sectionType, item) {
         const row = document.createElement('tr');
+        // XSS SAFETY: All user-provided data is escaped via escapeHtml() before being inserted into innerHTML.
+        // This pattern (escape then innerHTML) is safe as long as escapeHtml() is always called on untrusted data.
+        // DO NOT remove escapeHtml() calls - they prevent XSS attacks from malicious database content.
+
 
         // Create row content based on section type
         if (sectionType === 'tools') {
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || item.customName || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.url || '')}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
@@ -11523,7 +11957,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.uri || '')}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
@@ -11534,7 +11968,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${argsText}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
@@ -11544,7 +11978,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
@@ -11566,7 +12000,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap">
               <div class="text-sm font-medium text-gray-900 dark:text-gray-200">${escapeHtml(item.name || '')}</div>
-              <div class="text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.description || '')}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-400">${escapeHtml(decodeHtml(item.description || ''))}</div>
               <div class="mt-1">
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">${escapeHtml(item.ownerEmail || '')}</span>
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 ml-2">${escapeHtml(item.team || '')}</span>
@@ -11774,7 +12208,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -11997,7 +12432,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -14032,8 +14468,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <form
               id="create-team-form"
               hx-post="{{ root_path }}/admin/teams"
-              hx-target="#unified-teams-list"
-              hx-swap="afterbegin"
+              hx-target="#create-team-error"
+              hx-swap="innerHTML"
               data-team-validation="true"
             >
               <div id="create-team-error" class="mb-4"></div>
@@ -14182,7 +14618,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          style="max-height: 90vh; overflow-y: auto"
         >
           <div id="team-edit-modal-content">
             <!-- Content will be loaded here -->
@@ -14299,6 +14736,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   type="email"
                   id="invite-email"
                   name="email"
+                  autocomplete="off"
                   class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                   placeholder="user@example.com"
                 />
@@ -14490,11 +14928,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const teamName = button.getAttribute('data-team-name');
         if (confirm(`Leave team "${teamName}"? You will lose access to team resources.`)) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/leave', {
-            target: '#unified-teams-list',
-            swap: 'innerHTML'
-          }).then(() => {
-            initializeTeamManagement(); // Refresh the full list
+            target: 'body',
+            swap: 'none'
           });
+          // Backend HX-Trigger handles refresh with proper delay for DB commit
         }
       }
 
@@ -14539,22 +14976,20 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const teamName = button.getAttribute('data-team-name');
         if (confirm(`Delete team "${teamName}"? This action cannot be undone.`)) {
           htmx.ajax('DELETE', window.ROOT_PATH + '/admin/teams/' + teamId, {
-            target: '#unified-teams-list',
-            swap: 'innerHTML'
-          }).then(() => {
-            initializeTeamManagement(); // Refresh the full list
+            target: 'body',
+            swap: 'none'
           });
+          // Backend HX-Trigger handles refresh with proper delay for DB commit
         }
       }
 
       function cancelJoinRequest(teamId, requestId) {
         if (confirm('Cancel your join request?')) {
           htmx.ajax('DELETE', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request/' + requestId, {
-            target: '#unified-teams-list',
-            swap: 'innerHTML'
-          }).then(() => {
-            initializeTeamManagement(); // Refresh the full list
+            target: 'body',
+            swap: 'none'
           });
+          // Backend HX-Trigger handles refresh with proper delay for DB commit
         }
       }
 
@@ -14596,13 +15031,18 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const activeFilterBtn = document.querySelector('.filter-btn.active');
         const relationship = activeFilterBtn ? activeFilterBtn.getAttribute('data-filter') : 'all';
 
-        let url = window.ROOT_PATH + '/admin/teams/partial?page=1&per_page=10';
+        // Preserve current pagination state (use inline getPaginationParams)
+        const paginationState = getPaginationParams('teams');
+        const params = new URLSearchParams();
+        params.set('page', paginationState.page);
+        params.set('per_page', paginationState.perPage);
         if (searchQuery) {
-          url += '&q=' + encodeURIComponent(searchQuery);
+          params.set('q', searchQuery);
         }
         if (relationship && relationship !== 'all') {
-          url += '&relationship=' + encodeURIComponent(relationship);
+          params.set('relationship', relationship);
         }
+        const url = window.ROOT_PATH + '/admin/teams/partial?' + params.toString();
 
         htmx.ajax('GET', url, {
           target: '#unified-teams-list',

@@ -117,7 +117,7 @@ playwright install              # one-time browser setup
 pytest tests/playwright/        # run UI tests
 
 # Locust (load testing)
-locust -f tests/locust/locustfile.py --host=http://localhost:4444
+locust -f tests/loadtest/locustfile.py --host=http://localhost:4444
 ```
 
 Note: JavaScript unit tests are not yet implemented. Testing efforts focus on the Python backend (pytest) and UI automation (Playwright).

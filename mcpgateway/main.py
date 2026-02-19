@@ -32,6 +32,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
+import html
 import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -45,7 +46,7 @@ from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -64,7 +65,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, normalize_token_teams
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -191,7 +192,7 @@ plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_E
 from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
 from mcpgateway.services.prompt_service import prompt_service  # noqa: E402
 from mcpgateway.services.resource_service import resource_service  # noqa: E402
-from mcpgateway.services.root_service import root_service  # noqa: E402
+from mcpgateway.services.root_service import root_service, RootServiceNotFoundError  # noqa: E402
 from mcpgateway.services.server_service import server_service  # noqa: E402
 from mcpgateway.services.tool_service import tool_service  # noqa: E402
 
@@ -1326,6 +1327,33 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
     return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
+def _normalize_scope_path(scope_path: str, root_path: str) -> str:
+    """Strip ``root_path`` prefix from *scope_path* when a reverse proxy forwards the full path.
+
+    Returns the route-only path (e.g. ``"/qa/gateway/docs"`` -> ``"/docs"``).
+    A ``root_path`` of ``"/"`` is ignored to avoid stripping the leading slash
+    from every path.  Trailing slashes on *root_path* are stripped before
+    comparison so that ``"/qa/gateway/"`` is handled identically to
+    ``"/qa/gateway"``.
+
+    Args:
+        scope_path: The full path from the request scope.
+        root_path: The root path prefix to be stripped.
+
+    Returns:
+        The normalized path with the root_path prefix removed.
+    """
+    if root_path and len(root_path) > 1:
+        root_path = root_path.rstrip("/")
+    if root_path and len(root_path) > 1 and scope_path.startswith(root_path):
+        rest = scope_path[len(root_path) :]
+        # Ensure we matched a full path segment, not a partial prefix
+        # e.g. root_path="/app" must not strip from "/application/admin"
+        if not rest or rest[0] == "/":
+            return rest or "/"
+    return scope_path
+
+
 class DocsAuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware to protect FastAPI's auto-generated documentation routes
@@ -1386,14 +1414,11 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Get path from scope to handle root_path correctly
-        # request.scope["path"] is the path after stripping root_path
-        # This handles deployments under sub-paths (e.g., /gateway/docs)
         scope_path = request.scope.get("path", request.url.path)
         root_path = request.scope.get("root_path", "")
+        scope_path = _normalize_scope_path(scope_path, root_path)
 
-        # Check both the scope path and the full URL path to be safe
-        # This covers both direct access and sub-path deployments
-        is_protected = any(scope_path.startswith(p) for p in protected_paths) or any(request.url.path.startswith(f"{root_path}{p}") for p in protected_paths if root_path)
+        is_protected = any(scope_path.startswith(p) for p in protected_paths)
 
         if is_protected:
             try:
@@ -1416,6 +1441,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Exempts login-related paths and static assets:
     - /admin/login - login page
     - /admin/logout - logout action
+    - /admin/forgot-password - self-service password reset request page
+    - /admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -1426,8 +1453,14 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     and relies on endpoint-level authentication which can be mocked in tests.
     """
 
-    # Paths under /admin that don't require admin privileges
-    EXEMPT_PATHS = ["/admin/login", "/admin/logout", "/admin/static"]
+    # Public paths under /admin that do not require prior authentication.
+    EXEMPT_PATHS = [
+        "/admin/login",
+        "/admin/logout",
+        "/admin/forgot-password",
+        "/admin/reset-password",
+        "/admin/static",
+    ]
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -1441,7 +1474,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             error_param: Optional error parameter for login redirect URL.
 
         Returns:
-            RedirectResponse for HTML/HTMX requests, ORJSONResponse for API requests.
+            Response with HX-Redirect for HTMX requests, RedirectResponse for HTML requests, ORJSONResponse for API requests.
         """
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
@@ -1449,6 +1482,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
             if error_param:
                 login_url = f"{login_url}?error={error_param}"
+            if is_htmx:
+                return Response(status_code=200, headers={"HX-Redirect": login_url})
             return RedirectResponse(url=login_url, status_code=302)
         return ORJSONResponse(status_code=status_code, content={"detail": detail})
 
@@ -1471,22 +1506,20 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
         root_path = request.scope.get("root_path", "")
+        scope_path = _normalize_scope_path(scope_path, root_path)
 
         # Allow OPTIONS requests for CORS preflight (RFC 7231)
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if path is exempt (login, logout, static, team add-member)
-        is_admin_route = scope_path.startswith("/admin") or (root_path and request.url.path.startswith(f"{root_path}/admin"))
+        # Check if this is an admin route
+        is_admin_route = scope_path.startswith("/admin")
+
         if not is_admin_route:
             return await call_next(request)
+
         # Check if path is exempt (login, logout, static)
         is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
-        
-        # Also exempt team add-member endpoints (pattern: /admin/teams/{uuid}/add-member)
-        if not is_exempt and "/teams/" in scope_path and scope_path.endswith("/add-member"):
-            is_exempt = True
-            
         if is_exempt:
             return await call_next(request)
 
@@ -1567,7 +1600,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         logger.info(f"Platform admin bootstrap authentication for {username}")
                         # Allow platform admin through - they have implicit admin privileges
                     else:
-                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
+                        return self._error_response(request, root_path, 401, "User not found")
                 else:
                     # User exists in DB - check active status
                     if not user.is_active:
@@ -1724,11 +1757,15 @@ class MCPPathRewriteMiddleware:
 
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
-        if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
-            # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-            scope["path"] = "/mcp/"
-            await self.application(scope, receive, send)
-            return
+
+        # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
+        # These paths may end with /mcp but should not be rewritten to the MCP transport
+        if not original_path.startswith("/.well-known/"):
+            if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+                # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
+                scope["path"] = "/mcp/"
+                await self.application(scope, receive, send)
+                return
         await self.application(scope, receive, send)
 
 
@@ -1843,6 +1880,18 @@ if settings.security_logging_enabled:
 else:
     logger.info("🔐 Security event logging disabled")
 
+# Add token usage logging middleware
+# This tracks API token usage for analytics and security monitoring
+# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
+if settings.token_usage_logging_enabled:
+    # First-Party
+    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
+
+    app.add_middleware(TokenUsageMiddleware)
+    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
+else:
+    logger.info("📊 Token usage logging middleware disabled")
+
 # Add observability middleware if enabled
 # Note: Middleware runs in REVERSE order (last added runs first)
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
@@ -1874,6 +1923,35 @@ jinja_env = Environment(
     autoescape=True,
     auto_reload=settings.templates_auto_reload,
 )
+
+
+# Add custom filter to decode HTML entities for backward compatibility with old database records
+# that were stored with HTML entities (e.g., &#x27; instead of ')
+# NOTE: This filter can be removed after all deployments have run the c1c2c3c4c5c6 migration,
+# which decodes all existing HTML entities in the database. After that migration, this filter
+# becomes a no-op since new data is stored without HTML encoding.
+def decode_html_entities(value: str) -> str:
+    """Decode HTML entities in strings for display.
+
+    This filter handles legacy data that was stored with HTML entities.
+    New data is stored without encoding, but this ensures old records display correctly.
+
+    TEMPORARY: Can be removed after c1c2c3c4c5c6 migration has been applied to all deployments.
+
+    Args:
+        value: String that may contain HTML entities
+
+    Returns:
+        String with HTML entities decoded to their original characters
+    """
+    if not value:
+        return value
+
+    return html.unescape(value)
+
+
+jinja_env.filters["decode_html"] = decode_html_entities
+
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")
@@ -2906,6 +2984,8 @@ async def server_get_tools(
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    _req_email, _req_is_admin = user_email, is_admin
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
     if is_admin and token_teams is None:
@@ -2913,7 +2993,17 @@ async def server_get_tools(
         token_teams = None  # Admin unrestricted
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
-    tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
+    tools = await tool_service.list_server_tools(
+        db,
+        server_id=server_id,
+        include_inactive=include_inactive,
+        include_metrics=include_metrics,
+        user_email=user_email,
+        token_teams=token_teams,
+        requesting_user_email=_req_email,
+        requesting_user_is_admin=_req_is_admin,
+        requesting_user_team_roles=_req_team_roles,
+    )
     return [tool.model_dump(by_alias=True) for tool in tools]
 
 
@@ -3500,6 +3590,8 @@ async def list_tools(
 
     # Get filtering context from token (respects token scope)
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    # Capture original identity for header masking (before admin bypass modifies user_email)
+    _req_email, _req_is_admin = user_email, is_admin
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
@@ -3528,6 +3620,7 @@ async def list_tools(
 
     # Use unified list_tools() with token-based team filtering
     # Always apply visibility filtering based on token scope
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
     data, next_cursor = await tool_service.list_tools(
         db=db,
         cursor=cursor,
@@ -3539,6 +3632,9 @@ async def list_tools(
         team_id=team_id,
         visibility=visibility,
         token_teams=token_teams,
+        requesting_user_email=_req_email,
+        requesting_user_is_admin=_req_is_admin,
+        requesting_user_team_roles=_req_team_roles,
     )
     # Release transaction before response serialization
     db.commit()
@@ -3642,7 +3738,7 @@ async def create_tool(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ex))
         if isinstance(ex, (ValidationError, ValueError)):
             logger.error(f"Validation error while creating tool: {ex}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(ex))
         if isinstance(ex, IntegrityError):
             logger.error(f"Integrity error while creating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
@@ -3656,6 +3752,7 @@ async def create_tool(
 @require_permission("tools.read")
 async def get_tool(
     tool_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     apijsonpath: JsonPathModifier = Body(None),
@@ -3665,6 +3762,7 @@ async def get_tool(
 
     Args:
         tool_id: The numeric ID of the tool.
+        request: The incoming HTTP request.
         db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
         apijsonpath: Optional JSON-Path modifier supplied in the body.
@@ -3678,7 +3776,9 @@ async def get_tool(
     """
     try:
         logger.debug(f"User {user} is retrieving tool with ID {tool_id}")
-        data = await tool_service.get_tool(db, tool_id)
+        _req_email, _, _req_is_admin = _get_rpc_filter_context(request, user)
+        _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
+        data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
         if apijsonpath is None:
             return data
 
@@ -3744,7 +3844,7 @@ async def update_tool(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
         if isinstance(ex, ValidationError):
             logger.error(f"Validation error while updating tool: {ex}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(ex))
         if isinstance(ex, IntegrityError):
             logger.error(f"Integrity error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
@@ -4650,7 +4750,7 @@ async def create_prompt(
         if isinstance(e, ValidationError):
             # If there is a validation error, return a 422 Unprocessable Entity error
             logger.error(f"Validation error while creating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(e))
         if isinstance(e, IntegrityError):
             # If there is an integrity error, return a 409 Conflict error
             logger.error(f"Integrity error while creating prompt: {e}")
@@ -4837,7 +4937,7 @@ async def update_prompt(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, ValidationError):
             logger.error(f"Validation error while updating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(e))
         if isinstance(e, IntegrityError):
             logger.error(f"Integrity error while updating prompt: {e}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
@@ -5123,7 +5223,7 @@ async def register_gateway(
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            return ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -5133,7 +5233,7 @@ async def register_gateway(
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -5210,7 +5310,7 @@ async def update_gateway(
         if isinstance(ex, GatewayNotFoundError):
             return ORJSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
         if isinstance(ex, GatewayConnectionError):
-            return ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -5220,7 +5320,7 @@ async def update_gateway(
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -5336,44 +5436,59 @@ async def list_roots(
     return await root_service.list_roots()
 
 
-@root_router.post("", response_model=Root)
-@root_router.post("/", response_model=Root)
-async def add_root(
-    root: Root,  # Accept JSON body using the Root model from models.py
-    user=Depends(get_current_user_with_permissions),
-) -> Root:
-    """
-    Add a new root.
-
-    Args:
-        root: Root object containing URI and name.
-        user: Authenticated user.
-
-    Returns:
-        The added Root object.
-    """
-    logger.debug(f"User '{user}' requested to add root: {root}")
-    return await root_service.add_root(str(root.uri), root.name)
-
-
-@root_router.delete("/{uri:path}")
-async def remove_root(
+@root_router.get("/export", response_model=Dict[str, Any])
+async def export_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """
-    Remove a registered root by URI.
+    Export a single root configuration to JSON format.
 
     Args:
-        uri: URI of the root to remove.
-        user: Authenticated user.
+        uri: Root URI to export (query parameter)
+        user: Authenticated user
 
     Returns:
-        Status message indicating result.
+        Export data containing root information
+
+    Raises:
+        HTTPException: If root not found or export fails
     """
-    logger.debug(f"User '{user}' requested to remove root with URI: {uri}")
-    await root_service.remove_root(uri)
-    return {"status": "success", "message": f"Root {uri} removed"}
+    try:
+        logger.info(f"User {user} requested root export for URI: {uri}")
+
+        # Extract username from user
+        username: Optional[str] = None
+        if hasattr(user, "email"):
+            username = getattr(user, "email", None)
+        elif isinstance(user, dict):
+            username = user.get("email", None)
+        else:
+            username = None
+
+        # Get the root by URI
+        root = await root_service.get_root_by_uri(uri)
+
+        # Create export data
+        export_data = {
+            "exported_at": datetime.now().isoformat(),
+            "exported_by": username or "unknown",
+            "export_type": "root",
+            "version": "1.0",
+            "root": {
+                "uri": str(root.uri),
+                "name": root.name,
+            },
+        }
+
+        return export_data
+
+    except RootServiceNotFoundError as e:
+        logger.error(f"Root not found for export by user {user}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected root export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Root export failed: {str(e)}")
 
 
 @root_router.get("/changes")
@@ -5401,6 +5516,108 @@ async def subscribe_roots_changes(
             yield f"data: {orjson.dumps(event).decode()}\n\n"
 
     return StreamingResponse(generate_events(), media_type="text/event-stream")
+
+
+@root_router.get("/{root_uri:path}", response_model=Root)
+async def get_root_by_uri(
+    root_uri: str,
+    user=Depends(get_current_user_with_permissions),
+) -> Root:
+    """
+    Retrieve a specific root by its URI.
+
+    Args:
+        root_uri: URI of the root to retrieve.
+        user: Authenticated user.
+
+    Returns:
+        Root object.
+
+    Raises:
+        HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
+    """
+    logger.debug(f"User '{user}' requested root with URI: {root_uri}")
+    try:
+        root = await root_service.get_root_by_uri(root_uri)
+        return root
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting root {root_uri}: {e}")
+        raise e
+
+
+@root_router.post("", response_model=Root)
+@root_router.post("/", response_model=Root)
+async def add_root(
+    root: Root,  # Accept JSON body using the Root model from models.py
+    user=Depends(get_current_user_with_permissions),
+) -> Root:
+    """
+    Add a new root.
+
+    Args:
+        root: Root object containing URI and name.
+        user: Authenticated user.
+
+    Returns:
+        The added Root object.
+    """
+    logger.debug(f"User '{user}' requested to add root: {root}")
+    return await root_service.add_root(str(root.uri), root.name)
+
+
+@root_router.put("/{root_uri:path}", response_model=Root)
+async def update_root(
+    root_uri: str,
+    root: Root,
+    user=Depends(get_current_user_with_permissions),
+) -> Root:
+    """
+    Update a root by URI.
+
+    Args:
+        root_uri: URI of the root to update.
+        root: Root object with updated information.
+        user: Authenticated user.
+
+    Returns:
+        Updated Root object.
+
+    Raises:
+        HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
+    """
+    logger.debug(f"User '{user}' requested to update root with URI: {root_uri}")
+    try:
+        root = await root_service.update_root(root_uri, root.name)
+        return root
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating root {root_uri}: {e}")
+        raise e
+
+
+@root_router.delete("/{uri:path}")
+async def remove_root(
+    uri: str,
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
+    """
+    Remove a registered root by URI.
+
+    Args:
+        uri: URI of the root to remove.
+        user: Authenticated user.
+
+    Returns:
+        Status message indicating result.
+    """
+    logger.debug(f"User '{user}' requested to remove root with URI: {uri}")
+    await root_service.remove_root(uri)
+    return {"status": "success", "message": f"Root {uri} removed"}
 
 
 ##################
@@ -5527,6 +5744,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     logger.warning(f"[AFFINITY_INIT] Failed to register session ownership: {e}")
         elif method == "tools/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            _req_email, _req_is_admin = user_email, is_admin
+            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
                 user_email = None
@@ -5534,13 +5753,31 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
-                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                tools = await tool_service.list_server_tools(
+                    db,
+                    server_id,
+                    cursor=cursor,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_email=_req_email,
+                    requesting_user_is_admin=_req_is_admin,
+                    requesting_user_team_roles=_req_team_roles,
+                )
                 # Release DB connection early to prevent idle-in-transaction under load
                 db.commit()
                 db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                tools, next_cursor = await tool_service.list_tools(
+                    db,
+                    cursor=cursor,
+                    limit=0,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_email=_req_email,
+                    requesting_user_is_admin=_req_is_admin,
+                    requesting_user_team_roles=_req_team_roles,
+                )
                 # Release DB connection early to prevent idle-in-transaction under load
                 db.commit()
                 db.close()
@@ -5549,6 +5786,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            _req_email, _req_is_admin = user_email, is_admin
+            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions (token_teams is None)
             # If token has explicit team scope (even empty [] for public-only), respect it
             if is_admin and token_teams is None:
@@ -5557,12 +5796,30 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
-                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                tools = await tool_service.list_server_tools(
+                    db,
+                    server_id,
+                    cursor=cursor,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_email=_req_email,
+                    requesting_user_is_admin=_req_is_admin,
+                    requesting_user_team_roles=_req_team_roles,
+                )
                 db.commit()
                 db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                tools, next_cursor = await tool_service.list_tools(
+                    db,
+                    cursor=cursor,
+                    limit=0,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_email=_req_email,
+                    requesting_user_is_admin=_req_is_admin,
+                    requesting_user_team_roles=_req_team_roles,
+                )
                 db.commit()
                 db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
@@ -5642,10 +5899,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 else:
                     result = {"contents": [result]}
             except ValueError:
-                # Resource has no local content, forward to upstream MCP server
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
+                # Resource not found in the gateway
+                logger.error(f"Resource not found: {uri}")
+                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -5784,6 +6040,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
                     Returns:
                         The tool invocation result or gateway forwarding result.
+
+                    Raises:
+                        JSONRPCError: If the tool is not found.
                     """
                     try:
                         return await tool_service.invoke_tool(
@@ -5800,8 +6059,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                             meta_data=meta_data,
                         )
                     except ValueError:
-                        # Fallback to gateway forwarding
-                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
+                        # Tool not found log error and raise JSONRPCError
+                        logger.error(f"Tool not found: {name}")
+                        raise JSONRPCError(-32601, f"Tool not found: {name}", None)
 
                 tool_task = asyncio.create_task(execute_tool())
 
@@ -6028,15 +6288,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
                 raise
-            except (ValueError, Exception):
-                # If not a tool, try forwarding to gateway
-                try:
-                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
-                    if hasattr(result, "model_dump"):
-                        result = result.model_dump(by_alias=True, exclude_none=True)
-                except Exception:
-                    # If all else fails, return invalid method error
-                    raise JSONRPCError(-32000, "Invalid method", params)
+            except Exception:
+                # Log error and return invalid method
+                logger.error(f"Method not found: {method}")
+                raise JSONRPCError(-32000, "Invalid method", params)
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 

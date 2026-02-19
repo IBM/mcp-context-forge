@@ -300,7 +300,7 @@ async function toolPreInvoke({ payload, context }: any) {
 - Framework: `mcpgateway/plugins/framework/{base.py,models.py,manager.py,registry.py,loader/,external/mcp/client.py}`
 - Built-in plugins: `plugins/{argument_normalizer,pii_filter,regex_filter,deny_filter,resource_filter}`
 - Gateway config: `plugins/config.yaml`
-- Templates and CLI: `plugin_templates/` and CLI `mcpplugins` in `mcpgateway/plugins/tools/cli.py`; prompts handled by `copier.yml`.
+- Templates and CLI: `plugin_templates/` and CLI `mcpplugins` in `mcpgateway/plugins/tools/cli.py`; prompts handled by `cookiecutter.json`.
 
 **Testing Plugins**
 - Code quality & pre-commit (see AGENTS.md for details):

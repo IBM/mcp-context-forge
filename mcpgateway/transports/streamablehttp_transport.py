@@ -37,18 +37,19 @@ from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Tuple, Union
 from uuid import uuid4
 
 # Third-Party
 import anyio
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
-from mcp import types
+from mcp import ClientSession, types
+from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import JSONRPCMessage
+from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
 import orjson
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -65,8 +66,9 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import verify_credentials
+from mcpgateway.utils.verify_credentials import require_auth_override, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -458,8 +460,168 @@ def get_user_email_from_context() -> str:
     return str(user) if user else "unknown"
 
 
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
+    """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Tool objects from remote server
+    """
+    try:
+        # Prepare headers with gateway auth
+        headers = build_gateway_auth_headers(gateway)
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        # Use MCP SDK to connect and list tools
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+                # List tools with _meta forwarded
+                result = await session.list_tools(params=params)
+                return result.tools
+
+    except Exception as e:
+        logger.exception(f"Error proxying tools/list to gateway {gateway.id}: {e}")
+        return []
+
+
+async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Resource]:  # pylint: disable=unused-argument
+    """Proxy resources/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Resource objects from remote server
+    """
+    try:
+        # Prepare headers with gateway auth
+        headers = build_gateway_auth_headers(gateway)
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying resources/list to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        # Use MCP SDK to connect and list resources
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+                # List resources with _meta forwarded
+                result = await session.list_resources(params=params)
+
+                logger.info(f"Received {len(result.resources)} resources from gateway {gateway.id}")
+                return result.resources
+
+    except Exception as e:
+        logger.exception(f"Error proxying resources/list to gateway {gateway.id}: {e}")
+        return []
+
+
+async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument
+    """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        resource_uri: URI of the resource to read
+        user_context: User context (not used - auth comes from gateway config)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of content objects (TextResourceContents or BlobResourceContents) from remote server
+    """
+    try:
+        # Prepare headers with gateway auth
+        headers = build_gateway_auth_headers(gateway)
+
+        # Get request headers
+        request_headers = request_headers_var.get()
+
+        # Forward X-Context-Forge-Gateway-Id header
+        gw_id = extract_gateway_id_from_headers(request_headers)
+        if gw_id:
+            headers[GATEWAY_ID_HEADER] = gw_id
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying resources/read for {resource_uri} to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        # Use MCP SDK to connect and read resource
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # Prepare request params with _meta if provided
+                if meta:
+                    # Create params and inject _meta
+                    request_params = ReadResourceRequestParams(uri=resource_uri)
+                    request_params_dict = request_params.model_dump()
+                    request_params_dict["_meta"] = meta
+
+                    # Send request with _meta
+                    result = await session.send_request(
+                        types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
+                        types.ReadResourceResult,
+                    )
+                else:
+                    # No _meta, use simple read_resource
+                    result = await session.read_resource(uri=resource_uri)
+
+                logger.info(f"Received {len(result.contents)} content items from gateway {gateway.id} for resource {resource_uri}")
+                return result.contents
+
+    except Exception as e:
+        logger.exception(f"Error proxying resources/read to gateway {gateway.id} for resource {resource_uri}: {e}")
+        return []
+
+
 @mcp_app.call_tool(validate_input=False)
-async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]]:
+async def call_tool(name: str, arguments: dict) -> Union[
+    types.CallToolResult,
+    List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
+    Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
+]:
     """
     Handles tool invocation via the MCP Server.
 
@@ -470,23 +632,15 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     handles schema validation separately in tool_service.py with multi-draft support.
 
     This function supports the MCP protocol's tool calling with structured content validation.
-    It can return either unstructured content only, or both unstructured and structured content
-    when the tool defines an outputSchema.
+    In direct_proxy mode, returns the raw CallToolResult from the remote server.
+    In normal mode, converts ToolResult to CallToolResult with content normalization.
 
     Args:
         name (str): The name of the tool to invoke.
         arguments (dict): A dictionary of arguments to pass to the tool.
 
     Returns:
-        Union[List[ContentBlock], Tuple[List[ContentBlock], Dict[str, Any]]]:
-            - If structured content is not present: Returns a list of content blocks
-              (TextContent, ImageContent, or EmbeddedResource)
-            - If structured content is present: Returns a tuple of (unstructured_content, structured_content)
-              where structured_content is a dictionary that will be validated against the tool's outputSchema
-
-        The MCP SDK's call_tool decorator automatically handles both return types:
-        - List return → CallToolResult with content only
-        - Tuple return → CallToolResult with both content and structuredContent fields
+        types.CallToolResult: MCP SDK CallToolResult with content and optional structuredContent.
 
     Raises:
         Exception: Re-raised after logging to allow MCP SDK to convert to JSON-RPC error response.
@@ -504,12 +658,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         <class 'str'>
         >>> sig.parameters['arguments'].annotation
         <class 'dict'>
-        >>> sig.return_annotation
-        typing.List[typing.Union[mcp.types.TextContent, mcp.types.ImageContent, mcp.types.AudioContent, mcp.types.ResourceLink, mcp.types.EmbeddedResource]]
     """
-    request_headers = request_headers_var.get()
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
     # Extract _meta from request context if available
@@ -534,7 +684,46 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
-    app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
+    # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
+    gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
+
+    # If X-Context-Forge-Gateway-Id header is present, use direct proxy mode
+    if gateway_id_from_header:
+        try:  # Check if this gateway is in direct_proxy mode
+            async with get_db() as check_db:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                gateway = check_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
+                if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                    # SECURITY: Check gateway access before allowing direct proxy
+                    if not await check_gateway_access(check_db, gateway, user_email, token_teams):
+                        logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {user_email}")
+                        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], isError=True)
+
+                    logger.info(f"Using direct_proxy mode for tool '{name}' via gateway {gateway_id_from_header}")
+
+                    # Use direct proxy method - returns raw CallToolResult from remote server
+                    # Return it directly without any normalization
+                    return await tool_service.invoke_tool_direct(
+                        gateway_id=gateway_id_from_header,
+                        name=name,
+                        arguments=arguments,
+                        request_headers=request_headers,
+                        meta_data=meta_data,
+                        user_email=user_email,
+                        token_teams=token_teams,
+                    )
+        except Exception as e:
+            logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")
+            return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
+
+    # Normal mode: use standard tool invocation with normalization
+    # Use the already-recovered user_context (works for both ContextVar and stateful session paths)
+    app_user_email = (user_context.get("email") or user_context.get("sub") or "unknown") if user_context else "unknown"
 
     # Multi-worker session affinity: check if we should forward to another worker
     # Check both x-mcp-session-id (internal/forwarded) and mcp-session-id (client protocol header)
@@ -624,6 +813,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
 
     try:
         async with get_db() as db:
+            # Use tool service for all tool invocations (handles direct_proxy internally)
             result = await tool_service.invoke_tool(
                 db=db,
                 name=name,
@@ -755,10 +945,139 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         raise
 
 
+async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[str, Any]]:
+    """Retrieve request context information for the current execution.
+
+    This function attempts to obtain the `server_id`, request headers, and
+    user context from ContextVars (fast path). If the ContextVars contain
+    default values—indicating a stateful session where context propagation
+    may not have occurred—it falls back to extracting the information from
+    `mcp_app.request_context`.
+
+    The fallback logic:
+    - Extracts `server_id` from the request URL path.
+    - Copies request headers from the underlying request object.
+    - Attempts to recover user context using the authorization header or
+      JWT token stored in cookies.
+
+    If recovery fails at any point, default ContextVar values are returned.
+
+    Returns:
+        Tuple[str, dict[str, Any], dict[str, Any]]: A tuple containing:
+            - server_id: The resolved server identifier.
+            - request_headers: A dictionary of request headers.
+            - user_context: A dictionary representing the authenticated user
+              context (empty if anonymous or recovery fails).
+    """
+    # 1. Try context vars first (fast path)
+    s_id = server_id_var.get()
+
+    # Check if context vars are populated with real data (not defaults)
+    if s_id != "default_server_id":
+        return s_id, request_headers_var.get(), user_context_var.get()
+
+    # 2. Fallback to mcp_app.request_context (stateful session path)
+    try:
+        ctx = mcp_app.request_context
+        request = ctx.request
+        if not request:
+            logger.warning("No request object found in MCP context")
+            return s_id, request_headers_var.get(), user_context_var.get()
+
+        # Extract server_id from URL
+        path = request.url.path
+        match = _SERVER_ID_RE.search(path)
+        if match:
+            s_id = match.group("server_id")
+
+        # Extract headers
+        req_headers = dict(request.headers)
+
+        # Extract and verify user context
+        auth_header = req_headers.get("authorization")
+        # In stateful session, cookie might be more reliable
+        cookie_token = request.cookies.get("jwt_token")
+
+        try:
+            raw_payload = await require_auth_override(auth_header=auth_header, jwt_token=cookie_token, request=request)
+            if isinstance(raw_payload, str):  # "anonymous"
+                user_ctx = {}
+            elif isinstance(raw_payload, dict):
+                # Normalize raw JWT payload to canonical user context shape
+                # (matches streamable_http_auth normalization at lines 2155-2259)
+                user_ctx = _normalize_jwt_payload(raw_payload)
+            else:
+                user_ctx = {}
+        except Exception as e:
+            logger.warning(f"Failed to recover user context in stateful session: {e}")
+            user_ctx = {}
+
+        return s_id, req_headers, user_ctx
+
+    except LookupError:
+        # Not in a request context
+        return s_id, request_headers_var.get(), user_context_var.get()
+    except Exception as e:
+        logger.error(f"Error recovering context in stateful session: {e}", exc_info=True)
+        return s_id, request_headers_var.get(), user_context_var.get()
+
+
+def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a raw JWT payload to the canonical user context shape.
+
+    Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
+    canonical ``{email, teams, is_admin, is_authenticated}`` dict that MCP
+    handlers expect.  This mirrors the normalization performed by
+    ``streamable_http_auth`` so that the stateful-session fallback path in
+    ``_get_request_context_or_default`` returns an identical shape.
+
+    Args:
+        payload: Raw JWT payload dict from ``require_auth_override``.
+
+    Returns:
+        Canonical user context dict with keys email, teams, is_admin, is_authenticated.
+    """
+    email = payload.get("sub") or payload.get("email")
+    is_admin = payload.get("is_admin", False)
+    if not is_admin:
+        user_info = payload.get("user", {})
+        is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+
+    token_use = payload.get("token_use")
+    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+        # Session token: resolve teams from DB/cache
+        if is_admin:
+            final_teams = None  # Admin bypass
+        elif email:
+            # First-Party
+            from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+
+            final_teams = _resolve_teams_from_db_sync(email, is_admin=False)
+        else:
+            final_teams = []  # No email — public-only
+    else:
+        # API token or legacy: use embedded teams from JWT
+        # First-Party
+        from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+        final_teams = normalize_token_teams(payload)
+
+    return {
+        "email": email,
+        "teams": final_teams,
+        "is_admin": is_admin,
+        "is_authenticated": True,
+    }
+
+
 @mcp_app.list_tools()
 async def list_tools() -> List[types.Tool]:
     """
     Lists all tools available to the MCP Server.
+
+    Supports two modes based on gateway's gateway_mode:
+    - 'cache': Returns tools from database (default behavior)
+    - 'direct_proxy': Proxies the request directly to the remote MCP server
 
     Returns:
         A list of Tool objects containing metadata such as name, description, and input schema.
@@ -773,9 +1092,7 @@ async def list_tools() -> List[types.Tool]:
         >>> sig.return_annotation
         typing.List[mcp.types.Tool]
     """
-    server_id = server_id_var.get()
-    request_headers = request_headers_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -794,10 +1111,57 @@ async def list_tools() -> List[types.Tool]:
     if server_id:
         try:
             async with get_db() as db:
+                # Check for X-Context-Forge-Gateway-Id header first - if present, try direct proxy mode
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []  # Return empty list for unauthorized access
+
+                        # Direct proxy mode: forward request to remote MCP server
+                        # Get _meta from request context if available
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta)
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
+                # Check if server exists for cache mode
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+                server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+                if not server:
+                    logger.warning(f"Server {server_id} not found in database")
+                    return []
+
+                # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
-            logger.exception(f"Error listing tools:{e}")
+            logger.error(f"Error listing tools:{e}")
             return []
     else:
         try:
@@ -826,8 +1190,7 @@ async def list_prompts() -> List[types.Prompt]:
         >>> sig.return_annotation
         typing.List[mcp.types.Prompt]
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, _, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -884,8 +1247,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         >>> sig.return_annotation.__name__
         'GetPromptResult'
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, _, user_context = await _get_request_context_or_default()
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -951,8 +1313,7 @@ async def list_resources() -> List[types.Resource]:
         >>> sig.return_annotation
         typing.List[mcp.types.Resource]
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -971,6 +1332,41 @@ async def list_resources() -> List[types.Resource]:
     if server_id:
         try:
             async with get_db() as db:
+                # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []  # Return empty list for unauthorized access
+
+                        # Direct proxy mode: forward request to remote MCP server
+                        # Get _meta from request context if available
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_resources_to_gateway(gateway, request_headers, user_context, meta)
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
+                # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
@@ -1008,8 +1404,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         >>> sig.return_annotation
         typing.Union[str, bytes]
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract authorization parameters from user context (same pattern as list_resources)
     user_email = user_context.get("email") if user_context else None
@@ -1035,6 +1430,49 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
 
     try:
         async with get_db() as db:
+            # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
+            gateway_id = extract_gateway_id_from_headers(request_headers)
+
+            # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+            if gateway_id:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                    # SECURITY: Check gateway access before allowing direct proxy
+                    if not await check_gateway_access(db, gateway, user_email, token_teams):
+                        logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                        return ""
+
+                    # Direct proxy mode: forward request to remote MCP server
+                    # Get _meta from request context if available
+                    meta = None
+                    try:
+                        request_ctx = mcp_app.request_context
+                        meta = request_ctx.meta
+                        logger.info(f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header), forwarding _meta: {meta}")
+                    except (LookupError, AttributeError) as e:
+                        logger.debug(f"No request context available for _meta extraction: {e}")
+
+                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
+                    if contents:
+                        # Return first content (text or blob)
+                        first_content = contents[0]
+                        if hasattr(first_content, "text"):
+                            return first_content.text
+                        if hasattr(first_content, "blob"):
+                            return first_content.blob
+                    return ""
+                if gateway:
+                    logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                else:
+                    logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
+            # Default cache mode: use database
             try:
                 result = await resource_service.read_resource(
                     db=db,
@@ -1081,7 +1519,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         'list'
     """
     # Extract filtering parameters from user context (same pattern as list_resources)
-    user_context = user_context_var.get()
+    _, _, user_context = await _get_request_context_or_default()
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
@@ -1562,6 +2000,16 @@ class SessionManagerWrapper:
                             await send({"type": "http.response.body", "body": b""})
                             return
 
+                        # Inject server_id from URL path into params for /rpc routing
+                        if match:
+                            server_id = match.group("server_id")
+                            if "params" not in json_body:
+                                json_body["params"] = {}
+                            json_body["params"]["server_id"] = server_id
+                            # Re-serialize body with injected server_id
+                            body = orjson.dumps(json_body)
+                            logger.debug(f"[HTTP_AFFINITY_LOCAL] Injected server_id {server_id} into /rpc params")
+
                         async with httpx.AsyncClient() as client:
                             rpc_headers = {
                                 "content-type": "application/json",
@@ -1762,23 +2210,99 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
-            # Check if "teams" key exists and is not None to distinguish:
-            # - Key exists with non-None value (even empty []) -> normalized list (scoped token)
-            # - Key absent OR key is None -> None (unrestricted for admin, public-only for non-admin)
-            teams_value = user_payload.get("teams") if "teams" in user_payload else None
-            if teams_value is not None:
-                normalized_teams = []
-                for team in teams_value or []:
-                    if isinstance(team, dict):
-                        team_id = team.get("id")
-                        if team_id:
-                            normalized_teams.append(team_id)
-                    elif isinstance(team, str):
-                        normalized_teams.append(team)
-                final_teams = normalized_teams
+            # Resolve teams based on token_use claim
+            token_use = user_payload.get("token_use")
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams from DB/cache
+                user_email_for_teams = user_payload.get("sub") or user_payload.get("email")
+                is_admin_flag = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
+                if is_admin_flag:
+                    final_teams = None  # Admin bypass
+                elif user_email_for_teams:
+                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
+                    # First-Party
+                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+
+                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
+                else:
+                    final_teams = []  # No email — public-only
             else:
-                # No "teams" key or teams is null - treat as unrestricted (None)
-                final_teams = None
+                # API token or legacy: use embedded teams from JWT
+                # First-Party
+                from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+                final_teams = normalize_token_teams(user_payload)
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Validate team membership for team-scoped tokens
+            # Users removed from a team should lose MCP access immediately, not at token expiry
+            # ═══════════════════════════════════════════════════════════════════════════
+            user_email = user_payload.get("sub") or user_payload.get("email")
+            is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
+
+            # Only validate membership for team-scoped tokens (non-empty teams list)
+            # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
+            if final_teams and len(final_teams) > 0 and user_email:
+                # Import lazily to avoid circular imports
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+                auth_cache = get_auth_cache()
+
+                # Check cache first (60s TTL)
+                cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
+                if cached_result is False:
+                    logger.warning(f"MCP auth rejected: User {user_email} no longer member of teams (cached)")
+                    response = ORJSONResponse(
+                        {"detail": "Token invalid: User is no longer a member of the associated team"},
+                        status_code=HTTP_403_FORBIDDEN,
+                    )
+                    await response(scope, receive, send)
+                    return False
+
+                if cached_result is None:
+                    # Cache miss - query database
+                    db = SessionLocal()
+                    try:
+                        memberships = (
+                            db.execute(
+                                select(EmailTeamMember.team_id).where(
+                                    EmailTeamMember.team_id.in_(final_teams),
+                                    EmailTeamMember.user_email == user_email,
+                                    EmailTeamMember.is_active.is_(True),
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+
+                        valid_team_ids = set(memberships)
+                        missing_teams = set(final_teams) - valid_team_ids
+
+                        if missing_teams:
+                            logger.warning(f"MCP auth rejected: User {user_email} no longer member of teams: {missing_teams}")
+                            auth_cache.set_team_membership_valid_sync(user_email, final_teams, False)
+                            response = ORJSONResponse(
+                                {"detail": "Token invalid: User is no longer a member of the associated team"},
+                                status_code=HTTP_403_FORBIDDEN,
+                            )
+                            await response(scope, receive, send)
+                            return False
+
+                        # Cache positive result
+                        auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
+                    finally:
+                        # Rollback any implicit transaction before closing to prevent
+                        # idle-in-transaction state if the connection is returned to pool
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass  # nosec B110 - Best effort rollback
+                        db.close()
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Validate team membership for team-scoped tokens

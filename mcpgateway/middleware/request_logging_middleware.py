@@ -390,28 +390,30 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if not should_log_detailed:
             response = await call_next(request)
 
-            # Still log request completed even if detailed logging is disabled
-            if should_log_boundary:
-                duration_ms = (time.time() - start_time) * 1000
-                try:
-                    log_level = "ERROR" if response.status_code >= 500 else "WARNING" if response.status_code >= 400 else "INFO"
-                    structured_logger.log(
-                        level=log_level,
-                        message=f"Request completed: {method} {path} - {response.status_code}",
-                        correlation_id=correlation_id,
-                        user_email=user_email,
-                        user_id=user_id,
-                        operation_type="http_request",
-                        request_method=method,
-                        request_path=path,
-                        response_status_code=response.status_code,
-                        user_agent=user_agent,
-                        client_ip=client_ip,
-                        duration_ms=duration_ms,
-                        metadata={"event": "request_completed", "response_time_category": "fast" if duration_ms < 100 else "normal" if duration_ms < 1000 else "slow"},
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to log request completion: {e}")
+            # Still log request completed even if detailed logging is disabled.
+            #
+            # Note: reaching this block means we didn't take the early return where both
+            # boundary and detailed logging are disabled, so boundary logging is required.
+            duration_ms = (time.time() - start_time) * 1000
+            try:
+                log_level = "ERROR" if response.status_code >= 500 else "WARNING" if response.status_code >= 400 else "INFO"
+                structured_logger.log(
+                    level=log_level,
+                    message=f"Request completed: {method} {path} - {response.status_code}",
+                    correlation_id=correlation_id,
+                    user_email=user_email,
+                    user_id=user_id,
+                    operation_type="http_request",
+                    request_method=method,
+                    request_path=path,
+                    response_status_code=response.status_code,
+                    user_agent=user_agent,
+                    client_ip=client_ip,
+                    duration_ms=duration_ms,
+                    metadata={"event": "request_completed", "response_time_category": "fast" if duration_ms < 100 else "normal" if duration_ms < 1000 else "slow"},
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log request completion: {e}")
 
             return response
 

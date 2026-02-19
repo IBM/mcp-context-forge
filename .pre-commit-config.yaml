@@ -18,21 +18,21 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
 
 repos:
   # -----------------------------------------------------------------------------
   # 🔐 Security and Secret Detection Hooks
   # -----------------------------------------------------------------------------
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.27.2
+    rev: v8.30.0
     hooks:
       - id: gitleaks
         name: 🔐 Gitleaks - Detect hardcoded secrets
         description: Scans for hardcoded secrets like API keys and passwords.
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       #   - id: detect-aws-credentials
       #     name: 🔐 Detect AWS Credentials
@@ -42,6 +42,7 @@ repos:
       - id: detect-private-key
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
+        exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils)\.py|plugins_rust/secrets_detection/examples/heavy_workload\.rs|plugins_rust/secrets_detection/src/scanner\.rs|plugins_rust/secrets_detection/src/patterns\.rs
         types: [text]
 
   #   - repo: https://github.com/Yelp/detect-secrets
@@ -112,9 +113,9 @@ repos:
         name: ❌ Forbid Source Placeholders
         description: Prevents (Source:...) placeholders from being committed.
         entry: '(?i)\(source:'
+        exclude: '(^\.pre-commit-config\.yaml$|\.pyi?$)'
         language: pygrep
         types: [text]
-        exclude: ^\.pre-commit-config\.yaml$
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
       - id: forbid-malformed-code-fences
@@ -152,7 +153,7 @@ repos:
   # encoding bugs from creeping into the codebase.
   # -----------------------------------------------------------------------------
   - repo: https://github.com/sirosen/texthooks
-    rev: 0.6.8
+    rev: 0.7.1
     hooks:
       - id: fix-smartquotes
         name: 📝 Normalize Smart Quotes
@@ -171,7 +172,7 @@ repos:
   # 🧹 Formatting Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
         name: 🧹 Fix End of Files
@@ -225,7 +226,7 @@ repos:
   # ✅ Code Quality and Validation Hooks (LINTING ONLY)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-added-large-files
         name: ✅ Check Added Large Files
@@ -261,6 +262,7 @@ repos:
         name: ✅ Check Shebang Scripts Are Executable
         description: Ensures that (non-binary) files with a shebang are executable.
         types: [text]
+        exclude: plugins_rust/secrets_detection/compare_performance\.py
         stages: [pre-commit, pre-push, manual]
 
       - id: forbid-new-submodules
@@ -308,7 +310,7 @@ repos:
         types: [text]
 
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         name: ✅ YAMLlint - YAML Linter
@@ -329,7 +331,7 @@ repos:
   # 🐍 Python Code Quality Hooks (LINTING ONLY)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-ast
         name: 🐍 Check Python AST
@@ -363,11 +365,11 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load)/.*\.py$
+        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|populate)/.*\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
   - repo: https://github.com/pycqa/flake8
-    rev: 7.2.0
+    rev: 7.3.0
     hooks:
       - id: flake8
         name: 🐍 Flake8 - Python Linter
@@ -401,7 +403,7 @@ repos:
   # -----------------------------------------------------------------------------
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.11.12
+    rev: v0.15.1
     hooks:
       # Run the linter.
       - id: ruff-check
@@ -414,7 +416,7 @@ repos:
       #   files: ^mcpgateway/
 
   - repo: https://github.com/psf/black
-    rev: 25.1.0
+    rev: 26.1.0
     hooks:
       - id: black
         name: 🐍 Black - Python Code Formatter
@@ -470,7 +472,7 @@ repos:
   # 🚀 Performance and Optimization Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: v1.5.5
+    rev: v1.5.6
     hooks:
       - id: remove-crlf
         name: 🚀 Remove CRLF

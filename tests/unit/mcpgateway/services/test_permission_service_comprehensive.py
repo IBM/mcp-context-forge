@@ -390,7 +390,7 @@ class TestTeamFallbackPermissions:
     @pytest.mark.asyncio
     async def test_team_fallback_unknown_role(self, permission_service):
         """Test fallback with unknown team role."""
-        with patch.object(permission_service, "_is_team_member", return_value=True), patch.object(permission_service, "_get_user_team_role", return_value="unknown"):
+        with patch.object(permission_service, "_get_user_team_role", return_value="unknown"):
             result = await permission_service._check_team_fallback_permissions("user@example.com", "teams.read", "team-123")
             assert result == False
 

@@ -99,6 +99,18 @@ def test_insert_defaults_respects_explicit_host(monkeypatch) -> None:
     assert "--port" in out and str(cli.DEFAULT_PORT) in out
 
 
+def test_insert_defaults_respects_explicit_port() -> None:
+    """Port given, host missing ⇒ only host default injected."""
+    raw = ["myapp:app", "--port", "1234"]
+    out = cli._insert_defaults(raw)
+
+    assert out[0] == "myapp:app"
+    assert out.count("--port") == 1
+    assert "1234" in out
+    assert str(cli.DEFAULT_PORT) not in out
+    assert "--host" in out and cli.DEFAULT_HOST in out
+
+
 def test_insert_defaults_skips_for_uds() -> None:
     """When --uds is present no host/port defaults are added."""
     raw = ["--uds", "/tmp/app.sock"]
@@ -150,3 +162,96 @@ def test_main_invokes_uvicorn_with_patched_argv(monkeypatch) -> None:
     # Defaults present
     assert "--host" in patched and cli.DEFAULT_HOST in patched
     assert "--port" in patched and str(cli.DEFAULT_PORT) in patched
+
+
+def test_main_invokes_uvicorn_with_no_args(monkeypatch) -> None:
+    """No arguments should still invoke Uvicorn with injected defaults."""
+    captured = _capture_uvicorn_main(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["mcpgateway"])
+
+    cli.main()
+
+    assert "argv" in captured
+    patched = captured["argv"]
+    assert patched[0] == "mcpgateway"
+    assert cli.DEFAULT_APP in patched
+    assert "--host" in patched and cli.DEFAULT_HOST in patched
+    assert "--port" in patched and str(cli.DEFAULT_PORT) in patched
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_path"),
+    [
+        (["mcpgateway", "--validate-config"], ".env"),
+        (["mcpgateway", "--validate-config", ".env.example"], ".env.example"),
+    ],
+)
+def test_main_validate_config_flag_calls_handler(argv: List[str], expected_path: str, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(cli.uvicorn, "main", lambda: (_ for _ in ()).throw(RuntimeError("should not be called")))
+
+    called = {}
+
+    def _fake_handler(path: str = ".env") -> None:
+        called["path"] = path
+
+    monkeypatch.setattr(cli, "_handle_validate_config", _fake_handler)
+
+    cli.main()
+    assert called["path"] == expected_path
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_output"),
+    [
+        (["mcpgateway", "--config-schema"], None),
+        (["mcpgateway", "--config-schema", "schema.json"], "schema.json"),
+    ],
+)
+def test_main_config_schema_flag_calls_handler(argv: List[str], expected_output: str | None, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(cli.uvicorn, "main", lambda: (_ for _ in ()).throw(RuntimeError("should not be called")))
+
+    called = {}
+
+    def _fake_handler(output: str | None = None) -> None:
+        called["output"] = output
+
+    monkeypatch.setattr(cli, "_handle_config_schema", _fake_handler)
+
+    cli.main()
+    assert called["output"] == expected_output
+
+
+def test_main_support_bundle_parses_options(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["mcpgateway", "--support-bundle", "--no-system", "--unknown-flag"])
+    monkeypatch.setattr(cli.uvicorn, "main", lambda: (_ for _ in ()).throw(RuntimeError("should not be called")))
+
+    called = {}
+
+    def _fake_handler(
+        output_dir: str | None = None,
+        log_lines: int = 1000,
+        include_logs: bool = True,
+        include_env: bool = True,
+        include_system: bool = True,
+    ) -> None:
+        called.update(
+            {
+                "output_dir": output_dir,
+                "log_lines": log_lines,
+                "include_logs": include_logs,
+                "include_env": include_env,
+                "include_system": include_system,
+            }
+        )
+
+    monkeypatch.setattr(cli, "_handle_support_bundle", _fake_handler)
+
+    cli.main()
+
+    assert called["include_system"] is False
+    # Defaults for unspecified options
+    assert called["include_logs"] is True
+    assert called["include_env"] is True
+    assert called["log_lines"] == 1000

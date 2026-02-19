@@ -216,7 +216,7 @@ docker run -d \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
 
 # Generate an API token for later use (expires in 1 week)
 docker exec mcpgateway \
@@ -589,7 +589,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   mcpgateway:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
     environment:
       MCPGATEWAY_UI_ENABLED: "true"
       MCPGATEWAY_ADMIN_API_ENABLED: "true"

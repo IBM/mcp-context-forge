@@ -151,6 +151,30 @@ clean = "Result: Error"
 - Preserves `\n` (newline) and `\t` (tab)
 - Verifies Content-Type matches payload
 
+### JSON Schema Validation
+
+**Scenario**: Validate tool and prompt schemas during registration
+
+```python
+# Tool registration with invalid schema
+tool = {
+    "name": "invalid_tool",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"arg": {"type": "unknown_type"}} # Invalid type
+    }
+}
+
+# Strict mode (Default): Rejects with 400 Bad Request
+# Non-strict mode: Logs warning but accepts registration
+```
+
+**Validation Rules**:
+- Enforces valid JSON Schema 2020-12 (default)
+- Validates structural integrity of `inputSchema` for tools
+- Validates `arguments` schema for tool prompts
+- prevents registration of broken tools that would fail at runtime
+
 ## API Usage
 
 ### SecurityValidator Class

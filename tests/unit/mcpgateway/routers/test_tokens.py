@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.routers.tokens import (
-    _require_interactive_session,
+    _require_authenticated_session,
     admin_revoke_token,
     create_team_token,
     create_token,
@@ -106,30 +106,42 @@ def mock_token_record():
     return token
 
 
-class TestInteractiveSessionGate:
-    """Test interactive session gating for token endpoints."""
+class TestAuthenticatedSessionGate:
+    """Test authenticated session gating for token endpoints."""
 
-    def test_api_token_blocked(self):
-        """API tokens are blocked from token management."""
-        with pytest.raises(HTTPException) as exc_info:
-            _require_interactive_session({"auth_method": "api_token"})
-
-        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    def test_api_token_allowed(self):
+        """API tokens are allowed for token management (RBAC handles authorization)."""
+        _require_authenticated_session({"auth_method": "api_token"})
 
     def test_missing_auth_method_blocked(self):
         """Missing auth_method fails secure."""
         with pytest.raises(HTTPException) as exc_info:
-            _require_interactive_session({})
+            _require_authenticated_session({})
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_anonymous_blocked(self):
+        """Anonymous access is blocked."""
+        with pytest.raises(HTTPException) as exc_info:
+            _require_authenticated_session({"auth_method": "anonymous"})
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
     def test_oauth_allowed(self):
         """SSO/OAuth sessions are allowed."""
-        _require_interactive_session({"auth_method": "oauth"})
+        _require_authenticated_session({"auth_method": "oauth"})
 
     def test_disabled_allowed(self):
         """auth_disabled mode is allowed."""
-        _require_interactive_session({"auth_method": "disabled"})
+        _require_authenticated_session({"auth_method": "disabled"})
+
+    def test_jwt_allowed(self):
+        """JWT sessions are allowed."""
+        _require_authenticated_session({"auth_method": "jwt"})
+
+    def test_proxy_allowed(self):
+        """Proxy auth sessions are allowed."""
+        _require_authenticated_session({"auth_method": "proxy"})
 
 
 class TestCreateToken:
@@ -233,8 +245,9 @@ class TestListTokens:
         """Test successful token listing."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
-            mock_service.get_token_revocation = AsyncMock(return_value=None)
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_user_and_team_tokens = AsyncMock(return_value=1)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
 
             response = await list_tokens(include_inactive=False, limit=50, offset=0, db=mock_db, current_user=mock_current_user)
 
@@ -255,8 +268,9 @@ class TestListTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
-            mock_service.get_token_revocation = AsyncMock(return_value=revocation_info)
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_user_and_team_tokens = AsyncMock(return_value=1)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={"jti-123": revocation_info})
 
             response = await list_tokens(include_inactive=True, limit=10, offset=0, db=mock_db, current_user=mock_current_user)
 
@@ -270,15 +284,16 @@ class TestListTokens:
         """Test token listing with pagination."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[])
-            mock_service.get_token_revocation = AsyncMock(return_value=None)
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[])
+            mock_service.count_user_and_team_tokens = AsyncMock(return_value=0)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
 
             response = await list_tokens(include_inactive=False, limit=20, offset=10, db=mock_db, current_user=mock_current_user)
 
             assert response.tokens == []
             assert response.limit == 20
             assert response.offset == 10
-            mock_service.list_user_tokens.assert_called_with(
+            mock_service.list_user_and_team_tokens.assert_called_with(
                 user_email="test@example.com",
                 include_inactive=False,
                 limit=20,
@@ -530,7 +545,8 @@ class TestAdminEndpoints:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
-            mock_service.get_token_revocation = AsyncMock(return_value=None)
+            mock_service.count_user_tokens = AsyncMock(return_value=1)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
 
             response = await list_all_tokens(user_email="user@example.com", include_inactive=False, limit=100, offset=0, current_user=mock_admin_user, db=mock_db)
 
@@ -558,15 +574,13 @@ class TestAdminEndpoints:
             mock_service.admin_revoke_token.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_admin_revoke_token_blocked_for_api_token(self, mock_db, mock_admin_user):
-        """Admin API tokens are blocked from admin endpoints."""
+    async def test_admin_revoke_token_allowed_for_api_token(self, mock_db, mock_admin_user):
+        """Admin API tokens are allowed for admin token management (RBAC handles authorization)."""
         current_user = dict(mock_admin_user)
         current_user["auth_method"] = "api_token"
 
-        with pytest.raises(HTTPException) as exc_info:
-            await admin_revoke_token(token_id="token-123", request=None, current_user=current_user, db=mock_db)
-
-        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        # Should not raise 403 for api_token auth_method — succeeds or raises non-403 error
+        await admin_revoke_token(token_id="token-123", request=None, current_user=current_user, db=mock_db)
 
     @pytest.mark.asyncio
     async def test_admin_revoke_token_non_admin(self, mock_db, mock_current_user):
@@ -638,7 +652,8 @@ class TestTeamTokens:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_team_tokens = AsyncMock(return_value=[mock_token_record])
-            mock_service.get_token_revocation = AsyncMock(return_value=None)
+            mock_service.count_team_tokens = AsyncMock(return_value=1)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
 
             response = await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
 
@@ -657,6 +672,173 @@ class TestTeamTokens:
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "User is not team member" in str(exc_info.value.detail)
+
+
+class TestApiTokenAuth:
+    """Test that API token auth_method works for all token endpoints (bug #2870).
+
+    Previously, _require_interactive_session blocked API tokens from all token
+    management endpoints. After the fix, API tokens should be able to manage
+    tokens like any other authenticated method — RBAC handles authorization.
+    """
+
+    @pytest.fixture
+    def api_token_user(self, mock_db):
+        """Create a user context authenticated via API token."""
+        return {
+            "email": "user@example.com",
+            "is_admin": False,
+            "permissions": ["tokens.create", "tokens.read", "tokens.update", "tokens.revoke"],
+            "db": mock_db,
+            "auth_method": "api_token",
+        }
+
+    @pytest.fixture
+    def admin_api_token_user(self, mock_db):
+        """Create an admin user context authenticated via API token."""
+        return {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["*"],
+            "db": mock_db,
+            "auth_method": "api_token",
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_token_with_api_token(self, mock_db, api_token_user, mock_token_record):
+        """API token can create new tokens (core bug #2870 fix)."""
+        request = TokenCreateRequest(name="Created-Via-API-Token", description="Test")
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "new-raw-token"))
+
+            response = await create_token(request, current_user=api_token_user, db=mock_db)
+
+            assert isinstance(response, TokenCreateResponse)
+            assert response.access_token == "new-raw-token"
+            mock_service.create_token.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_tokens_with_api_token(self, mock_db, api_token_user, mock_token_record):
+        """API token can list own tokens."""
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_user_and_team_tokens = AsyncMock(return_value=1)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
+
+            response = await list_tokens(include_inactive=False, limit=50, offset=0, db=mock_db, current_user=api_token_user)
+
+            assert isinstance(response, TokenListResponse)
+            assert len(response.tokens) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_token_with_api_token(self, mock_db, api_token_user, mock_token_record):
+        """API token can get token details."""
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_token = AsyncMock(return_value=mock_token_record)
+
+            response = await get_token(token_id="token-123", current_user=api_token_user, db=mock_db)
+
+            assert isinstance(response, TokenResponse)
+            assert response.id == "token-123"
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_with_api_token(self, mock_db, api_token_user):
+        """API token can revoke tokens."""
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.revoke_token = AsyncMock(return_value=True)
+
+            await revoke_token(token_id="token-123", request=None, current_user=api_token_user, db=mock_db)
+
+            mock_service.revoke_token.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_token_with_api_token(self, mock_db, api_token_user, mock_token_record):
+        """API token can update tokens."""
+        request = TokenUpdateRequest(name="Updated-Via-API-Token")
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_token_record.name = "Updated-Via-API-Token"
+            mock_service.update_token = AsyncMock(return_value=mock_token_record)
+
+            response = await update_token(token_id="token-123", request=request, current_user=api_token_user, db=mock_db)
+
+            assert response.name == "Updated-Via-API-Token"
+
+    @pytest.mark.asyncio
+    async def test_get_usage_stats_with_api_token(self, mock_db, api_token_user, mock_token_record):
+        """API token can view usage stats."""
+        stats_data = {
+            "period_days": 7,
+            "total_requests": 100,
+            "successful_requests": 95,
+            "blocked_requests": 5,
+            "success_rate": 0.95,
+            "average_response_time_ms": 150.0,
+            "top_endpoints": [],
+        }
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_token = AsyncMock(return_value=mock_token_record)
+            mock_service.get_token_usage_stats = AsyncMock(return_value=stats_data)
+
+            response = await get_token_usage_stats(token_id="token-123", days=7, current_user=api_token_user, db=mock_db)
+
+            assert isinstance(response, TokenUsageStatsResponse)
+            assert response.total_requests == 100
+
+    @pytest.mark.asyncio
+    async def test_admin_list_all_with_api_token(self, mock_db, admin_api_token_user, mock_token_record):
+        """Admin API token can list all tokens."""
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_user_tokens = AsyncMock(return_value=1)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
+
+            response = await list_all_tokens(user_email="other@example.com", include_inactive=False, limit=100, offset=0, current_user=admin_api_token_user, db=mock_db)
+
+            assert isinstance(response, TokenListResponse)
+
+    @pytest.mark.asyncio
+    async def test_create_team_token_with_api_token(self, mock_db, api_token_user, mock_token_record):
+        """API token can create team tokens."""
+        request = TokenCreateRequest(name="Team-Token-Via-API", description="Test")
+        mock_token_record.team_id = "team-456"
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "team-token"))
+
+            response = await create_team_token(team_id="team-456", request=request, current_user=api_token_user, db=mock_db)
+
+            assert response.access_token == "team-token"
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["team_id"] == "team-456"
+
+
+class TestAuthenticatedSessionErrorMessages:
+    """Test error message content for _require_authenticated_session."""
+
+    def test_anonymous_error_message(self):
+        """Anonymous rejection includes appropriate message."""
+        with pytest.raises(HTTPException) as exc_info:
+            _require_authenticated_session({"auth_method": "anonymous"})
+
+        assert "Anonymous access is not permitted" in exc_info.value.detail
+
+    def test_none_auth_method_error_message(self):
+        """Missing auth_method rejection includes appropriate message."""
+        with pytest.raises(HTTPException) as exc_info:
+            _require_authenticated_session({})
+
+        assert "Authentication method could not be determined" in exc_info.value.detail
 
 
 class TestEdgeCases:
@@ -689,7 +871,9 @@ class TestEdgeCases:
         """Test listing tokens with no results."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[])
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[])
+            mock_service.count_user_and_team_tokens = AsyncMock(return_value=0)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
 
             response = await list_tokens(include_inactive=True, limit=100, offset=50, db=mock_db, current_user=mock_current_user)
 
@@ -699,16 +883,19 @@ class TestEdgeCases:
             assert response.offset == 50
 
     @pytest.mark.asyncio
-    async def test_admin_list_all_tokens_no_email(self, mock_db, mock_admin_user):
+    async def test_admin_list_all_tokens_no_email(self, mock_db, mock_admin_user, mock_token_record):
         """Test admin listing all tokens without email filter."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.list_all_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_all_tokens = AsyncMock(return_value=1)
+            mock_service.get_token_revocations_batch = AsyncMock(return_value={})
 
             response = await list_all_tokens(user_email=None, include_inactive=False, limit=100, offset=0, current_user=mock_admin_user, db=mock_db)
 
-            # Currently returns empty list when no email provided
-            assert response.tokens == []
-            assert response.total == 0
+            # Now returns all tokens when no email provided
+            assert len(response.tokens) == 1
+            assert response.total == 1
 
     @pytest.mark.asyncio
     async def test_create_token_with_complex_scope(self, mock_db, mock_current_user, mock_token_record):

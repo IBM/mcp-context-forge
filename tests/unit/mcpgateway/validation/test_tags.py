@@ -120,6 +120,16 @@ class TestValidateTagsField:
         result = validate_tags_field(["high-priority", "team:backend", "v2.0"])
         assert result == [{'id':'high-priority','label':'high-priority'}, {'id':'team:backend','label':'team:backend'}, {'id':'v2.0','label':'v2.0'}]
 
+    def test_validate_tags_field_string_input(self):
+        """Single string passed by mistake should be treated as a 1-item list."""
+        result = validate_tags_field("Analytics")
+        assert result == [{'id':'analytics','label':'Analytics'}]
+
+    def test_validate_tags_field_comma_separated_values(self):
+        """Comma-separated values in a single tag entry should be expanded."""
+        result = validate_tags_field(["tag1, tag2, tag3"])
+        assert result == [{'id':'tag1','label':'tag1'}, {'id':'tag2','label':'tag2'}, {'id':'tag3','label':'tag3'}]
+
 
 class TestTagPatterns:
     """Test suite for specific tag patterns."""

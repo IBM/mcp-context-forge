@@ -13,8 +13,9 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 """
 
 # Standard
+from html import escape
 import logging
-from typing import Any, Dict
+from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party
@@ -247,8 +248,10 @@ async def initiate_oauth_flow(
 
 @oauth_router.get("/callback")
 async def oauth_callback(
-    code: str = Query(..., description="Authorization code from OAuth provider"),
-    state: str = Query(..., description="State parameter for CSRF protection"),
+    code: Annotated[str | None, Query(description="Authorization code from OAuth provider")] = None,
+    state: Annotated[str, Query(description="State parameter for CSRF protection")] = ...,
+    error: Annotated[str | None, Query(description="OAuth provider error code")] = None,
+    error_description: Annotated[str | None, Query(description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
     request: Request = None,
     db: Session = Depends(get_db),
@@ -262,6 +265,8 @@ async def oauth_callback(
     Args:
         code (str): The authorization code returned by the OAuth provider.
         state (str): The state parameter for CSRF protection, which encodes the gateway ID.
+        error (str): OAuth provider error code from error callback (RFC 6749 Section 4.1.2.1).
+        error_description (str): OAuth provider error description.
         request (Request): The incoming HTTP request object.
         db (Session): The database session dependency.
 
@@ -280,6 +285,45 @@ async def oauth_callback(
     try:
         # Get root path for URL construction
         root_path = request.scope.get("root_path", "") if request else ""
+        safe_root_path = escape(str(root_path), quote=True)
+
+        # RFC 6749 Section 4.1.2.1: provider may return error instead of code
+        if error:
+            error_text = escape(error)
+            description_text = escape(error_description or "OAuth provider returned an authorization error.")
+            logger.warning(f"OAuth provider returned error callback: error={error}, description={error_description}")
+            return HTMLResponse(
+                content=f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>OAuth Authorization Failed</title></head>
+                <body>
+                    <h1>❌ OAuth Authorization Failed</h1>
+                    <p><strong>Error:</strong> {error_text}</p>
+                    <p><strong>Description:</strong> {description_text}</p>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
+                </body>
+                </html>
+                """,
+                status_code=400,
+            )
+
+        if not code:
+            logger.warning("OAuth callback missing authorization code")
+            return HTMLResponse(
+                content=f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>OAuth Authorization Failed</title></head>
+                <body>
+                    <h1>❌ OAuth Authorization Failed</h1>
+                    <p>Error: Missing authorization code in callback response.</p>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
+                </body>
+                </html>
+                """,
+                status_code=400,
+            )
 
         # Extract gateway_id from state parameter
         # Try new base64-encoded JSON format first
@@ -321,14 +365,14 @@ async def oauth_callback(
 
         if not gateway:
             return HTMLResponse(
-                content="""
+                content=f"""
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Authorization Failed</title></head>
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p>Error: Gateway not found</p>
-                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -337,14 +381,14 @@ async def oauth_callback(
 
         if not gateway.oauth_config:
             return HTMLResponse(
-                content="""
+                content=f"""
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Authorization Failed</title></head>
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p>Error: Gateway has no OAuth configuration</p>
-                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -405,9 +449,9 @@ async def oauth_callback(
         <body>
             <h1 class="success">✅ OAuth Authorization Successful</h1>
             <div class="info">
-                <p><strong>Gateway:</strong> {gateway.name}</p>
-                <p><strong>User ID:</strong> {result.get("user_id", "Unknown")}</p>
-                <p><strong>Expires:</strong> {result.get("expires_at", "Unknown")}</p>
+                <p><strong>Gateway:</strong> {escape(str(gateway.name))}</p>
+                <p><strong>User ID:</strong> {escape(str(result.get("user_id", "Unknown")))}</p>
+                <p><strong>Expires:</strong> {escape(str(result.get("expires_at", "Unknown")))}</p>
                 <p><strong>Status:</strong> Authorization completed successfully</p>
             </div>
 
@@ -420,7 +464,7 @@ async def oauth_callback(
                 <div id="fetch-status" style="margin-top: 15px;"></div>
             </div>
 
-            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
 
             <script>
             async function fetchTools() {{
@@ -432,7 +476,7 @@ async def oauth_callback(
                 statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
 
                 try {{
-                    const response = await fetch('{root_path}/oauth/fetch-tools/{gateway_id}', {{
+                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id))}', {{
                         method: 'POST'
                     }});
 
@@ -494,9 +538,9 @@ async def oauth_callback(
         </head>
         <body>
             <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Error:</strong> {str(e)}</p>
+            <p><strong>Error:</strong> {escape(str(e))}</p>
             <p>Please check your OAuth configuration and try again.</p>
-            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
         </html>
         """,
@@ -528,9 +572,9 @@ async def oauth_callback(
         </head>
         <body>
             <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Unexpected Error:</strong> {str(e)}</p>
+            <p><strong>Unexpected Error:</strong> {escape(str(e))}</p>
             <p>Please contact your administrator for assistance.</p>
-            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
         </html>
         """,

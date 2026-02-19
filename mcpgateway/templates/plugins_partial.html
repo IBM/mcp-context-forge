@@ -261,7 +261,7 @@
     <div
       class="plugin-card bg-white rounded-lg shadow-lg p-6 hover:shadow-xl transition-shadow dark:bg-gray-800"
       data-name="{{ plugin.name | lower }}"
-      data-description="{{ plugin.description | lower }}"
+      data-description="{{ plugin.description | decode_html | lower }}"
       data-author="{{ plugin.author | lower }}"
       data-mode="{{ plugin.mode }}"
       data-status="{{ plugin.status }}"
@@ -280,7 +280,7 @@
 
       <!-- Description -->
       <p class="text-sm text-gray-600 dark:text-gray-300 mb-4 line-clamp-2">
-        {{ plugin.description[:100] }}{% if plugin.description|length > 100
+        {% set pdesc = (plugin.description or "") | decode_html %}{{ pdesc[:100] }}{% if pdesc|length > 100
         %}...{% endif %}
       </p>
 

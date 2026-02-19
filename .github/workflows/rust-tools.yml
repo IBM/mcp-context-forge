@@ -1,0 +1,100 @@
+name: Rust Tools CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "tools_rust/**"
+      - ".github/workflows/rust-tools.yml"
+  pull_request:
+    branches: [main, develop, rust-tools-ci]
+    paths:
+      - "tools_rust/**"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust-checks:
+    name: Rust Checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: |
+          rustup toolchain install stable
+          rustup component add rustfmt clippy
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools_rust/wrapper/target
+          key: ${{ runner.os }}-cargo-wrapper-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        working-directory: tools_rust/wrapper
+        run: cargo fmt --check
+
+      - name: Run cargo check
+        working-directory: tools_rust/wrapper
+        run: make check
+
+      - name: Run clippy (pedantic)
+        working-directory: tools_rust/wrapper
+        run: make pedantic
+
+      - name: Run tests
+        working-directory: tools_rust/wrapper
+        run: make test
+
+      - name: Build release
+        working-directory: tools_rust/wrapper
+        run: make build-release
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
+      - name: Run license check
+        working-directory: tools_rust/wrapper
+        run: make licenses
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable and components
+        run: |
+          rustup default stable
+          rustup component add llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
+
+      - name: Run coverage
+        working-directory: tools_rust/wrapper
+        run: make coverage

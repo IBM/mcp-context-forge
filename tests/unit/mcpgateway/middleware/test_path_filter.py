@@ -11,6 +11,8 @@ import pytest
 
 from mcpgateway.config import settings
 from mcpgateway.middleware.path_filter import (
+    _get_observability_exclude_regex,
+    _get_observability_include_regex,
     OBSERVABILITY_SKIP_EXACT,
     clear_all_caches,
     should_skip_auth_context,
@@ -257,6 +259,26 @@ class TestEdgeCases:
         """Test handling of very long paths."""
         long_path = "/static/" + "a" * 10000
         assert should_skip_observability(long_path) is True  # Still matches /static/ prefix
+
+
+def test_invalid_observability_include_regex_logged(monkeypatch, caplog):
+    clear_all_caches()
+    monkeypatch.setattr(settings, "observability_include_paths", ["(", r"^/ok$"])
+
+    patterns = _get_observability_include_regex()
+
+    assert len(patterns) == 1
+    assert "Invalid observability_include_paths regex" in caplog.text
+
+
+def test_invalid_observability_exclude_regex_logged(monkeypatch, caplog):
+    clear_all_caches()
+    monkeypatch.setattr(settings, "observability_exclude_paths", ["[", r"^/health$"])
+
+    patterns = _get_observability_exclude_regex()
+
+    assert len(patterns) == 1
+    assert "Invalid observability_exclude_paths regex" in caplog.text
 
     def test_path_with_query_string_component(self):
         """Test that paths are matched as-is (query strings should be stripped before calling)."""

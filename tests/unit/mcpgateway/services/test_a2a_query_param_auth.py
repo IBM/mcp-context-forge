@@ -305,6 +305,147 @@ class TestA2AQueryParamAuthUpdate:
                 # Verify auth_query_params was cleared
                 assert mock_agent.auth_query_params is None
 
+    @pytest.mark.asyncio
+    async def test_update_agent_value_only_rotation_reuses_existing_key(self, a2a_service, test_db, monkeypatch):
+        """When only a value is provided, the existing key is reused for rotation."""
+        mock_agent = MagicMock()
+        mock_agent.id = "agent-123"
+        mock_agent.name = "test_agent"
+        mock_agent.slug = "test_agent"
+        mock_agent.endpoint_url = "https://api.example.com/a2a"
+        mock_agent.auth_type = "query_param"
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = {"api_key": "encrypted_old"}
+        mock_agent.enabled = True
+        mock_agent.version = 1
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_agent.passthrough_headers = None
+        mock_agent.__table__ = MagicMock()
+        mock_agent.__table__.columns = []
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent):
+            mock_read = Mock()
+            mock_read.masked.return_value = mock_read
+            monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
+
+            from mcpgateway.services.tool_service import tool_service
+
+            with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
+                with patch("mcpgateway.services.a2a_service.encode_auth", return_value="encrypted_new") as enc:
+                    update = A2AAgentUpdate.model_construct(auth_query_param_value="rotated-secret")
+                    await a2a_service.update_agent(test_db, "agent-123", update)
+
+        enc.assert_called_once_with({"api_key": "rotated-secret"})
+        assert mock_agent.auth_query_params == {"api_key": "encrypted_new"}
+
+    @pytest.mark.asyncio
+    async def test_update_agent_key_only_no_value_does_not_update(self, a2a_service, test_db, monkeypatch):
+        """Providing only a key with no value does not update auth_query_params."""
+        mock_agent = MagicMock()
+        mock_agent.id = "agent-123"
+        mock_agent.name = "test_agent"
+        mock_agent.slug = "test_agent"
+        mock_agent.endpoint_url = "https://api.example.com/a2a"
+        mock_agent.auth_type = "query_param"
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = {"api_key": "encrypted_old"}
+        mock_agent.enabled = True
+        mock_agent.version = 1
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_agent.passthrough_headers = None
+        mock_agent.__table__ = MagicMock()
+        mock_agent.__table__.columns = []
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent):
+            mock_read = Mock()
+            mock_read.masked.return_value = mock_read
+            monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
+
+            from mcpgateway.services.tool_service import tool_service
+
+            with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
+                with patch("mcpgateway.services.a2a_service.encode_auth") as enc:
+                    update = A2AAgentUpdate.model_construct(auth_query_param_key="api_key")
+                    await a2a_service.update_agent(test_db, "agent-123", update)
+
+        enc.assert_not_called()
+        assert mock_agent.auth_query_params == {"api_key": "encrypted_old"}
+
+    @pytest.mark.asyncio
+    async def test_update_agent_masked_placeholder_reencrypts_on_key_change(self, a2a_service, test_db, monkeypatch):
+        """Masked value with a new key preserves existing secret and re-encrypts under the new key."""
+        mock_agent = MagicMock()
+        mock_agent.id = "agent-123"
+        mock_agent.name = "test_agent"
+        mock_agent.slug = "test_agent"
+        mock_agent.endpoint_url = "https://api.example.com/a2a"
+        mock_agent.auth_type = "query_param"
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = {"old_key": "encrypted_old"}
+        mock_agent.enabled = True
+        mock_agent.version = 1
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_agent.passthrough_headers = None
+        mock_agent.__table__ = MagicMock()
+        mock_agent.__table__.columns = []
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent):
+            mock_read = Mock()
+            mock_read.masked.return_value = mock_read
+            monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
+
+            from mcpgateway.services.tool_service import tool_service
+
+            with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
+                with patch("mcpgateway.services.a2a_service.decode_auth", return_value={"old_key": "secret"}):
+                    with patch("mcpgateway.services.a2a_service.encode_auth", return_value="encrypted_new"):
+                        update = A2AAgentUpdate(auth_query_param_key="new_key", auth_query_param_value="*****")
+                        await a2a_service.update_agent(test_db, "agent-123", update)
+
+        assert mock_agent.auth_query_params == {"new_key": "encrypted_new"}
+
+    @pytest.mark.asyncio
+    async def test_update_agent_queryparam_url_change_grandfather_when_disabled(self, a2a_service, test_db, monkeypatch, mock_all_settings):
+        """Existing query_param agents can change URL even when feature flag is disabled (no cred changes)."""
+        mock_all_settings["config"].insecure_allow_queryparam_auth = False
+        mock_all_settings["config"].insecure_queryparam_auth_allowed_hosts = []
+
+        mock_agent = MagicMock()
+        mock_agent.id = "agent-123"
+        mock_agent.name = "test_agent"
+        mock_agent.slug = "test_agent"
+        mock_agent.endpoint_url = "https://api.example.com/a2a"
+        mock_agent.auth_type = "query_param"
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = {"api_key": "encrypted_old"}
+        mock_agent.enabled = True
+        mock_agent.version = 1
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_agent.passthrough_headers = None
+        mock_agent.__table__ = MagicMock()
+        mock_agent.__table__.columns = []
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent):
+            mock_read = Mock()
+            mock_read.masked.return_value = mock_read
+            monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
+
+            from mcpgateway.services.tool_service import tool_service
+
+            with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
+                update = A2AAgentUpdate(endpoint_url="https://api.example.com/changed")
+                await a2a_service.update_agent(test_db, "agent-123", update)
+
+        assert str(mock_agent.endpoint_url) == "https://api.example.com/changed"
+
 
 class TestA2AQueryParamAuthSchemaValidation:
     """Tests for A2A schema validation with query_param authentication."""

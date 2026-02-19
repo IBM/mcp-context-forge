@@ -153,7 +153,7 @@ async def test_receive_message_handles_json_decode_error(transport, caplog):
 
 @pytest.mark.asyncio
 async def test_receive_message_handles_cancelled_error(transport):
-    """receive_message should break on CancelledError."""
+    """receive_message should re-raise CancelledError."""
 
     class CancelReader:
         async def readline(self):
@@ -161,8 +161,9 @@ async def test_receive_message_handles_cancelled_error(transport):
 
     transport._stdin_reader = CancelReader()  # type: ignore[attr-defined]
     transport._connected = True  # type: ignore[attr-defined]
-    msgs = [m async for m in transport.receive_message()]
-    assert msgs == []
+    with pytest.raises(asyncio.CancelledError):
+        async for _ in transport.receive_message():
+            pass
 
 
 @pytest.mark.asyncio

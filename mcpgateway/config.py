@@ -56,6 +56,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from urllib.parse import urlparse
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -115,6 +116,41 @@ _normalize_env_list_vars()
 
 # Default content type for outgoing requests to Forge
 FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+
+# UI embedding / visibility controls
+UI_HIDABLE_SECTIONS = frozenset(
+    {
+        "overview",
+        "servers",
+        "gateways",
+        "tools",
+        "prompts",
+        "resources",
+        "roots",
+        "mcp-registry",
+        "metrics",
+        "plugins",
+        "export-import",
+        "logs",
+        "version-info",
+        "maintenance",
+        "teams",
+        "users",
+        "agents",
+        "tokens",
+        "settings",
+    }
+)
+UI_HIDABLE_HEADER_ITEMS = frozenset({"logout", "team_selector", "user_identity", "theme_toggle"})
+UI_HIDE_SECTION_ALIASES = {
+    "catalog": "servers",
+    "virtual_servers": "servers",
+    "a2a-agents": "agents",
+    "a2a": "agents",
+    "grpc-services": "agents",
+    "api_tokens": "tokens",
+    "llm-settings": "settings",
+}
 
 
 class Settings(BaseSettings):
@@ -198,7 +234,7 @@ class Settings(BaseSettings):
     app_root_path: str = ""
 
     # Protocol
-    protocol_version: str = "2025-06-18"
+    protocol_version: str = "2025-11-25"
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -223,6 +259,9 @@ class Settings(BaseSettings):
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
 
+    # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
+    json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
+
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
     sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")
@@ -245,11 +284,18 @@ class Settings(BaseSettings):
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
     sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
+    sso_keycloak_public_base_url: Optional[str] = Field(
+        default=None,
+        description="Browser-facing Keycloak base URL for authorization redirects (e.g., http://localhost:8180)",
+    )
     sso_keycloak_realm: str = Field(default="master", description="Keycloak realm name")
     sso_keycloak_client_id: Optional[str] = Field(default=None, description="Keycloak client ID")
     sso_keycloak_client_secret: Optional[SecretStr] = Field(default=None, description="Keycloak client secret")
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
+    sso_keycloak_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Keycloak groups/roles to Context Forge roles (JSON: {group_or_role: role_name})")
+    sso_keycloak_default_role: Optional[str] = Field(default=None, description="Default Context Forge role for Keycloak users without role mapping")
+    sso_keycloak_resolve_team_scope_to_personal_team: bool = Field(default=False, description="Resolve team-scoped Keycloak role mappings to the user's personal team")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
 
     # Security Validation & Sanitization
@@ -277,7 +323,7 @@ class Settings(BaseSettings):
     sso_entra_client_secret: Optional[SecretStr] = Field(default=None, description="Microsoft Entra ID client secret")
     sso_entra_tenant_id: Optional[str] = Field(default=None, description="Microsoft Entra ID tenant ID")
     sso_entra_groups_claim: str = Field(default="groups", description="JWT claim for EntraID groups (groups/roles)")
-    sso_entra_admin_groups: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="EntraID groups granting platform_admin role (CSV/JSON)")
+    sso_entra_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="EntraID groups granting platform_admin role (CSV/JSON)")
     sso_entra_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map EntraID groups to Context Forge roles (JSON: {group_id: role_name})")
     sso_entra_default_role: Optional[str] = Field(default=None, description="Default role for EntraID users without group mapping (None = no role assigned)")
     sso_entra_sync_roles_on_login: bool = Field(default=True, description="Synchronize role assignments on each login")
@@ -295,13 +341,13 @@ class Settings(BaseSettings):
 
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
-    sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
+    sso_trusted_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
     sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
 
     # SSO Admin Assignment Settings
-    sso_auto_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
-    sso_github_admin_orgs: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
-    sso_google_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
+    sso_auto_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
+    sso_github_admin_orgs: Annotated[list[str], NoDecode] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
+    sso_google_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
     sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
 
     # MCP Client Authentication
@@ -436,6 +482,10 @@ class Settings(BaseSettings):
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
     )
+    protect_all_admins: bool = Field(
+        default=True,
+        description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
+    )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
     default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
@@ -462,8 +512,32 @@ class Settings(BaseSettings):
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     # Account Security Configuration
-    max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
-    account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
+    max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
+    account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
+    account_lockout_notification_enabled: bool = Field(default=True, description="Send lockout notification emails when accounts are locked")
+
+    # Self-service password reset
+    password_reset_enabled: bool = Field(default=True, description="Enable self-service password reset workflow (set false to disable public forgot/reset endpoints)")
+    password_reset_token_expiry_minutes: int = Field(default=60, description="Password reset token expiration time in minutes")
+    password_reset_rate_limit: int = Field(default=5, description="Maximum password reset requests allowed per email in each rate-limit window")
+    password_reset_rate_window_minutes: int = Field(default=15, description="Password reset request rate-limit window in minutes")
+    password_reset_invalidate_sessions: bool = Field(default=True, description="Invalidate active sessions after password reset")
+    password_reset_min_response_ms: int = Field(default=250, description="Minimum response duration for forgot-password requests to reduce timing side channels")
+
+    # Email delivery for auth notifications
+    smtp_enabled: bool = Field(
+        default=False,
+        description="Enable SMTP email delivery for password reset and account lockout notifications (when false, reset requests are accepted but no email is sent)",
+    )
+    smtp_host: Optional[str] = Field(default=None, description="SMTP server host")
+    smtp_port: int = Field(default=587, description="SMTP server port")
+    smtp_user: Optional[str] = Field(default=None, description="SMTP username")
+    smtp_password: Optional[SecretStr] = Field(default=None, description="SMTP password")
+    smtp_from_email: Optional[str] = Field(default=None, description="From email address used for auth notifications")
+    smtp_from_name: str = Field(default="MCP Gateway", description="From display name used for auth notifications")
+    smtp_use_tls: bool = Field(default=True, description="Use STARTTLS for SMTP connections")
+    smtp_use_ssl: bool = Field(default=False, description="Use implicit SSL/TLS for SMTP connections")
+    smtp_timeout_seconds: int = Field(default=15, description="SMTP connection timeout in seconds")
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
@@ -473,10 +547,29 @@ class Settings(BaseSettings):
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 
+    # Default Role Configuration
+    default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
+    default_user_role: str = Field(default="platform_viewer", description="Global role assigned to non-admin users")
+    default_team_owner_role: str = Field(default="team_admin", description="Team-scoped role assigned to team owners (e.g. personal team creator)")
+    default_team_member_role: str = Field(default="viewer", description="Team-scoped role assigned to team members")
+
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
+    mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
+    mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "CSV/JSON list of UI sections to hide. "
+            "Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, "
+            "metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
+        ),
+    )
+    mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
+    )
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
@@ -500,6 +593,10 @@ class Settings(BaseSettings):
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
+
+    # Direct Proxy Configuration (disabled by default)
+    mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
+    mcpgateway_direct_proxy_timeout: int = Field(default=30, description="Default timeout in seconds for direct proxy MCP operations")
 
     # ===================================
     # Performance Monitoring Configuration
@@ -558,17 +655,21 @@ class Settings(BaseSettings):
     @field_validator("x_frame_options")
     @classmethod
     def normalize_x_frame_options(cls, v: Optional[str]) -> Optional[str]:
-        """Convert string 'null' or 'none' to Python None to disable iframe restrictions.
+        """Convert string 'null', 'none', or empty/whitespace-only string to Python None to disable iframe restrictions.
 
         Args:
-            v: The x_frame_options value from environment/config
+            v: The X-Frame-Options value to normalize.
 
         Returns:
-            None if v is "null" or "none" (case-insensitive), otherwise returns v unchanged
+            None if v is None, an empty/whitespace-only string, or case-insensitive 'null'/'none';
+            otherwise returns the stripped string value.
         """
-        if isinstance(v, str) and v.lower() in ("null", "none"):
+        if v is None:
             return None
-        return v
+        val = v.strip()
+        if val == "" or val.lower() in ("null", "none"):
+            return None
+        return val
 
     x_content_type_options_enabled: bool = Field(default=True)
     x_xss_protection_enabled: bool = Field(default=True)
@@ -1150,6 +1251,11 @@ class Settings(BaseSettings):
     security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
     security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
 
+    # API Token Tracking Configuration
+    # Controls how token usage and last_used timestamps are tracked
+    token_usage_logging_enabled: bool = Field(default=True, description="Enable API token usage logging middleware")
+    token_last_used_update_interval_minutes: int = Field(default=5, ge=1, le=1440, description="Minimum minutes between last_used timestamp updates (rate-limits DB writes)")
+
     # Metrics Aggregation Configuration
     metrics_aggregation_enabled: bool = Field(default=True, description="Enable automatic log aggregation into performance metrics")
     metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
@@ -1701,6 +1807,8 @@ Disallow: /
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
         "insecure_queryparam_auth_allowed_hosts",
+        "mcpgateway_ui_hide_sections",
+        "mcpgateway_ui_hide_header_items",
         mode="before",
     )
     @classmethod
@@ -1736,6 +1844,61 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("mcpgateway_ui_hide_sections", mode="after")
+    @classmethod
+    def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
+        """Normalize and filter hidable UI sections.
+
+        Args:
+            value: Candidate section identifiers from environment/config.
+
+        Returns:
+            list[str]: Normalized unique section identifiers.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            candidate = str(item).strip().lower()
+            if not candidate:
+                continue
+            candidate = UI_HIDE_SECTION_ALIASES.get(candidate, candidate)
+            if candidate not in UI_HIDABLE_SECTIONS:
+                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_SECTIONS item: %s", item)
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+        return normalized
+
+    @field_validator("mcpgateway_ui_hide_header_items", mode="after")
+    @classmethod
+    def _validate_ui_hide_header_items(cls, value: list[str]) -> list[str]:
+        """Normalize and filter hidable header items.
+
+        Args:
+            value: Candidate header identifiers from environment/config.
+
+        Returns:
+            list[str]: Normalized unique header identifiers.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            candidate = str(item).strip().lower()
+            if not candidate:
+                continue
+            if candidate not in UI_HIDABLE_HEADER_ITEMS:
+                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_HEADER_ITEMS item: %s", item)
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+        return normalized
 
     @property
     def api_key(self) -> str:
@@ -2137,8 +2300,9 @@ Disallow: /
                     f"http://127.0.0.1:{self.port}",
                 }
             else:
-                # Production origins - construct from app_domain
-                self.allowed_origins = {f"https://{self.app_domain}", f"https://app.{self.app_domain}", f"https://admin.{self.app_domain}"}
+                # Production origins - construct from app_domain (extract hostname from HttpUrl)
+                app_domain_host = urlparse(str(self.app_domain)).hostname or "localhost"
+                self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:

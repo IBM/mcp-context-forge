@@ -77,16 +77,16 @@ const (
     appVersion = "1.0.0"
 
     // Default values
-    defaultPort           = 8080
-    defaultListen         = "0.0.0.0"
-    defaultLogLevel       = "info"
-    defaultServerCount    = 1
-    defaultToolCount      = 100
-    defaultResourceCnt    = 100
-    defaultPromptCount    = 100
-    defaultToolSize       = 1000
-    defaultResourceSize   = 1000
-    defaultPromptSize     = 1000
+    defaultPort         = 8080
+    defaultListen       = "0.0.0.0"
+    defaultLogLevel     = "info"
+    defaultServerCount  = 1
+    defaultToolCount    = 100
+    defaultResourceCnt  = 100
+    defaultPromptCount  = 100
+    defaultToolSize     = 1000
+    defaultResourceSize = 1000
+    defaultPromptSize   = 1000
 
     // Server timeouts
     shutdownTimeout = 10 * time.Second
@@ -334,7 +334,7 @@ func buildMCPServer(cfg serverConfig, serverID int, isMultiServer bool) *server.
     s := server.NewMCPServer(
         name,
         appVersion,
-        server.WithToolCapabilities(false),           // No progress reporting needed
+        server.WithToolCapabilities(false), // No progress reporting needed
         server.WithResourceCapabilities(false, true), // Enable resource capabilities
         server.WithPromptCapabilities(true),          // Enable prompt capabilities
         server.WithLogging(),                         // Enable MCP protocol logging
@@ -413,8 +413,9 @@ func runHTTPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handler
     defer wg.Done()
 
     srv := &http.Server{
-        Addr:    addr,
-        Handler: handler,
+        Addr:              addr,
+        Handler:           handler,
+        ReadHeaderTimeout: shutdownTimeout,
     }
 
     // Start server in a goroutine
@@ -447,22 +448,22 @@ func runHTTPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handler
 func main() {
     /* ---------------------------- flags --------------------------- */
     var (
-        transport     = flag.String("transport", "stdio", "Transport: stdio | sse | http")
-        addrFlag      = flag.String("addr", "", "Full listen address (host:port) - overrides -listen/-port")
-        listenHost    = flag.String("listen", defaultListen, "Listen interface for sse/http")
-        port          = flag.Int("port", defaultPort, "TCP port for sse/http")
-        serverCount   = flag.Int("server-count", defaultServerCount, "Number of servers to spawn (for multi-server testing)")
-        startPort     = flag.Int("start-port", defaultPort, "Starting port for multi-server mode")
-        publicURL     = flag.String("public-url", "", "External base URL advertised to SSE clients")
-        authToken     = flag.String("auth-token", "", "Bearer token for authentication (SSE/HTTP only)")
-        logLevel      = flag.String("log-level", defaultLogLevel, "Logging level: debug|info|warn|error|none")
-        toolCount     = flag.Int("tools", defaultToolCount, "Number of tools to generate")
-        resourceCnt   = flag.Int("resources", defaultResourceCnt, "Number of resources to generate")
-        promptCount   = flag.Int("prompts", defaultPromptCount, "Number of prompts to generate")
-        toolSize      = flag.Int("tool-size", defaultToolSize, "Size of tool response payload in bytes")
-        resourceSize  = flag.Int("resource-size", defaultResourceSize, "Size of resource response payload in bytes")
-        promptSize    = flag.Int("prompt-size", defaultPromptSize, "Size of prompt response payload in bytes")
-        showHelp      = flag.Bool("help", false, "Show help message")
+        transport    = flag.String("transport", "stdio", "Transport: stdio | sse | http")
+        addrFlag     = flag.String("addr", "", "Full listen address (host:port) - overrides -listen/-port")
+        listenHost   = flag.String("listen", defaultListen, "Listen interface for sse/http")
+        port         = flag.Int("port", defaultPort, "TCP port for sse/http")
+        serverCount  = flag.Int("server-count", defaultServerCount, "Number of servers to spawn (for multi-server testing)")
+        startPort    = flag.Int("start-port", defaultPort, "Starting port for multi-server mode")
+        publicURL    = flag.String("public-url", "", "External base URL advertised to SSE clients")
+        authToken    = flag.String("auth-token", "", "Bearer token for authentication (SSE/HTTP only)")
+        logLevel     = flag.String("log-level", defaultLogLevel, "Logging level: debug|info|warn|error|none")
+        toolCount    = flag.Int("tools", defaultToolCount, "Number of tools to generate")
+        resourceCnt  = flag.Int("resources", defaultResourceCnt, "Number of resources to generate")
+        promptCount  = flag.Int("prompts", defaultPromptCount, "Number of prompts to generate")
+        toolSize     = flag.Int("tool-size", defaultToolSize, "Size of tool response payload in bytes")
+        resourceSize = flag.Int("resource-size", defaultResourceSize, "Size of resource response payload in bytes")
+        promptSize   = flag.Int("prompt-size", defaultPromptSize, "Size of prompt response payload in bytes")
+        showHelp     = flag.Bool("help", false, "Show help message")
     )
 
     // Custom usage function
@@ -477,17 +478,17 @@ func main() {
             fmt.Fprintf(flag.CommandLine.Output(), ind+ind+"%s (default %q)\n\n",
                 fl.Usage, fl.DefValue)
         })
-        fmt.Fprintf(flag.CommandLine.Output(),
-            "Examples:\n"+
-                ind+"%s -tools=1000 -resources=500 -prompts=200\n"+
-                ind+"%s -transport=sse -port=8080 -tools=500\n"+
-                ind+"%s -tools=100 -tool-size=5000 -resource-size=10000 -prompt-size=2000\n"+
-                ind+"%s -tools=10000 -resources=0 -prompts=0 -tool-size=500\n"+
-                ind+"%s -transport=sse -server-count=10 -start-port=8080 -tools=100\n"+
-                ind+"%s -transport=http -server-count=5 -start-port=9000\n\n"+
-                "Environment Variables:\n"+
-                ind+"AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
-            os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+        fmt.Fprint(flag.CommandLine.Output(),
+            "Examples:\n",
+            ind, appName, " -tools=1000 -resources=500 -prompts=200\n",
+            ind, appName, " -transport=sse -port=8080 -tools=500\n",
+            ind, appName, " -tools=100 -tool-size=5000 -resource-size=10000 -prompt-size=2000\n",
+            ind, appName, " -tools=10000 -resources=0 -prompts=0 -tool-size=500\n",
+            ind, appName, " -transport=sse -server-count=10 -start-port=8080 -tools=100\n",
+            ind, appName, " -transport=http -server-count=5 -start-port=9000\n\n",
+            "Environment Variables:\n",
+            ind, "AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
+        )
     }
 
     flag.Parse()

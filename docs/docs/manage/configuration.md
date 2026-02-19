@@ -32,6 +32,7 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
+| `PROTECT_ALL_ADMINS` | Prevent any admin from being demoted or deactivated via API/UI | `true` |
 
 ### ⚙️ Project Defaults (Dev Setup)
 
@@ -246,15 +247,33 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
 ### UI Features
 
+For detailed guidance on embedding and section customization, see [Admin UI Customization](admin-ui-customization.md).
+
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
 | `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
+| `MCPGATEWAY_UI_EMBEDDED`       | Embedded UI mode (hides logout + team selector by default) | `false` | bool |
+| `MCPGATEWAY_UI_HIDE_SECTIONS`  | CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings) | `[]` | CSV/JSON list |
+| `MCPGATEWAY_UI_HIDE_HEADER_ITEMS` | CSV/JSON list of header items to hide (logout, team_selector, user_identity, theme_toggle) | `[]` | CSV/JSON list |
 | `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
 | `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
+
+!!! note "Per-Request UI Hiding"
+    For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
+
+    Example:
+    ```text
+    /admin/?ui_hide=prompts,resources,teams
+    ```
+
+    The query value is stored in an HttpOnly cookie with a 30-day lifetime. Clear it by visiting:
+    ```text
+    /admin/?ui_hide=
+    ```
 
 !!! tip "Production Settings"
     Set both UI and Admin API to `false` to disable management UI and APIs in production.
@@ -273,6 +292,20 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+
+### Direct Proxy Mode
+
+| Setting                              | Description                                    | Default | Options |
+| ------------------------------------ | ---------------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_DIRECT_PROXY_ENABLED`    | Enable direct_proxy gateway mode               | `false` | bool    |
+| `MCPGATEWAY_DIRECT_PROXY_TIMEOUT`    | Timeout for direct proxy operations (seconds)  | `30`    | int     |
+
+**Configuration Effects:**
+
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=false` (default): Gateways cannot use `gateway_mode=direct_proxy`; existing ones fall back to cache mode
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=true`: Enables pass-through MCP operations bypassing the caching layer
+
+**Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway's ID. All MCP operations (tools/list, tools/call, resources/list, resources/read) will be proxied directly to the remote server.
 
 ### ToolOps
 
@@ -421,8 +454,29 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PASSWORD_REQUIRE_LOWERCASE`  | Require lowercase letters in passwords           | `true`                | bool    |
 | `PASSWORD_REQUIRE_NUMBERS`    | Require numbers in passwords                     | `false`               | bool    |
 | `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `true`                | bool    |
-| `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `5`                   | int > 0 |
-| `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `30`                  | int > 0 |
+| `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `10`                  | int > 0 |
+| `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `1`                   | int > 0 |
+| `ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED` | Send lockout notification emails      | `true`                | bool    |
+| `PASSWORD_RESET_ENABLED`      | Enable self-service forgot-password/reset flow   | `true`                | bool    |
+| `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` | Password reset token expiry window     | `60`                  | int > 0 |
+| `PASSWORD_RESET_RATE_LIMIT`   | Max reset requests per email in rate window      | `5`                   | int > 0 |
+| `PASSWORD_RESET_RATE_WINDOW_MINUTES` | Password reset rate-limit window        | `15`                  | int > 0 |
+| `PASSWORD_RESET_INVALIDATE_SESSIONS` | Invalidate active sessions on reset     | `true`                | bool    |
+| `PASSWORD_RESET_MIN_RESPONSE_MS` | Minimum forgot-password response duration    | `250`                 | int >= 0 |
+| `PROTECT_ALL_ADMINS`         | Prevent any admin from being demoted or deactivated via API/UI. When false, only the last active admin is protected. | `true` | bool |
+| `SMTP_ENABLED`                | Enable SMTP notifications for auth emails        | `false`               | bool    |
+| `SMTP_HOST`                   | SMTP host                                         | (none)                | string  |
+| `SMTP_PORT`                   | SMTP port                                         | `587`                 | int     |
+| `SMTP_USER`                   | SMTP username                                     | (none)                | string  |
+| `SMTP_PASSWORD`               | SMTP password                                     | (none)                | string  |
+| `SMTP_FROM_EMAIL`             | Sender email address                              | (none)                | string  |
+| `SMTP_FROM_NAME`              | Sender display name                               | `MCP Gateway`         | string  |
+| `SMTP_USE_TLS`                | Use STARTTLS                                      | `true`                | bool    |
+| `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
+| `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
+
+When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
+When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
 
 ### MCP Client Authentication
 
@@ -710,7 +764,7 @@ MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed t
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-BETA-2`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-1`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -822,6 +876,17 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `PROMPT_CACHE_SIZE`     | Cached prompt templates          | `100`    | int > 0 |
 | `MAX_PROMPT_SIZE`       | Max prompt template size (bytes) | `102400` | int > 0 |
 | `PROMPT_RENDER_TIMEOUT` | Jinja render timeout (secs)      | `10`     | int > 0 |
+
+### Schema Validation
+
+| Setting | Description | Default | Options |
+| :--- | :--- | :--- | :--- |
+| `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
+
+**Strict Mode Scenarios:**
+
+- **`true` (Default)**: Invalid schemas (e.g., unknown types, malformed JSON Schema) will cause registration to **fail** with a 400 error. This ensures that only valid, spec-compliant tools and prompts are registered, preventing runtime issues later.
+- **`false`**: Invalid schemas will be **logged as warnings** but successfully persisted. Use this **only** for backward compatibility if you have legacy tools with broken schemas that cannot be immediately updated. Invalid schemas may still cause runtime errors when used by LLMs or downstream tools.
 
 ### Health Checks
 
@@ -1011,6 +1076,11 @@ BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
+# Embedded UI mode (hides logout + team selector by default)
+MCPGATEWAY_UI_EMBEDDED=false
+# CSV/JSON list of UI sections/header items to hide (optional)
+MCPGATEWAY_UI_HIDE_SECTIONS=
+MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
 ```
 
 ### Docker Compose with MySQL

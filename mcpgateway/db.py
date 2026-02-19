@@ -472,15 +472,13 @@ def before_commit_handler(session):
     """Handler before commit to ensure transaction is in good state.
 
     This is called before COMMIT, ensuring any pending work is flushed.
+    If the flush fails, the exception is propagated so the commit also fails
+    and the caller's error handling (e.g. get_db rollback) can clean up properly.
 
     Args:
         session: The SQLAlchemy session about to commit.
     """
-    try:
-        session.flush()
-    except Exception:  # nosec B110
-        # If flush fails, the commit will also fail and trigger rollback
-        pass
+    session.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -953,6 +951,7 @@ class Permissions:
     # Server permissions
     SERVERS_CREATE = "servers.create"
     SERVERS_READ = "servers.read"
+    SERVERS_USE = "servers.use"
     SERVERS_UPDATE = "servers.update"
     SERVERS_DELETE = "servers.delete"
     SERVERS_MANAGE = "servers.manage"
@@ -1069,6 +1068,8 @@ class EmailUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Track how admin status was granted: "sso" (synced from IdP), "manual" (Admin UI), "api" (API grant), or None (legacy)
+    admin_origin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Status fields
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -1128,7 +1129,12 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        return utc_now() < self.locked_until
+        if utc_now() >= self.locked_until:
+            # Lockout expired: reset counters so users get a fresh attempt window.
+            self.failed_login_attempts = 0
+            self.locked_until = None
+            return False
+        return True
 
     def get_display_name(self) -> str:
         """Get the user's display name.
@@ -1406,6 +1412,45 @@ class EmailAuthEvent(Base):
             EmailAuthEvent: New authentication event
         """
         return cls(user_email=user_email, event_type="password_change", success=success, ip_address=ip_address, user_agent=user_agent)
+
+
+class PasswordResetToken(Base):
+    """One-time password reset token record.
+
+    Stores only a SHA-256 hash of the user-facing token. Tokens are one-time use
+    and expire after a configured duration.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    user: Mapped["EmailUser"] = relationship("EmailUser")
+
+    __table_args__ = (Index("ix_password_reset_tokens_expires_at", "expires_at"),)
+
+    def is_expired(self) -> bool:
+        """Return whether the reset token has expired.
+
+        Returns:
+            bool: True when `expires_at` is in the past.
+        """
+        return self.expires_at <= utc_now()
+
+    def is_used(self) -> bool:
+        """Return whether the reset token was already consumed.
+
+        Returns:
+            bool: True when `used_at` is set.
+        """
+        return self.used_at is not None
 
 
 class EmailTeam(Base):
@@ -2775,6 +2820,7 @@ class Tool(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(767), nullable=True)
+    original_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     integration_type: Mapped[str] = mapped_column(String(20), default="MCP")
     request_type: Mapped[str] = mapped_column(String(20), default="SSE")
@@ -4400,6 +4446,11 @@ class Gateway(Base):
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
 
+    # Gateway mode: 'cache' (default) or 'direct_proxy'
+    # - 'cache': Tools/resources/prompts are cached in database upon gateway registration (current behavior)
+    # - 'direct_proxy': All RPC calls are proxied directly to remote MCP server with no database caching
+    gateway_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
+
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 
@@ -5257,6 +5308,9 @@ def validate_tool_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
+    Raises:
+        ValueError: If the tool input schema is invalid.
+
     """
     # You can use mapper and connection later, if required.
     _ = mapper
@@ -5276,14 +5330,20 @@ def validate_tool_schema(mapper, connection, target):
             return
 
         try:
-            validator = jsonschema.validators.validator_for(schema)
+            # If $schema is missing, default to Draft 2020-12 as per MCP spec.
+            if schema.get("$schema") is None:
+                validator_cls = jsonschema.Draft202012Validator
+            else:
+                validator_cls = jsonschema.validators.validator_for(schema)
 
-            if validator.__name__ not in allowed_validator_names:
-                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+            if validator_cls.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
 
-            validator.check_schema(schema)
+            validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
             logger.warning(f"Invalid tool input schema: {str(e)}")
+            if settings.json_schema_validation_strict:
+                raise ValueError(f"Invalid tool input schema: {str(e)}") from e
 
 
 def validate_tool_name(mapper, connection, target):
@@ -5336,14 +5396,20 @@ def validate_prompt_schema(mapper, connection, target):
             return
 
         try:
-            validator = jsonschema.validators.validator_for(schema)
+            # If $schema is missing, default to Draft 2020-12 as per MCP spec.
+            if schema.get("$schema") is None:
+                validator_cls = jsonschema.Draft202012Validator
+            else:
+                validator_cls = jsonschema.validators.validator_for(schema)
 
-            if validator.__name__ not in allowed_validator_names:
-                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+            if validator_cls.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
 
-            validator.check_schema(schema)
+            validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
             logger.warning(f"Invalid prompt argument schema: {str(e)}")
+            if settings.json_schema_validation_strict:
+                raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
 
 
 # Register validation listeners

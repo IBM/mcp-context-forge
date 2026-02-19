@@ -105,14 +105,17 @@ def test_client() -> TestClient:
     async def mock_user_with_permissions():
         """Mock user context for RBAC."""
         db_session = TestSessionLocal()
-        return {
-            "email": "integration-test-user@example.com",
-            "full_name": "Integration Test User",
-            "is_admin": True,
-            "ip_address": "127.0.0.1",
-            "user_agent": "test-client",
-            "db": db_session,
-        }
+        try:
+            yield {
+                "email": "integration-test-user@example.com",
+                "full_name": "Integration Test User",
+                "is_admin": True,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": db_session,
+            }
+        finally:
+            db_session.close()
 
     def mock_get_permission_service(*args, **kwargs):
         """Return a mock permission service that always grants access."""
@@ -175,6 +178,7 @@ MOCK_TOOL = ToolRead(
     original_name="test_tool",
     url="http://example.com/tools/test",
     description="demo",
+    original_description="original demo",
     request_type="POST",
     integration_type="MCP",
     headers={"Content-Type": "application/json"},

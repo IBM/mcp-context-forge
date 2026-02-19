@@ -133,8 +133,10 @@ async def test_stdio_to_sse_echo_initialize(echo_server, unused_tcp_port):
                 async for line in response.aiter_lines():
                     line_count += 1
 
-                    if line.startswith("data: "):
-                        data = line[6:]
+                    if line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
 
                         if message_endpoint is None and data.startswith("http"):
                             # First data is the endpoint URL

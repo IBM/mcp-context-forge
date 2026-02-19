@@ -554,3 +554,478 @@ async def test_get_gateway_models_failure(monkeypatch: pytest.MonkeyPatch):
         await llmchat_router.get_gateway_models(_user={"id": "user1"})
 
     assert excinfo.value.status_code == 500
+
+
+# ---------- Additional coverage tests ----------
+
+
+@pytest.mark.asyncio
+async def test_init_redis_with_redis_config(monkeypatch: pytest.MonkeyPatch):
+    mock_redis = AsyncMock()
+    monkeypatch.setattr(llmchat_router.settings, "cache_type", "redis")
+    monkeypatch.setattr(llmchat_router.settings, "redis_url", "redis://localhost")
+    monkeypatch.setattr(llmchat_router, "get_redis_client", AsyncMock(return_value=mock_redis))
+
+    await llmchat_router.init_redis()
+
+    assert llmchat_router.redis_client is mock_redis
+    # Clean up
+    llmchat_router.redis_client = None
+
+
+@pytest.mark.asyncio
+async def test_init_redis_client_returns_none(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router.settings, "cache_type", "redis")
+    monkeypatch.setattr(llmchat_router.settings, "redis_url", "redis://localhost")
+    monkeypatch.setattr(llmchat_router, "get_redis_client", AsyncMock(return_value=None))
+
+    await llmchat_router.init_redis()
+
+    assert llmchat_router.redis_client is None
+
+
+@pytest.mark.asyncio
+async def test_chat_session_not_initialized():
+    svc = DummyChatService(config=None, user_id="user1")
+    svc.is_initialized = False
+    llmchat_router.active_sessions["user1"] = svc
+
+    input_data = ChatInput(user_id="user1", message="hi", streaming=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.chat(input_data, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 503
+    assert "not properly initialized" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_chat_runtime_error():
+    class RuntimeErrorChat(DummyChatService):
+        async def chat_with_metadata(self, message):
+            raise RuntimeError("service error")
+
+    llmchat_router.active_sessions["user1"] = RuntimeErrorChat(config=None, user_id="user1")
+    input_data = ChatInput(user_id="user1", message="hi", streaming=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.chat(input_data, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_chat_connection_error():
+    class ConnectionErrorChat(DummyChatService):
+        async def chat_with_metadata(self, message):
+            raise ConnectionError("lost connection")
+
+    llmchat_router.active_sessions["user1"] = ConnectionErrorChat(config=None, user_id="user1")
+    input_data = ChatInput(user_id="user1", message="hi", streaming=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.chat(input_data, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_chat_timeout_error():
+    class TimeoutChat(DummyChatService):
+        async def chat_with_metadata(self, message):
+            raise TimeoutError("timed out")
+
+    llmchat_router.active_sessions["user1"] = TimeoutChat(config=None, user_id="user1")
+    input_data = ChatInput(user_id="user1", message="hi", streaming=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.chat(input_data, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 504
+
+
+@pytest.mark.asyncio
+async def test_chat_unexpected_error():
+    class UnexpectedErrorChat(DummyChatService):
+        async def chat_with_metadata(self, message):
+            raise ValueError("unexpected")
+
+    llmchat_router.active_sessions["user1"] = UnexpectedErrorChat(config=None, user_id="user1")
+    input_data = ChatInput(user_id="user1", message="hi", streaming=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.chat(input_data, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_chat_empty_message():
+    llmchat_router.active_sessions["user1"] = DummyChatService(config=None, user_id="user1")
+    input_data = ChatInput(user_id="user1", message="   ", streaming=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.chat(input_data, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 400
+    assert "empty" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_token_streamer_connection_error():
+    class ConnErrChat(DummyChatService):
+        async def chat_events(self, message):
+            raise ConnectionError("lost")
+            if message:  # pragma: no cover
+                yield {"type": "token", "content": message}
+
+    svc = ConnErrChat(config=None, user_id="user1")
+    parts = []
+    async for part in llmchat_router.token_streamer(svc, "hi", "user1"):
+        parts.append(part.decode("utf-8"))
+
+    joined = "".join(parts)
+    assert "event: error" in joined
+    assert "Connection lost" in joined
+
+
+@pytest.mark.asyncio
+async def test_token_streamer_timeout_error():
+    class TimeoutChat(DummyChatService):
+        async def chat_events(self, message):
+            raise TimeoutError()
+            if message:  # pragma: no cover
+                yield {"type": "token", "content": message}
+
+    svc = TimeoutChat(config=None, user_id="user1")
+    parts = []
+    async for part in llmchat_router.token_streamer(svc, "hi", "user1"):
+        parts.append(part.decode("utf-8"))
+
+    joined = "".join(parts)
+    assert "event: error" in joined
+    assert "timed out" in joined
+
+
+@pytest.mark.asyncio
+async def test_token_streamer_generic_error():
+    class GenericErrChat(DummyChatService):
+        async def chat_events(self, message):
+            raise ValueError("bad value")
+            if message:  # pragma: no cover
+                yield {"type": "token", "content": message}
+
+    svc = GenericErrChat(config=None, user_id="user1")
+    parts = []
+    async for part in llmchat_router.token_streamer(svc, "hi", "user1"):
+        parts.append(part.decode("utf-8"))
+
+    joined = "".join(parts)
+    assert "event: error" in joined
+    assert "Unexpected error" in joined
+
+
+@pytest.mark.asyncio
+async def test_token_streamer_tool_events():
+    class ToolChat(DummyChatService):
+        async def chat_events(self, message):
+            yield {"type": "tool_start", "tool": "search"}
+            yield {"type": "tool_end", "tool": "search", "result": "ok"}
+            yield {"type": "tool_error", "tool": "search", "error": "oops"}
+            yield {"type": "final", "text": "done", "metadata": {}}
+
+    svc = ToolChat(config=None, user_id="user1")
+    parts = []
+    async for part in llmchat_router.token_streamer(svc, "hi", "user1"):
+        parts.append(part.decode("utf-8"))
+
+    joined = "".join(parts)
+    assert "event: tool_start" in joined
+    assert "event: tool_end" in joined
+    assert "event: tool_error" in joined
+    assert "event: final" in joined
+
+
+def test_get_user_id_from_context_non_dict():
+    assert llmchat_router._get_user_id_from_context(None) == "unknown"
+    assert llmchat_router._get_user_id_from_context("user123") == "user123"
+
+    class UserObj:
+        id = "obj-user"
+
+    assert llmchat_router._get_user_id_from_context(UserObj()) == "obj-user"
+
+
+def test_resolve_user_id_match():
+    result = llmchat_router._resolve_user_id("user1", {"id": "user1"})
+    assert result == "user1"
+
+
+def test_resolve_user_id_none_input():
+    result = llmchat_router._resolve_user_id(None, {"id": "user1"})
+    assert result == "user1"
+
+
+@pytest.mark.asyncio
+async def test_connect_init_value_error(monkeypatch: pytest.MonkeyPatch):
+    class InitValueErrorChatService(DummyChatService):
+        async def initialize(self):
+            raise ValueError("bad model")
+
+    monkeypatch.setattr(llmchat_router, "MCPChatService", InitValueErrorChatService)
+    delete_config = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "delete_user_config", delete_config)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 400
+    assert "Invalid LLM configuration" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_connect_init_generic_error(monkeypatch: pytest.MonkeyPatch):
+    class InitGenericErrorChatService(DummyChatService):
+        async def initialize(self):
+            raise RuntimeError("init failed")
+
+    monkeypatch.setattr(llmchat_router, "MCPChatService", InitGenericErrorChatService)
+    delete_config = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "delete_user_config", delete_config)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 500
+    assert "Service initialization failed" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_connect_build_config_generic_error(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "build_config", MagicMock(side_effect=RuntimeError("config error")))
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 400
+    assert "Configuration error" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_connect_unexpected_error(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+    monkeypatch.setattr(llmchat_router, "get_active_session", AsyncMock(side_effect=RuntimeError("unexpected")))
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1"})
+
+    assert excinfo.value.status_code == 500
+    assert "Unexpected connection error" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_connect_no_server(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=None)
+
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert result["status"] == "connected"
+
+
+@pytest.mark.asyncio
+async def test_connect_tool_extraction_error(monkeypatch: pytest.MonkeyPatch):
+    class BadToolChat:
+        def __init__(self, config, user_id=None, redis_client=None):
+            self.config = config
+            self.user_id = user_id
+            self.is_initialized = True
+
+        async def initialize(self):
+            pass
+
+        async def clear_history(self):
+            pass
+
+        async def shutdown(self):
+            pass
+
+        @property
+        def _tools(self):
+            raise RuntimeError("tool error")
+
+    monkeypatch.setattr(llmchat_router, "MCPChatService", BadToolChat)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
+
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert result["status"] == "connected"
+    assert result["tool_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_expire_failure(monkeypatch: pytest.MonkeyPatch):
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = llmchat_router.WORKER_ID
+    redis_mock.expire.side_effect = RuntimeError("expire failed")
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is session
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_owner_missing_lock_failed(monkeypatch: pytest.MonkeyPatch):
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = llmchat_router.WORKER_ID
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    # No local session
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=False))
+    monkeypatch.setattr(llmchat_router, "LOCK_RETRIES", 1)
+    monkeypatch.setattr(llmchat_router.asyncio, "sleep", AsyncMock())
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_no_owner_claim_success(monkeypatch: pytest.MonkeyPatch):
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(llmchat_router, "_create_local_session_from_config", AsyncMock(return_value=session))
+    release_lock = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", release_lock)
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is session
+    assert release_lock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_no_owner_retry_our_worker(monkeypatch: pytest.MonkeyPatch):
+    redis_mock = AsyncMock()
+    redis_mock.get.side_effect = [None, llmchat_router.WORKER_ID]
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    # First lock fails, then gets session during retry
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=False))
+    monkeypatch.setattr(llmchat_router, "LOCK_RETRIES", 1)
+    monkeypatch.setattr(llmchat_router.asyncio, "sleep", AsyncMock())
+    llmchat_router.active_sessions["u1"] = session
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is session
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_no_owner_final_acquire(monkeypatch: pytest.MonkeyPatch):
+    redis_mock = AsyncMock()
+    redis_mock.get.side_effect = [None, None]
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    # First lock fails, retry loop finds no owner, final acquire succeeds
+    lock_calls = [False, True]
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(side_effect=lock_calls))
+    monkeypatch.setattr(llmchat_router, "_create_local_session_from_config", AsyncMock(return_value=session))
+    release_lock = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", release_lock)
+    monkeypatch.setattr(llmchat_router, "LOCK_RETRIES", 1)
+    monkeypatch.setattr(llmchat_router.asyncio, "sleep", AsyncMock())
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is session
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_no_owner_all_fail(monkeypatch: pytest.MonkeyPatch):
+    redis_mock = AsyncMock()
+    redis_mock.get.side_effect = [None, None]
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=False))
+    monkeypatch.setattr(llmchat_router, "LOCK_RETRIES", 1)
+    monkeypatch.setattr(llmchat_router.asyncio, "sleep", AsyncMock())
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_create_local_session_no_config(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "get_user_config", AsyncMock(return_value=None))
+
+    result = await llmchat_router._create_local_session_from_config("u1")
+    assert result is None
+
+
+def test_build_llm_config_with_temperature():
+    config = llmchat_router.build_llm_config(LLMInput(model="gpt-4", temperature=0.5, max_tokens=100))
+    assert config.config.temperature == 0.5
+    assert config.config.max_tokens == 100
+
+
+def test_build_config_with_server():
+    config = llmchat_router.build_config(ConnectInput(
+        user_id="u1",
+        llm=LLMInput(model="gpt"),
+        server=ServerInput(url="http://custom/mcp", transport="sse", auth_token="token"),
+        streaming=True,
+    ))
+    assert config.mcp_server.url == "http://custom/mcp"
+    assert config.mcp_server.transport == "sse"
+    assert config.mcp_server.auth_token == "token"
+    assert config.enable_streaming is True
+
+
+@pytest.mark.asyncio
+async def test_get_user_config_redis_no_data(monkeypatch: pytest.MonkeyPatch):
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    result = await llmchat_router.get_user_config("u1")
+    assert result is None

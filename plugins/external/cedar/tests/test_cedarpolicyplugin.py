@@ -53,7 +53,7 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
     ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*"}
+    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*", "redaction_str": "[REDACTED]"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -99,7 +99,7 @@ async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
     [role:employee:server/askHR]\nview_redacted_output"
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*"}
+    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*", "redaction_str": "[REDACTED]"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -352,7 +352,7 @@ async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
     ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern": "all"}
+    policy_redaction_spec = {"pattern": "all", "redaction_str": "[REDACTED]"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -399,7 +399,7 @@ async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
     policy_config = "[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output"
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern": "all"}
+    policy_redaction_spec = {"pattern": "all", "redaction_str": "[REDACTED]"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -558,7 +558,7 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
     ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
+    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}", "redaction_str": "[REDACTED]"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -603,7 +603,7 @@ async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
     """Test plugin resource postfetch hook."""
     policy_config = "[role:employee:resource/https://example.com/data]\nview_redacted_output\n\n[role:admin:resource/https://example.com/data]\nview_full_output"
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
+    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}", "redaction_str": "[REDACTED]"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",

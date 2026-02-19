@@ -7,48 +7,179 @@ stateful Streamable HTTP sessions.
 """
 
 import asyncio
-import os
-import time
+import uuid
+from unittest.mock import AsyncMock
 
+import orjson
 import pytest
 
 from mcpgateway.transports.redis_event_store import RedisEventStore
-from mcpgateway.utils.redis_client import get_redis_client
+
+
+class InMemoryRedisClient:
+    """Minimal async Redis simulation for RedisEventStore unit tests."""
+
+    def __init__(self) -> None:
+        self._meta: dict[str, dict[str, int]] = {}
+        self._events: dict[str, list[tuple[int, str]]] = {}
+        self._messages: dict[str, dict[str, bytes]] = {}
+        self._kv: dict[str, bytes] = {}
+        self._expires_at: dict[str, float] = {}
+        self._lock = asyncio.Lock()
+
+    def _now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    def _purge_expired_key(self, key: str) -> None:
+        expires_at = self._expires_at.get(key)
+        if expires_at is not None and expires_at <= self._now():
+            self._meta.pop(key, None)
+            self._events.pop(key, None)
+            self._messages.pop(key, None)
+            self._kv.pop(key, None)
+            self._expires_at.pop(key, None)
+
+    def _purge_all_expired(self) -> None:
+        for key in list(self._expires_at):
+            self._purge_expired_key(key)
+
+    def _set_expiry(self, key: str, ttl: int) -> None:
+        self._expires_at[key] = self._now() + ttl
+
+    def _has_key(self, key: str) -> bool:
+        self._purge_expired_key(key)
+        return key in self._meta or key in self._events or key in self._messages or key in self._kv
+
+    async def eval(
+        self,
+        _script: str,
+        _num_keys: int,
+        meta_key: str,
+        events_key: str,
+        messages_key: str,
+        event_id: str,
+        message_json: bytes,
+        ttl: int,
+        max_events: int,
+        index_prefix: str,
+        stream_id: str,
+    ) -> int:
+        async with self._lock:
+            self._purge_expired_key(meta_key)
+            self._purge_expired_key(events_key)
+            self._purge_expired_key(messages_key)
+
+            meta = self._meta.setdefault(meta_key, {"next_seq": 0, "count": 0})
+            events = self._events.setdefault(events_key, [])
+            messages = self._messages.setdefault(messages_key, {})
+
+            seq_num = int(meta.get("next_seq", 0)) + 1
+            count = int(meta.get("count", 0)) + 1
+            meta["next_seq"] = seq_num
+            meta["count"] = count
+
+            if count == 1:
+                meta["start_seq"] = seq_num
+
+            events.append((seq_num, event_id))
+            messages[event_id] = bytes(message_json)
+
+            index_key = f"{index_prefix}{event_id}"
+            self._kv[index_key] = orjson.dumps({"stream_id": stream_id, "seq_num": seq_num})
+            self._set_expiry(index_key, int(ttl))
+
+            if count > int(max_events):
+                to_evict = count - int(max_events)
+                evicted = events[:to_evict]
+                del events[:to_evict]
+
+                for _, evicted_id in evicted:
+                    messages.pop(evicted_id, None)
+                    evicted_index_key = f"{index_prefix}{evicted_id}"
+                    self._kv.pop(evicted_index_key, None)
+                    self._expires_at.pop(evicted_index_key, None)
+
+                meta["count"] = int(max_events)
+                if events:
+                    meta["start_seq"] = events[0][0]
+                else:
+                    meta["start_seq"] = seq_num
+
+            self._set_expiry(meta_key, int(ttl))
+            self._set_expiry(events_key, int(ttl))
+            self._set_expiry(messages_key, int(ttl))
+            return seq_num
+
+    async def get(self, key: str):
+        async with self._lock:
+            self._purge_expired_key(key)
+            return self._kv.get(key)
+
+    async def hget(self, key: str, field: str):
+        async with self._lock:
+            self._purge_expired_key(key)
+            if key in self._meta:
+                value = self._meta[key].get(field)
+                if value is None:
+                    return None
+                return str(value).encode("utf-8")
+            if key in self._messages:
+                return self._messages[key].get(field)
+            return None
+
+    async def zrangebyscore(self, key: str, min_score, max_score):
+        async with self._lock:
+            self._purge_expired_key(key)
+            events = self._events.get(key, [])
+            minimum = float(min_score)
+            maximum = float("inf") if max_score == "+inf" else float(max_score)
+            return [event_id.encode("utf-8") for seq_num, event_id in events if minimum <= seq_num <= maximum]
+
+    async def exists(self, key: str) -> int:
+        async with self._lock:
+            return int(self._has_key(key))
+
+    async def keys(self, pattern: str):
+        async with self._lock:
+            self._purge_all_expired()
+            all_keys = set(self._meta) | set(self._events) | set(self._messages) | set(self._kv)
+            if pattern.endswith("*"):
+                prefix = pattern[:-1]
+                return [key for key in all_keys if key.startswith(prefix)]
+            return [key for key in all_keys if key == pattern]
+
+    async def delete(self, *keys: str) -> int:
+        async with self._lock:
+            deleted = 0
+            for key in keys:
+                key_existed = self._has_key(key)
+                self._meta.pop(key, None)
+                self._events.pop(key, None)
+                self._messages.pop(key, None)
+                self._kv.pop(key, None)
+                self._expires_at.pop(key, None)
+                deleted += int(key_existed)
+            return deleted
 
 
 @pytest.fixture
-async def redis_event_store(monkeypatch):
+def fake_redis_client():
+    """In-memory Redis client used by unit tests."""
+    return InMemoryRedisClient()
+
+
+@pytest.fixture
+async def redis_event_store(monkeypatch, fake_redis_client):
     """Create a RedisEventStore instance for testing."""
-    # Enable Redis for this test
-    monkeypatch.setenv("CACHE_TYPE", "redis")
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
+    monkeypatch.setattr(
+        "mcpgateway.transports.redis_event_store.get_redis_client",
+        AsyncMock(return_value=fake_redis_client),
+    )
 
-    # Reset Redis client to pick up new settings
-    from mcpgateway.utils.redis_client import _reset_client
-    from mcpgateway.config import settings
-
-    _reset_client()
-    # Force settings reload by directly setting attributes
-    settings.cache_type = "redis"
-    settings.redis_url = "redis://localhost:6379"
-
-    # Check if Redis is available
-    redis = await get_redis_client()
-    if redis is None:
-        pytest.skip("Redis not available - skipping Redis event store tests")
-
-    store = RedisEventStore(max_events_per_stream=10, ttl=60)
+    # Use a per-test prefix to avoid cross-test interference under xdist.
+    key_prefix = f"mcpgw:eventstore:test:{uuid.uuid4().hex}"
+    store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix=key_prefix)
     yield store
-
-    # Cleanup: delete all test keys
-    redis = await get_redis_client()
-    if redis:
-        keys = await redis.keys("mcpgw:eventstore:*")
-        if keys:
-            await redis.delete(*keys)
-
-    # Reset client after test
-    _reset_client()
 
 
 @pytest.fixture
@@ -174,7 +305,7 @@ class TestRedisEventStore:
         assert len(replayed1) == 0  # No events after event1 in stream1
         assert len(replayed2) == 0  # No events after event2 in stream2
 
-    async def test_ttl_expiration(self, redis_event_store):
+    async def test_ttl_expiration(self, redis_event_store, fake_redis_client):
         """Streams expire after TTL."""
         # Create store with very short TTL
         short_ttl_store = RedisEventStore(max_events_per_stream=10, ttl=1)
@@ -196,7 +327,7 @@ class TestRedisEventStore:
         await asyncio.sleep(2)
 
         # Verify stream keys expired in Redis
-        redis = await get_redis_client()
+        redis = fake_redis_client
         meta_key = f"mcpgw:eventstore:{stream_id}:meta"
         events_key = f"mcpgw:eventstore:{stream_id}:events"
         messages_key = f"mcpgw:eventstore:{stream_id}:messages"
@@ -312,7 +443,7 @@ class TestRedisEventStore:
     async def test_sequence_ordering(self, redis_event_store):
         """Events are replayed in correct sequence order."""
         # Create store with larger capacity to avoid eviction during this test
-        large_store = RedisEventStore(max_events_per_stream=30, ttl=60)
+        large_store = RedisEventStore(max_events_per_stream=30, ttl=60, key_prefix=redis_event_store.key_prefix)
 
         stream_id = "test-stream-ordering"
         messages = [{"jsonrpc": "2.0", "method": f"msg_{i}", "id": i} for i in range(20)]
@@ -335,3 +466,144 @@ class TestRedisEventStore:
         assert len(replayed) == 15
         for i, msg in enumerate(replayed):
             assert msg["method"] == f"msg_{i + 5}"
+
+    async def test_store_event_raises_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+
+        with pytest.raises(RuntimeError, match="Redis client not available"):
+            await store.store_event("stream", {"jsonrpc": "2.0", "method": "test", "id": 1})
+
+    async def test_replay_events_after_returns_none_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
+
+    async def test_replay_events_after_returns_none_for_invalid_index_data(self, monkeypatch: pytest.MonkeyPatch):
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=b"{")  # invalid JSON
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
+
+    async def test_replay_events_after_returns_none_when_index_missing_fields(self, monkeypatch: pytest.MonkeyPatch):
+        import orjson
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": "s"}))  # seq_num missing
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
+
+    async def test_replay_events_after_handles_bad_start_seq_and_bad_messages(self, monkeypatch: pytest.MonkeyPatch):
+        import orjson
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        stream_id = "s"
+        meta_key = store._get_stream_meta_key(stream_id)
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.zrangebyscore = AsyncMock(return_value=[b"ev-1", b"ev-2"])
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                if key == meta_key and field == "start_seq":
+                    return b"not-int"
+                if key == messages_key and field == "ev-1":
+                    return None
+                if key == messages_key and field == "ev-2":
+                    return b"{"  # invalid JSON -> replay None
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) == stream_id
+        callback.assert_awaited_once_with(None)
+
+    async def test_replay_events_after_returns_none_when_event_evicted_by_start_seq(self, monkeypatch: pytest.MonkeyPatch):
+        import orjson
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        stream_id = "s"
+        meta_key = store._get_stream_meta_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.hget = AsyncMock(side_effect=self._hget)
+                self.zrangebyscore = AsyncMock()
+
+            async def _hget(self, key: str, field: str):
+                if key == meta_key and field == "start_seq":
+                    return b"10"  # start_seq > last_seq -> evicted
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
+
+    async def test_replay_events_after_with_missing_start_seq_still_replays(self, monkeypatch: pytest.MonkeyPatch):
+        import orjson
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        stream_id = "s"
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.zrangebyscore = AsyncMock(return_value=[b"ev-2"])
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                if field == "start_seq":
+                    return None
+                if key == messages_key and field == "ev-2":
+                    return orjson.dumps({"jsonrpc": "2.0", "id": 2})
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) == stream_id
+        callback.assert_awaited_once()

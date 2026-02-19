@@ -82,8 +82,9 @@ func NewStreamableHTTPTransport(mcpServer *Server, config *StreamableHTTPConfig)
 
     // Create HTTP server with CORS middleware
     transport.server = &http.Server{
-        Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
-        Handler: transport.corsMiddleware(mux), // Wrap with CORS support
+        Addr:              fmt.Sprintf("%s:%d", config.Host, config.Port),
+        Handler:           transport.corsMiddleware(mux), // Wrap with CORS support
+        ReadHeaderTimeout: 10 * time.Second,
     }
 
     // Start background session cleanup goroutine to prevent memory leaks
@@ -234,7 +235,7 @@ func (t *StreamableHTTPTransport) handleGET(w http.ResponseWriter, r *http.Reque
     // Create new session if not provided
     if sessionID == "" {
         sessionID = t.createSession()
-        log.Printf("Created new session: %s", sessionID)
+        log.Println("Created new session")
     }
 
     // Setup SSE stream
@@ -268,19 +269,21 @@ func (t *StreamableHTTPTransport) writeSSEResponse(w http.ResponseWriter, respon
     eventID := t.generateEventID()
     responseJSON, err := json.Marshal(response)
     if err != nil {
-        log.Printf("Failed to marshal response for session %s, event %s: %v", sessionID, eventID, err)
+        log.Printf("Failed to marshal response: %v", err)
         // Send error response to client
         errorResponse := fmt.Sprintf(`{"jsonrpc":"2.0","id":%v,"error":{"code":-32603,"message":"Internal error: failed to serialize response"}}`, response.ID)
-        fmt.Fprintf(w, "id: %s\n", eventID)
-        fmt.Fprintf(w, "event: error\n")
-        fmt.Fprintf(w, "data: %s\n\n", errorResponse)
+        if writeErr := writeSSEEvent(w, eventID, "error", errorResponse); writeErr != nil {
+            log.Printf("Failed to write SSE error response: %v", writeErr)
+            return
+        }
         flusher.Flush()
         return
     }
 
-    fmt.Fprintf(w, "id: %s\n", eventID)
-    fmt.Fprintf(w, "event: message\n")
-    fmt.Fprintf(w, "data: %s\n\n", responseJSON)
+    if err := writeSSEEvent(w, eventID, "message", string(responseJSON)); err != nil {
+        log.Printf("Failed to write SSE response: %v", err)
+        return
+    }
     flusher.Flush()
 }
 
@@ -299,9 +302,10 @@ func (t *StreamableHTTPTransport) setupSSEStream(w http.ResponseWriter, r *http.
     }
 
     // Send initial connection event
-    fmt.Fprintf(w, "id: %s\n", t.generateEventID())
-    fmt.Fprintf(w, "event: connection\n")
-    fmt.Fprintf(w, "data: {\"type\":\"connected\",\"session_id\":\"%s\"}\n\n", sessionID)
+    if err := writeSSEEvent(w, t.generateEventID(), "connection", fmt.Sprintf(`{"type":"connected","session_id":"%s"}`, sessionID)); err != nil {
+        log.Printf("Failed to write initial SSE connection event: %v", err)
+        return
+    }
     flusher.Flush()
 
     // Keep connection alive with periodic heartbeats
@@ -314,12 +318,34 @@ func (t *StreamableHTTPTransport) setupSSEStream(w http.ResponseWriter, r *http.
         case <-ctx.Done():
             return
         case <-ticker.C:
-            fmt.Fprintf(w, "id: %s\n", t.generateEventID())
-            fmt.Fprintf(w, "event: heartbeat\n")
-            fmt.Fprintf(w, "data: {\"type\":\"ping\"}\n\n")
+            if err := writeSSEEvent(w, t.generateEventID(), "heartbeat", `{"type":"ping"}`); err != nil {
+                log.Printf("Failed to write SSE heartbeat: %v", err)
+                return
+            }
             flusher.Flush()
         }
     }
+}
+
+func sanitizeSSEField(value string) string {
+    withoutCR := strings.ReplaceAll(value, "\r", "")
+    return strings.ReplaceAll(withoutCR, "\n", "")
+}
+
+func writeSSEEvent(w io.Writer, id, event, data string) error {
+    if _, err := io.WriteString(w, "id: "+sanitizeSSEField(id)+"\n"); err != nil { // #nosec G705 -- SSE protocol line with sanitized identifier.
+        return err
+    }
+    if _, err := io.WriteString(w, "event: "+sanitizeSSEField(event)+"\n"); err != nil { // #nosec G705 -- SSE protocol line with sanitized event name.
+        return err
+    }
+    for _, line := range strings.Split(data, "\n") {
+        if _, err := io.WriteString(w, "data: "+line+"\n"); err != nil { // #nosec G705 -- SSE data payload (JSON/text) intentionally streamed to client.
+            return err
+        }
+    }
+    _, err := io.WriteString(w, "\n")
+    return err
 }
 
 // mapErrorCodeToHTTPStatus maps JSON-RPC error codes to appropriate HTTP status codes
@@ -391,7 +417,9 @@ func (t *StreamableHTTPTransport) writeJSONResponse(w http.ResponseWriter, respo
     }
 
     w.WriteHeader(statusCode)
-    json.NewEncoder(w).Encode(response)
+    if err := json.NewEncoder(w).Encode(response); err != nil {
+        log.Printf("Failed to encode JSON response: %v", err)
+    }
 }
 
 // writeErrorResponse writes a JSON-RPC error response

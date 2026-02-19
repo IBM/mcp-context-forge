@@ -15,6 +15,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import logging
+import threading
 from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
@@ -22,6 +23,7 @@ import uuid
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 # First-Party
 from mcpgateway.config import settings
@@ -32,6 +34,15 @@ from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
+
+# Module-level sync Redis client for rate-limiting (lazy-initialized)
+_SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
+_SYNC_REDIS_LOCK = threading.Lock()
+_SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection failures
+
+# Module-level in-memory cache for last_used rate-limiting (fallback when Redis unavailable)
+_LAST_USED_CACHE: dict = {}
+_LAST_USED_CACHE_LOCK = threading.Lock()
 
 
 def _log_auth_event(
@@ -143,6 +154,150 @@ def _get_personal_team_sync(user_email: str) -> Optional[str]:
         result = db.execute(select(EmailTeam).join(EmailTeamMember).where(EmailTeamMember.user_email == user_email, EmailTeam.is_personal.is_(True)))
         personal_team = result.scalar_one_or_none()
         return personal_team.id if personal_team else None
+
+
+def _get_user_team_ids_sync(email: str) -> List[str]:
+    """Query all active team IDs for a user (including personal teams).
+
+    Uses a fresh DB session so this can be called from thread pool.
+    Matches the behavior of user.get_teams() which returns all active memberships.
+
+    Args:
+        email: User email address
+
+    Returns:
+        List of team ID strings
+    """
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(
+            select(EmailTeamMember.team_id).where(
+                EmailTeamMember.user_email == email,
+                EmailTeamMember.is_active.is_(True),
+            )
+        )
+        return [row[0] for row in result.all()]
+
+
+def get_user_team_roles(db, user_email: str) -> Dict[str, str]:
+    """Return a {team_id: role} mapping for a user's active team memberships.
+
+    Args:
+        db: SQLAlchemy database session.
+        user_email: Email address of the user to query memberships for.
+
+    Returns:
+        Dict mapping team_id to the user's role in that team.
+        Returns empty dict on DB errors (safe default — headers stay masked).
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+        rows = db.query(EmailTeamMember.team_id, EmailTeamMember.role).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).all()
+        return {r.team_id: r.role for r in rows}
+    except Exception:
+        return {}
+
+
+def _resolve_teams_from_db_sync(email: str, is_admin: bool) -> Optional[List[str]]:
+    """Resolve teams synchronously with L1 cache support.
+
+    Used by StreamableHTTP transport which runs in a sync context.
+    Checks the in-memory L1 cache before falling back to DB.
+
+    Args:
+        email: User email address
+        is_admin: Whether the user is an admin
+
+    Returns:
+        None (admin bypass), [] (no teams), or list of team ID strings
+    """
+    if is_admin:
+        return None  # Admin bypass
+
+    cache_key = f"{email}:True"
+
+    # Check L1 in-memory cache (sync-safe, no network I/O)
+    try:
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        entry = auth_cache._teams_list_cache.get(cache_key)  # pylint: disable=protected-access
+        if entry and not entry.is_expired():
+            auth_cache._hit_count += 1  # pylint: disable=protected-access
+            return entry.value
+    except Exception:  # nosec B110 - Cache unavailable is non-fatal
+        pass
+
+    # Cache miss: query DB
+    team_ids = _get_user_team_ids_sync(email)
+
+    # Populate L1 cache for subsequent requests
+    try:
+        # Standard
+        import time  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache, CacheEntry  # pylint: disable=import-outside-toplevel
+
+        with auth_cache._lock:  # pylint: disable=protected-access
+            auth_cache._teams_list_cache[cache_key] = CacheEntry(  # pylint: disable=protected-access
+                value=team_ids,
+                expiry=time.time() + auth_cache._teams_list_ttl,  # pylint: disable=protected-access
+            )
+    except Exception:  # nosec B110 - Cache write failure is non-fatal
+        pass
+
+    return team_ids
+
+
+async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
+    """Resolve teams for session tokens from DB/cache.
+
+    For admin users, returns None (admin bypass).
+    For non-admin users, returns the full list of team IDs from DB/cache.
+
+    Args:
+        email: User email address
+        user_info: User dict or EmailUser instance
+
+    Returns:
+        None (admin bypass), [] (no teams), or list of team ID strings
+    """
+    is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else getattr(user_info, "is_admin", False)
+    if is_admin:
+        return None  # Admin bypass
+
+    # Try auth cache first
+    try:
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        cached_teams = await auth_cache.get_user_teams(f"{email}:True")
+        if cached_teams is not None:
+            return cached_teams
+    except Exception:  # nosec B110 - Cache unavailable is non-fatal, fall through to DB
+        pass
+
+    # Cache miss: query DB
+    team_ids = await asyncio.to_thread(_get_user_team_ids_sync, email)
+
+    # Cache the result
+    try:
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        await auth_cache.set_user_teams(f"{email}:True", team_ids)
+    except Exception:  # nosec B110 - Cache write failure is non-fatal
+        pass
+
+    return team_ids
 
 
 def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
@@ -322,6 +477,146 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_sync_redis_client():
+    """Get or create module-level synchronous Redis client for rate-limiting.
+
+    Returns:
+        Redis client or None if Redis is unavailable/disabled.
+    """
+    global _SYNC_REDIS_CLIENT, _SYNC_REDIS_FAILURE_TIME  # pylint: disable=global-statement
+
+    # Standard
+    import logging as log  # pylint: disable=import-outside-toplevel,reimported
+    import time  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
+
+    # Quick check without lock
+    if _SYNC_REDIS_CLIENT is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
+        return _SYNC_REDIS_CLIENT
+
+    # Backoff after recent failure (30 seconds)
+    if _SYNC_REDIS_FAILURE_TIME and (time.time() - _SYNC_REDIS_FAILURE_TIME < 30):
+        return None
+
+    # Lazy initialization with lock
+    with _SYNC_REDIS_LOCK:
+        # Double-check after acquiring lock
+        if _SYNC_REDIS_CLIENT is not None:
+            return _SYNC_REDIS_CLIENT
+
+        try:
+            # Third-Party
+            import redis  # pylint: disable=import-outside-toplevel
+
+            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+            # Test connection
+            _SYNC_REDIS_CLIENT.ping()
+            _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
+            log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
+        except Exception as e:
+            log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
+            _SYNC_REDIS_CLIENT = None
+            _SYNC_REDIS_FAILURE_TIME = time.time()
+
+    return _SYNC_REDIS_CLIENT
+
+
+def _update_api_token_last_used_sync(jti: str) -> None:
+    """Update last_used timestamp for an API token with rate-limiting.
+
+    This function is called when an API token is successfully validated via JWT,
+    ensuring the last_used field stays current for monitoring and security audits.
+
+    Rate-limiting: Uses Redis cache (or in-memory fallback) to track the last
+    update time and only writes to the database if the configured interval has
+    elapsed. This prevents excessive DB writes on high-traffic tokens.
+
+    Args:
+        jti: JWT ID of the API token
+
+    Note:
+        Called via asyncio.to_thread() to avoid blocking the event loop.
+        Uses fresh_db_session() for thread-safe database access.
+    """
+    # Standard
+    import time  # pylint: disable=import-outside-toplevel,redefined-outer-name
+
+    # First-Party
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
+
+    # Rate-limiting cache key
+    cache_key = f"api_token_last_used:{jti}"
+    update_interval_seconds = config_settings.token_last_used_update_interval_minutes * 60
+
+    # Try Redis rate-limiting first (if available)
+    redis_client = _get_sync_redis_client()
+    if redis_client:
+        try:
+            last_update = redis_client.get(cache_key)
+            if last_update:
+                # Check if enough time has elapsed
+                time_since_update = time.time() - float(last_update)
+                if time_since_update < update_interval_seconds:
+                    return  # Skip update - too soon
+
+            # Update DB and cache
+            with fresh_db_session() as db:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
+
+                result = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti))
+                api_token = result.scalar_one_or_none()
+                if api_token:
+                    api_token.last_used = utc_now()
+                    db.commit()
+                    # Update Redis cache with current timestamp
+                    redis_client.setex(cache_key, update_interval_seconds * 2, str(time.time()))
+            return
+        except Exception as exc:
+            # Redis failed, fall through to in-memory cache
+            logger = logging.getLogger(__name__)
+            logger.debug("Redis unavailable for API token rate-limiting, using in-memory fallback: %s", exc)
+
+    # Fallback: In-memory cache (module-level dict with threading.Lock for thread-safety)
+    # Note: This is per-process and won't work in multi-worker deployments
+    # but provides basic rate-limiting when Redis is unavailable
+    max_cache_size = 1024  # Prevent unbounded growth
+
+    with _LAST_USED_CACHE_LOCK:
+        last_update = _LAST_USED_CACHE.get(jti)
+        if last_update:
+            time_since_update = time.time() - last_update
+            if time_since_update < update_interval_seconds:
+                return  # Skip update - too soon
+
+    # Update DB and cache
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti))
+        api_token = result.scalar_one_or_none()
+        if api_token:
+            api_token.last_used = utc_now()
+            db.commit()
+            # Update in-memory cache (with lock for thread-safety)
+            with _LAST_USED_CACHE_LOCK:
+                if len(_LAST_USED_CACHE) >= max_cache_size:
+                    # Evict oldest entries (by timestamp value)
+                    sorted_keys = sorted(_LAST_USED_CACHE, key=_LAST_USED_CACHE.get)  # type: ignore[arg-type]
+                    for k in sorted_keys[: len(_LAST_USED_CACHE) // 2]:
+                        del _LAST_USED_CACHE[k]
+                _LAST_USED_CACHE[jti] = time.time()
+
+
 def _is_api_token_jti_sync(jti: str) -> bool:
     """Check if JTI belongs to an API token (legacy fallback) - SYNC version.
 
@@ -378,6 +673,8 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
                 full_name=user.full_name,
                 is_admin=user.is_admin,
                 is_active=user.is_active,
+                auth_provider=user.auth_provider,
+                password_change_required=user.password_change_required,
                 email_verified_at=user.email_verified_at,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
@@ -392,6 +689,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
     1. _get_user_by_email_sync - user data
     2. _get_personal_team_sync - personal team ID
     3. _check_token_revoked_sync - token revocation status
+    4. _get_user_team_ids - all active team memberships (for session tokens)
 
     This reduces thread pool contention and DB connection overhead.
 
@@ -401,7 +699,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
 
     Returns:
         Dict with keys: user (dict or None), personal_team_id (str or None),
-        is_token_revoked (bool)
+        is_token_revoked (bool), team_ids (list of str)
 
     Examples:
         >>> # This function runs in a thread pool
@@ -419,6 +717,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             "user": None,
             "personal_team_id": None,
             "is_token_revoked": False,  # nosec B105 - boolean flag, not a password
+            "team_ids": [],
         }
 
         # Query 1: Get user data
@@ -433,6 +732,8 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                 "full_name": user.full_name,
                 "is_admin": user.is_admin,
                 "is_active": user.is_active,
+                "auth_provider": user.auth_provider,
+                "password_change_required": user.password_change_required,
                 "email_verified_at": user.email_verified_at,
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
@@ -450,6 +751,15 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             personal_team = team_result.scalar_one_or_none()
             if personal_team:
                 result["personal_team_id"] = personal_team.id
+
+            # Query 4: Get all active team memberships (for session token team resolution)
+            team_ids_result = db.execute(
+                select(EmailTeamMember.team_id).where(
+                    EmailTeamMember.user_email == email,
+                    EmailTeamMember.is_active.is_(True),
+                )
+            )
+            result["team_ids"] = [row[0] for row in team_ids_result.all()]
 
         # Query 3: Check token revocation (if JTI provided)
         if jti:
@@ -474,6 +784,8 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
         full_name=user_dict.get("full_name"),
         is_admin=user_dict.get("is_admin", False),
         is_active=user_dict.get("is_active", True),
+        auth_provider=user_dict.get("auth_provider", "local"),
+        password_change_required=user_dict.get("password_change_required", False),
         email_verified_at=user_dict.get("email_verified_at"),
         created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
         updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
@@ -482,7 +794,7 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    request: Optional[object] = None,
+    request: Request = None,  # type: ignore[assignment]
 ) -> EmailUser:
     """Get current authenticated user from JWT token with revocation checking.
 
@@ -516,6 +828,14 @@ async def get_current_user(
 
         if auth_provider == "api_token":
             request.state.auth_method = "api_token"
+            jti = payload.get("jti")
+            if jti:
+                request.state.jti = jti
+                try:
+                    await asyncio.to_thread(_update_api_token_last_used_sync, jti)
+                except Exception as e:
+                    logger.debug(f"Failed to update API token last_used: {e}")
+                    # Continue authentication - last_used update is not critical
             return
 
         if auth_provider:
@@ -530,7 +850,13 @@ async def get_current_user(
             is_legacy_api_token = await asyncio.to_thread(_is_api_token_jti_sync, jti_for_check)
             if is_legacy_api_token:
                 request.state.auth_method = "api_token"
+                request.state.jti = jti_for_check
                 logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
+                try:
+                    await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
+                except Exception as e:
+                    logger.debug(f"Failed to update legacy API token last_used: {e}")
+                    # Continue authentication - last_used update is not critical
             else:
                 request.state.auth_method = "jwt"
         else:
@@ -614,6 +940,8 @@ async def get_current_user(
                     full_name=user_dict.get("full_name"),
                     is_admin=user_dict.get("is_admin", False),
                     is_active=user_dict.get("is_active", True),
+                    auth_provider=user_dict.get("auth_provider", "local"),
+                    password_change_required=user_dict.get("password_change_required", False),
                     email_verified_at=user_dict.get("email_verified_at"),
                     created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
                     updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
@@ -716,26 +1044,28 @@ async def get_current_user(
                             headers={"WWW-Authenticate": "Bearer"},
                         )
 
-                    # Set team_id from cache
+                    # Resolve teams based on token_use
                     if request:
-                        # SECURITY: Normalize token_teams for consistent security checks
-                        # normalize_token_teams returns: None (admin bypass), [] (public-only), or [...] (teams)
-                        teams = normalize_token_teams(payload)
+                        token_use = payload.get("token_use")
+                        request.state.token_use = token_use
+
+                        if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                            # Session token: resolve teams from DB/cache
+                            user_info = cached_ctx.user or {"is_admin": False}
+                            teams = await _resolve_teams_from_db(email, user_info)
+                        else:
+                            # API token or legacy: use embedded teams
+                            teams = normalize_token_teams(payload)
+
                         request.state.token_teams = teams
 
-                        # Determine team_id from normalized teams
+                        # Set team_id: only for single-team API tokens
                         if teams is None:
-                            # Admin bypass - team_id stays None (sees all)
                             request.state.team_id = None
-                        elif len(teams) == 0:
-                            # Public-only token - no team access
-                            request.state.team_id = None
+                        elif len(teams) == 1 and token_use != "session":  # nosec B105
+                            request.state.team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
                         else:
-                            # Has teams - use first one
-                            token_team_id = teams[0]
-                            if isinstance(token_team_id, dict):
-                                token_team_id = token_team_id.get("id")
-                            request.state.team_id = token_team_id
+                            request.state.team_id = None
 
                         await _set_auth_method_from_payload(payload)
 
@@ -782,27 +1112,32 @@ async def get_current_user(
                         headers={"WWW-Authenticate": "Bearer"},
                     )
 
-                # SECURITY: Normalize token_teams for consistent security checks
-                # normalize_token_teams returns: None (admin bypass), [] (public-only), or [...] (teams)
-                teams = normalize_token_teams(payload)
+                # Resolve teams based on token_use
+                token_use = payload.get("token_use")
+                if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                    # Session token: use team_ids from batched query
+                    user_dict = auth_ctx.get("user")
+                    is_admin = user_dict.get("is_admin", False) if user_dict else False
+                    if is_admin:
+                        teams = None  # Admin bypass
+                    else:
+                        teams = auth_ctx.get("team_ids", [])
+                else:
+                    # API token or legacy: use embedded teams
+                    teams = normalize_token_teams(payload)
+
+                # Set team_id: only for single-team API tokens
+                if teams is None:
+                    team_id = None
+                elif len(teams) == 1 and token_use != "session":  # nosec B105
+                    team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
+                else:
+                    team_id = None
+
                 if request:
                     request.state.token_teams = teams
-
-                # Determine team_id from normalized teams
-                if teams is None:
-                    # Admin bypass - team_id stays None
-                    team_id = None
-                elif len(teams) == 0:
-                    # Public-only token - no team access
-                    team_id = None
-                else:
-                    # Has teams - use first one
-                    team_id = teams[0]
-                    if isinstance(team_id, dict):
-                        team_id = team_id.get("id")
-
-                if request:
                     request.state.team_id = team_id
+                    request.state.token_use = token_use
                     await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
@@ -820,6 +1155,10 @@ async def get_current_user(
                                 is_token_revoked=auth_ctx.get("is_token_revoked", False),
                             ),
                         )
+                        # Also populate teams-list cache so cached-path requests
+                        # don't need an extra DB query via _resolve_teams_from_db()
+                        if token_use == "session" and teams is not None:  # nosec B105
+                            await auth_cache.set_user_teams(f"{email}:True", teams)
                     except Exception as cache_set_error:
                         logger.debug(f"Failed to cache auth context: {cache_set_error}")
 
@@ -864,6 +1203,8 @@ async def get_current_user(
                             full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
                             is_admin=True,
                             is_active=True,
+                            auth_provider="local",
+                            password_change_required=False,
                             email_verified_at=datetime.now(timezone.utc),
                             created_at=datetime.now(timezone.utc),
                             updated_at=datetime.now(timezone.utc),
@@ -901,13 +1242,31 @@ async def get_current_user(
                 # Log the error but don't fail authentication for admin tokens
                 logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
 
-        # SECURITY: Normalize token_teams for consistent security checks
-        # normalize_token_teams returns: None (admin bypass), [] (public-only), or [...] (teams)
-        normalized_teams = normalize_token_teams(payload)
-        team_id = await get_team_from_token(payload)
+        # Resolve teams based on token_use
+        token_use = payload.get("token_use")
+        if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+            # Session token: resolve teams from DB/cache (fallback path — separate query OK)
+            user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
+            normalized_teams = await _resolve_teams_from_db(email, user_info)
+        else:
+            # API token or legacy: use embedded teams
+            normalized_teams = normalize_token_teams(payload)
+
+        # Set team_id: only for single-team API tokens
+        if normalized_teams is None:
+            team_id = None
+        elif len(normalized_teams) == 1 and token_use != "session":  # nosec B105
+            team_id = normalized_teams[0] if isinstance(normalized_teams[0], str) else normalized_teams[0].get("id")
+        else:
+            team_id = None
+
         if request:
             request.state.token_teams = normalized_teams
             request.state.team_id = team_id
+            request.state.token_use = token_use
+            # Store JTI for use in middleware (e.g., token usage logging)
+            if jti:
+                request.state.jti = jti
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
@@ -948,6 +1307,10 @@ async def get_current_user(
                 # Set auth_method for database API tokens
                 if request:
                     request.state.auth_method = "api_token"
+                    request.state.user_email = api_token_info["user_email"]
+                    # Store JTI for use in middleware
+                    if "jti" in api_token_info:
+                        request.state.jti = api_token_info["jti"]
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")
@@ -1000,6 +1363,8 @@ async def get_current_user(
                 full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
                 is_admin=True,
                 is_active=True,
+                auth_provider="local",
+                password_change_required=False,
                 email_verified_at=datetime.now(timezone.utc),
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),

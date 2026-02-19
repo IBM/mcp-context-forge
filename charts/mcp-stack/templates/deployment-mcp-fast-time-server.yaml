@@ -37,6 +37,14 @@ spec:
         - name: mcp-fast-time-server
           image: "{{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}"
           imagePullPolicy: {{ .Values.mcpFastTimeServer.image.pullPolicy }}
+          {{- if .Values.mcpFastTimeServer.command }}
+          command:
+{{- toYaml .Values.mcpFastTimeServer.command | nindent 12 }}
+          {{- end }}
+          {{- if .Values.mcpFastTimeServer.args }}
+          args:
+{{- toYaml .Values.mcpFastTimeServer.args | nindent 12 }}
+          {{- end }}
 
           # ─── Service port exposed inside the pod ───
           ports:

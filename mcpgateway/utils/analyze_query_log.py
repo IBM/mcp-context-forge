@@ -28,6 +28,17 @@ def load_json_log(filepath: Path) -> List[Dict[str, Any]]:
 
     Returns:
         List of log entries
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> from mcpgateway.utils.analyze_query_log import load_json_log
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d) / "db-queries.jsonl"
+        ...     _ = p.write_text('{\"query_count\": 2}\\nnot-json\\n{\"query_count\": 1}\\n', encoding="utf-8")
+        ...     entries = load_json_log(p)
+        ...     [e["query_count"] for e in entries]
+        [2, 1]
     """
     entries = []
     with open(filepath, "r", encoding="utf-8") as f:
@@ -49,6 +60,23 @@ def analyze_logs(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     Returns:
         Analysis results
+
+    Examples:
+        >>> from mcpgateway.utils.analyze_query_log import analyze_logs
+        >>> analysis = analyze_logs(
+        ...     [
+        ...         {"method": "GET", "path": "/x", "query_count": 2, "total_query_ms": 5, "n1_issues": None},
+        ...         {"method": "GET", "path": "/x", "query_count": 3, "total_query_ms": 7, "n1_issues": [{"pattern": "SELECT 1", "table": "t", "count": 2}]},
+        ...     ]
+        ... )
+        >>> (analysis["total_requests"], analysis["total_queries"], analysis["requests_with_n1"])
+        (2, 5, 1)
+        >>> analysis["endpoint_stats"][0][0]
+        'GET /x'
+        >>> analysis["endpoint_stats"][0][1]["avg_queries"]
+        2.5
+        >>> analysis["top_n1_patterns"][0]
+        ('t: SELECT 1', 2)
     """
     total_requests = len(entries)
     total_queries = sum(e.get("query_count", 0) for e in entries)
@@ -110,6 +138,26 @@ def print_report(analysis: Dict[str, Any]) -> None:
 
     Args:
         analysis: Analysis results from analyze_logs()
+
+    Examples:
+        >>> import io
+        >>> from contextlib import redirect_stdout
+        >>> from mcpgateway.utils.analyze_query_log import print_report
+        >>> buf = io.StringIO()
+        >>> with redirect_stdout(buf):
+        ...     print_report(
+        ...         {
+        ...             "total_requests": 0,
+        ...             "total_queries": 0,
+        ...             "avg_queries_per_request": 0,
+        ...             "requests_with_n1": 0,
+        ...             "n1_percentage": 0,
+        ...             "endpoint_stats": [],
+        ...             "top_n1_patterns": [],
+        ...         }
+        ...     )
+        >>> "DATABASE QUERY LOG ANALYSIS" in buf.getvalue()
+        True
     """
     print("\n" + "=" * 80)
     print("DATABASE QUERY LOG ANALYSIS")
@@ -159,6 +207,23 @@ def main() -> int:
 
     Returns:
         Exit code (0 for success, 1 for error)
+
+    Examples:
+        Missing logs return a non-zero exit code:
+
+        >>> import io
+        >>> import tempfile
+        >>> from contextlib import redirect_stdout
+        >>> from pathlib import Path
+        >>> from unittest.mock import patch
+        >>> from mcpgateway.utils.analyze_query_log import main
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     missing = str(Path(d) / "missing.jsonl")
+        ...     buf = io.StringIO()
+        ...     with patch("sys.argv", ["prog", "--json", missing]), redirect_stdout(buf):
+        ...         code = main()
+        ...     code
+        1
     """
     parser = argparse.ArgumentParser(description="Analyze database query logs for N+1 patterns")
     parser.add_argument("--json", default="logs/db-queries.jsonl", help="Path to JSON Lines log file (default: logs/db-queries.jsonl)")

@@ -59,25 +59,34 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
 _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Tools permissions
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
-    ("POST", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_CREATE),
+    ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/
+    ("POST", re.compile(r"^/tools/[^/]+/"), Permissions.TOOLS_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_UPDATE),
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
     # Resources permissions
     ("GET", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_READ),
-    ("POST", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_CREATE),
+    ("POST", re.compile(r"^/resources/?$"), Permissions.RESOURCES_CREATE),  # Only exact /resources or /resources/
+    ("POST", re.compile(r"^/resources/subscribe(?:$|/)"), Permissions.RESOURCES_READ),  # SSE subscription
+    ("POST", re.compile(r"^/resources/[^/]+/"), Permissions.RESOURCES_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_UPDATE),
     ("DELETE", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/resources(?:$|/)"), Permissions.RESOURCES_READ),
     # Prompts permissions
     ("GET", re.compile(r"^/prompts(?:$|/)"), Permissions.PROMPTS_READ),
-    ("POST", re.compile(r"^/prompts(?:$|/)"), Permissions.PROMPTS_CREATE),
+    ("POST", re.compile(r"^/prompts/?$"), Permissions.PROMPTS_CREATE),  # Only exact /prompts or /prompts/
+    ("POST", re.compile(r"^/prompts/[^/]+/"), Permissions.PROMPTS_UPDATE),  # POST to sub-resources (state, toggle)
+    ("POST", re.compile(r"^/prompts/[^/]+$"), Permissions.PROMPTS_READ),  # MCP spec prompt retrieval (POST /prompts/{id})
     ("PUT", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_UPDATE),
     ("DELETE", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_DELETE),
     # Server management permissions
+    ("GET", re.compile(r"^/servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),  # Server SSE access endpoint
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
-    ("POST", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_CREATE),
+    ("POST", re.compile(r"^/servers/?$"), Permissions.SERVERS_CREATE),  # Only exact /servers or /servers/
+    ("POST", re.compile(r"^/servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),  # Server management sub-resources
+    ("POST", re.compile(r"^/servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),  # Server message access endpoint
+    ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Gateway permissions
@@ -326,7 +335,7 @@ class TokenScopingMiddleware:
                 return path_server_id == server_id
 
         # If no server ID found in path, allow general endpoints
-        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc"]
+        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc"]
 
         # Check exact root path separately
         if request_path == "/":
@@ -856,13 +865,21 @@ class TokenScopingMiddleware:
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
             user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
 
-            # SECURITY: Use normalize_token_teams for consistent secure-first semantics
-            # - teams key missing → [] (public-only, secure default)
-            # - teams key null + is_admin=true → None (admin bypass)
-            # - teams key null + is_admin=false → [] (public-only)
-            # - teams key [] → [] (explicit public-only)
-            # - teams key [...] → normalized list of string IDs
-            token_teams = normalize_token_teams(payload)
+            # Resolve teams based on token_use claim
+            token_use = payload.get("token_use")
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams from DB/cache directly
+                # Cannot rely on request.state.token_teams — AuthContextMiddleware
+                # is gated by security_logging_enabled (defaults to False)
+                # First-Party
+                from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+
+                is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                user_info = {"is_admin": is_admin}
+                token_teams = await _resolve_teams_from_db(user_email, user_info)
+            else:
+                # API token or legacy: use embedded teams with normalize_token_teams
+                token_teams = normalize_token_teams(payload)
 
             # Check if admin bypass is active (token_teams is None means admin with explicit null teams)
             is_admin_bypass = token_teams is None

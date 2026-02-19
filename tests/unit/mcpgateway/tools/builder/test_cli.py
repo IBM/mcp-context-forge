@@ -21,8 +21,9 @@ import typer
 from typer.testing import CliRunner
 
 # First-Party
-from mcpgateway.tools.builder.cli import app, main
+from mcpgateway.tools.builder.cli import app, build as build_command, main
 from mcpgateway.tools.builder.factory import CICDTypes, DeployFactory
+from mcpgateway.tools.builder.pipeline import CICDModule
 
 
 @pytest.fixture
@@ -67,6 +68,20 @@ class TestCLICallback:
         assert result.exit_code == 0
 
     @patch("mcpgateway.tools.builder.cli.DeployFactory.create_deployer")
+    def test_cli_callback_verbose_shows_panel(self, mock_factory, runner, tmp_path):
+        """Test callback verbose panel branch during command execution."""
+        mock_deployer = MagicMock()
+        mock_deployer.validate = MagicMock()
+        mock_factory.return_value = (mock_deployer, "python")
+
+        config_file = tmp_path / "test-config.yaml"
+        config_file.write_text("deployment:\n  type: compose\n")
+
+        result = runner.invoke(app, ["--verbose", "validate", str(config_file)])
+        assert result.exit_code == 0
+        assert "Mode:" in result.stdout
+
+    @patch("mcpgateway.tools.builder.cli.DeployFactory.create_deployer")
     def test_cli_callback_with_dagger(self, mock_factory, runner, tmp_path):
         """Test CLI callback with --dagger flag (opt-in)."""
         mock_deployer = MagicMock()
@@ -104,6 +119,31 @@ def test_deploy_factory_dagger_available(monkeypatch):
     )
 
     deployer, mode = DeployFactory.create_deployer("dagger", verbose=True)
+    assert isinstance(deployer, DummyDagger)
+    assert mode == CICDTypes.DAGGER
+
+
+def test_deploy_factory_dagger_available_non_verbose(monkeypatch):
+    class DummyDagger:
+        def __init__(self, verbose):
+            self.verbose = verbose
+
+    class DummyPython:
+        def __init__(self, verbose):
+            self.verbose = verbose
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mcpgateway.tools.builder.dagger_deploy",
+        SimpleNamespace(DAGGER_AVAILABLE=True, MCPStackDagger=DummyDagger),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "mcpgateway.tools.builder.python_deploy",
+        SimpleNamespace(MCPStackPython=DummyPython),
+    )
+
+    deployer, mode = DeployFactory.create_deployer("dagger", verbose=False)
     assert isinstance(deployer, DummyDagger)
     assert mode == CICDTypes.DAGGER
 
@@ -157,6 +197,25 @@ def test_deploy_factory_python_import_error(monkeypatch):
         assert result.exit_code == 0
         # Verify python mode was requested (default)
         mock_factory.assert_called_once_with("python", False)
+
+
+def test_deploy_factory_python_verbose_logs(monkeypatch):
+    class DummyPython:
+        def __init__(self, verbose):
+            self.verbose = verbose
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mcpgateway.tools.builder.python_deploy",
+        SimpleNamespace(MCPStackPython=DummyPython),
+    )
+
+    with patch("mcpgateway.tools.builder.factory.console.print") as mock_print:
+        deployer, mode = DeployFactory.create_deployer("python", verbose=True)
+
+    assert isinstance(deployer, DummyPython)
+    assert mode == CICDTypes.PYTHON
+    mock_print.assert_called()
 
 
 class TestValidateCommand:
@@ -258,6 +317,59 @@ class TestBuildCommand:
         result = runner.invoke(app, ["build", str(config_file)])
         assert result.exit_code == 1
         assert "Build failed" in result.stdout
+
+    @patch("mcpgateway.tools.builder.cli.DeployFactory.create_deployer")
+    def test_build_no_copy_env_templates_suppresses_warning(self, mock_factory, tmp_path, mock_deployer):
+        """Test build command when copy_env_templates=False."""
+        config_file = tmp_path / "mcp-stack.yaml"
+        config_file.write_text("gateway:\n  image: test:latest\n")
+
+        mock_factory.return_value = (mock_deployer, "python")
+        ctx = SimpleNamespace(obj={"deployer": mock_deployer})
+
+        with patch("mcpgateway.tools.builder.cli.console.print") as mock_print:
+            build_command(ctx, config_file, copy_env_templates=False)
+
+        print_calls = [args[0] for args, _kwargs in mock_print.call_args_list]
+        assert any("Build complete" in msg for msg in print_calls)
+        assert all("IMPORTANT: Review .env files" not in msg for msg in print_calls)
+
+
+class _DummyPipeline(CICDModule):
+    async def build(self, config_file: str, **kwargs) -> None:  # noqa: ARG002
+        return None
+
+    async def generate_certificates(self, config_file: str) -> None:  # noqa: ARG002
+        return None
+
+    async def deploy(self, config_file: str, **kwargs) -> None:  # noqa: ARG002
+        return None
+
+    async def verify(self, config_file: str, **kwargs) -> None:  # noqa: ARG002
+        return None
+
+    async def destroy(self, config_file: str) -> None:  # noqa: ARG002
+        return None
+
+    def generate_manifests(self, config_file: str, **kwargs) -> Path:  # noqa: ARG002
+        return Path(".")
+
+
+def test_pipeline_validate_verbose_logs(tmp_path):
+    config_file = tmp_path / "mcp-stack.yaml"
+    config_file.write_text(
+        "deployment:\n"
+        "  type: compose\n"
+        "gateway:\n"
+        "  image: mcpgateway:latest\n"
+        "plugins: []\n"
+    )
+
+    deployer = _DummyPipeline(verbose=True)
+    with patch.object(deployer.console, "print") as mock_print:
+        deployer.validate(str(config_file))
+
+    assert mock_print.call_count >= 2
 
 
 class TestCertsCommand:

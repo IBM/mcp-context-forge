@@ -36,6 +36,7 @@ plugins/                    # Plugin implementations (see plugins/AGENTS.md)
 charts/                     # Helm charts (see charts/AGENTS.md)
 deployment/                 # Infrastructure configs (see deployment/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
+a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
@@ -246,6 +247,7 @@ make test
 - **Link issues**: `Closes #123`
 - Include tests for behavior changes
 - Require green lint and tests before PR
+- Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
 
 ## Important Constraints
 
