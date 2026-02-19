@@ -1869,7 +1869,7 @@ class SessionManagerWrapper:
                         rpc_headers["authorization"] = headers["authorization"]
 
                     response = await client.post(
-                        f"http://127.0.0.1:{settings.port}/rpc",
+                        settings.internal_rpc_url,
                         content=body,
                         headers=rpc_headers,
                         timeout=30.0,
@@ -2020,7 +2020,7 @@ class SessionManagerWrapper:
                                 rpc_headers["authorization"] = headers["authorization"]
 
                             response = await client.post(
-                                f"http://127.0.0.1:{settings.port}/rpc",
+                                settings.internal_rpc_url,
                                 content=body,
                                 headers=rpc_headers,
                                 timeout=30.0,
