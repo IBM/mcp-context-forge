@@ -1478,7 +1478,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                             return types.GetPromptResult(messages=[], description=None)
 
                         logger.info(f"[GET PROMPT] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
-                        result = await _proxy_get_prompt_to_gateway(gateway, request_headers, user_context, name=prompt_id, arguments=arguments, meta=meta_data)
+                        result = await _proxy_get_prompt_to_gateway(gateway, request_headers, prompt_id, arguments, meta_data)
                         if not result or not result.messages:
                             logger.warning(f"No content returned by upstream prompt: {prompt_id}")
                             return types.GetPromptResult(messages=[], description=None)
