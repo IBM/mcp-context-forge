@@ -1970,6 +1970,27 @@ class SessionRegistry(SessionBackend):
                 # works for self-calls, or can be configured for custom networking scenarios.
                 rpc_url = settings.internal_rpc_url
 
+                if not rpc_url:
+                    # Fallback to constructing RPC URL from base_url 
+                    # Extract root URL from base_url (remove /servers/{id} path)
+                    parsed_url = urlparse(base_url)
+                    # Preserve the path up to the root path (before /servers/{id})
+                    path_parts = parsed_url.path.split("/")
+                    if "/servers/" in parsed_url.path:
+                        # Find the index of 'servers' and take everything before it
+                        try:
+                            servers_index = path_parts.index("servers")
+                            root_path = "/" + "/".join(path_parts[1:servers_index]).strip("/")
+                            if root_path == "/":
+                                root_path = ""
+                        except ValueError:
+                            root_path = ""
+                    else:
+                        root_path = parsed_url.path.rstrip("/")
+
+                    root_url = f"{parsed_url.scheme}://{parsed_url.netloc}{root_path}"
+                    rpc_url = root_url + "/rpc"
+
                 logger.info(f"SSE RPC: Making internal call to {rpc_url} with method={method}, params={params}")
 
                 async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
