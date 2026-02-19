@@ -9006,6 +9006,14 @@ function initToolSelect(
             }
             // If in edit server mode, use the selection store count (includes new selections)
             else if (isEditServerMode && editToolSel) {
+                // Sync current DOM state into store (update() may fire before store listener)
+                checkboxes.forEach((cb) => {
+                    if (cb.checked) {
+                        editToolSel.add(cb.value);
+                    } else {
+                        editToolSel.delete(cb.value);
+                    }
+                });
                 count = editToolSel.size;
                 // Build pills data from the selection store using toolMapping
                 if (editToolSel.size > 0) {
@@ -9013,7 +9021,6 @@ function initToolSelect(
                         const toolName = window.toolMapping
                             ? window.toolMapping[id]
                             : null;
-                        // Use tool name if available, otherwise fallback to ID
                         pillsData.push({
                             id,
                             name: toolName || id.substring(0, 8) + "...",
@@ -9479,6 +9486,14 @@ function initResourceSelect(
             }
             // If in edit server mode, use the selection store count (includes new selections)
             else if (isEditServerMode && editResourceSel) {
+                // Sync current DOM state into store (update() may fire before store listener)
+                checkboxes.forEach((cb) => {
+                    if (cb.checked) {
+                        editResourceSel.add(cb.value);
+                    } else {
+                        editResourceSel.delete(cb.value);
+                    }
+                });
                 count = editResourceSel.size;
                 // Build pills data from the selection store
                 if (editResourceSel.size > 0) {
@@ -9944,6 +9959,14 @@ function initPromptSelect(
             }
             // If in edit server mode, use the selection store count (includes new selections)
             else if (isEditServerMode && editPromptSel) {
+                // Sync current DOM state into store (update() may fire before store listener)
+                checkboxes.forEach((cb) => {
+                    if (cb.checked) {
+                        editPromptSel.add(cb.value);
+                    } else {
+                        editPromptSel.delete(cb.value);
+                    }
+                });
                 count = editPromptSel.size;
                 // Build pills data from the selection store
                 if (editPromptSel.size > 0) {
@@ -27977,6 +28000,9 @@ async function serverSidePromptSearch(searchTerm) {
                 const html = await response.text();
                 container.innerHTML = html;
 
+                // Populate prompt mapping for pill display names
+                updatePromptMapping(container);
+
                 // Hide no results message
                 if (noResultsMessage) {
                     noResultsMessage.style.display = "none";
@@ -28162,6 +28188,9 @@ async function serverSidePromptSearch(searchTerm) {
 
             container.innerHTML = searchResultsHtml;
 
+            // Populate prompt mapping for pill display names
+            updatePromptMapping(container);
+
             // Initialize prompt select mapping
             initPromptSelect(
                 "associatedPrompts",
@@ -28297,6 +28326,9 @@ async function serverSideResourceSearch(searchTerm) {
                 }
 
                 container.innerHTML = html;
+
+                // Populate resource mapping for pill display names
+                updateResourceMapping(container);
 
                 // If the container has been re-rendered server-side and our
                 // `data-selected-resources` attribute was lost, restore from the
@@ -28474,6 +28506,9 @@ async function serverSideResourceSearch(searchTerm) {
             }
 
             container.innerHTML = searchResultsHtml;
+
+            // Populate resource mapping for pill display names
+            updateResourceMapping(container);
 
             // Initialize Resource select mapping
             initResourceSelect(
