@@ -107,6 +107,78 @@ def test_cors_settings_branches():
     assert result == {}  # Empty dict when disabled
 
 
+
+# --------------------------------------------------------------------------- #
+#                    Internal RPC Configuration Tests                         #
+# --------------------------------------------------------------------------- #
+def test_internal_rpc_host_default():
+    """Test default internal_rpc_host value."""
+    s = Settings(_env_file=None)
+    assert s.internal_rpc_host == "127.0.0.1"
+
+
+def test_internal_rpc_host_custom():
+    """Test custom internal_rpc_host value."""
+    s = Settings(internal_rpc_host="gateway-service", _env_file=None)
+    assert s.internal_rpc_host == "gateway-service"
+
+
+def test_internal_rpc_url_default():
+    """Test internal_rpc_url property with default settings."""
+    s = Settings(port=4444, app_root_path="", _env_file=None)
+    assert s.internal_rpc_url == "http://127.0.0.1:4444/rpc"
+
+
+def test_internal_rpc_url_custom_port():
+    """Test internal_rpc_url property with custom port."""
+    s = Settings(port=8080, app_root_path="", _env_file=None)
+    assert s.internal_rpc_url == "http://127.0.0.1:8080/rpc"
+
+
+def test_internal_rpc_url_with_root_path():
+    """Test internal_rpc_url property with app_root_path."""
+    s = Settings(port=4444, app_root_path="/api/v1", _env_file=None)
+    assert s.internal_rpc_url == "http://127.0.0.1:4444/api/v1/rpc"
+
+
+def test_internal_rpc_url_custom_host():
+    """Test internal_rpc_url property with custom host."""
+    s = Settings(port=4444, internal_rpc_host="gateway-service", app_root_path="", _env_file=None)
+    assert s.internal_rpc_url == "http://gateway-service:4444/rpc"
+
+
+def test_internal_rpc_url_custom_host_with_root_path():
+    """Test internal_rpc_url property with custom host and root path."""
+    s = Settings(port=8080, internal_rpc_host="my-gateway", app_root_path="/api", _env_file=None)
+    assert s.internal_rpc_url == "http://my-gateway:8080/api/rpc"
+
+
+def test_internal_rpc_url_full_url_passthrough():
+    """Test internal_rpc_url when internal_rpc_host already contains /rpc."""
+    s = Settings(internal_rpc_host="http://gateway-service:4444/rpc", port=4444, _env_file=None)
+    assert s.internal_rpc_url == "http://gateway-service:4444/rpc"
+
+
+def test_internal_rpc_url_full_url_with_path():
+    """Test internal_rpc_url when internal_rpc_host contains full URL with path."""
+    s = Settings(internal_rpc_host="http://gateway-service:8080/api/v1/rpc", port=4444, _env_file=None)
+    assert s.internal_rpc_url == "http://gateway-service:8080/api/v1/rpc"
+
+
+def test_internal_rpc_url_containerized_scenario():
+    """Test internal_rpc_url for containerized deployment scenario."""
+    # Simulates Kubernetes service name
+    s = Settings(port=4444, internal_rpc_host="mcpgateway-service.default.svc.cluster.local", app_root_path="", _env_file=None)
+    assert s.internal_rpc_url == "http://mcpgateway-service.default.svc.cluster.local:4444/rpc"
+
+
+def test_internal_rpc_url_hybrid_cloud_mesh():
+    """Test internal_rpc_url for hybrid cloud mesh scenario."""
+    # Simulates internal service hostname in hybrid cloud
+    s = Settings(port=4444, internal_rpc_host="gateway.internal.mesh", app_root_path="/gateway", _env_file=None)
+    assert s.internal_rpc_url == "http://gateway.internal.mesh:4444/gateway/rpc"
+    
+
 # --------------------------------------------------------------------------- #
 #                           get_settings LRU cache                            #
 # --------------------------------------------------------------------------- #
