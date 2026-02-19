@@ -905,6 +905,11 @@ class TeamManagementService:
 
         If you need full ORM functionality, disable caching or refetch from database.
 
+        Cache Versioning:
+            The cache key includes a version prefix (v1:) to handle schema changes.
+            If CachedTeamData schema changes (new required fields, etc.), increment
+            the version to auto-invalidate stale cache entries.
+
         Args:
             user_email: Email of the user
             include_personal: Whether to include personal teams
@@ -917,8 +922,10 @@ class TeamManagementService:
             User dashboard showing team memberships.
         """
         # Check cache first
+        # Cache key includes version prefix to handle schema changes
+        # Increment version (v1 -> v2) when CachedTeamData schema changes
         cache = self._get_auth_cache()
-        cache_key = f"{user_email}:{include_personal}"
+        cache_key = f"v1:{user_email}:{include_personal}"
 
         if cache:
             cached_teams = await cache.get_user_teams(cache_key)

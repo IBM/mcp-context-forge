@@ -769,7 +769,7 @@ class AuthCache:
         delete team, approve join request).
 
         This invalidates both include_personal=True and include_personal=False
-        cache entries for the user.
+        cache entries for the user, including all versioned variants (v1:, v2:, etc.).
 
         Args:
             email: User email whose teams cache should be invalidated
@@ -781,9 +781,10 @@ class AuthCache:
         """
         logger.debug(f"AuthCache: Invalidating teams list cache for {email}")
 
-        # Clear in-memory cache entries for this user (both True and False variants)
+        # Clear in-memory cache entries for this user (both True and False variants, all versions)
+        # Matches: {email}:True, {email}:False, v1:{email}:True, v1:{email}:False, etc.
         with self._lock:
-            keys_to_remove = [k for k in self._teams_list_cache if k.startswith(f"{email}:")]
+            keys_to_remove = [k for k in self._teams_list_cache if f"{email}:" in k]
             for key in keys_to_remove:
                 self._teams_list_cache.pop(key, None)
 
@@ -791,10 +792,12 @@ class AuthCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                # Delete both variants
+                # Delete both variants (unversioned and v1 versioned)
                 await redis.delete(
                     self._get_redis_key("teams", f"{email}:True"),
                     self._get_redis_key("teams", f"{email}:False"),
+                    self._get_redis_key("teams", f"v1:{email}:True"),
+                    self._get_redis_key("teams", f"v1:{email}:False"),
                 )
                 # Publish invalidation for other workers
                 await redis.publish("mcpgw:auth:invalidate", f"teams:{email}")
