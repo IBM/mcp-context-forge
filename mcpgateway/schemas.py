@@ -5888,6 +5888,64 @@ class TeamUpdateRequest(BaseModel):
         return v if v else None
 
 
+class CachedTeamData(BaseModel):
+    """Schema for cached team data (read-only).
+
+    This model represents team data stored in cache and returned from cache lookups.
+    It is intentionally a Pydantic model (not a SQLAlchemy ORM object) to avoid
+    DetachedInstanceError when accessing relationships or attempting session operations.
+
+    IMPORTANT: Objects of this type should be treated as read-only data. They are not
+    attached to any database session and cannot be used for:
+    - Accessing relationships (e.g., team.members)
+    - Database operations (db.add(), db.merge(), db.commit())
+    - Modifying and persisting changes
+
+    Use this model when returning cached team data to avoid creating transient
+    SQLAlchemy objects that could cause session-related errors.
+
+    Attributes:
+        id: Team UUID
+        name: Team display name
+        slug: URL-friendly team identifier
+        description: Team description
+        created_by: Email of team creator
+        is_personal: Whether this is a personal team
+        visibility: Team visibility level
+        max_members: Maximum number of members allowed
+        is_active: Whether the team is active
+        created_at: Team creation timestamp
+        updated_at: Last update timestamp
+
+    Examples:
+        >>> team = CachedTeamData(
+        ...     id="team-123",
+        ...     name="Engineering Team",
+        ...     slug="engineering-team",
+        ...     created_by="admin@example.com",
+        ...     is_personal=False,
+        ...     visibility="private",
+        ...     is_active=True,
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc)
+        ... )
+        >>> team.name
+        'Engineering Team'
+    """
+
+    id: str = Field(..., description="Team UUID")
+    name: str = Field(..., description="Team display name")
+    slug: Optional[str] = Field(None, description="URL-friendly team identifier")
+    description: Optional[str] = Field(None, description="Team description")
+    created_by: Optional[str] = Field(None, description="Email of team creator")
+    is_personal: bool = Field(False, description="Whether this is a personal team")
+    visibility: Optional[str] = Field("public", description="Team visibility level")
+    max_members: Optional[int] = Field(None, description="Maximum number of members allowed")
+    is_active: bool = Field(True, description="Whether the team is active")
+    created_at: Optional[datetime] = Field(None, description="Team creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+
+
 class TeamResponse(BaseModel):
     """Schema for team response data.
 
