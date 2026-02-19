@@ -1181,6 +1181,21 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/a2a/$A2A_ID | jq '.'
 ```
 
+### Enable/Disable A2A Agent
+
+```bash
+# Deactivate an A2A agent (also deactivates its associated tool)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/a2a/$A2A_ID/state?activate=false | jq '.'
+
+# Reactivate an A2A agent (also reactivates its associated tool)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/a2a/$A2A_ID/state?activate=true | jq '.'
+```
+
+!!! note "State Cascade"
+    Toggling an A2A agent's state automatically cascades to its associated MCP tool. Deactivating an agent removes its tool from virtual server listings; reactivating restores it. This is consistent with gateway deactivation, which cascades to all child tools, prompts, and resources.
+
 ### Delete A2A Agent
 
 ```bash
