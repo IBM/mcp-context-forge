@@ -676,6 +676,34 @@ class TestAdminServerRoutes:
         assert result.status_code == 400
         assert b"code_execution servers are disabled" in result.body
 
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_standard_server_ignores_stale_code_execution_json(self, mock_register, mock_request, mock_db, monkeypatch):
+        """Standard server create must succeed even if hidden code_execution fields contain invalid JSON.
+
+        Regression test: previously, JSON fields were parsed before the server_type
+        guard, causing 400 errors from stale hidden form data.
+        """
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
+        mock_register.return_value = SimpleNamespace(id="srv-1", name="Standard")
+        form_data = FakeForm(
+            {
+                "name": "Standard Server",
+                "server_type": "standard",
+                "mount_rules": "{bad-json!!!}",
+                "sandbox_policy": "not-json-at-all",
+                "tokenization": "{{{{",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        # register_server(db, server, ...) — server is the second positional arg
+        server_create = mock_register.call_args[0][1]
+        assert server_create.mount_rules is None
+        assert server_create.sandbox_policy is None
+
     async def test_admin_add_server_invalid_code_execution_json_returns_400(self, mock_request, mock_db, monkeypatch):
         """Invalid JSON payload in code_execution fields should fail validation."""
         monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)

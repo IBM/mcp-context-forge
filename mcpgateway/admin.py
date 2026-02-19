@@ -2319,11 +2319,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         skills_scope = skills_scope_raw or None
         skills_require_approval = form.get("skills_require_approval") == "on"
 
-        mount_rules = _parse_optional_json_field("mount_rules")
-        sandbox_policy = _parse_optional_json_field("sandbox_policy")
-        tokenization = _parse_optional_json_field("tokenization")
-
-        if server_type != "code_execution":
+        if server_type == "code_execution":
+            mount_rules = _parse_optional_json_field("mount_rules")
+            sandbox_policy = _parse_optional_json_field("sandbox_policy")
+            tokenization = _parse_optional_json_field("tokenization")
+        else:
             stub_language = None
             mount_rules = None
             sandbox_policy = None
@@ -2558,10 +2558,6 @@ async def admin_edit_server(
         skills_scope = skills_scope_raw or None
         skills_require_approval = form.get("skills_require_approval") == "on"
 
-        mount_rules = _parse_optional_json_field("mount_rules")
-        sandbox_policy = _parse_optional_json_field("sandbox_policy")
-        tokenization = _parse_optional_json_field("tokenization")
-
         if server_type == "standard":
             stub_language = None
             mount_rules = None
@@ -2569,6 +2565,11 @@ async def admin_edit_server(
             tokenization = None
             skills_scope = None
             skills_require_approval = False
+        elif server_type == "code_execution" or server_type is None:
+            # Parse JSON fields for code_execution, or when type is unchanged (partial edit)
+            mount_rules = _parse_optional_json_field("mount_rules")
+            sandbox_policy = _parse_optional_json_field("sandbox_policy")
+            tokenization = _parse_optional_json_field("tokenization")
 
         server = ServerUpdate(
             id=form.get("id"),
