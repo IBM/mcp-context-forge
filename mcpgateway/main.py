@@ -7017,23 +7017,24 @@ async def export_selective_configuration(
 @export_import_router.post("/import", response_model=Dict[str, Any])
 @require_permission("admin.import")
 async def import_configuration(
-    import_data: Dict[str, Any] = Body(...),
-    conflict_strategy: str = "update",
-    dry_run: bool = False,
-    rekey_secret: Optional[str] = None,
-    selected_entities: Optional[Dict[str, List[str]]] = None,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Import configuration data with conflict resolution.
 
+    Expects JSON body:
+    {
+        "import_data": {...},           # Required: The configuration data to import
+        "conflict_strategy": "update",  # Optional: skip, update, rename, fail (default: update)
+        "dry_run": false,               # Optional: If true, validate but don't make changes (default: false)
+        "rekey_secret": "secret",       # Optional: New encryption secret for cross-environment imports
+        "selected_entities": {...}      # Optional: Dict of entity types to specific entity names/ids to import
+    }
+
     Args:
-        import_data: The configuration data to import
-        conflict_strategy: How to handle conflicts: skip, update, rename, fail
-        dry_run: If true, validate but don't make changes
-        rekey_secret: New encryption secret for cross-environment imports
-        selected_entities: Dict of entity types to specific entity names/ids to import
+        request: FastAPI request object
         db: Database session
         user: Authenticated user
 
@@ -7044,11 +7045,32 @@ async def import_configuration(
         HTTPException: If import fails or validation errors occur
     """
     try:
+        # Manually parse the JSON body to handle all parameters correctly
+        body_bytes = await request.body()
+        if not body_bytes:
+            raise HTTPException(status_code=400, detail="Empty request body")
+        
+        try:
+            body = orjson.loads(body_bytes)
+        except orjson.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+        
+        # Extract and validate import_data (required)
+        import_data = body.get("import_data")
+        if not import_data:
+            raise HTTPException(status_code=400, detail="Missing 'import_data' in request body")
+        
+        # Extract optional parameters with defaults
+        conflict_strategy_str = body.get("conflict_strategy", "update")
+        dry_run = body.get("dry_run", False)
+        rekey_secret = body.get("rekey_secret")
+        selected_entities = body.get("selected_entities")
+        
         logger.info(f"User {user} requested configuration import (dry_run={dry_run})")
 
         # Validate conflict strategy
         try:
-            strategy = ConflictStrategy(conflict_strategy.lower())
+            strategy = ConflictStrategy(conflict_strategy_str.lower())
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in list(ConflictStrategy)]}")
 
