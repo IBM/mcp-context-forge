@@ -4965,7 +4965,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
 
-        # Invalid JSON string for apijsonpath - the HTTPException is caught and re-raised as 404
+        # Invalid JSON string for apijsonpath - should raise 400 Bad Request
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.get_tool.__wrapped__(
                 "tool-1",
@@ -4974,8 +4974,8 @@ class TestRemainingCoverageGaps:
                 user={"email": "u"},
                 apijsonpath="{invalid json"
             )
-        # The outer exception handler converts it to 404, but the detail contains the original error
-        assert excinfo.value.status_code == 404
+        # Should be 400 (not 404) for invalid apijsonpath JSON
+        assert excinfo.value.status_code == 400
         assert "Invalid apijsonpath JSON" in str(excinfo.value.detail)
 
     async def test_get_tool_jsonpath_modifier_exception(self, monkeypatch):
@@ -5005,8 +5005,8 @@ class TestRemainingCoverageGaps:
                 user={"email": "u"},
                 apijsonpath=apijsonpath
             )
-        # The outer exception handler converts it to 404, but the detail contains the original error
-        assert excinfo.value.status_code == 404
+        # Should be 500 (not 404) for JSONPath modifier errors
+        assert excinfo.value.status_code == 500
         assert "JSONPath modifier error" in str(excinfo.value.detail)
 
     async def test_list_tools_apijsonpath_jsonpathmodifier_becomes_none_with_pagination(self, monkeypatch):
