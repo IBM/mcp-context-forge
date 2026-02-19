@@ -48,6 +48,7 @@ volumes:                # Named volumes survive podman-compose down/up
   pgadmindata:
   redisinsight_data:
   nginx_cache:
+  code_exec_data:       # Shared code execution session storage (ADR-0042)
   grafanadata:
   prometheusdata:
   lokidata:
@@ -627,6 +628,7 @@ services:
     # Mount catalog configuration and SSL certificates
     volumes:
       - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
+      - code_exec_data:/tmp/mcpgateway_code_execution  # shared code execution sessions (ADR-0042)
       # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:

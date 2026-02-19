@@ -3428,7 +3428,7 @@ class TestGetOrCreateSession:
 
     @pytest.mark.asyncio
     async def test_expired_session_replaced(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """_get_or_create_session replaces expired sessions with new ones."""
+        """_get_or_create_session destroys and recreates expired sessions."""
         monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
         svc = CodeExecutionService()
         svc._base_dir = tmp_path
@@ -3443,13 +3443,166 @@ class TestGetOrCreateSession:
         db.execute = MagicMock(return_value=execute_result)
 
         s1 = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
-        original_id = s1.session_id
 
         # Expire the session by backdating last_used_at
         s1.last_used_at = datetime.now(timezone.utc) - timedelta(seconds=10)
 
         s2 = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
-        assert s2.session_id != original_id
+        # Deterministic session IDs mean the ID stays the same after expiry + recreation
+        assert s2.session_id == s1.session_id
+        # But it should be a fresh session object (re-created after destroy)
+        assert s2 is not s1
+        assert s2.root_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_deterministic_session_id(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Session IDs are deterministic based on (server_id, user_email, language)."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+
+        # Two independent service instances derive the same session ID
+        svc_a = CodeExecutionService()
+        svc_a._base_dir = tmp_path
+        svc_b = CodeExecutionService()
+        svc_b._base_dir = tmp_path
+
+        id_a = svc_a._deterministic_session_id("srv-1", "alice@test.com", "python")
+        id_b = svc_b._deterministic_session_id("srv-1", "alice@test.com", "python")
+        assert id_a == id_b
+        assert len(id_a) == 24  # 24-char hex prefix
+
+        # Different inputs produce different IDs
+        id_c = svc_a._deterministic_session_id("srv-1", "bob@test.com", "python")
+        assert id_c != id_a
+
+        id_d = svc_a._deterministic_session_id("srv-1", "alice@test.com", "typescript")
+        assert id_d != id_a
+
+    @pytest.mark.asyncio
+    async def test_cross_worker_session_reuse(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Two independent service instances resolve to the same session directory."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+
+        server = _make_mock_server()
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        # Simulate Worker A creating a session
+        svc_a = CodeExecutionService()
+        svc_a._base_dir = tmp_path
+        s_a = await svc_a._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+
+        # Write a file to scratch
+        (s_a.scratch_dir / "hello.txt").write_text("from worker A", encoding="utf-8")
+
+        # Simulate Worker B (fresh service, empty _sessions dict) getting same request
+        svc_b = CodeExecutionService()
+        svc_b._base_dir = tmp_path
+        s_b = await svc_b._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+
+        # Same session_id and same root_dir
+        assert s_b.session_id == s_a.session_id
+        assert s_b.root_dir == s_a.root_dir
+
+        # Worker B can see Worker A's file
+        assert (s_b.scratch_dir / "hello.txt").read_text(encoding="utf-8") == "from worker A"
+
+    @pytest.mark.asyncio
+    async def test_redis_meta_fallback_when_unavailable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Session creation works when Redis is unavailable (graceful fallback)."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+
+        server = _make_mock_server()
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        svc = CodeExecutionService()
+        svc._base_dir = tmp_path
+
+        # Patch Redis to return None (unavailable)
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
+            session = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+
+        assert session.root_dir.exists()
+        assert session.session_id == svc._deterministic_session_id("server-1", "user@t.com", "python")
+
+    @pytest.mark.asyncio
+    async def test_redis_meta_roundtrip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Session metadata is stored in and retrieved from Redis."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+
+        # Create a mock Redis client that stores data in a dict
+        redis_store: Dict[str, Any] = {}
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=lambda k: redis_store.get(k))
+        mock_redis.set = AsyncMock(side_effect=lambda k, v, ex=None: redis_store.__setitem__(k, v))
+        mock_redis.delete = AsyncMock(side_effect=lambda k: redis_store.pop(k, None))
+
+        server = _make_mock_server()
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        svc = CodeExecutionService()
+        svc._base_dir = tmp_path
+
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            session = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+
+        # Verify Redis was called to persist metadata
+        redis_key = svc._session_redis_key("server-1", "user@t.com", "python")
+        assert redis_key in redis_store
+        import json as _json
+        stored = _json.loads(redis_store[redis_key])
+        assert stored["session_id"] == session.session_id
+
+    @pytest.mark.asyncio
+    async def test_redis_content_hash_restores(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Worker B gets content_hash from Redis, avoiding VFS regen when tools unchanged."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+
+        redis_store: Dict[str, Any] = {}
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=lambda k: redis_store.get(k))
+        mock_redis.set = AsyncMock(side_effect=lambda k, v, ex=None: redis_store.__setitem__(k, v))
+        mock_redis.delete = AsyncMock(side_effect=lambda k: redis_store.pop(k, None))
+
+        server = _make_mock_server()
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        # Worker A: creates session and persists content_hash to Redis
+        svc_a = CodeExecutionService()
+        svc_a._base_dir = tmp_path
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            s_a = await svc_a._get_or_create_session(db=db, server=server, user_email="u@t.com", language="python", token_teams=None)
+
+        content_hash_a = s_a.content_hash
+        assert content_hash_a is not None
+
+        # Worker B: new service instance, empty _sessions dict
+        svc_b = CodeExecutionService()
+        svc_b._base_dir = tmp_path
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            s_b = await svc_b._get_or_create_session(db=db, server=server, user_email="u@t.com", language="python", token_teams=None)
+
+        # Worker B should have the same content_hash (restored from Redis)
+        assert s_b.content_hash == content_hash_a
 
 
 # ===========================================================================

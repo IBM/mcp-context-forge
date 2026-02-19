@@ -44,5 +44,6 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0039  | Adopt Fully Independent Plugin Crates Architecture | Accepted | Architecture | 2026-02-13 |
 | 0040  | Flexible Admin UI Section Visibility | Accepted | UI | 2026-02-16 |
 | 0041  | Secure Code Execution and Virtual Tool Filesystem (MCP Code Mode) | Accepted | Security | 2026-02-16 |
+| 0042  | Code Execution Session Persistence for Multi-Worker Deployments | Accepted | Architecture | 2026-02-19 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

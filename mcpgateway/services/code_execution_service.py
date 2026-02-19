@@ -20,6 +20,7 @@ from collections import defaultdict, deque
 import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import fcntl
 import fnmatch
 import hashlib
 import io
@@ -1849,6 +1850,64 @@ class CodeExecutionService:
         skill.updated_at = utc_now()
         return skill
 
+    @staticmethod
+    def _deterministic_session_id(server_id: str, user_email: str, language: str) -> str:
+        """Derive a deterministic session ID from the session key.
+
+        Any worker on any container will resolve to the same directory for the
+        same (server_id, user_email, language) tuple.  Uses a 24-char SHA-256
+        prefix — 96 bits of entropy, collision-free for practical use.
+        """
+        key_material = f"{server_id}:{user_email}:{language}"
+        return hashlib.sha256(key_material.encode("utf-8")).hexdigest()[:24]
+
+    async def _redis_get_session_meta(self, redis_key: str) -> Optional[Dict[str, Any]]:
+        """Fetch session metadata from Redis.  Returns None when Redis is unavailable or key is missing."""
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            client = await get_redis_client()
+            if client is None:
+                return None
+            raw = await client.get(redis_key)
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except Exception:  # pragma: no cover - Redis unavailable
+            return None
+
+    async def _redis_set_session_meta(self, redis_key: str, meta: Dict[str, Any], ttl: int) -> None:
+        """Persist session metadata to Redis with TTL.  Silently ignores failures."""
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            client = await get_redis_client()
+            if client is None:
+                return
+            await client.set(redis_key, json.dumps(meta), ex=ttl)
+        except Exception:  # pragma: no cover - Redis unavailable
+            pass
+
+    async def _redis_delete_session_meta(self, redis_key: str) -> None:
+        """Remove session metadata from Redis.  Silently ignores failures."""
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            client = await get_redis_client()
+            if client is None:
+                return
+            await client.delete(redis_key)
+        except Exception:  # pragma: no cover - Redis unavailable
+            pass
+
+    def _session_redis_key(self, server_id: str, user_email: str, language: str) -> str:
+        """Build the Redis key for a code execution session."""
+        user_slug = slugify(user_email)
+        return f"mcpgw:code_exec_session:{server_id}:{user_slug}:{language}"
+
     async def _get_or_create_session(
         self,
         db: Session,
@@ -1857,28 +1916,77 @@ class CodeExecutionService:
         language: str,
         token_teams: Optional[List[str]],
     ) -> CodeExecutionSession:
-        """Return an active session, creating or refreshing filesystem state as needed."""
-        key = (server.id, user_email, language)
-        async with self._lock:
-            session = self._sessions.get(key)
-            now = utc_now()
-            ttl = int((self._server_sandbox_policy(server)).get("session_ttl_seconds", self._default_ttl))
-            expired = session and (now - session.last_used_at).total_seconds() > ttl
-            if session and expired:
-                await self._destroy_session(session)
-                self._sessions.pop(key, None)
-                session = None
+        """Return an active session, creating or refreshing filesystem state as needed.
 
+        Session lookup uses three tiers:
+        1. Process-local ``_sessions`` dict (fastest, same-worker hit)
+        2. Redis session metadata (cross-worker / cross-container)
+        3. Filesystem probe + fresh creation (cold start)
+
+        Deterministic session IDs ensure every worker derives the same directory
+        path for a given (server_id, user_email, language) tuple.  A shared
+        Docker volume makes that directory accessible to all containers.
+        """
+        key = (server.id, user_email, language)
+        session_id = self._deterministic_session_id(server.id, user_email, language)
+        redis_key = self._session_redis_key(server.id, user_email, language)
+        now = utc_now()
+        ttl = int((self._server_sandbox_policy(server)).get("session_ttl_seconds", self._default_ttl))
+
+        async with self._lock:
+            # ── Tier 1: process-local cache ──────────────────────────────
+            session = self._sessions.get(key)
+            if session:
+                expired = (now - session.last_used_at).total_seconds() > ttl
+                if expired:
+                    await self._destroy_session(session)
+                    self._sessions.pop(key, None)
+                    await self._redis_delete_session_meta(redis_key)
+                    session = None
+                else:
+                    session.last_used_at = now
+
+            # ── Tier 2: reconstruct from deterministic path ──────────────
             if session is None:
-                session_id = uuid.uuid4().hex
-                logger.info("Creating code execution session %s for user=%s server=%s lang=%s", session_id, user_email, server.id, language)
-                root = self._base_dir / server.id / slugify(user_email) / session_id
+                user_slug = slugify(user_email)
+                root = self._base_dir / server.id / user_slug / session_id
+
+                # Check Redis for cached content_hash (avoids redundant VFS regen)
+                redis_meta = await self._redis_get_session_meta(redis_key)
+                cached_content_hash: Optional[str] = None
+                if redis_meta:
+                    cached_content_hash = redis_meta.get("content_hash")
+
+                # Filesystem already exists from another worker?
+                session_exists = root.exists() and (root / "tools").exists()
+
+                if not session_exists:
+                    # Cold start — create with file-based locking
+                    root.mkdir(parents=True, exist_ok=True)
+                    lock_path = root / ".session.lock"
+                    try:
+                        lock_fd = open(lock_path, "w")  # noqa: SIM115
+                        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                        try:
+                            # Double-check after acquiring lock
+                            if not (root / "tools").exists():
+                                logger.info("Creating code execution session %s for user=%s server=%s lang=%s", session_id, user_email, server.id, language)
+                                for subdir in ("tools", "scratch", "skills", "results"):
+                                    (root / subdir).mkdir(parents=True, exist_ok=True)
+                        finally:
+                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                            lock_fd.close()
+                    except OSError:  # pragma: no cover - fallback if locking fails
+                        for subdir in ("tools", "scratch", "skills", "results"):
+                            (root / subdir).mkdir(parents=True, exist_ok=True)
+                else:
+                    logger.debug("Reusing existing session dir %s for user=%s server=%s lang=%s", session_id, user_email, server.id, language)
+
                 tools_dir = root / "tools"
                 scratch_dir = root / "scratch"
                 skills_dir = root / "skills"
                 results_dir = root / "results"
-                for directory in (tools_dir, scratch_dir, skills_dir, results_dir):
-                    directory.mkdir(parents=True, exist_ok=True)
+
                 session = CodeExecutionSession(
                     session_id=session_id,
                     server_id=server.id,
@@ -1894,10 +2002,27 @@ class CodeExecutionService:
                 )
                 session.tokenization.enabled = bool(self._server_tokenization_policy(server).get("enabled", False))
                 session.tokenization.token_types = tuple(self._server_tokenization_policy(server).get("types", []))
+
+                # Restore content_hash from Redis so VFS refresh can short-circuit
+                if cached_content_hash and session_exists:
+                    session.content_hash = cached_content_hash
+                    session.generated_at = now  # Mark as generated to skip regen if hash matches
+
                 self._sessions[key] = session
 
+            # ── Refresh VFS and persist metadata ─────────────────────────
             session.last_used_at = now
             await self._refresh_virtual_filesystem_if_needed(db=db, session=session, server=server, token_teams=token_teams)
+
+            # Persist session metadata to Redis for cross-worker visibility
+            meta = {
+                "session_id": session.session_id,
+                "content_hash": session.content_hash or "",
+                "last_used_at": session.last_used_at.isoformat(),
+                "created_at": session.created_at.isoformat(),
+            }
+            await self._redis_set_session_meta(redis_key, meta, ttl)
+
             return session
 
     async def _refresh_virtual_filesystem_if_needed(self, db: Session, session: CodeExecutionSession, server: DbServer, token_teams: Optional[List[str]]) -> None:
@@ -3168,13 +3293,15 @@ class CodeExecutionService:
         return sorted(child.name for child in real_path.iterdir())
 
     async def _destroy_session(self, session: CodeExecutionSession) -> None:
-        """Destroy runtime artifacts and remove the session workspace."""
+        """Destroy runtime artifacts, remove the session workspace, and clear Redis metadata."""
         logger.info("Destroying code execution session %s for user=%s server=%s", session.session_id, session.user_email, session.server_id)
         with contextlib.suppress(Exception):
             await self._deno_runtime.destroy_session(session)
         with contextlib.suppress(Exception):
             await self._python_runtime.destroy_session(session)
         shutil.rmtree(session.root_dir, ignore_errors=True)
+        redis_key = self._session_redis_key(session.server_id, session.user_email, session.language)
+        await self._redis_delete_session_meta(redis_key)
 
     def _wipe_and_recreate_directory(self, path: Path) -> None:
         """Recreate a directory from scratch, discarding previous contents."""
