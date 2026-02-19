@@ -7300,6 +7300,9 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                 }
 
                 if (container) {
+                    // Populate resource mapping for pill display names
+                    updateResourceMapping(container);
+
                     const newCheckboxes = container.querySelectorAll(
                         "input[data-auto-check=true]",
                     );
@@ -7446,6 +7449,9 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                 }
 
                 if (container) {
+                    // Populate prompt mapping for pill display names
+                    updatePromptMapping(container);
+
                     const newCheckboxes = container.querySelectorAll(
                         "input[data-auto-check=true]",
                     );
@@ -9413,7 +9419,7 @@ function initResourceSelect(
                     );
                 });
                 persistedResourceIds.forEach((id) => {
-                    const name = checkboxMap.get(id) || id;
+                    const name = checkboxMap.get(id) || (window.resourceMapping && window.resourceMapping[id]) || id;
                     pillsData.push({ id, name });
                 });
             }
@@ -9878,7 +9884,7 @@ function initPromptSelect(
                     );
                 });
                 persistedPromptIds.forEach((id) => {
-                    const name = checkboxMap.get(id) || id;
+                    const name = checkboxMap.get(id) || (window.promptMapping && window.promptMapping[id]) || id;
                     pillsData.push({ id, name });
                 });
             }
