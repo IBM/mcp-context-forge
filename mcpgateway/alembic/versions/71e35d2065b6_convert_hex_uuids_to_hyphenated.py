@@ -100,7 +100,14 @@ def upgrade() -> None:
 
     # Helper function to build UUID hyphenation SQL based on database dialect
     def build_hyphenate_uuid_sql(column_name: str) -> str:
-        """Build database-agnostic SQL to convert hex UUID to hyphenated format."""
+        """Build database-agnostic SQL to convert hex UUID to hyphenated format.
+
+        Args:
+            column_name: The name of the column containing the UUID to hyphenate.
+
+        Returns:
+            SQL expression string that converts a 32-char hex UUID to hyphenated format.
+        """
         if dialect == "postgresql":
             # PostgreSQL: substring() and ||
             return (
