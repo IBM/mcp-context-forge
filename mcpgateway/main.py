@@ -1540,7 +1540,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.get_exempt_paths())
+        exempt_paths = self.get_exempt_paths() or []
+        if isinstance(exempt_paths, str):
+            exempt_paths = [exempt_paths]
+        is_exempt = any(scope_path.startswith(p) for p in exempt_paths)
         if is_exempt:
             return await call_next(request)
 
@@ -7465,8 +7468,8 @@ if UI_ENABLED:
                 logger.warning("Deprecated: /admin is now %s. Redirecting %s to %s", ui_base_path, req_path, new_url)
                 # Preserve original HTTP method for non-GET requests using 308.
                 # Use 301 for GET to retain previous behavior expected by many clients/tests.
-                status = 301 if request.method in ("GET", "HEAD") else 308
-                return RedirectResponse(url=new_url, status_code=status)
+                redirect_status = 301 if request.method in ("GET", "HEAD") else 308
+                return RedirectResponse(url=new_url, status_code=redirect_status)
             return await call_next(request)
 
 else:
