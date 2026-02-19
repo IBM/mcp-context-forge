@@ -1465,7 +1465,11 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
     @classmethod
     def get_exempt_paths(cls) -> list:
-        """Return cached exempt paths; rebuild if UI base changed."""
+        """Return cached exempt paths; rebuild if UI base changed.
+
+        Returns:
+            list: A list of exempt path prefixes (strings) under the UI base path.
+        """
         ui_base = getattr(cls, "UI_BASE_PATH", settings.mcpgateway_ui_base_path)
         if cls._EXEMPT_CACHE is None or cls._EXEMPT_UI_BASE != ui_base:
             cls._EXEMPT_UI_BASE = ui_base
@@ -7438,6 +7442,14 @@ if UI_ENABLED:
             """Redirect legacy /admin paths to the configured UI base path.
 
             Uses 308 to preserve the original HTTP method (POST/PUT/DELETE).
+
+            Args:
+                request (Request): The incoming HTTP request.
+                call_next (Callable): The function to call the next middleware or endpoint.
+
+            Returns:
+                Response: `RedirectResponse` when redirecting legacy `/admin` paths,
+                otherwise the result of `call_next(request)`.
             """
             # Normalize path from request (root_path handled elsewhere)
             req_path = request.url.path
