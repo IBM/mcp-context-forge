@@ -301,7 +301,7 @@ class MCPClientTLSConfig(MCPTransportTLSConfigBase):
         if s.client_mtls_ca_bundle:
             data["ca_bundle"] = s.client_mtls_ca_bundle
         if s.client_mtls_keyfile_password is not None:
-            data["keyfile_password"] = s.client_mtls_keyfile_password
+            data["keyfile_password"] = s.client_mtls_keyfile_password.get_secret_value()
         if s.client_mtls_verify is not None:
             data["verify"] = s.client_mtls_verify
         if s.client_mtls_check_hostname is not None:
@@ -339,7 +339,7 @@ class MCPServerTLSConfig(MCPTransportTLSConfigBase):
         if s.server_ssl_ca_certs:
             data["ca_bundle"] = s.server_ssl_ca_certs
         if s.server_ssl_keyfile_password is not None:
-            data["keyfile_password"] = s.server_ssl_keyfile_password
+            data["keyfile_password"] = s.server_ssl_keyfile_password.get_secret_value()
         if s.server_ssl_cert_reqs is not None:
             data["ssl_cert_reqs"] = s.server_ssl_cert_reqs
 
@@ -686,7 +686,7 @@ class GRPCClientTLSConfig(MCPTransportTLSConfigBase):
         if s.grpc_client_mtls_ca_bundle:
             data["ca_bundle"] = s.grpc_client_mtls_ca_bundle
         if s.grpc_client_mtls_keyfile_password is not None:
-            data["keyfile_password"] = s.grpc_client_mtls_keyfile_password
+            data["keyfile_password"] = s.grpc_client_mtls_keyfile_password.get_secret_value()
         if s.grpc_client_mtls_verify is not None:
             data["verify"] = s.grpc_client_mtls_verify
 
@@ -741,7 +741,7 @@ class GRPCServerTLSConfig(MCPTransportTLSConfigBase):
         if s.grpc_server_ssl_ca_certs:
             data["ca_bundle"] = s.grpc_server_ssl_ca_certs
         if s.grpc_server_ssl_keyfile_password is not None:
-            data["keyfile_password"] = s.grpc_server_ssl_keyfile_password
+            data["keyfile_password"] = s.grpc_server_ssl_keyfile_password.get_secret_value()
         if s.grpc_server_ssl_client_auth:
             data["client_auth"] = s.grpc_server_ssl_client_auth
 
