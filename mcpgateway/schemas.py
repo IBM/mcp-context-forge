@@ -878,6 +878,9 @@ class ToolCreate(BaseModel):
 
         Returns:
             dict: The updated values with base_url, path_template, and populated schemas.
+
+        Raises:
+            ValueError: If OpenAPI spec is invalid, path not found, or schema references are missing.
         """
         integration_type = values.get("integration_type")
         if integration_type != "REST":
@@ -926,7 +929,7 @@ class ToolCreate(BaseModel):
                 # Check if it has type="object" with empty properties
                 if schema.get("type") == "object":
                     props = schema.get("properties")
-                    if props is None or props == {} or props == dict():
+                    if props is None or props == {} or props == {}:
                         return True
                 # Also check if it's just {"properties": {}} without type
                 if "properties" in schema and not schema.get("properties"):
@@ -1042,8 +1045,7 @@ class ToolCreate(BaseModel):
                                     if "components" in spec and "schemas" in spec["components"] and schema_name in spec["components"]["schemas"]:
                                         response_schema = spec["components"]["schemas"][schema_name]
                                         break
-                                    else:
-                                        logger.warning(f"Schema reference '{schema_name}' not found in OpenAPI spec components")
+                                    logger.warning(f"Schema reference '{schema_name}' not found in OpenAPI spec components")
                                 else:
                                     # Direct schema definition
                                     response_schema = schema_def
@@ -1460,6 +1462,9 @@ class ToolUpdate(BaseModelWithConfigDict):
 
         Returns:
             dict: The updated values with base_url, path_template, and populated schemas.
+
+        Raises:
+            ValueError: If OpenAPI spec is invalid, path not found, or schema references are missing.
         """
         integration_type = values.get("integration_type")
         if integration_type != "REST":
@@ -1489,7 +1494,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         # For ToolUpdate: If URL is being changed, force re-population of schemas
         # even if they already exist
         url_changed = url is not None  # If url field is provided in update, it means it's being changed
-        
+
         # Check if schemas need to be populated
         input_schema = values.get("input_schema")
         output_schema = values.get("output_schema")
@@ -1504,7 +1509,7 @@ class ToolUpdate(BaseModelWithConfigDict):
             if isinstance(schema, dict):
                 if schema.get("type") == "object":
                     props = schema.get("properties")
-                    if props is None or props == {} or props == dict():
+                    if props is None or props == {} or props == {}:
                         return True
                 if "properties" in schema and not schema.get("properties"):
                     return True
@@ -1623,8 +1628,7 @@ class ToolUpdate(BaseModelWithConfigDict):
                                     if "components" in spec and "schemas" in spec["components"] and schema_name in spec["components"]["schemas"]:
                                         response_schema = spec["components"]["schemas"][schema_name]
                                         break
-                                    else:
-                                        logger.warning(f"Schema reference '{schema_name}' not found in OpenAPI spec components")
+                                    logger.warning(f"Schema reference '{schema_name}' not found in OpenAPI spec components")
                                 else:
                                     # Direct schema definition
                                     response_schema = schema_def
