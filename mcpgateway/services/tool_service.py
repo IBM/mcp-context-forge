@@ -3822,6 +3822,7 @@ class ToolService:
                     # gRPC tool invocation using the registered gRPC service
                     try:
                         # First-Party
+                        # NOTE: lazy import to avoid circular dependency
                         from mcpgateway.services.grpc_service import GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
 
                         grpc_manager = GrpcServiceManager()
