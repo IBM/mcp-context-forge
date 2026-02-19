@@ -1340,6 +1340,9 @@ class ToolUpdate(BaseModelWithConfigDict):
         # For ToolUpdate: Force re-population if URL changed
         if url_changed:
             logger.info("URL changed in ToolUpdate, forcing schema re-population from OpenAPI spec")
+            # Clear existing schemas to force fresh population from new URL
+            values["input_schema"] = None
+            values["output_schema"] = None
             input_needs_population = True
             output_needs_population = True
         else:
