@@ -1,13 +1,10 @@
 /**
- * Unit tests for filters.js module
- * Tests: clearSearch (the only untested function)
- * (filterServerTable, filterToolsTable, filterResourcesTable, filterPromptsTable,
- *  filterA2AAgentsTable, filterGatewaysTable are already tested in tests/js/)
+ * Unit tests for search.js module
  */
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
-import { clearSearch } from "../../../mcpgateway/admin_ui/filters.js";
+import { clearSearch } from "../../../mcpgateway/admin_ui/search.js";
 
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),

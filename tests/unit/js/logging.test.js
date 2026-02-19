@@ -15,16 +15,12 @@ import {
   getLogLevelClass,
   getSeverityClass,
   searchStructuredLogs,
-  previousLogPage,
-  nextLogPage,
   showCorrelationTrace,
   displayCorrelationTrace,
   showSecurityEvents,
   displaySecurityEvents,
   showAuditTrail,
   displayAuditTrail,
-  showPerformanceMetrics,
-  displayPerformanceMetrics,
   restoreLogTableHeaders,
   setPerformanceAggregationVisibility,
   setLogFiltersVisibility,
@@ -117,6 +113,7 @@ describe("getSeverityClass", () => {
 // ---------------------------------------------------------------------------
 describe("searchStructuredLogs", () => {
   test("fetches logs and calls displayLogResults", async () => {
+    // eslint-disable-next-line no-unused-vars
     const { tbody } = addLogDOM();
 
     const pageInfo = document.createElement("span");
@@ -137,6 +134,7 @@ describe("searchStructuredLogs", () => {
 
   test("handles fetch errors gracefully", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // eslint-disable-next-line no-unused-vars
     const { tbody } = addLogDOM();
 
     fetchWithAuth.mockRejectedValue(new Error("Network error"));

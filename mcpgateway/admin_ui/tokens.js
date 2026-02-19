@@ -18,7 +18,7 @@ import {
  * Load tokens list from API.
  * @param {boolean} resetToFirstPage - If true, forces page 1 (use after create/revoke).
  */
-async function loadTokensList(resetToFirstPage) {
+export async function loadTokensList(resetToFirstPage) {
   const tokensTable = document.getElementById("tokens-table");
   if (!tokensTable) {
     return;

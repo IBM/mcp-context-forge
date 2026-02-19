@@ -41,9 +41,8 @@ import {
 } from "../../../mcpgateway/admin_ui/llmModels.js";
 
 import { showCopyableModal } from "../../../mcpgateway/admin_ui/modals.js";
-import { escapeHtml, parseErrorResponse } from "../../../mcpgateway/admin_ui/security.js";
-import { fetchWithAuth, getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
-import { safeGetElement, showToast } from "../../../mcpgateway/admin_ui/utils.js";
+import { fetchWithAuth } from "../../../mcpgateway/admin_ui/tokens.js";
+import { showToast } from "../../../mcpgateway/admin_ui/utils.js";
 
 // Mock dependencies before imports
 vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
