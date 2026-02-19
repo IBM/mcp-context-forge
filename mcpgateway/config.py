@@ -2388,9 +2388,9 @@ class LazySettingsWrapper:
             PluginsSettings: The plugin framework settings instance.
         """
         # First-Party
-        from mcpgateway.plugins.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.settings import get_settings as _get_plugin_settings  # pylint: disable=import-outside-toplevel
 
-        return _plugin_settings
+        return _get_plugin_settings()
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it

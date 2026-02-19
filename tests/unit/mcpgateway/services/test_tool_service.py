@@ -218,6 +218,9 @@ class TestToolServiceHelpersExtended:
         mock_pm.assert_called_once()
 
         monkeypatch.setenv("PLUGINS_ENABLED", "no")
+        from mcpgateway.plugins.framework.settings import settings as plugin_settings  # pylint: disable=import-outside-toplevel
+
+        plugin_settings.cache_clear()
         with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
             service = ToolService()
         assert service._plugin_manager is None

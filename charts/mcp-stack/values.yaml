@@ -569,8 +569,10 @@ mcpContextForge:
 
     # ─ Plugin Configuration ─
     PLUGINS_ENABLED: "false"         # enable the plugin framework
-    PLUGINS_CONFIG_FILE: "plugins/config.yaml" # path to main plugins configuration file (PLUGIN_CONFIG_FILE also accepted)
-    PLUGIN_CONFIG_FILE: "plugins/config.yaml" # path to main plugins configuration file (deprecated, use PLUGINS_CONFIG_FILE)
+    # PLUGINS_CONFIG_FILE: "plugins/config.yaml" # path to main plugins configuration file (PLUGIN_CONFIG_FILE also accepted)
+    # NOTE: intentionally not set here so that legacy PLUGIN_CONFIG_FILE overrides
+    # are not shadowed by the chart default.  The app falls back to
+    # "plugins/config.yaml" when neither env var is present.
     PLUGINS_CLIENT_MTLS_CA_BUNDLE: ""        # default CA bundle for external plugins (optional)
     PLUGINS_CLIENT_MTLS_CERTFILE: ""         # gateway client certificate for plugin mTLS
     PLUGINS_CLIENT_MTLS_KEYFILE: ""          # gateway client key for plugin mTLS (optional)
