@@ -31,7 +31,7 @@ import sys
 
 # First-Party
 from mcpgateway.plugins.framework.external.unix.server.server import run_server
-from mcpgateway.plugins.framework.settings import PluginsSettings
+from mcpgateway.plugins.framework.settings import get_settings
 
 # Configure logging
 logging.basicConfig(
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 async def run() -> None:
     """Main entry point for the Unix socket server."""
-    s = PluginsSettings()
+    s = get_settings()
     config_path = s.config_path or os.path.join(".", "resources", "plugins", "config.yaml")
     socket_path = s.unix_socket_path or "/tmp/mcpgateway-plugins.sock"  # nosec B108 - configurable via env var
 

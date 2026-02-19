@@ -13,11 +13,10 @@ dependency on mcpgateway.config.settings.
 
 # Standard
 from functools import lru_cache
-import os
 from typing import Any, Literal
 
 # Third-Party
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +28,7 @@ class PluginsSettings(BaseSettings):
     """
 
     enabled: bool = Field(default=False, description="Enable the plugin framework")
-    config_file: str = Field(default="plugins/config.yaml", description="Path to main plugins configuration file", validation_alias=AliasChoices("PLUGIN_CONFIG_FILE", "PLUGINS_CONFIG_FILE"))
+    config_file: str = Field(default="plugins/config.yaml", description="Path to main plugins configuration file", validation_alias=AliasChoices("PLUGINS_CONFIG_FILE", "PLUGIN_CONFIG_FILE"))
     plugin_timeout: int = Field(default=30, description="Plugin execution timeout in seconds")
     log_level: str = Field(default="INFO", description="Logging level for plugin framework components")
     skip_ssl_verify: bool = Field(
@@ -54,7 +53,7 @@ class PluginsSettings(BaseSettings):
     client_mtls_certfile: str | None = Field(default=None, description="Path to PEM client certificate for mTLS")
     client_mtls_keyfile: str | None = Field(default=None, description="Path to PEM client private key for mTLS")
     client_mtls_ca_bundle: str | None = Field(default=None, description="Path to CA bundle for client certificate verification")
-    client_mtls_keyfile_password: str | None = Field(default=None, description="Password for encrypted client private key")
+    client_mtls_keyfile_password: SecretStr | None = Field(default=None, description="Password for encrypted client private key")
     client_mtls_verify: bool | None = Field(default=None, description="Verify the upstream server certificate")
     client_mtls_check_hostname: bool | None = Field(default=None, description="Enable hostname verification")
 
@@ -62,7 +61,7 @@ class PluginsSettings(BaseSettings):
     server_ssl_keyfile: str | None = Field(default=None, description="Path to PEM server private key")
     server_ssl_certfile: str | None = Field(default=None, description="Path to PEM server certificate")
     server_ssl_ca_certs: str | None = Field(default=None, description="Path to CA certificates for client verification")
-    server_ssl_keyfile_password: str | None = Field(default=None, description="Password for encrypted server private key")
+    server_ssl_keyfile_password: SecretStr | None = Field(default=None, description="Password for encrypted server private key")
     server_ssl_cert_reqs: int | None = Field(default=None, description="Client certificate requirement (0=NONE, 1=OPTIONAL, 2=REQUIRED)")
 
     # MCP server settings
@@ -79,14 +78,14 @@ class PluginsSettings(BaseSettings):
     grpc_client_mtls_certfile: str | None = Field(default=None, description="Path to PEM client certificate for gRPC mTLS")
     grpc_client_mtls_keyfile: str | None = Field(default=None, description="Path to PEM client private key for gRPC mTLS")
     grpc_client_mtls_ca_bundle: str | None = Field(default=None, description="Path to CA bundle for gRPC client verification")
-    grpc_client_mtls_keyfile_password: str | None = Field(default=None, description="Password for encrypted gRPC client private key")
+    grpc_client_mtls_keyfile_password: SecretStr | None = Field(default=None, description="Password for encrypted gRPC client private key")
     grpc_client_mtls_verify: bool | None = Field(default=None, description="Verify the gRPC upstream server certificate")
 
     # gRPC server SSL settings
     grpc_server_ssl_keyfile: str | None = Field(default=None, description="Path to PEM gRPC server private key")
     grpc_server_ssl_certfile: str | None = Field(default=None, description="Path to PEM gRPC server certificate")
     grpc_server_ssl_ca_certs: str | None = Field(default=None, description="Path to CA certificates for gRPC client verification")
-    grpc_server_ssl_keyfile_password: str | None = Field(default=None, description="Password for encrypted gRPC server private key")
+    grpc_server_ssl_keyfile_password: SecretStr | None = Field(default=None, description="Password for encrypted gRPC server private key")
     grpc_server_ssl_client_auth: str | None = Field(default=None, description="gRPC client certificate requirement (none, optional, require)")
 
     # gRPC server settings
@@ -96,17 +95,14 @@ class PluginsSettings(BaseSettings):
     grpc_server_ssl_enabled: bool | None = Field(default=None, description="Enable SSL/TLS for the gRPC server")
 
     # Unix socket settings
-    unix_socket_path: str | None = Field(default=None, description="Path to the Unix domain socket", validation_alias=AliasChoices("UNIX_SOCKET_PATH", "PLUGINS_UNIX_SOCKET_PATH"))
+    unix_socket_path: str | None = Field(default=None, description="Path to the Unix domain socket", validation_alias=AliasChoices("PLUGINS_UNIX_SOCKET_PATH", "UNIX_SOCKET_PATH"))
 
-    model_config = SettingsConfigDict(env_prefix="PLUGINS_")
+    model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
-@lru_cache()
-def get_settings(**kwargs: Any) -> PluginsSettings:
+@lru_cache(maxsize=1)
+def get_settings() -> PluginsSettings:
     """Get cached plugins settings instance.
-
-    Args:
-        **kwargs: Keyword arguments to pass to the PluginsSettings setup.
 
     Returns:
         PluginsSettings: A cached instance of the PluginsSettings class.
@@ -122,23 +118,11 @@ def get_settings(**kwargs: Any) -> PluginsSettings:
     """
     # Instantiate a fresh Pydantic PluginsSettings object,
     # loading from env vars or .env exactly once.
-    return PluginsSettings(**kwargs)
+    return PluginsSettings()
 
 
 class LazySettingsWrapper:
-    """Lazily initialize plugins settings singleton on getattr with override support."""
-
-    @property
-    def enabled(self) -> bool:
-        """Access plugin enabled flag with env override support.
-
-        Returns:
-            True if plugin framework is enabled.
-        """
-        env_flag = os.getenv("PLUGINS_ENABLED")
-        if env_flag is not None:
-            return env_flag.strip().lower() in {"1", "true", "yes", "on"}
-        return get_settings().enabled
+    """Lazily initialize plugins settings singleton on getattr."""
 
     @staticmethod
     def cache_clear() -> None:
