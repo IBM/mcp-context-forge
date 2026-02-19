@@ -7593,8 +7593,19 @@ async function editServer(serverId) {
             "standard"
         ).toLowerCase();
         if (serverTypeField) {
-            serverTypeField.value =
+            const targetValue =
                 serverType === "code_execution" ? "code_execution" : "standard";
+            // Enable the code_execution option if this server already uses it,
+            // even when CODE_EXECUTION_ENABLED is false (the option is disabled
+            // in the template). Without this, browsers silently ignore setting
+            // a disabled <option> as the selected value.
+            if (targetValue === "code_execution") {
+                const opt = serverTypeField.querySelector(
+                    'option[value="code_execution"]',
+                );
+                if (opt) opt.disabled = false;
+            }
+            serverTypeField.value = targetValue;
         }
         if (stubLanguageField) {
             stubLanguageField.value =
