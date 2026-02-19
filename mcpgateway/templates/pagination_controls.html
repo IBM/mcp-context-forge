@@ -112,14 +112,19 @@
       url.searchParams.set('include_inactive', includeInactive.toString());
     }
 
-    // Preserve other query parameters
-    {% if query_params %}
-    {% for key, value in query_params.items() %}
-    {% if key != 'include_inactive' and value is not none %}
-    url.searchParams.set('{{ key }}', '{{ value }}');
-    {% endif %}
-    {% endfor %}
-    {% endif %}
+    // Preserve other query parameters (read from sibling <script> tag
+    // to avoid Jinja2 tojson double-quote conflicts in x-data attributes)
+    const qpEl = $el.querySelector('script.pagination-qp');
+    if (qpEl) {
+      try {
+        const qp = JSON.parse(qpEl.textContent);
+        Object.entries(qp).forEach(([k, v]) => {
+          if (k !== 'include_inactive' && v != null) {
+            url.searchParams.set(k, String(v));
+          }
+        });
+      } catch (_) {}
+    }
 
     // Preserve team_id from current URL (if present) - this ensures team filter
     // is maintained during pagination
@@ -155,6 +160,10 @@
 }"
   class="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700"
 >
+  {% if query_params %}
+  <script type="application/json" class="pagination-qp">{{ query_params | tojson }}</script>
+  {% endif %}
+
   <!-- Page Size Selector -->
   <div class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
     <span>Show:</span>

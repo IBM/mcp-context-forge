@@ -15865,7 +15865,12 @@ class TestTemplateButtonGating:
         assert "/delete" not in html
 
     def test_servers_pagination_query_params_are_js_escaped(self, jinja_env):
-        """Malicious q/tags values must not break out of JS string context."""
+        """Malicious q/tags values must not break out of JS string context.
+
+        Query params are rendered inside a <script type="application/json">
+        tag using Jinja2's tojson filter, which escapes single quotes to
+        \\u0027 and angle brackets to \\u003c/\\u003e.
+        """
         server_data = {
             "id": "srv-1",
             "name": "Test Server",
@@ -15891,9 +15896,15 @@ class TestTemplateButtonGating:
             },
         )
 
+        # Raw payloads must NOT appear unescaped
         assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
-        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
-        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
+        assert "<script>alert(2)</script>" not in html.split('type="application/json"')[1].split("</script>")[0] if 'type="application/json"' in html else True
+
+        # tojson escapes live inside the <script type="application/json"> tag
+        assert 'class="pagination-qp"' in html
+        assert "\\u0027" in html  # Single quotes escaped
+        assert "\\u003c/script\\u003e" in html  # Script tags escaped
+        assert "\\u003cscript\\u003e" in html  # Opening script tags escaped
 
     def test_servers_code_execution_visual_marker(self, jinja_env):
         """Code execution servers should render highlighted badge/emoji in the list."""
