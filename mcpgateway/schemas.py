@@ -5904,6 +5904,11 @@ class CachedTeamData(BaseModel):
     Use this model when returning cached team data to avoid creating transient
     SQLAlchemy objects that could cause session-related errors.
 
+    Schema Versioning:
+        When adding new required fields to this model, increment the cache version
+        in TeamManagementService.get_user_teams() (e.g., v1: -> v2:) to auto-invalidate
+        stale cache entries and prevent schema drift errors.
+
     Attributes:
         id: Team UUID
         name: Team display name
