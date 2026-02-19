@@ -10127,6 +10127,7 @@ async def admin_unified_search(
         }
 
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
+        """Run entity search and map auth errors to empty result payloads."""
         try:
             return await search_callable(**kwargs)
         except HTTPException as exc:
