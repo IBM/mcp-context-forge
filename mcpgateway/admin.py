@@ -10043,7 +10043,7 @@ async def admin_unified_search(
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     entity_types: Optional[str] = Query(
         None,
-        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users)",
+        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users,roots)",
     ),
     include_inactive: bool = False,
     limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
@@ -10060,10 +10060,15 @@ async def admin_unified_search(
 ):
     """Unified search across primary admin entities.
 
+    Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
+    and optionally users (when the caller has ``admin.user_management`` permission).
+
     Args:
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
+            Supported values: servers, gateways, tools, resources, prompts,
+            agents, teams, users, roots.
         include_inactive (bool): Whether to include inactive entities.
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
@@ -10083,8 +10088,8 @@ async def admin_unified_search(
     normalized_entity_types = _normalize_tags_query(entity_types)
     tag_groups = _parse_tag_filter_groups(normalized_tags)
 
-    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users"]
-    default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams"]
+    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots"]
+    default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "roots"]
     selected_entity_types: list[str] = []
     if normalized_entity_types:
         for raw_entity_type in normalized_entity_types.split(","):
@@ -10256,6 +10261,17 @@ async def admin_unified_search(
             user=user,
         )
         grouped_results["users"] = typing_cast(list[dict[str, Any]], users_result.get("users", users_result.get("items", [])))
+
+    # Roots do not support tag filtering; only include when a text query exists.
+    if "roots" in selected_entity_types and search_query:
+        roots_result = await _safe_entity_search(
+            admin_search_roots,
+            "roots",
+            q=search_query,
+            limit=effective_limit,
+            user=user,
+        )
+        grouped_results["roots"] = typing_cast(list[dict[str, Any]], roots_result.get("roots", roots_result.get("items", [])))
 
     groups = []
     flat_items: list[dict[str, Any]] = []
@@ -11997,6 +12013,55 @@ async def admin_set_prompt_state(
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+
+
+@admin_router.get("/roots/search", response_class=JSONResponse)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_search_roots(
+    q: str = Query("", description="Search query"),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    user=Depends(get_current_user_with_permissions),
+) -> dict:
+    """Search roots by name or URI.
+
+    Roots are held in-memory by :class:`~mcpgateway.services.root_service.RootService`,
+    so this function fetches the full list before filtering.  In typical deployments the
+    number of registered roots is small (< 100), making the in-memory scan negligible.
+    If root counts grow substantially, consider adding filtering support directly to
+    :meth:`~mcpgateway.services.root_service.RootService.list_roots`.
+
+    Args:
+        q (str): Free-text search query matched against root name and URI.
+        limit (int): Maximum number of results to return.
+        user: Authenticated user context.
+
+    Returns:
+        dict: Unified search payload containing matching roots.
+
+    Examples:
+        >>> callable(admin_search_roots)
+        True
+        >>> admin_search_roots.__name__
+        'admin_search_roots'
+    """
+    search_query = _normalize_search_query(q)
+    # Defense-in-depth clamp: FastAPI validates ge/le at the HTTP layer, but direct
+    # Python calls (e.g. from admin_unified_search) bypass that validation.
+    limit = max(1, min(limit, settings.pagination_max_page_size))
+    all_roots = await root_service.list_roots()
+
+    # Single pass: convert URI once, filter and transform together, stop at limit.
+    results: list[dict[str, Any]] = []
+    for r in all_roots:
+        if len(results) >= limit:
+            break
+        uri_str = str(r.uri)
+        name_str = r.name or uri_str
+        if not search_query or search_query in uri_str.lower() or search_query in name_str.lower():
+            results.append({"id": uri_str, "name": name_str, "uri": uri_str})
+
+    LOGGER.debug(f"User {get_user_email(user)} searched roots with query '{search_query}': {len(results)} results")
+    return _build_search_response(entity_key="roots", entity_type="roots", items=results, query=search_query, tags="", tag_groups=[])
 
 
 @admin_router.get("/roots/export")
