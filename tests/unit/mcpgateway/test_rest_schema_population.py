@@ -1115,5 +1115,3 @@ class TestToolUpdateSchemaPopulation:
             mock_get.return_value = mock_response
             tool_update = ToolUpdate(**tool_data)
             assert tool_update.input_schema == {"type": "object", "properties": {}}
-
-# Made with Bob
