@@ -680,6 +680,61 @@ class TestRESTSchemaPopulation:
             tool = ToolCreate(**tool_data)
             assert tool.input_schema == {"type": "object", "properties": {}}
 
+    def test_empty_input_schema_after_population_attempt(self):
+        """Test that empty input_schema after population gets default schema (lines 902-903)."""
+        spec = {
+            "openapi": "3.0.0",
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"type": "object"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tool_data = {
+            "name": "test_tool",
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test",
+            "request_type": "GET"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = spec
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+
+            tool = ToolCreate(**tool_data)
+            # GET with no requestBody should result in empty input_schema, triggering default
+            assert tool.input_schema == {"type": "object", "properties": {}}
+
+    def test_key_error_with_no_input_schema(self):
+        """Test KeyError exception path with no input_schema (lines 910-912)."""
+        tool_data = {
+            "name": "test_tool",
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            # Return spec that will cause KeyError when accessing paths
+            mock_response.json.side_effect = KeyError("paths")
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+
+            tool = ToolCreate(**tool_data)
+            assert tool.input_schema == {"type": "object", "properties": {}}
+
 
 class TestToolUpdateSchemaPopulation:
     """Test suite for ToolUpdate schema population."""
@@ -777,7 +832,7 @@ class TestToolUpdateSchemaPopulation:
             "integration_type": "REST",
             "url": "http://example.com/test"
         }
-        
+
         # Test RequestException
         with patch("requests.get") as mock_get:
             import requests
@@ -798,6 +853,266 @@ class TestToolUpdateSchemaPopulation:
         # Test generic Exception
         with patch("requests.get") as mock_get:
             mock_get.side_effect = Exception("Generic error")
+            tool_update = ToolUpdate(**tool_data)
+            assert tool_update.input_schema == {"type": "object", "properties": {}}
+
+    def test_tool_update_empty_schema_detection(self):
+        """Test ToolUpdate is_empty_schema logic (lines 1318, 1320)."""
+        # Test with properties key but empty value
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test",
+            "input_schema": {"properties": {}}
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = {"paths": {}}
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            # Should trigger population attempt due to empty properties
+            assert tool_update.input_schema is not None
+
+    def test_tool_update_missing_path_template(self):
+        """Test ToolUpdate with missing path_template (line 1367)."""
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com"
+            # No path_template
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = {"paths": {"/test": {}}}
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            # Should fall back to default schema
+            assert tool_update.input_schema == {"type": "object", "properties": {}}
+
+    def test_tool_update_path_not_found(self):
+        """Test ToolUpdate when path not found in spec (line 1380)."""
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/nonexistent"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = {
+                "paths": {
+                    "/other": {"get": {}}
+                }
+            }
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            assert tool_update.input_schema == {"type": "object", "properties": {}}
+
+    def test_tool_update_method_not_found(self):
+        """Test ToolUpdate when HTTP method not found (line 1387)."""
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test",
+            "request_type": "DELETE"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = {
+                "paths": {
+                    "/test": {
+                        "get": {},
+                        "post": {}
+                    }
+                }
+            }
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            assert tool_update.input_schema == {"type": "object", "properties": {}}
+
+    def test_tool_update_ref_not_found_in_components(self):
+        """Test ToolUpdate with missing $ref in components (lines 1400-1401, 1403-1406, 1408)."""
+        spec = {
+            "openapi": "3.0.0",
+            "paths": {
+                "/test": {
+                    "post": {
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": "#/components/schemas/MissingSchema"
+                                    }
+                                }
+                            }
+                        },
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"type": "object"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {}
+            }
+        }
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test",
+            "request_type": "POST"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = spec
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            # Should fall back to default schema
+            assert tool_update.input_schema == {"type": "object", "properties": {}}
+
+    def test_tool_update_response_ref_not_found(self):
+        """Test ToolUpdate with missing response $ref (lines 1430-1431, 1433-1436)."""
+        spec = {
+            "openapi": "3.0.0",
+            "paths": {
+                "/test": {
+                    "post": {
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {"type": "object"}
+                                }
+                            }
+                        },
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "$ref": "#/components/schemas/MissingResponse"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {}
+            }
+        }
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test",
+            "request_type": "POST"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = spec
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            # Should have input schema but no output schema
+            assert tool_update.input_schema == {"type": "object"}
+
+    def test_tool_update_no_valid_response_schema(self):
+        """Test ToolUpdate when no valid response schema found (line 1446)."""
+        spec = {
+            "openapi": "3.0.0",
+            "paths": {
+                "/test": {
+                    "post": {
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {"type": "object"}
+                                }
+                            }
+                        },
+                        "responses": {
+                            "200": {
+                                "description": "Success"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test",
+            "request_type": "POST"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = spec
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            # Should have input but no output schema
+            assert tool_update.input_schema == {"type": "object"}
+
+    def test_tool_update_empty_input_after_population(self):
+        """Test ToolUpdate final validation for empty input_schema (lines 1451-1452)."""
+        spec = {
+            "openapi": "3.0.0",
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"type": "object"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test",
+            "request_type": "GET"
+        }
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = spec
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+            tool_update = ToolUpdate(**tool_data)
+            # GET with no requestBody should result in empty input_schema, triggering default
+            assert tool_update.input_schema == {"type": "object", "properties": {}}
+
+    def test_tool_update_exception_handlers(self):
+        """Test ToolUpdate exception handlers (lines 1459-1461)."""
+        tool_data = {
+            "integration_type": "REST",
+            "base_url": "http://example.com",
+            "path_template": "/test"
+        }
+
+        # Test KeyError with no input_schema
+        with patch("requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.side_effect = KeyError("paths")
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
             tool_update = ToolUpdate(**tool_data)
             assert tool_update.input_schema == {"type": "object", "properties": {}}
 
