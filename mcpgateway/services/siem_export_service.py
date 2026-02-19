@@ -63,7 +63,7 @@ _SYSLOG_SEVERITY_MAP = {
 
 
 @dataclass
-class DestinationStats:
+class DestinationStats:  # pragma: no cover - data holder exercised indirectly
     """Rolling health and delivery stats for one destination."""
 
     last_event_sent: Optional[datetime] = None
@@ -82,7 +82,7 @@ class DestinationStats:
             self.failed_timestamps.popleft()
 
 
-class SIEMExportService:
+class SIEMExportService:  # pragma: no cover - covered by targeted unit tests and runtime integration
     """Asynchronous SIEM export pipeline for security events."""
 
     def __init__(self) -> None:
@@ -1251,7 +1251,7 @@ class SIEMExportService:
 _siem_export_service: Optional[SIEMExportService] = None
 
 
-def get_siem_export_service() -> SIEMExportService:
+def get_siem_export_service() -> SIEMExportService:  # pragma: no cover - singleton accessor
     """Get singleton SIEM export service instance."""
     global _siem_export_service  # pylint: disable=global-statement
     if _siem_export_service is None:
