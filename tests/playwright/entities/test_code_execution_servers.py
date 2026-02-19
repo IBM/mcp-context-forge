@@ -174,7 +174,7 @@ class TestCodeExecutionServerUI:
         # Verify creation via API
         created = find_server(page, name)
         assert created is not None
-        assert created.get("server_type") == "code_execution"
+        assert created.get("type") == "code_execution"
 
         # Cleanup
         cleanup_server(page, name)
