@@ -7,7 +7,7 @@ import { validateInputName, validateUrl } from "./security.js";
 export const setupFormValidation = function () {
   // Add validation to all forms on the page
   const forms = document.querySelectorAll("form");
-  
+
   forms.forEach((form) => {
     // Add validation to name fields
     const nameFields = form.querySelectorAll(
@@ -53,7 +53,7 @@ export const setupFormValidation = function () {
         }
       });
     });
-    
+
     // Add validation to URL fields
     const urlFields = form.querySelectorAll(
       'input[name*="url"], input[name*="URL"]',

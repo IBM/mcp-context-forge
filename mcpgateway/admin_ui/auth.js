@@ -11,7 +11,7 @@ import {
 /**
  * Toggle masking for sensitive text inputs (passwords, tokens, headers)
  * @param {HTMLElement|string} inputOrId - Target input element or its ID
- * 
+ *
  * SECURITY NOTE: Stored secrets cannot be revealed. The "Show" button only works
  * for newly entered values, not for existing credentials stored in the database.
  * This is intentional - stored secrets are write-only for security.

@@ -490,24 +490,24 @@ export const initPromptSelect = function (
   const warnBox = safeGetElement(warnId);
   const clearBtn = clearBtnId ? safeGetElement(clearBtnId) : null;
   const selectBtn = selectBtnId ? safeGetElement(selectBtnId) : null;
-  
+
   if (!container || !pillsBox || !warnBox) {
     console.warn(
       `Prompt select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
     );
     return;
   }
-  
+
   const pillClasses =
   "inline-block px-3 py-1 text-xs font-semibold text-purple-700 bg-purple-100 rounded-full shadow dark:text-purple-300 dark:bg-purple-900";
-  
+
   const update = function () {
     try {
       const checkboxes = container.querySelectorAll(
         'input[type="checkbox"]',
       );
       const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-      
+
       // Determine count: if Select All mode is active, use the stored allPromptIds
       const selectAllInput = container.querySelector(
         'input[name="selectAllPrompts"]',
@@ -515,7 +515,7 @@ export const initPromptSelect = function (
       const allIdsInput = container.querySelector(
         'input[name="allPromptIds"]',
       );
-      
+
       // Get persisted selections for Add Server mode
       let persistedPromptIds = [];
       if (selectId === "associatedPrompts") {
@@ -540,10 +540,10 @@ export const initPromptSelect = function (
           window._selectedAssociatedPrompts.slice();
         }
       }
-      
+
       let count = checked.length;
       const pillsData = [];
-      
+
       if (
         selectAllInput &&
         selectAllInput.value === "true" &&
@@ -576,11 +576,11 @@ export const initPromptSelect = function (
           pillsData.push({ id, name });
         });
       }
-      
+
       // Rebuild pills safely - show first 3, then summarize the rest
       pillsBox.innerHTML = "";
       const maxPillsToShow = 3;
-      
+
       // Determine which pills to display based on mode
       if (selectId === "associatedPrompts" && pillsData.length > 0) {
         // In Add Server mode with persisted data, show pills from persisted selections
@@ -601,7 +601,7 @@ export const initPromptSelect = function (
           pillsBox.appendChild(span);
         });
       }
-      
+
       // If more than maxPillsToShow, show a summary pill
       if (count > maxPillsToShow) {
         const span = document.createElement("span");
@@ -611,7 +611,7 @@ export const initPromptSelect = function (
         span.textContent = `+${remaining} more`;
         pillsBox.appendChild(span);
       }
-      
+
       // Warning when > max
       if (count > max) {
         warnBox.textContent = `Selected ${count} prompts. Selecting more than ${max} prompts can degrade agent performance with the server.`;
@@ -622,20 +622,20 @@ export const initPromptSelect = function (
       console.error("Error updating prompt select:", error);
     }
   }
-  
+
   // Remove old event listeners by cloning and replacing (preserving ID)
   if (clearBtn && !clearBtn.dataset.listenerAttached) {
     clearBtn.dataset.listenerAttached = "true";
     const newClearBtn = clearBtn.cloneNode(true);
     newClearBtn.dataset.listenerAttached = "true";
     clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
-    
+
     newClearBtn.addEventListener("click", () => {
       const checkboxes = container.querySelectorAll(
         'input[type="checkbox"]',
       );
       checkboxes.forEach((cb) => (cb.checked = false));
-      
+
       // Remove any select-all hidden inputs
       const selectAllInput = container.querySelector(
         'input[name="selectAllPrompts"]',
@@ -649,11 +649,11 @@ export const initPromptSelect = function (
       if (allIdsInput) {
         allIdsInput.remove();
       }
-      
+
       update();
     });
   }
-  
+
   if (selectBtn && !selectBtn.dataset.listenerAttached) {
     selectBtn.dataset.listenerAttached = "true";
     const newSelectBtn = selectBtn.cloneNode(true);
@@ -663,7 +663,7 @@ export const initPromptSelect = function (
       const originalText = newSelectBtn.textContent;
       newSelectBtn.disabled = true;
       newSelectBtn.textContent = "Selecting all prompts...";
-      
+
       try {
         // Prefer full-set selection when pagination/infinite-scroll is present
         const loadedCheckboxes = container.querySelectorAll(
@@ -672,7 +672,7 @@ export const initPromptSelect = function (
         const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
           (cb) => cb.offsetParent !== null,
         );
-        
+
         // Detect pagination/infinite-scroll controls for prompts
         const hasPaginationControls = !!safeGetElement(
           "prompts-pagination-controls",
@@ -681,9 +681,9 @@ export const initPromptSelect = function (
           "[id^='prompts-scroll-trigger']",
         );
         const isPaginated = hasPaginationControls || hasScrollTrigger;
-        
+
         let allIds = [];
-        
+
         if (!isPaginated && visibleCheckboxes.length > 0) {
           // No pagination and some visible items => select visible set
           allIds = visibleCheckboxes.map((cb) => cb.value);
@@ -713,7 +713,7 @@ export const initPromptSelect = function (
           // If nothing visible (paginated), check loaded checkboxes
           loadedCheckboxes.forEach((cb) => (cb.checked = true));
         }
-        
+
         // Add hidden select-all flag
         let selectAllInput = container.querySelector(
           'input[name="selectAllPrompts"]',
@@ -725,7 +725,7 @@ export const initPromptSelect = function (
           container.appendChild(selectAllInput);
         }
         selectAllInput.value = "true";
-        
+
         // Store IDs as JSON for backend handling
         let allIdsInput = container.querySelector(
           'input[name="allPromptIds"]',
@@ -737,9 +737,9 @@ export const initPromptSelect = function (
           container.appendChild(allIdsInput);
         }
         allIdsInput.value = JSON.stringify(allIds);
-        
+
         update();
-        
+
         newSelectBtn.textContent = `✓ All ${allIds.length} prompts selected`;
         setTimeout(() => {
           newSelectBtn.textContent = originalText;
@@ -752,9 +752,9 @@ export const initPromptSelect = function (
       }
     });
   }
-  
+
   update(); // Initial render
-  
+
   // Attach change listeners using delegation for dynamic content
   if (!container.dataset.changeListenerAttached) {
     container.dataset.changeListenerAttached = "true";
@@ -767,7 +767,7 @@ export const initPromptSelect = function (
         const allIdsInput = container.querySelector(
           'input[name="allPromptIds"]',
         );
-        
+
         if (
           selectAllInput &&
           selectAllInput.value === "true" &&
@@ -788,7 +788,7 @@ export const initPromptSelect = function (
             console.error("Error updating allPromptIds:", err);
           }
         }
-        
+
         // If we're in the edit-server-prompts container, maintain the
         // `data-server-prompts` attribute so user selections persist
         // across gateway-filtered reloads.
@@ -808,7 +808,7 @@ export const initPromptSelect = function (
                 );
               }
             }
-            
+
             const idVal = e.target.value;
             if (!Number.isNaN(idVal)) {
               if (e.target.checked) {
@@ -820,7 +820,7 @@ export const initPromptSelect = function (
                   (x) => x !== idVal,
                 );
               }
-              
+
               container.setAttribute(
                 "data-server-prompts",
                 JSON.stringify(serverPrompts),
@@ -833,13 +833,13 @@ export const initPromptSelect = function (
             );
           }
         }
-        
+
         // If we're in the Add Server prompts container, persist selected IDs incrementally
         else if (selectId === "associatedPrompts") {
           try {
             const changedEl = e.target;
             const changedId = changedEl.value;
-            
+
             let persisted = [];
             const dataAttr = container.getAttribute(
               "data-selected-prompts",
@@ -862,7 +862,7 @@ export const initPromptSelect = function (
               persisted =
               window._selectedAssociatedPrompts.slice();
             }
-            
+
             if (changedEl.checked) {
               if (!persisted.includes(changedId)) {
                 persisted.push(changedId);
@@ -872,7 +872,7 @@ export const initPromptSelect = function (
                 (x) => x !== changedId,
               );
             }
-            
+
             const visibleChecked = Array.from(
               container.querySelectorAll(
                 'input[type="checkbox"]:checked',
@@ -883,7 +883,7 @@ export const initPromptSelect = function (
                 persisted.push(id);
               }
             });
-            
+
             container.setAttribute(
               "data-selected-prompts",
               JSON.stringify(persisted),
@@ -904,7 +904,7 @@ export const initPromptSelect = function (
             );
           }
         }
-        
+
         update();
       }
     });
@@ -928,24 +928,24 @@ const promptTestState = {
 export const testPrompt = async function (promptId) {
   try {
     console.log(`Testing prompt ID: ${promptId}`);
-    
+
     // Debouncing to prevent rapid clicking
     const now = Date.now();
     const lastRequest = promptTestState.lastRequestTime.get(promptId) || 0;
     const timeSinceLastRequest = now - lastRequest;
     const debounceDelay = 1000;
-    
+
     if (timeSinceLastRequest < debounceDelay) {
       console.log(`Prompt ${promptId} test request debounced`);
       return;
     }
-    
+
     // Check if modal is already active
     if (AppState.isModalActive("prompt-test-modal")) {
       console.warn("Prompt test modal is already active");
       return;
     }
-    
+
     // Update button state
     const testButton = document.querySelector(
       `[onclick*="testPrompt('${promptId}')"]`,
@@ -961,15 +961,15 @@ export const testPrompt = async function (promptId) {
       testButton.textContent = "Loading...";
       testButton.classList.add("opacity-50", "cursor-not-allowed");
     }
-    
+
     // Record request time and mark as active
     promptTestState.lastRequestTime.set(promptId, now);
     promptTestState.activeRequests.add(promptId);
-    
+
     // Fetch prompt details
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
-    
+
     try {
       // Fetch prompt details from the prompts endpoint (view mode)
       const response = await fetch(
@@ -983,22 +983,22 @@ export const testPrompt = async function (promptId) {
           signal: controller.signal,
         },
       );
-      
+
       clearTimeout(timeoutId);
-      
+
       if (!response.ok) {
         throw new Error(
           `Failed to fetch prompt details: ${response.status} ${response.statusText}`,
         );
       }
-      
+
       const prompt = await response.json();
       promptTestState.currentTestPrompt = prompt;
-      
+
       // Set modal title and description
       const titleElement = safeGetElement("prompt-test-modal-title");
       const descElement = safeGetElement("prompt-test-modal-description");
-      
+
       const promptLabel =
       prompt.displayName ||
       prompt.originalName ||
@@ -1012,22 +1012,22 @@ export const testPrompt = async function (promptId) {
           // Decode HTML entities first, then escape and replace newlines with <br/> tags
           const decodedDesc = decodeHtml(prompt.description);
           descElement.innerHTML = escapeHtml(decodedDesc).replace(
-            /\n/g, 
+            /\n/g,
             "<br/>"
           );
         } else {
           descElement.textContent = "No description available.";
         }
       }
-      
+
       // Build form fields based on prompt arguments
       buildPromptTestForm(prompt);
-      
+
       // Open the modal
       openModal("prompt-test-modal");
     } catch (error) {
       clearTimeout(timeoutId);
-      
+
       if (error.name === "AbortError") {
         console.warn("Request was cancelled (timeout or user action)");
         showErrorMessage("Request timed out. Please try again.");
@@ -1051,7 +1051,7 @@ export const testPrompt = async function (promptId) {
       testButton.textContent = "Test";
       testButton.classList.remove("opacity-50", "cursor-not-allowed");
     }
-    
+
     // Clean up state
     promptTestState.activeRequests.delete(promptId);
   }
@@ -1066,10 +1066,10 @@ export const buildPromptTestForm = function (prompt) {
     console.error("Prompt test form fields container not found");
     return;
   }
-  
+
   // Clear existing fields
   fieldsContainer.innerHTML = "";
-  
+
   if (!prompt.arguments || prompt.arguments.length === 0) {
     fieldsContainer.innerHTML = `
                 <div class="text-gray-500 dark:text-gray-400 text-sm italic">
@@ -1078,32 +1078,32 @@ export const buildPromptTestForm = function (prompt) {
             `;
     return;
   }
-  
+
   // Create fields for each prompt argument
   prompt.arguments.forEach((arg, index) => {
     const fieldDiv = document.createElement("div");
     fieldDiv.className = "space-y-2";
-    
+
     const label = document.createElement("label");
     label.className =
     "block text-sm font-medium text-gray-700 dark:text-gray-300";
     label.textContent = `${arg.name}${arg.required ? " *" : ""}`;
-    
+
     const input = document.createElement("input");
     input.type = "text";
     input.id = `prompt-arg-${index}`;
     input.name = `arg-${arg.name}`;
     input.className =
     "mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
-    
+
     if (arg.description) {
       input.placeholder = arg.description;
     }
-    
+
     if (arg.required) {
       input.required = true;
     }
-    
+
     fieldDiv.appendChild(label);
     if (arg.description) {
       const description = document.createElement("div");
@@ -1112,7 +1112,7 @@ export const buildPromptTestForm = function (prompt) {
       fieldDiv.appendChild(description);
     }
     fieldDiv.appendChild(input);
-    
+
     fieldsContainer.appendChild(fieldDiv);
   });
 };
@@ -1127,19 +1127,19 @@ export const runPromptTest = async function () {
   const runButton = document.querySelector(
     'button[onclick="runPromptTest()"]',
   );
-  
+
   if (!form || !promptTestState.currentTestPrompt) {
     console.error("Prompt test form or current prompt not found");
     showErrorMessage("Prompt test form not available");
     return;
   }
-  
+
   // Prevent multiple concurrent test runs
   if (runButton && runButton.disabled) {
     console.log("Prompt test already running");
     return;
   }
-  
+
   try {
     // Disable button and show loading
     if (runButton) {
@@ -1156,11 +1156,11 @@ export const runPromptTest = async function () {
                     </div>
                 `;
     }
-    
+
     // Collect form data (prompt arguments)
     const formData = new FormData(form);
     const args = {};
-    
+
     // Parse the form data into arguments object
     for (const [key, value] of formData.entries()) {
       if (key.startsWith("arg-")) {
@@ -1168,7 +1168,7 @@ export const runPromptTest = async function () {
         args[argName] = value;
       }
     }
-    
+
     // Call the prompt API endpoint
     const response = await fetch(
       `${window.ROOT_PATH}/prompts/${encodeURIComponent(promptTestState.currentTestPrompt.id)}`,
@@ -1181,7 +1181,7 @@ export const runPromptTest = async function () {
         body: JSON.stringify(args),
       },
     );
-    
+
     if (!response.ok) {
       let errorMessage;
       try {
@@ -1189,7 +1189,7 @@ export const runPromptTest = async function () {
         errorMessage =
         errorData.message ||
         `HTTP ${response.status}: ${response.statusText}`;
-        
+
         // Show more detailed error information
         if (errorData.details) {
           errorMessage += `\nDetails: ${errorData.details}`;
@@ -1199,13 +1199,13 @@ export const runPromptTest = async function () {
       }
       throw new Error(errorMessage);
     }
-    
+
     const result = await response.json();
-    
+
     // Display the result
     if (resultContainer) {
       let resultHtml = "";
-      
+
       if (result.messages && Array.isArray(result.messages)) {
         result.messages.forEach((message, index) => {
           resultHtml += `
@@ -1222,14 +1222,14 @@ export const runPromptTest = async function () {
                         <div class="text-gray-900 dark:text-gray-100 whitespace-pre-wrap">${escapeHtml(JSON.stringify(result, null, 2))}</div>
                     `;
       }
-      
+
       resultContainer.innerHTML = resultHtml;
     }
-    
+
     console.log("Prompt rendered successfully");
   } catch (error) {
     console.error("Error rendering prompt:", error);
-    
+
     if (resultContainer) {
       resultContainer.innerHTML = `
                     <div class="text-red-600 dark:text-red-400 text-sm">
@@ -1237,7 +1237,7 @@ export const runPromptTest = async function () {
                     </div>
                 `;
     }
-    
+
     showErrorMessage(`Failed to render prompt: ${error.message}`);
   } finally {
     // Hide loading and restore button
@@ -1258,19 +1258,19 @@ export const cleanupPromptTestModal = function () {
   try {
     // Clear current test prompt
     promptTestState.currentTestPrompt = null;
-    
+
     // Reset form
     const form = safeGetElement("prompt-test-form");
     if (form) {
       form.reset();
     }
-    
+
     // Clear form fields
     const fieldsContainer = safeGetElement("prompt-test-form-fields");
     if (fieldsContainer) {
       fieldsContainer.innerHTML = "";
     }
-    
+
     // Clear result container
     const resultContainer = safeGetElement("prompt-test-result");
     if (resultContainer) {
@@ -1280,13 +1280,13 @@ export const cleanupPromptTestModal = function () {
                     </div>
                 `;
     }
-    
+
     // Hide loading
     const loadingElement = safeGetElement("prompt-test-loading");
     if (loadingElement) {
       loadingElement.classList.add("hidden");
     }
-    
+
     console.log("✓ Prompt test modal cleaned up");
   } catch (error) {
     console.error("Error cleaning up prompt test modal:", error);

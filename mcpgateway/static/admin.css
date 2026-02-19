@@ -561,7 +561,7 @@
     margin-left: 0.5rem;
     animation: blink 1s infinite;
 }
-                      
+
 @keyframes blink {
     0%, 50% { opacity: 1; }
     51%, 100% { opacity: 0; }

@@ -391,7 +391,7 @@ describe("viewGrpcMethods", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/grpc/svc-1/methods",
+      "/admin/grpc/svc-1/methods",
       expect.objectContaining({ method: "GET" })
     );
     expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining("pkg.Service/Method"));
