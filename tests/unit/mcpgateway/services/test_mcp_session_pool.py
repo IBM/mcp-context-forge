@@ -8,11 +8,15 @@ SPDX-License-Identifier: Apache-2.0
 # Standard
 import asyncio
 import hashlib
+import logging
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch, Mock
 
 # Third-Party
+import httpx
 import pytest
+from mcp.types import CallToolRequest, CallToolResult
 
 # First-Party
 from mcpgateway.services.mcp_session_pool import (
@@ -1440,138 +1444,95 @@ class TestContextManager:
 
 
 
-class TestInternalRPCURL:
-    """Tests for internal RPC URL usage in session pool."""
+
+
+class TestExecuteForwardedRequest:
+    """Tests for _execute_forwarded_request method."""
 
     @pytest.mark.asyncio
-    async def test_forward_to_rpc_uses_internal_rpc_url(self, monkeypatch):
-        """Test that _forward_to_rpc uses settings.internal_rpc_url."""
-        from mcpgateway.config import settings
-
+    async def test_execute_forwarded_request_success(self):
+        """Test successful execution of forwarded request."""
         pool = MCPSessionPool()
-
-        # Mock settings.internal_rpc_url
-        monkeypatch.setattr(settings, "internal_rpc_url", "http://127.0.0.1:4444/rpc")
-        monkeypatch.setattr(settings, "port", 4444)
-
-        # Mock ResilientHttpClient
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"jsonrpc": "2.0", "result": {"test": "data"}, "id": 1}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-
-        class MockAsyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        with patch("mcpgateway.services.mcp_session_pool.ResilientHttpClient", MockAsyncClient):
-            result = await pool._forward_to_rpc(
-                method="test_method",
-                params={"key": "value"},
-                headers={"Authorization": "Bearer test-token"}
-            )
-
-        # Verify the RPC call was made to internal_rpc_url
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
-        assert call_args[0][0] == "http://127.0.0.1:4444/rpc"
-        assert result == {"test": "data"}
-
-        await pool.close_all()
-
-    @pytest.mark.asyncio
-    async def test_forward_to_rpc_with_custom_internal_host(self, monkeypatch):
-        """Test _forward_to_rpc with custom internal_rpc_host."""
-        from mcpgateway.config import settings
-
-        pool = MCPSessionPool()
-
-        # Mock settings for containerized environment
-        monkeypatch.setattr(settings, "internal_rpc_url", "http://gateway-service:4444/rpc")
-
-        # Mock ResilientHttpClient
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"jsonrpc": "2.0", "result": {"tools": []}, "id": 2}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-
-        class MockAsyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        with patch("mcpgateway.services.mcp_session_pool.ResilientHttpClient", MockAsyncClient):
-            result = await pool._forward_to_rpc(
-                method="tools/list",
-                params={},
-                headers={"Authorization": "Bearer test-token"}
-            )
-
-        # Verify the RPC call used the internal service URL
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
-        assert call_args[0][0] == "http://gateway-service:4444/rpc"
-        assert result == {"tools": []}
-
-        await pool.close_all()
-
-    @pytest.mark.asyncio
-    async def test_forward_to_rpc_preserves_headers(self, monkeypatch):
-        """Test that _forward_to_rpc preserves authorization headers."""
-        from mcpgateway.config import settings
-
-        pool = MCPSessionPool()
-
-        monkeypatch.setattr(settings, "internal_rpc_url", "http://127.0.0.1:4444/rpc")
-
-        # Mock ResilientHttpClient
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"jsonrpc": "2.0", "result": {}, "id": 3}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-
-        class MockAsyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        test_headers = {
-            "Authorization": "Bearer test-token-123",
-            "X-Tenant-ID": "tenant-456"
+        request = {
+            "method": "tools/list",
+            "params": {},
+            "headers": {"authorization": "Bearer token"},
+            "req_id": 123,
+            "mcp_session_id": "session_id",
         }
 
-        with patch("mcpgateway.services.mcp_session_pool.ResilientHttpClient", MockAsyncClient):
-            await pool._forward_to_rpc(
-                method="ping",
-                params={},
-                headers=test_headers
-            )
+        mock_response = Mock()
+        mock_response.json.return_value = {"jsonrpc": "2.0", "result": {"tools": []}, "id": 123}
 
-        # Verify headers were passed through
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        # Mock __aenter__ to return the mock_client instance
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            with patch("mcpgateway.config.settings.internal_rpc_url", "http://internal-host/rpc"):
+                result = await pool._execute_forwarded_request(request)
+
+        assert result == {"result": {"tools": []}}
+        
         mock_client.post.assert_called_once()
-        call_kwargs = mock_client.post.call_args[1]
-        assert "authorization" in call_kwargs["headers"]
-        assert call_kwargs["headers"]["authorization"] == "Bearer test-token-123"
-        assert call_kwargs["headers"]["content-type"] == "application/json"
+        call_args = mock_client.post.call_args
+        assert call_args[0][0] == "http://internal-host/rpc"
+        assert call_args[1]["json"] == {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 123}
+        assert call_args[1]["headers"]["x-forwarded-internally"] == "true"
+        assert call_args[1]["headers"]["authorization"] == "Bearer token"
 
-        await pool.close_all()
-        await pool.close_all()
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_error_response(self):
+        """Test execution returning JSON-RPC error."""
+        pool = MCPSessionPool()
+        request = {"method": "tools/list"}
+
+        mock_response = Mock()
+        mock_response.json.return_value = {"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": 1}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            result = await pool._execute_forwarded_request(request)
+
+        assert result == {"error": {"code": -32601, "message": "Method not found"}}
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_timeout(self):
+        """Test timeout during execution."""
+        pool = MCPSessionPool()
+        request = {"method": "tools/list"}
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.TimeoutException("Timeout")
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            result = await pool._execute_forwarded_request(request)
+
+        assert result["error"]["code"] == -32603
+        assert "Internal request timeout" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_exception(self):
+        """Test generic exception during execution."""
+        pool = MCPSessionPool()
+        request = {"method": "tools/list"}
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = Exception("Network error")
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            result = await pool._execute_forwarded_request(request)
+
+        assert result["error"]["code"] == -32603
+        assert "Network error" in result["error"]["message"]
