@@ -4120,12 +4120,8 @@ class TestExportImportEndpoints:
     async def test_import_configuration_invalid_strategy(self):
         import mcpgateway.main as main_mod
 
-        # Create mock request with invalid strategy
-        mock_request = MagicMock()
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "invalid"}')
-
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(import_data={}, conflict_strategy="invalid", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 400
         assert "Invalid conflict strategy" in str(excinfo.value.detail)
 
@@ -4135,12 +4131,8 @@ class TestExportImportEndpoints:
         import_service = MagicMock()
         import_service.import_configuration = AsyncMock(return_value=status)
 
-        # Create mock request
-        mock_request = MagicMock()
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "update"}')
-
         with patch("mcpgateway.main.import_service", import_service):
-            result = await import_configuration(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await import_configuration(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
             assert result["status"] == "ok"
 
     async def test_import_configuration_error_mappings(self, monkeypatch):
@@ -4154,70 +4146,31 @@ class TestExportImportEndpoints:
         svc.import_configuration = AsyncMock(return_value=request_import_status)
         monkeypatch.setattr(main_mod, "import_service", svc)
 
-        # Create mock request
-        mock_request = MagicMock()
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "update"}')
-
         # Cover username=None branch by using non-dict user
-        result = await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user="basic-user")
+        result = await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user="basic-user")
         assert result["status"] == "ok"
 
         svc.import_configuration = AsyncMock(side_effect=ImportValidationError("bad"))
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "update"}')
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 422
 
         svc.import_configuration = AsyncMock(side_effect=ImportConflictError("conflict"))
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "update"}')
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 409
 
         svc.import_configuration = AsyncMock(side_effect=ImportServiceError("bad"))
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "update"}')
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 400
 
         svc.import_configuration = AsyncMock(side_effect=RuntimeError("boom"))
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "update"}')
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
 
-    async def test_import_configuration_empty_body(self):
-        import mcpgateway.main as main_mod
 
-        mock_request = MagicMock()
-        mock_request.body = AsyncMock(return_value=b'')
-
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 400
-        assert "Empty request body" in str(excinfo.value.detail)
-
-    async def test_import_configuration_invalid_json(self):
-        import mcpgateway.main as main_mod
-
-        mock_request = MagicMock()
-        mock_request.body = AsyncMock(return_value=b'{invalid json}')
-
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 400
-        assert "Invalid JSON" in str(excinfo.value.detail)
-
-    async def test_import_configuration_missing_import_data(self):
-        import mcpgateway.main as main_mod
-
-        mock_request = MagicMock()
-        mock_request.body = AsyncMock(return_value=b'{"conflict_strategy": "update"}')
-
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 400
-        assert "Missing 'import_data'" in str(excinfo.value.detail)
 
 
 class TestMessageEndpointElicitation:
@@ -5063,15 +5016,13 @@ class TestRemainingCoverageGaps:
         svc.import_configuration = AsyncMock(return_value=status_obj)
         monkeypatch.setattr(main_mod, "import_service", svc)
 
-        # Create mock request
-        mock_request = MagicMock()
-        mock_request.body = AsyncMock(
-            return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "update", "dry_run": false, "rekey_secret": null, "selected_entities": null}'
-        )
-
         user = SimpleNamespace(email="obj@example.com")
         result = await main_mod.import_configuration.__wrapped__(
-            request=mock_request,
+            import_data={"tools": []},
+            conflict_strategy="update",
+            dry_run=False,
+            rekey_secret=None,
+            selected_entities=None,
             db=MagicMock(),
             user=user,
         )
