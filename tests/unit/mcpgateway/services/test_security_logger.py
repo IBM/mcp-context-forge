@@ -2,6 +2,8 @@
 """Unit tests for SecurityLogger service."""
 
 # Standard
+from collections import deque
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 # Third-Party
@@ -333,6 +335,42 @@ def test_log_auth_attempt_failure_low_severity(sec_logger, mock_db):
     assert event is not None
 
 
+def test_log_auth_attempt_siem_only_uses_memory_counter(monkeypatch, sec_logger):
+    mock_siem = MagicMock()
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr("mcpgateway.services.security_logger.get_siem_export_service", lambda: mock_siem)
+
+    event = sec_logger.log_authentication_attempt(
+        user_id="user1",
+        user_email=None,
+        auth_method="basic",
+        success=False,
+        client_ip="1.2.3.4",
+        persist=False,
+        db=None,
+    )
+
+    assert event is None
+    assert sec_logger._count_recent_failures_memory("user1", "1.2.3.4") >= 1
+
+
+def test_count_recent_failures_memory_prunes_and_counts_max(sec_logger):
+    now = datetime.now(timezone.utc)
+    sec_logger._memory_failures = {
+        "user:user1": deque([now - timedelta(minutes=10), now - timedelta(minutes=1), now]),
+        "ip:1.2.3.4": deque([now - timedelta(minutes=1), now]),
+    }
+
+    count = sec_logger._count_recent_failures_memory(user_id="user1", client_ip="1.2.3.4", minutes=5)
+
+    assert count == 2
+    assert len(sec_logger._memory_failures["user:user1"]) == 2
+
+
+def test_count_recent_failures_memory_no_keys_returns_zero(sec_logger):
+    assert sec_logger._count_recent_failures_memory(user_id=None, client_ip=None, minutes=5) == 0
+
+
 # ---------- log_data_access ----------
 
 
@@ -394,6 +432,23 @@ def test_log_data_access_non_sensitive(sec_logger, mock_db):
             db=mock_db,
         )
     assert audit is not None
+
+
+def test_create_audit_trail_failure_sets_high_severity(sec_logger, mock_db):
+    sec_logger._emit_to_siem = MagicMock()  # pylint: disable=protected-access
+    mock_db.refresh = MagicMock()
+
+    audit = sec_logger._create_audit_trail(
+        action="delete",
+        resource_type="tool",
+        user_id="user1",
+        success=False,
+        db=mock_db,
+    )
+
+    assert audit is not None
+    emitted_event = sec_logger._emit_to_siem.call_args.kwargs["event"]  # pylint: disable=protected-access
+    assert emitted_event["severity"] == "HIGH"
 
 
 # ---------- log_suspicious_activity ----------

@@ -7193,7 +7193,7 @@ try:
 
     app.include_router(siem_router)
     logger.info("SIEM router included")
-except ImportError as e:
+except ImportError as e:  # pragma: no cover - optional import guard
     logger.warning(f"SIEM router not available: {e}")
 
 # Conditionally include observability router if enabled
