@@ -9629,12 +9629,7 @@ function initResourceSelect(
                     } catch (err) {
                         console.error("Error updating allResourceIds:", err);
                     }
-                }
-
-                // If we're in the edit-server-resources container, maintain the
-                // `data-server-resources` attribute so user selections persist
-                // across gateway-filtered reloads.
-                else if (selectId === "edit-server-resources") {
+                } else if (selectId === "edit-server-resources") {
                     try {
                         let serverResources = [];
                         const dataAttr = container.getAttribute(
@@ -10098,12 +10093,7 @@ function initPromptSelect(
                     } catch (err) {
                         console.error("Error updating allPromptIds:", err);
                     }
-                }
-
-                // If we're in the edit-server-prompts container, maintain the
-                // `data-server-prompts` attribute so user selections persist
-                // across gateway-filtered reloads.
-                else if (selectId === "edit-server-prompts") {
+                } else if (selectId === "edit-server-prompts") {
                     try {
                         let serverPrompts = [];
                         const dataAttr = container.getAttribute(
