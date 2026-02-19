@@ -358,6 +358,7 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)
 
+
 @lru_cache(maxsize=1)
 def load_sri_hashes() -> Dict[str, str]:
     """Load SRI hashes from sri_hashes.json file.
