@@ -1082,6 +1082,7 @@ class SIEMExportService:
         redacted = deepcopy(event)
 
         def redact_obj(obj: Any) -> Any:
+            """Recursively redact matching keys in dictionaries and lists."""
             if isinstance(obj, dict):
                 redacted_dict: Dict[str, Any] = {}
                 for key, value in obj.items():
