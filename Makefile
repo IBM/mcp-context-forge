@@ -4958,6 +4958,9 @@ docker-shell:
 # help: compose-tls-down      - Stop TLS-enabled stack
 # help: compose-tls-logs      - Tail logs from TLS stack
 # help: compose-tls-ps        - Show TLS stack status
+# help: compose-siem-up       - 🛡️  Start stack with local OpenSearch SIEM sink (docker-compose.siem-opensearch.yml)
+# help: compose-siem-down     - 🛑 Stop SIEM test stack and remove SIEM containers
+# help: compose-siem-logs     - 📜 Tail logs for gateway + OpenSearch SIEM services
 
 # ─────────────────────────────────────────────────────────────────────────────
 # You may **force** a specific binary by exporting COMPOSE_CMD, e.g.:
@@ -5004,6 +5007,7 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
+	compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down
 
 # Validate compose file
@@ -5106,6 +5110,36 @@ compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.o
 	fi
 	@echo "🚀  Starting lite stack (with override)..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.override.lite.yml up -d
+
+compose-siem-up: compose-validate ## 🛡️ Start stack with OpenSearch SIEM sink
+	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.siem-opensearch.yml"; \
+		exit 1; \
+	fi
+	@echo "🛡️  Starting stack with SIEM OpenSearch override..."
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml up -d
+	@echo "✅ SIEM stack started."
+	@echo "   Gateway:    http://localhost:8080"
+	@echo "   OpenSearch: http://localhost:9200"
+	@echo "   Tip: curl -s http://localhost:9200/_cat/indices?v"
+
+compose-siem-down: compose-validate ## 🛑 Stop SIEM test stack
+	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.siem-opensearch.yml"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping SIEM stack..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml down --remove-orphans
+	@echo "✅ SIEM stack stopped."
+
+compose-siem-logs: ## 📜 Tail logs for SIEM stack services
+	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.siem-opensearch.yml"; \
+		exit 1; \
+	fi
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml logs -f gateway opensearch
 
 compose-restart:
 	@echo "🔄  Restarting stack..."
