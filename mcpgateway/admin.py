@@ -2565,7 +2565,7 @@ async def admin_edit_server(
             tokenization = None
             skills_scope = None
             skills_require_approval = False
-        elif server_type == "code_execution" or server_type is None:
+        else:
             # Parse JSON fields for code_execution, or when type is unchanged (partial edit)
             mount_rules = _parse_optional_json_field("mount_rules")
             sandbox_policy = _parse_optional_json_field("sandbox_policy")
