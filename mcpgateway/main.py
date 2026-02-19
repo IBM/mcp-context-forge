@@ -2503,10 +2503,7 @@ async def list_servers(
     )
 
     if include_pagination:
-        payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedServersResponse(servers=data, next_cursor=next_cursor)
     return data
 
 
@@ -3176,10 +3173,7 @@ async def list_a2a_agents(
     )
 
     if include_pagination:
-        payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedA2AAgentsResponse(agents=data, next_cursor=next_cursor)
     return data
 
 
@@ -3642,10 +3636,7 @@ async def list_tools(
 
     if apijsonpath is None:
         if include_pagination:
-            payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
-            if next_cursor:
-                payload["nextCursor"] = next_cursor
-            return payload
+            return CursorPaginatedToolsResponse(tools=data, next_cursor=next_cursor)
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
@@ -4169,10 +4160,7 @@ async def list_resources(
     db.close()
 
     if include_pagination:
-        payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedResourcesResponse(resources=data, next_cursor=next_cursor)
     return data
 
 
@@ -4655,10 +4643,7 @@ async def list_prompts(
     db.close()
 
     if include_pagination:
-        payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedPromptsResponse(prompts=data, next_cursor=next_cursor)
     return data
 
 
@@ -5146,10 +5131,7 @@ async def list_gateways(
     db.close()
 
     if include_pagination:
-        payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedGatewaysResponse(gateways=data, next_cursor=next_cursor)
     return data
 
 
