@@ -357,3 +357,6 @@ docker-compose.perf.yml
 tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
+cosign.key
+cosign.pub
+scanner-report.json
