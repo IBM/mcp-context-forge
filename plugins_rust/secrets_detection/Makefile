@@ -1,5 +1,5 @@
 # Makefile for Secrets Detection Plugin (Rust)
-# Copyright 2025
+# Copyright 2026
 # SPDX-License-Identifier: Apache-2.0
 #
 # Plugin-specific operations for secrets_detection
@@ -14,6 +14,9 @@
 
 # Default target
 .DEFAULT_GOAL := help
+
+# Project metadata
+DIST_DIR := target
 
 # Colors for output
 BLUE := \033[0;34m
@@ -35,22 +38,21 @@ help: ## Show this help message
 	@echo "  make compare      # Compare Python vs Rust performance"
 
 # Build targets
-build: ## Build plugin in release mode
-	@echo "$(GREEN)Building secrets_detection plugin...$(NC)"
-	maturin build --release
+stub-gen: ## Generate Python type stubs (.pyi files)
+	@echo "$(GREEN)Generating Python type stubs...$(NC)"
+	@cargo run --bin stub_gen
+	@echo "$(GREEN)Type stubs generated$(NC)"
 
-build-target: ## Build for specific target (use TARGET=...)
+build-target: stub-gen ## Build for specific target (use TARGET=...)
 	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
-	@maturin build --release --target $(TARGET)
+	@uv run maturin build --release --target $(TARGET)
 	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
 
-install: ## Build and install plugin (uses maturin develop)
-	@echo "$(GREEN)Installing secrets_detection plugin...$(NC)"
-	maturin develop --release
-	@echo "$(GREEN)Verifying installation...$(NC)"
-	@python -c "import secret_detection; print('✓ secret_detection installed'); print('✓ Module:', secret_detection.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
-	@echo "$(GREEN)Installation verified successfully!$(NC)"
+install: stub-gen
+	@echo "$(GREEN)Installing $(PACKAGE_NAME) plugin...$(NC)"
+	@cd ../.. && uv run maturin develop --release --manifest-path plugins_rust/secrets_detection/Cargo.toml
+	@echo "$(GREEN)Installation complete$(NC)"
 
 # Testing targets
 test: ## Run Rust tests for plugin
@@ -63,7 +65,7 @@ test-verbose: ## Run plugin tests (verbose)
 
 test-python: ## Run Python unit tests for plugin (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd ../.. && pytest tests -k secrets_detection -v
+	cd ../.. && uv run pytest tests -k secrets_detection -v
 
 fmt: ## Format code with rustfmt
 	@echo "$(GREEN)Formatting code...$(NC)"
@@ -84,8 +86,8 @@ check-all: ## Run all checks (format, lint, test)
 	@$(MAKE) --no-print-directory test
 
 verify: ## Verify plugin installation
-	@echo "$(GREEN)Verifying secret_detection installation...$(NC)"
-	@python3 -c "import secret_detection; print('✅ secret_detection available')" || echo "⚠️  secret_detection not installed"
+	@echo "$(GREEN)Verifying secrets_detection installation...$(NC)"
+	@uv run python -c "import secrets_detection; print('✅ secrets_detection available')" || echo "⚠️  secrets_detection not installed"
 
 test-integration: ## Run integration tests
 	@echo "$(GREEN)Running integration tests...$(NC)"
@@ -105,7 +107,7 @@ compare: install ## Run Python vs Rust performance comparison (full)
 	@$(MAKE) --no-print-directory install
 	@echo ""
 	@echo "$(YELLOW)Running comparison script...$(NC)"
-	python3 compare_performance.py
+	cd ../../ && uv run python3 plugins_rust/secrets_detection/compare_performance.py
 
 compare-quick: install ## Run Python vs Rust performance comparison (quick)
 	@echo "$(GREEN)Running quick performance comparison...$(NC)"
@@ -113,7 +115,7 @@ compare-quick: install ## Run Python vs Rust performance comparison (quick)
 	@$(MAKE) --no-print-directory install
 	@echo ""
 	@echo "$(YELLOW)Running comparison script (quick mode)...$(NC)"
-	python3 compare_performance.py --iterations 100 --warmup 10
+	uv run compare_performance.py --iterations 100 --warmup 10
 
 compare-detailed: install ## Run Python vs Rust performance comparison (detailed)
 	@echo "$(GREEN)Running detailed performance comparison...$(NC)"
@@ -121,7 +123,7 @@ compare-detailed: install ## Run Python vs Rust performance comparison (detailed
 	@$(MAKE) --no-print-directory install
 	@echo ""
 	@echo "$(YELLOW)Running comparison script (detailed mode)...$(NC)"
-	python3 compare_performance.py --iterations 50000 --warmup 500
+	uv run compare_performance.py --iterations 50000 --warmup 500
 
 test-all: install ## Run all tests: cargo test, integration tests, and performance comparison
 	@echo "$(BLUE)Running complete test suite...$(NC)"
@@ -133,20 +135,9 @@ test-all: install ## Run all tests: cargo test, integration tests, and performan
 	cargo test
 	@echo ""
 	@echo "$(GREEN)Step 3/4: Running Python tests...$(NC)"
-	cd ../.. && pytest tests -k secrets_detection -v
+	cd ../.. && uv run python -m pytest tests -k secrets_detection -v
 	@echo ""
 	@echo "$(BLUE)✓ All tests completed successfully!$(NC)"
-
-test-differential: install ## Install plugin and run Python vs Rust comparison
-	@echo "$(GREEN)Running performance comparison (Python vs Rust)...$(NC)"
-	@echo "$(YELLOW)Installing plugin first...$(NC)"
-	@$(MAKE) --no-print-directory install
-	@echo ""
-	@echo "$(YELLOW)Verifying fresh installation...$(NC)"
-	@python -c "import secret_detection; import os; import time; stat = os.stat(secret_detection.__file__); age = time.time() - stat.st_mtime; print(f'✓ Installation age: {age:.1f} seconds'); assert age < 60, f'Installation too old ({age:.1f}s), rebuild required'" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
-	@echo ""
-	@echo "$(YELLOW)Running comparison script...$(NC)"
-	cd ../.. && pytest -k test_secrets_detection_differential
 
 # Security and audit targets
 audit: ## Run security audit with cargo-audit
@@ -170,10 +161,17 @@ doc-open: doc ## Build and open documentation in browser
 # Coverage targets
 coverage: ## Generate code coverage report
 	@echo "$(GREEN)Generating code coverage...$(NC)"
-	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
-	cargo tarpaulin --out Html --out Xml --output-dir coverage
+	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-llvm-cov...$(NC)"; cargo install cargo-llvm-cov; }
+	@mkdir -p coverage
+	cargo llvm-cov --cobertura --output-path coverage/cobertura.xml
+	@echo "$(GREEN)Coverage report generated at coverage/cobertura.xml$(NC)"
 
 # Cleaning targets
+uninstall: ## Uninstall plugin from Python environment
+	@echo "$(YELLOW)Uninstalling secrets_detection...$(NC)"
+	@uv pip uninstall -y secrets_detection 2>/dev/null || pip uninstall -y secrets_detection 2>/dev/null || true
+	@echo "$(GREEN)secrets_detection uninstalled$(NC)"
+
 clean: ## Remove build artifacts
 	@echo "$(YELLOW)Cleaning build artifacts...$(NC)"
 	cargo clean
@@ -192,8 +190,8 @@ info: ## Show build information
 	@echo "$(BLUE)Build Information:$(NC)"
 	@echo "  Rust version:    $$(rustc --version)"
 	@echo "  Cargo version:   $$(cargo --version)"
-	@echo "  Maturin version: $$(maturin --version 2>/dev/null || echo 'not installed')"
-	@echo "  Python version:  $$(python --version)"
+	@echo "  Maturin version: $$(uv run maturin --version 2>/dev/null || echo 'not installed')"
+	@echo "  Python version:  $$(uv run python --version)"
 	@echo ""
 	@echo "$(BLUE)Plugin Information:$(NC)"
 	@echo "  Name:    secrets_detection"
@@ -202,7 +200,7 @@ info: ## Show build information
 
 deps: ## Install/update dependencies
 	@echo "$(GREEN)Installing/updating dependencies...$(NC)"
-	@command -v maturin >/dev/null 2>&1 || { echo "$(YELLOW)Installing maturin...$(NC)"; pip install maturin; }
+	@command -v uv >/dev/null 2>&1 && uv pip install maturin || { echo "$(YELLOW)Installing maturin...$(NC)"; uv pip install maturin; }
 	@command -v cargo-audit >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-audit...$(NC)"; cargo install cargo-audit; }
 	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
 	@echo "$(GREEN)Dependencies installed!$(NC)"
@@ -214,7 +212,7 @@ watch: ## Watch for changes and run tests
 
 watch-dev: ## Watch for changes and rebuild in dev mode
 	@command -v cargo-watch >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-watch...$(NC)"; cargo install cargo-watch; }
-	cargo watch -x 'maturin develop'
+	cargo watch -s 'make install'
 
 # Performance profiling
 flamegraph: ## Generate flamegraph from heavy workload example
@@ -235,7 +233,7 @@ stats: ## Show code statistics
 	@cargo tree --depth 1
 
 # All PHONY targets
-.PHONY: help build build-debug build-target dev dev-debug install \
+.PHONY: help build-target install \
         test test-verbose test-python test-integration test-all \
         fmt fmt-check clippy \
         bench compare compare-quick compare-detailed \

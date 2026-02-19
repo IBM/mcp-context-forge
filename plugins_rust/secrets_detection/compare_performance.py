@@ -28,11 +28,12 @@ from secrets_detection import SecretsDetectionConfig, _scan_container  # noqa: E
 
 # Try to import Rust implementation
 try:
-    import secret_detection as rust_secret_detection
+    from secrets_detection_rust.secrets_detection_rust import py_scan_container as rust_scan_container
 
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
+    rust_scan_container = None
     print("⚠️  Rust implementation not available. Build it with:")
     print("   cd plugins_rust/secrets_detection && maturin develop --release")
     print()
@@ -97,13 +98,13 @@ def benchmark_rust(data: Any, config: SecretsDetectionConfig, iterations: int, w
         return [], 0
 
     for _ in range(warmup):
-        rust_secret_detection.py_scan_container(data, config)
+        rust_scan_container(data, config)
 
     times = []
     count = 0
     for _ in range(iterations):
         start = time.perf_counter()
-        c, _, _ = rust_secret_detection.py_scan_container(data, config)
+        c, _, _ = rust_scan_container(data, config)
         times.append(time.perf_counter() - start)
         count = c
 

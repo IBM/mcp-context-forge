@@ -7,6 +7,8 @@ use std::fmt;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
+use pyo3_stub_gen::define_stub_info_gatherer;
+use pyo3_stub_gen::derive::*;
 
 pub use config::SecretsDetectionConfig;
 pub use patterns::PATTERNS;
@@ -14,6 +16,7 @@ pub use scanner::{detect_and_redact, scan_container};
 
 /// Scan Python container for secrets using optimized type dispatch
 ///
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn py_scan_container<'py>(
     py: Python<'py>,
@@ -58,10 +61,13 @@ fn py_scan_container<'py>(
 }
 
 #[pymodule]
-fn secret_detection(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn secrets_detection_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_scan_container, m)?)?;
     Ok(())
 }
+
+// Define stub info gatherer for generating Python type stubs
+define_stub_info_gatherer!(stub_info);
 
 /// Helper function to extract and convert Python attributes with custom error type
 fn extract_attr<'py, T>(

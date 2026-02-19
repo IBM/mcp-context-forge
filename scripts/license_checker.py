@@ -726,9 +726,12 @@ def evaluate_license(
 
 
 def _iter_files_with_name(root: Path, filename: str) -> Iterable[Path]:
-    ignored = {".git", ".github", ".tox", ".venv", "node_modules", ".ruff_cache", ".mypy_cache", ".pytest_cache", "todo"}
+    ignored = {".git", ".github", ".tox", ".venv", "node_modules", ".ruff_cache", ".mypy_cache", ".pytest_cache", "todo", ".cache"}
     for path in root.rglob(filename):
         if not path.is_file():
+            continue
+        # Skip cookiecutter template directories (contain {{cookiecutter in path)
+        if "{{cookiecutter" in str(path):
             continue
         parts = set(path.relative_to(root).parts[:-1])
         if parts.intersection(ignored):
@@ -751,9 +754,7 @@ def _run_command(command: Sequence[str], cwd: Path, timeout: int = 120) -> subpr
         return subprocess.CompletedProcess(command, returncode=124, stdout="", stderr=f"timed out after {timeout}s")
 
 
-def scan_pyprojects(
-    root: Path, policy: Dict[str, Any], compiled_patterns: Optional[CompiledPatterns] = None
-) -> Tuple[List[Finding], Dict[str, int]]:
+def scan_pyprojects(root: Path, policy: Dict[str, Any], compiled_patterns: Optional[CompiledPatterns] = None) -> Tuple[List[Finding], Dict[str, int]]:
     findings: List[Finding] = []
     stats = {"manifests": 0, "evaluated": 0}
     for file in _iter_files_with_name(root, "pyproject.toml"):
@@ -803,12 +804,6 @@ def scan_pip_dependencies(
 ) -> Tuple[List[Finding], Dict[str, int]]:
     findings: List[Finding] = []
     stats = {"dependencies": 0, "dependencies_ignored_as_dev": 0}
-    scan_cfg = policy.get("scan", {})
-    ignore_group_names = {
-        name.strip().lower()
-        for name in scan_cfg.get("ignore_dev_dependency_group_names", ["dev", "development", "developer"])
-        if isinstance(name, str) and name.strip()
-    }
     ignored = dev_dependency_names or set()
     if ignore_dev_dependencies and ignored:
         ignored = {name.lower() for name in ignored if name}
@@ -1195,29 +1190,21 @@ def scan_rust_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Opt
     return findings, stats
 
 
-def print_summary(
-    findings: Sequence[Finding], stats: Dict[str, Dict[str, int]], root: Path, summary_only: bool = False
-) -> None:
+def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]], root: Path, summary_only: bool = False) -> None:
     warnings = sum(1 for finding in findings if finding.is_warning)
     errors = len(findings) - warnings
 
-    status = _color("FAILED", _Palette.BOLD + _Palette.RED) if errors else _color(
-        "PASS", _Palette.BOLD + _Palette.GREEN
-    )
+    status = _color("FAILED", _Palette.BOLD + _Palette.RED) if errors else _color("PASS", _Palette.BOLD + _Palette.GREEN)
     print(_section_banner(f"\nLicense compliance report ({status})"))
     print(_color("═" * 60, _Palette.DIM + _Palette.WHITE))
-    print(
-        "Checked pyproject manifests:"
-        f" {stats['pyproject']['manifests']} files, {stats['pyproject']['evaluated']} evaluated"
-    )
+    print("Checked pyproject manifests:" f" {stats['pyproject']['manifests']} files, {stats['pyproject']['evaluated']} evaluated")
     print(f"Checked pip deps: {stats['pip']['dependencies']} entries")
     subvenv_stats = stats.get("pip-subvenv", {})
     if subvenv_stats.get("venvs", 0):
         print(f"Checked pip sub-venvs: {subvenv_stats['venvs']} venvs, {subvenv_stats['packages']} packages")
     print(f"Checked Go modules: {stats['go']['modules']} modules, {stats['go']['packages']} packages")
     print(f"Checked Rust manifests: {stats['rust']['manifests']} manifests, {stats['rust']['crates']} crates")
-    print(f"Findings: {_color(str(errors), _Palette.BOLD + _Palette.RED)} "
-          f"error(s), {_color(str(warnings), _Palette.BOLD + _Palette.YELLOW)} warning(s)\n")
+    print(f"Findings: {_color(str(errors), _Palette.BOLD + _Palette.RED)} " f"error(s), {_color(str(warnings), _Palette.BOLD + _Palette.YELLOW)} warning(s)\n")
 
     if summary_only:
         counts = _summarize_findings(findings)
@@ -1285,10 +1272,7 @@ def print_summary(
                     print(f"      source: {item.source}")
             print("")
         else:
-            print(
-                f"  {_status_label(False, is_error=False)} "
-                f"{scope} ({file_count} file(s), no local license issues)"
-            )
+            print(f"  {_status_label(False, is_error=False)} " f"{scope} ({file_count} file(s), no local license issues)")
 
     pip_findings = [finding for finding in findings if finding.scope == "pip"]
     print(_section_banner("# PYTHON THIRD-PARTY (pip)"))
@@ -1423,11 +1407,7 @@ def main() -> int:
     args = build_parser().parse_args()
     policy = load_policy(Path(args.config))
     scan_cfg = policy.get("scan", {})
-    ignore_group_names = {
-        name.strip().lower()
-        for name in scan_cfg.get("ignore_dev_dependency_group_names", ["dev", "development", "developer"])
-        if isinstance(name, str) and name.strip()
-    }
+    ignore_group_names = {name.strip().lower() for name in scan_cfg.get("ignore_dev_dependency_group_names", ["dev", "development", "developer"]) if isinstance(name, str) and name.strip()}
     include_dev_groups = bool(args.include_dev_groups)
 
     dev_dependency_names: Set[str] = set()

@@ -86,7 +86,7 @@ test-verbose:
 
 test-python: ## Run Python unit tests for plugin (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd ../.. && pytest -k pii_filter -v
+	cd ../.. && uv run pytest -k pii_filter -v
 
 test-all: test test-python
 
@@ -94,36 +94,25 @@ test-all: test test-python
 # 🛠 BUILD (maturin for Python extension)
 # =============================================================================
 # help: 🛠 BUILD
-# help: build                 - Build debug Python extension
-# help: release               - Build optimized release Python extension
-# help: develop               - Install in development mode (editable)
+# help: stub-gen              - Generate Python type stubs (.pyi files)
+# help: build-target        - Build for specific target (use TARGET=...)
 # help: install               - Build and install wheel
-.PHONY: build release develop install
+.PHONY: stub-gen build-target install
 
-build:
-	@echo "$(GREEN)Building release Python extension...$(NC)"
-	@maturin build --release
-	@echo "$(GREEN)Release build complete$(NC)"
+stub-gen:
+	@echo "$(GREEN)Generating Python type stubs...$(NC)"
+	@cargo run --bin stub_gen
+	@echo "$(GREEN)Type stubs generated$(NC)"
 
-build-target:
+build-target: stub-gen
 	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
-	@maturin build --release --target $(TARGET)
+	@uv run maturin build --release --target $(TARGET)
 	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
-release:
-	@echo "$(GREEN)Building release Python extension...$(NC)"
-	@maturin build --release
-	@echo "$(GREEN)Release build complete$(NC)"
-	@ls -lh $(DIST_DIR)/wheels/*.whl 2>/dev/null || true
 
-develop:
-	@echo "$(GREEN)Installing in development mode...$(NC)"
-	@maturin develop --release
-	@echo "$(GREEN)Development install complete$(NC)"
-
-install: release
-	@echo "$(GREEN)Installing wheel...$(NC)"
-	@uv pip install --force-reinstall $(DIST_DIR)/wheels/*.whl
+install: stub-gen
+	@echo "$(GREEN)Installing $(PACKAGE_NAME) plugin...$(NC)"
+	@cd ../.. && uv run maturin develop --release --manifest-path plugins_rust/pii_filter/Cargo.toml
 	@echo "$(GREEN)Installation complete$(NC)"
 
 # =============================================================================
@@ -140,15 +129,16 @@ bench:
 	@cargo bench
 
 bench-baseline:
-	@echo "$(GREEN)Saving benchmark baseline...$(NC)"
-	@cargo bench -- --save-baseline main
+	@echo "$(GREEN)Running benchmarks...$(NC)"
+	@cargo bench
 
 bench-compare:
-	@echo "$(GREEN)Comparing against baseline...$(NC)"
-	@cargo bench -- --baseline main
+	@echo "$(GREEN)Running benchmarks...$(NC)"
+	@cargo bench
 
-compare: bench-compare
-	@echo "$(GREEN)Performance comparison complete$(NC)"
+compare: install ## Run performance comparison (skip benchmarks)
+	@echo "$(GREEN)Running performance comparison...$(NC)"
+	@echo "$(YELLOW)Note: This plugin doesn't have a compare_performance.py script yet$(NC)"
 
 # =============================================================================
 # 🧹 CLEANUP
@@ -156,7 +146,13 @@ compare: bench-compare
 # help: 🧹 CLEANUP
 # help: clean                 - Remove build artifacts
 # help: clean-all             - Remove all build artifacts including wheels
-.PHONY: clean clean-all
+# help: uninstall             - Uninstall plugin from Python environment
+.PHONY: clean clean-all uninstall
+
+uninstall:
+	@echo "$(YELLOW)Uninstalling $(PACKAGE_NAME)...$(NC)"
+	@uv pip uninstall -y $(PACKAGE_NAME) 2>/dev/null || pip uninstall -y $(PACKAGE_NAME) 2>/dev/null || true
+	@echo "$(GREEN)$(PACKAGE_NAME) uninstalled$(NC)"
 
 clean:
 	@echo "$(YELLOW)Cleaning build artifacts...$(NC)"
@@ -189,7 +185,7 @@ doc-open: doc
 	cargo doc --no-deps --document-private-items --open
 
 # =============================================================================
-# 🔧 DEVELOPMENT HELPERS
+# � DEVELOPMENT HELPERS
 # =============================================================================
 # help: 🔧 DEVELOPMENT HELPERS
 # help: verify                - Verify plugin installation
@@ -200,14 +196,10 @@ doc-open: doc
 
 verify:
 	@echo "$(GREEN)Verifying pii_filter installation...$(NC)"
-	@python3 -c "import pii_filter; print('✅ pii_filter available')" || echo "⚠️  pii_filter not installed"
+	@uv run python -c "import pii_filter; print('✅ pii_filter available')" || echo "⚠️  pii_filter not installed"
 
 check-all: fmt-check clippy test
 	@echo "$(GREEN)✔ All checks passed$(NC)"
-
-test-integration:
-	@echo "$(GREEN)Running integration tests...$(NC)"
-	@cargo test --test '*' --release
 
 pre-commit: check-all
 	@echo "$(GREEN)✔ Ready to commit$(NC)"

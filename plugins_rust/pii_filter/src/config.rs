@@ -4,7 +4,7 @@
 // Configuration types for PII Filter
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyAny, PyDict};
 use serde::{Deserialize, Serialize};
 
 /// PII types that can be detected
@@ -146,6 +146,21 @@ impl Default for PIIConfig {
 }
 
 impl PIIConfig {
+    /// Extract configuration from Python object (dict or Pydantic model)
+    pub fn from_py_object(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
+        // Try to convert to dict first (handles both dict and Pydantic models)
+        let dict = if obj.is_instance_of::<PyDict>() {
+            obj.cast::<PyDict>()?.clone()
+        } else {
+            // For Pydantic models, call model_dump() to get a dict
+            let model_dump = obj.getattr("model_dump")?;
+            let dict_obj = model_dump.call0()?;
+            dict_obj.cast::<PyDict>()?.clone()
+        };
+
+        Self::from_py_dict(&dict)
+    }
+
     /// Extract configuration from Python dict
     pub fn from_py_dict(dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let mut config = Self::default();

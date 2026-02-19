@@ -3,7 +3,7 @@
 //
 // Heavy workload example for flamegraph profiling
 
-use secret_detection::{SecretsDetectionConfig, detect_and_redact};
+use secrets_detection_rust::{detect_and_redact, SecretsDetectionConfig};
 use std::collections::HashMap;
 
 fn create_test_config() -> SecretsDetectionConfig {

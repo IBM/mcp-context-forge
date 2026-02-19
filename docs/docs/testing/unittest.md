@@ -118,7 +118,7 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | tests/unit/mcpgateway/middleware/test_rbac.py                                                   |     77 |       9 |       86 |
 | tests/unit/mcpgateway/plugins/plugins/altk_json_processor/test_json_processor.py                |      0 |       1 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/sparc_static_validator/test_sparc_static_validator.py     |      4 |      32 |       36 |
-| tests/unit/mcpgateway/plugins/test_pii_filter_rust.py                                           |      1 |      44 |       45 |
+| tests/unit/mcpgateway/plugins/test_pii_filter.py                                                |      1 |      44 |       45 |
 | tests/unit/mcpgateway/plugins/tools/test_cli.py                                                 |      8 |       1 |        9 |
 | tests/unit/mcpgateway/routers/test_reverse_proxy.py                                             |     65 |       1 |       66 |
 | tests/unit/mcpgateway/routers/test_teams.py                                                     |     39 |       5 |       44 |
