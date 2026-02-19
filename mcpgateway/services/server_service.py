@@ -1363,9 +1363,12 @@ class ServerService:
                     server.oauth_config = server_update.oauth_config
 
             # Update code execution server settings
-            requested_server_type = server_update.server_type or getattr(server, "server_type", "standard") or "standard"
-            if requested_server_type == "code_execution" and not settings.code_execution_enabled:
+            # Only block explicit transitions TO code_execution when the feature is disabled.
+            # Metadata-only edits (name/description/tags/OAuth) on existing code-exec servers
+            # must remain allowed even when the feature toggle is off.
+            if server_update.server_type == "code_execution" and not settings.code_execution_enabled:
                 raise ValueError("code_execution servers are disabled (set CODE_EXECUTION_ENABLED=true to enable)")
+            requested_server_type = server_update.server_type or getattr(server, "server_type", "standard") or "standard"
 
             if server_update.server_type is not None:
                 server.server_type = server_update.server_type

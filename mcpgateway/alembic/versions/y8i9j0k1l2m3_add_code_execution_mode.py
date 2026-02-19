@@ -35,17 +35,17 @@ def upgrade() -> None:
     server_columns = {col["name"] for col in inspector.get_columns("servers")}
 
     # Phase 1: Add columns as nullable to avoid table rewrites on MySQL/MariaDB.
-    # PostgreSQL 11+ handles NOT NULL + DEFAULT as metadata-only, but MySQL may
-    # require a full table copy.  The phased approach is safe on all backends.
+    # Phase 2: Backfill existing rows.
+    # Phase 3: Apply NOT NULL via batch_alter_table (required for SQLite compatibility;
+    #          SQLite does not support ALTER COLUMN natively).
     if "server_type" not in server_columns:
         op.add_column(
             "servers",
             sa.Column("server_type", sa.String(length=32), nullable=True, server_default="standard"),
         )
-        # Phase 2: Backfill existing rows
         op.execute("UPDATE servers SET server_type = 'standard' WHERE server_type IS NULL")
-        # Phase 3: Apply NOT NULL constraint
-        op.alter_column("servers", "server_type", nullable=False)
+        with op.batch_alter_table("servers") as batch_op:
+            batch_op.alter_column("server_type", nullable=False)
     if "stub_language" not in server_columns:
         op.add_column("servers", sa.Column("stub_language", sa.String(length=32), nullable=True))
     if "mount_rules" not in server_columns:
@@ -61,9 +61,12 @@ def upgrade() -> None:
             "servers",
             sa.Column("skills_require_approval", sa.Boolean(), nullable=True, server_default=sa.false()),
         )
-        op.execute("UPDATE servers SET skills_require_approval = 0 WHERE skills_require_approval IS NULL")
-        op.alter_column("servers", "skills_require_approval", nullable=False)
+        op.execute("UPDATE servers SET skills_require_approval = FALSE WHERE skills_require_approval IS NULL")
+        with op.batch_alter_table("servers") as batch_op:
+            batch_op.alter_column("skills_require_approval", nullable=False)
 
+    # Refresh inspector to pick up any schema changes from column additions above.
+    inspector = sa.inspect(bind)
     server_indexes = {idx["name"] for idx in inspector.get_indexes("servers")}
     if "ix_servers_server_type" not in server_indexes and "server_type" in {c["name"] for c in inspector.get_columns("servers")}:
         op.create_index("ix_servers_server_type", "servers", ["server_type"], unique=False)
@@ -108,6 +111,7 @@ def upgrade() -> None:
             sa.UniqueConstraint("server_id", "name", "version", name="uq_code_execution_skill_server_name_version"),
         )
 
+    inspector = sa.inspect(bind)
     skill_indexes = {idx["name"] for idx in inspector.get_indexes("code_execution_skills")}
     if "idx_code_execution_skills_server_status" not in skill_indexes:
         op.create_index("idx_code_execution_skills_server_status", "code_execution_skills", ["server_id", "status"], unique=False)
@@ -143,6 +147,7 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint("id"),
         )
 
+    inspector = sa.inspect(bind)
     approval_indexes = {idx["name"] for idx in inspector.get_indexes("skill_approvals")}
     if "idx_skill_approvals_status_requested_at" not in approval_indexes:
         op.create_index("idx_skill_approvals_status_requested_at", "skill_approvals", ["status", "requested_at"], unique=False)
@@ -182,6 +187,7 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint("id"),
         )
 
+    inspector = sa.inspect(bind)
     run_indexes = {idx["name"] for idx in inspector.get_indexes("code_execution_runs")}
     if "idx_code_execution_runs_server_created" not in run_indexes:
         op.create_index("idx_code_execution_runs_server_created", "code_execution_runs", ["server_id", "created_at"], unique=False)

@@ -2098,3 +2098,1756 @@ class TestSkillModerationAccess:
         server = SimpleNamespace(team_id="team-123")
         user = {"email": "admin@example.com", "is_admin": True}
         _require_skill_moderation_access(server, user)  # Should not raise
+
+
+# ===========================================================================
+# DenoRuntime.execute() - subprocess simulation
+# ===========================================================================
+
+
+class TestDenoRuntimeExecute:
+    """Tests for DenoRuntime.execute() mocking asyncio.create_subprocess_exec."""
+
+    def _make_fake_proc(self, stdout_lines: List[bytes], stderr_content: bytes = b"") -> MagicMock:
+        """Build a mock asyncio subprocess whose stdout emits given lines."""
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdin.write = MagicMock()
+        proc.stdin.drain = AsyncMock()
+        proc.stderr = MagicMock()
+        proc.stderr.read = AsyncMock(return_value=stderr_content)
+        # readline returns each item from stdout_lines in order, then b"" to signal EOF
+        proc.stdout = MagicMock()
+        line_iter = iter(stdout_lines + [b""])
+        proc.stdout.readline = AsyncMock(side_effect=lambda: asyncio.coroutine(lambda: next(line_iter))())
+        proc.wait = AsyncMock(return_value=0)
+        proc.kill = MagicMock()
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_execute_returns_result(self, tmp_path: Path) -> None:
+        """execute() parses a result JSON line and returns SandboxExecutionResult."""
+        import json as _json
+
+        runtime = DenoRuntime()
+        runtime._deno_path = "/usr/bin/deno"
+        session = _make_session(tmp_path)
+
+        secret_holder: Dict[str, str] = {}
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            # Capture the script path to read the secret from the written file
+            script_arg = [a for a in args if str(a).endswith(".ts")]
+            secret = "testsecret000000"
+            if script_arg:
+                content = Path(str(script_arg[0])).read_text(encoding="utf-8") if Path(str(script_arg[0])).exists() else ""
+                import re as _re
+                m = _re.search(r'__CODEEXEC_SECRET\s*=\s*"([^"]+)"', content)
+                if m:
+                    secret = m.group(1)
+            secret_holder["secret"] = secret
+            result_line = _json.dumps({"secret": secret, "type": "result", "output": "hello", "error": None, "exit_code": 0}).encode("utf-8") + b"\n"
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdin.write = MagicMock()
+            proc.stdin.drain = AsyncMock()
+            proc.stderr = MagicMock()
+            proc.stderr.read = AsyncMock(return_value=b"")
+            proc.stdout = MagicMock()
+            lines = iter([result_line, b""])
+            proc.stdout.readline = AsyncMock(side_effect=lambda: lines.__next__())
+            proc.wait = AsyncMock(return_value=0)
+            proc.kill = MagicMock()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            result = await runtime.execute(session, "console.log('hello')", 5000, _policy(), AsyncMock())
+
+        assert result.stdout == "hello"
+        assert result.exit_code == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_timeout_raises(self, tmp_path: Path) -> None:
+        """execute() raises CodeExecutionError when asyncio.wait_for times out."""
+        runtime = DenoRuntime()
+        runtime._deno_path = "/usr/bin/deno"
+        session = _make_session(tmp_path)
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdin.write = MagicMock()
+            proc.stdin.drain = AsyncMock()
+            proc.stderr = MagicMock()
+            proc.stderr.read = AsyncMock(return_value=b"")
+            proc.stdout = MagicMock()
+            # Never return a result - readline hangs forever
+            proc.stdout.readline = AsyncMock(side_effect=asyncio.sleep(9999))
+            proc.wait = AsyncMock(return_value=0)
+            proc.kill = MagicMock()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            with patch("asyncio.wait_for", side_effect=TimeoutError("timed out")):
+                with pytest.raises(CodeExecutionError, match="timed out"):
+                    await runtime.execute(session, "x = 1", 100, _policy(), AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_execute_stderr_merged(self, tmp_path: Path) -> None:
+        """execute() merges extra stderr with empty result_error."""
+        import json as _json
+
+        runtime = DenoRuntime()
+        runtime._deno_path = "/usr/bin/deno"
+        session = _make_session(tmp_path)
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            script_arg = [a for a in args if str(a).endswith(".ts")]
+            secret = "testsecret000001"
+            if script_arg:
+                content = Path(str(script_arg[0])).read_text(encoding="utf-8") if Path(str(script_arg[0])).exists() else ""
+                import re as _re
+                m = _re.search(r'__CODEEXEC_SECRET\s*=\s*"([^"]+)"', content)
+                if m:
+                    secret = m.group(1)
+            # Result with no error field
+            result_line = _json.dumps({"secret": secret, "type": "result", "output": "ok", "error": None, "exit_code": 0}).encode("utf-8") + b"\n"
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdin.write = MagicMock()
+            proc.stdin.drain = AsyncMock()
+            proc.stderr = MagicMock()
+            proc.stderr.read = AsyncMock(return_value=b"some stderr text")
+            proc.stdout = MagicMock()
+            lines = iter([result_line, b""])
+            proc.stdout.readline = AsyncMock(side_effect=lambda: lines.__next__())
+            proc.wait = AsyncMock(return_value=0)
+            proc.kill = MagicMock()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            result = await runtime.execute(session, "x = 1", 5000, _policy(), AsyncMock())
+
+        # stderr_extra should be merged into result_error since result_error was empty
+        assert "some stderr text" in result.stderr
+
+    @pytest.mark.asyncio
+    async def test_execute_stderr_appended_to_existing_error(self, tmp_path: Path) -> None:
+        """execute() appends extra stderr to existing result_error."""
+        import json as _json
+
+        runtime = DenoRuntime()
+        runtime._deno_path = "/usr/bin/deno"
+        session = _make_session(tmp_path)
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            script_arg = [a for a in args if str(a).endswith(".ts")]
+            secret = "testsecret000002"
+            if script_arg:
+                content = Path(str(script_arg[0])).read_text(encoding="utf-8") if Path(str(script_arg[0])).exists() else ""
+                import re as _re
+                m = _re.search(r'__CODEEXEC_SECRET\s*=\s*"([^"]+)"', content)
+                if m:
+                    secret = m.group(1)
+            result_line = _json.dumps({"secret": secret, "type": "result", "output": "ok", "error": "runtime error", "exit_code": 1}).encode("utf-8") + b"\n"
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdin.write = MagicMock()
+            proc.stdin.drain = AsyncMock()
+            proc.stderr = MagicMock()
+            proc.stderr.read = AsyncMock(return_value=b"extra stderr info")
+            proc.stdout = MagicMock()
+            lines = iter([result_line, b""])
+            proc.stdout.readline = AsyncMock(side_effect=lambda: lines.__next__())
+            proc.wait = AsyncMock(return_value=1)
+            proc.kill = MagicMock()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            result = await runtime.execute(session, "x = 1", 5000, _policy(), AsyncMock())
+
+        assert "runtime error" in result.stderr
+        assert "extra stderr info" in result.stderr
+
+    @pytest.mark.asyncio
+    async def test_execute_allow_raw_http_adds_allow_net(self, tmp_path: Path) -> None:
+        """execute() adds --allow-net to Deno flags when allow_raw_http is True."""
+        runtime = DenoRuntime()
+        runtime._deno_path = "/usr/bin/deno"
+        session = _make_session(tmp_path)
+
+        captured_cmd: List[Any] = []
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            captured_cmd.extend(args)
+            raise CodeExecutionError("stop early")
+
+        policy = dict(_policy())
+        policy["allow_raw_http"] = True
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            with pytest.raises(CodeExecutionError):
+                await runtime.execute(session, "x = 1", 5000, policy, AsyncMock())
+
+        assert "--allow-net" in captured_cmd
+
+
+# ===========================================================================
+# PythonSandboxRuntime.execute() - subprocess simulation
+# ===========================================================================
+
+
+class TestPythonSandboxRuntimeExecute:
+    """Tests for PythonSandboxRuntime.execute() mocking asyncio.create_subprocess_exec."""
+
+    @pytest.mark.asyncio
+    async def test_execute_returns_result(self, tmp_path: Path) -> None:
+        """execute() parses a result JSON line and returns SandboxExecutionResult."""
+        import json as _json
+
+        runtime = PythonSandboxRuntime()
+        session = _make_session(tmp_path)
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            script_arg = [a for a in args if str(a).endswith(".py") and "codeexec_" in str(a)]
+            secret = "pysecret000000"
+            if script_arg:
+                content = Path(str(script_arg[0])).read_text(encoding="utf-8") if Path(str(script_arg[0])).exists() else ""
+                import re as _re
+                m = _re.search(r'__CODEEXEC_SECRET\s*=\s*"([^"]+)"', content)
+                if m:
+                    secret = m.group(1)
+            result_line = _json.dumps({"secret": secret, "type": "result", "output": "py_output", "error": None, "exit_code": 0}).encode("utf-8") + b"\n"
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdin.write = MagicMock()
+            proc.stdin.drain = AsyncMock()
+            proc.stderr = MagicMock()
+            proc.stderr.read = AsyncMock(return_value=b"")
+            proc.stdout = MagicMock()
+            lines = iter([result_line, b""])
+            proc.stdout.readline = AsyncMock(side_effect=lambda: lines.__next__())
+            proc.wait = AsyncMock(return_value=0)
+            proc.kill = MagicMock()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            result = await runtime.execute(session, "print('py_output')", 5000, _policy(), AsyncMock())
+
+        assert result.stdout == "py_output"
+        assert result.exit_code == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_timeout_raises(self, tmp_path: Path) -> None:
+        """execute() raises CodeExecutionError on timeout."""
+        runtime = PythonSandboxRuntime()
+        session = _make_session(tmp_path)
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdin.write = MagicMock()
+            proc.stdin.drain = AsyncMock()
+            proc.stderr = MagicMock()
+            proc.stderr.read = AsyncMock(return_value=b"")
+            proc.stdout = MagicMock()
+            proc.stdout.readline = AsyncMock(side_effect=asyncio.sleep(9999))
+            proc.wait = AsyncMock(return_value=0)
+            proc.kill = MagicMock()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            with patch("asyncio.wait_for", side_effect=TimeoutError("timed out")):
+                with pytest.raises(CodeExecutionError, match="timed out"):
+                    await runtime.execute(session, "x = 1", 100, _policy(), AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_execute_stderr_merged(self, tmp_path: Path) -> None:
+        """execute() merges stderr from process when result_error is empty."""
+        import json as _json
+
+        runtime = PythonSandboxRuntime()
+        session = _make_session(tmp_path)
+
+        async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            script_arg = [a for a in args if str(a).endswith(".py") and "codeexec_" in str(a)]
+            secret = "pysecret000001"
+            if script_arg:
+                content = Path(str(script_arg[0])).read_text(encoding="utf-8") if Path(str(script_arg[0])).exists() else ""
+                import re as _re
+                m = _re.search(r'__CODEEXEC_SECRET\s*=\s*"([^"]+)"', content)
+                if m:
+                    secret = m.group(1)
+            result_line = _json.dumps({"secret": secret, "type": "result", "output": "ok", "error": None, "exit_code": 0}).encode("utf-8") + b"\n"
+            proc = MagicMock()
+            proc.stdin = MagicMock()
+            proc.stdin.write = MagicMock()
+            proc.stdin.drain = AsyncMock()
+            proc.stderr = MagicMock()
+            proc.stderr.read = AsyncMock(return_value=b"python stderr output")
+            proc.stdout = MagicMock()
+            lines = iter([result_line, b""])
+            proc.stdout.readline = AsyncMock(side_effect=lambda: lines.__next__())
+            proc.wait = AsyncMock(return_value=0)
+            proc.kill = MagicMock()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            result = await runtime.execute(session, "x = 1", 5000, _policy(), AsyncMock())
+
+        assert "python stderr output" in result.stderr
+
+
+# ===========================================================================
+# shell_exec full flow
+# ===========================================================================
+
+
+def _make_mock_server(server_id: str = "server-1") -> SimpleNamespace:
+    """Create a minimal mock server for shell_exec tests."""
+    return SimpleNamespace(
+        id=server_id,
+        team_id=None,
+        sandbox_policy=None,
+        tokenization=None,
+        stub_language="python",
+        skills_require_approval=False,
+        mount_rules=None,
+        skills_scope="",
+    )
+
+
+def _make_mock_db(session_obj: Any, run_obj: Any) -> MagicMock:
+    """Create a mock DB that returns given objects for add/flush/get."""
+    db = MagicMock()
+    db.add = MagicMock()
+    db.flush = MagicMock()
+    # execute for tool queries returns empty
+    scalars_mock = MagicMock()
+    scalars_mock.all = MagicMock(return_value=[])
+    execute_result = MagicMock()
+    execute_result.scalars = MagicMock(return_value=scalars_mock)
+    db.execute = MagicMock(return_value=execute_result)
+    return db
+
+
+class TestShellExecFullFlow:
+    """Tests for CodeExecutionService.shell_exec() top-level method."""
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_disabled_raises(self, tmp_path: Path) -> None:
+        """shell_exec raises when the meta-tool is disabled."""
+        svc = CodeExecutionService()
+        svc._shell_exec_enabled = False
+        server = _make_mock_server()
+        db = _make_mock_db(None, None)
+        with pytest.raises(CodeExecutionError, match="disabled"):
+            await svc.shell_exec(
+                db=db,
+                server=server,
+                code="ls /tools",
+                language=None,
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_empty_code_raises(self, tmp_path: Path) -> None:
+        """shell_exec raises when no code is provided."""
+        svc = CodeExecutionService()
+        server = _make_mock_server()
+        db = _make_mock_db(None, None)
+        with pytest.raises(CodeExecutionError, match="required"):
+            await svc.shell_exec(
+                db=db,
+                server=server,
+                code="   ",
+                language=None,
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_shell_mode(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """shell_exec runs shell mode for shell-like commands."""
+        svc = CodeExecutionService()
+        server = _make_mock_server()
+
+        # Pre-create a session so _get_or_create_session returns it
+        session = _make_session(tmp_path)
+        (session.tools_dir / "hello.txt").write_text("world", encoding="utf-8")
+
+        async def fake_get_session(**kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = fake_get_session  # type: ignore[method-assign]
+
+        run = SimpleNamespace(
+            id="run-1",
+            server_id="server-1",
+            session_id="session-1",
+            language="shell",
+            code_hash="abc",
+            code_body="ls /tools",
+            status="running",
+            started_at=None,
+            team_id=None,
+            token_teams=None,
+            runtime=None,
+            code_size_bytes=8,
+            output=None,
+            error=None,
+            metrics=None,
+            tool_calls_made=None,
+            security_events=None,
+            finished_at=None,
+        )
+        db = MagicMock()
+        db.add = MagicMock()
+        db.flush = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        # Patch CodeExecutionRun constructor
+        with patch("mcpgateway.services.code_execution_service.CodeExecutionRun", return_value=run):
+            result = await svc.shell_exec(
+                db=db,
+                server=server,
+                code="ls /tools",
+                language=None,
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+        assert "output" in result
+        assert "hello.txt" in result["output"]
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_security_error_blocked(self, tmp_path: Path) -> None:
+        """shell_exec catches SecurityError and returns blocked status."""
+        svc = CodeExecutionService()
+        server = _make_mock_server()
+
+        session = _make_session(tmp_path)
+
+        async def fake_get_session(**kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = fake_get_session  # type: ignore[method-assign]
+
+        run = SimpleNamespace(
+            id="run-1",
+            server_id="server-1",
+            session_id="session-1",
+            language="python",
+            code_hash="abc",
+            code_body="x = 1",
+            status="running",
+            started_at=None,
+            team_id=None,
+            token_teams=None,
+            runtime=None,
+            code_size_bytes=5,
+            output=None,
+            error=None,
+            metrics=None,
+            tool_calls_made=None,
+            security_events=None,
+            finished_at=None,
+        )
+        db = MagicMock()
+        db.add = MagicMock()
+        db.flush = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        # Force the inprocess runtime and make it raise a SecurityError
+        svc._python_runtime = MagicMock()
+        svc._python_runtime.health_check = AsyncMock(return_value=True)
+        svc._python_runtime.create_session = AsyncMock()
+        svc._python_runtime.execute = AsyncMock(side_effect=CodeExecutionSecurityError("blocked: dangerous code"))
+        svc._emit_security_event = MagicMock()  # type: ignore[method-assign]
+
+        with patch("mcpgateway.services.code_execution_service.CodeExecutionRun", return_value=run):
+            result = await svc.shell_exec(
+                db=db,
+                server=server,
+                code="x = 1",
+                language="python",
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+        assert run.status == "blocked"
+        assert result["error"] is not None
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_typescript_runtime_selected(self, tmp_path: Path) -> None:
+        """shell_exec selects the Deno runtime for typescript language."""
+        svc = CodeExecutionService()
+        server = _make_mock_server()
+
+        session = _make_session(tmp_path)
+
+        async def fake_get_session(**kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = fake_get_session  # type: ignore[method-assign]
+
+        run = SimpleNamespace(
+            id="run-2",
+            server_id="server-1",
+            session_id="session-1",
+            language="typescript",
+            code_hash="def",
+            code_body="const x = 1;",
+            status="running",
+            started_at=None,
+            team_id=None,
+            token_teams=None,
+            runtime=None,
+            code_size_bytes=12,
+            output=None,
+            error=None,
+            metrics=None,
+            tool_calls_made=None,
+            security_events=None,
+            finished_at=None,
+        )
+        db = MagicMock()
+        db.add = MagicMock()
+        db.flush = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        deno_result = SandboxExecutionResult(stdout="ts output", stderr="", exit_code=0, wall_time_ms=10)
+        svc._deno_runtime = MagicMock()
+        svc._deno_runtime.health_check = AsyncMock(return_value=True)
+        svc._deno_runtime.create_session = AsyncMock()
+        svc._deno_runtime.execute = AsyncMock(return_value=deno_result)
+
+        with patch("mcpgateway.services.code_execution_service.CodeExecutionRun", return_value=run):
+            result = await svc.shell_exec(
+                db=db,
+                server=server,
+                code="const x = 1;",
+                language="typescript",
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+        assert result["output"] == "ts output"
+        assert run.runtime == "deno"
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_unsupported_language_raises(self, tmp_path: Path) -> None:
+        """shell_exec returns error for unsupported language."""
+        svc = CodeExecutionService()
+        server = _make_mock_server()
+
+        session = _make_session(tmp_path)
+
+        async def fake_get_session(**kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = fake_get_session  # type: ignore[method-assign]
+        svc._validate_code_safety = MagicMock()  # type: ignore[method-assign]
+
+        run = SimpleNamespace(
+            id="run-3",
+            server_id="server-1",
+            session_id="session-1",
+            language="ruby",
+            code_hash="ghi",
+            code_body="puts 'hello'",
+            status="running",
+            started_at=None,
+            team_id=None,
+            token_teams=None,
+            runtime=None,
+            code_size_bytes=12,
+            output=None,
+            error=None,
+            metrics=None,
+            tool_calls_made=None,
+            security_events=None,
+            finished_at=None,
+        )
+        db = MagicMock()
+        db.add = MagicMock()
+        db.flush = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        with patch("mcpgateway.services.code_execution_service.CodeExecutionRun", return_value=run):
+            result = await svc.shell_exec(
+                db=db,
+                server=server,
+                code="puts 'hello'",
+                language="ruby",
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+        assert result["error"] is not None
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_python_inprocess_fallback(self, tmp_path: Path) -> None:
+        """shell_exec falls back to inprocess for python when runtime unavailable."""
+        svc = CodeExecutionService()
+        svc._python_inprocess_fallback_enabled = True
+        server = _make_mock_server()
+
+        session = _make_session(tmp_path)
+
+        async def fake_get_session(**kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = fake_get_session  # type: ignore[method-assign]
+
+        run = SimpleNamespace(
+            id="run-4",
+            server_id="server-1",
+            session_id="session-1",
+            language="python",
+            code_hash="jkl",
+            code_body="x = 1",
+            status="running",
+            started_at=None,
+            team_id=None,
+            token_teams=None,
+            runtime=None,
+            code_size_bytes=5,
+            output=None,
+            error=None,
+            metrics=None,
+            tool_calls_made=None,
+            security_events=None,
+            finished_at=None,
+        )
+        db = MagicMock()
+        db.add = MagicMock()
+        db.flush = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        # Python runtime is "unavailable"
+        svc._python_runtime = MagicMock()
+        svc._python_runtime.health_check = AsyncMock(return_value=False)
+
+        # Inprocess execution returns success
+        svc._execute_python_inprocess = AsyncMock(return_value={"output": "inprocess result", "error": ""})  # type: ignore[method-assign]
+
+        with patch("mcpgateway.services.code_execution_service.CodeExecutionRun", return_value=run):
+            result = await svc.shell_exec(
+                db=db,
+                server=server,
+                code="x = 1",
+                language="python",
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+        assert result["output"] == "inprocess result"
+        assert run.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_shell_exec_metrics_computed(self, tmp_path: Path) -> None:
+        """shell_exec returns metrics dict with expected keys."""
+        svc = CodeExecutionService()
+        server = _make_mock_server()
+
+        session = _make_session(tmp_path)
+        (session.tools_dir / "f.txt").write_text("x", encoding="utf-8")
+
+        async def fake_get_session(**kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = fake_get_session  # type: ignore[method-assign]
+
+        run = SimpleNamespace(
+            id="run-5",
+            server_id="server-1",
+            session_id="session-1",
+            language="shell",
+            code_hash="mno",
+            code_body="ls /tools",
+            status="running",
+            started_at=None,
+            team_id=None,
+            token_teams=None,
+            runtime=None,
+            code_size_bytes=8,
+            output=None,
+            error=None,
+            metrics=None,
+            tool_calls_made=None,
+            security_events=None,
+            finished_at=None,
+        )
+        db = MagicMock()
+        db.add = MagicMock()
+        db.flush = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        with patch("mcpgateway.services.code_execution_service.CodeExecutionRun", return_value=run):
+            result = await svc.shell_exec(
+                db=db,
+                server=server,
+                code="ls /tools",
+                language=None,
+                timeout_ms=None,
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+        metrics = result["metrics"]
+        assert "wall_time_ms" in metrics
+        assert "cpu_time_ms" in metrics
+        assert "tool_call_count" in metrics
+        assert "run_id" in metrics
+
+
+# ===========================================================================
+# Skill lifecycle: approve_skill and revoke_skill
+# ===========================================================================
+
+
+class TestSkillLifecycle:
+    """Tests for approve_skill() and revoke_skill()."""
+
+    @pytest.mark.asyncio
+    async def test_approve_skill_not_found(self) -> None:
+        """approve_skill raises when approval doesn't exist."""
+        svc = CodeExecutionService()
+        db = MagicMock()
+        db.get = MagicMock(return_value=None)
+        with pytest.raises(CodeExecutionError, match="not found"):
+            await svc.approve_skill(db=db, server_id="s1", approval_id="missing", reviewer_email="admin@t.com", approve=True)
+
+    @pytest.mark.asyncio
+    async def test_approve_skill_skill_not_found(self) -> None:
+        """approve_skill raises when skill doesn't exist."""
+        svc = CodeExecutionService()
+        approval = SimpleNamespace(id="a1", skill_id="skill-missing", status="pending", is_expired=lambda: False)
+        db = MagicMock()
+        db.get = MagicMock(side_effect=lambda model, key: approval if key == "a1" else None)
+        with pytest.raises(CodeExecutionError, match="Skill not found"):
+            await svc.approve_skill(db=db, server_id="s1", approval_id="a1", reviewer_email="admin@t.com", approve=True)
+
+    @pytest.mark.asyncio
+    async def test_approve_skill_already_terminal(self) -> None:
+        """approve_skill raises when approval already approved/rejected."""
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(id="sk1", server_id="s1")
+        approval = SimpleNamespace(id="a1", skill_id="sk1", status="approved", is_expired=lambda: False)
+        db = MagicMock()
+        db.get = MagicMock(side_effect=lambda model, key: {"a1": approval, "sk1": skill}.get(key))
+        with pytest.raises(CodeExecutionError, match="terminal state"):
+            await svc.approve_skill(db=db, server_id="s1", approval_id="a1", reviewer_email="admin@t.com", approve=True)
+
+    @pytest.mark.asyncio
+    async def test_approve_skill_approve_sets_fields(self) -> None:
+        """approve_skill correctly sets approved fields on skill and approval."""
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(
+            id="sk1",
+            server_id="s1",
+            status="pending",
+            approved_by=None,
+            approved_at=None,
+            rejection_reason="old",
+        )
+        approval = SimpleNamespace(
+            id="a1",
+            skill_id="sk1",
+            status="pending",
+            reviewed_by=None,
+            reviewed_at=None,
+            is_expired=lambda: False,
+        )
+        db = MagicMock()
+        db.get = MagicMock(side_effect=lambda model, key: {"a1": approval, "sk1": skill}.get(key))
+
+        result = await svc.approve_skill(db=db, server_id="s1", approval_id="a1", reviewer_email="reviewer@t.com", approve=True)
+
+        assert result.status == "approved"
+        assert skill.status == "approved"
+        assert skill.approved_by == "reviewer@t.com"
+        assert skill.rejection_reason is None
+
+    @pytest.mark.asyncio
+    async def test_approve_skill_reject_sets_fields(self) -> None:
+        """approve_skill correctly sets rejected fields on skill and approval."""
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(
+            id="sk1",
+            server_id="s1",
+            status="pending",
+            approved_by=None,
+            approved_at=None,
+            rejection_reason=None,
+            is_active=True,
+        )
+        approval = SimpleNamespace(
+            id="a1",
+            skill_id="sk1",
+            status="pending",
+            reviewed_by=None,
+            reviewed_at=None,
+            rejection_reason=None,
+            is_expired=lambda: False,
+        )
+        db = MagicMock()
+        db.get = MagicMock(side_effect=lambda model, key: {"a1": approval, "sk1": skill}.get(key))
+
+        result = await svc.approve_skill(db=db, server_id="s1", approval_id="a1", reviewer_email="reviewer@t.com", approve=False, reason="Not suitable")
+
+        assert result.status == "rejected"
+        assert skill.status == "rejected"
+        assert skill.is_active is False
+        assert "Not suitable" in skill.rejection_reason
+
+    @pytest.mark.asyncio
+    async def test_revoke_skill_not_found(self) -> None:
+        """revoke_skill raises when skill doesn't exist."""
+        svc = CodeExecutionService()
+        db = MagicMock()
+        db.get = MagicMock(return_value=None)
+        with pytest.raises(CodeExecutionError, match="not found"):
+            await svc.revoke_skill(db=db, server_id="s1", skill_id="missing", reviewer_email="admin@t.com")
+
+    @pytest.mark.asyncio
+    async def test_revoke_skill_sets_fields(self) -> None:
+        """revoke_skill correctly updates skill attributes."""
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(
+            id="sk1",
+            server_id="s1",
+            status="approved",
+            is_active=True,
+            rejection_reason=None,
+            modified_by=None,
+            modified_via=None,
+            updated_at=None,
+        )
+        db = MagicMock()
+        db.get = MagicMock(return_value=skill)
+
+        result = await svc.revoke_skill(db=db, server_id="s1", skill_id="sk1", reviewer_email="revoker@t.com", reason="No longer needed")
+
+        assert result.status == "revoked"
+        assert result.is_active is False
+        assert result.modified_by == "revoker@t.com"
+        assert "No longer needed" in result.rejection_reason
+
+    @pytest.mark.asyncio
+    async def test_revoke_skill_default_reason(self) -> None:
+        """revoke_skill uses 'Revoked' as default reason."""
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(
+            id="sk2",
+            server_id="s1",
+            status="approved",
+            is_active=True,
+            rejection_reason=None,
+            modified_by=None,
+            modified_via=None,
+            updated_at=None,
+        )
+        db = MagicMock()
+        db.get = MagicMock(return_value=skill)
+
+        result = await svc.revoke_skill(db=db, server_id="s1", skill_id="sk2", reviewer_email="admin@t.com")
+
+        assert result.rejection_reason == "Revoked"
+
+
+# ===========================================================================
+# list_skills
+# ===========================================================================
+
+
+class TestListSkills:
+    """Tests for list_skills() with include_inactive flag."""
+
+    @pytest.mark.asyncio
+    async def test_list_skills_active_only(self) -> None:
+        """list_skills filters out inactive when include_inactive=False."""
+        svc = CodeExecutionService()
+        skill_active = SimpleNamespace(id="s1", name="active", is_active=True, version=1)
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[skill_active])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db = MagicMock()
+        db.execute = MagicMock(return_value=execute_result)
+
+        result = await svc.list_skills(db=db, server_id="s1", include_inactive=False)
+        assert result == [skill_active]
+
+    @pytest.mark.asyncio
+    async def test_list_skills_include_inactive(self) -> None:
+        """list_skills includes inactive when include_inactive=True."""
+        svc = CodeExecutionService()
+        skill_inactive = SimpleNamespace(id="s2", name="inactive", is_active=False, version=1)
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[skill_inactive])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db = MagicMock()
+        db.execute = MagicMock(return_value=execute_result)
+
+        result = await svc.list_skills(db=db, server_id="s1", include_inactive=True)
+        assert result == [skill_inactive]
+
+
+# ===========================================================================
+# Session management: _get_or_create_session
+# ===========================================================================
+
+
+class TestGetOrCreateSession:
+    """Tests for _get_or_create_session()."""
+
+    @pytest.mark.asyncio
+    async def test_new_session_created(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_get_or_create_session creates a new session when none exists."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+        svc = CodeExecutionService()
+        svc._base_dir = tmp_path
+
+        server = _make_mock_server()
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        session = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+        assert session.server_id == "server-1"
+        assert session.user_email == "user@t.com"
+        assert session.language == "python"
+        assert session.root_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_session_reused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_get_or_create_session reuses existing non-expired session."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+        svc = CodeExecutionService()
+        svc._base_dir = tmp_path
+
+        server = _make_mock_server()
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        s1 = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+        s2 = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+        assert s1.session_id == s2.session_id
+
+    @pytest.mark.asyncio
+    async def test_expired_session_replaced(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_get_or_create_session replaces expired sessions with new ones."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_base_dir", str(tmp_path), raising=False)
+        svc = CodeExecutionService()
+        svc._base_dir = tmp_path
+        svc._default_ttl = 1  # 1 second TTL
+
+        server = _make_mock_server()
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        s1 = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+        original_id = s1.session_id
+
+        # Expire the session by backdating last_used_at
+        s1.last_used_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+
+        s2 = await svc._get_or_create_session(db=db, server=server, user_email="user@t.com", language="python", token_teams=None)
+        assert s2.session_id != original_id
+
+
+# ===========================================================================
+# Virtual filesystem refresh
+# ===========================================================================
+
+
+class TestRefreshVirtualFilesystem:
+    """Tests for _refresh_virtual_filesystem_if_needed()."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_skipped_when_hash_matches(self, tmp_path: Path) -> None:
+        """Refresh is skipped when content hash already matches."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        session.content_hash = "already_computed"
+        session.generated_at = datetime.now(timezone.utc)
+
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        server = _make_mock_server()
+
+        # Manually compute what hash would be (empty tool list)
+        import hashlib as _hashlib
+        digest = _hashlib.sha256("".encode("utf-8")).hexdigest()
+        session.content_hash = digest
+
+        await svc._refresh_virtual_filesystem_if_needed(db=db, session=session, server=server, token_teams=None)
+        # session.generated_at not updated (still the same object reference)
+        assert session.generated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_refresh_writes_catalog(self, tmp_path: Path) -> None:
+        """Refresh writes _catalog.json to tools_dir."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        session.content_hash = None
+        session.generated_at = None
+
+        db = MagicMock()
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+
+        server = _make_mock_server()
+
+        await svc._refresh_virtual_filesystem_if_needed(db=db, session=session, server=server, token_teams=None)
+
+        assert (session.tools_dir / "_catalog.json").exists()
+        assert (session.tools_dir / ".search_index").exists()
+        assert session.generated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_refresh_mounts_python_skill(self, tmp_path: Path) -> None:
+        """Refresh writes skill file when skill is resolved."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path, language="python")
+        session.content_hash = None
+        session.generated_at = None
+
+        skill = SimpleNamespace(
+            id="skill-1",
+            name="my skill",
+            version=1,
+            language="python",
+            source_code="def run(): pass",
+            owner_email="o@t.com",
+            team_id=None,
+            updated_at=None,
+            is_active=True,
+            status="approved",
+        )
+        server = _make_mock_server()
+
+        db = MagicMock()
+        # Tools query returns empty
+        tools_scalars = MagicMock()
+        tools_scalars.all = MagicMock(return_value=[])
+        tools_result = MagicMock()
+        tools_result.scalars = MagicMock(return_value=tools_scalars)
+
+        # Skills query returns our skill
+        skills_scalars = MagicMock()
+        skills_scalars.all = MagicMock(return_value=[skill])
+        skills_result = MagicMock()
+        skills_result.scalars = MagicMock(return_value=skills_scalars)
+
+        call_count = [0]
+
+        def execute_side_effect(query: Any) -> MagicMock:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return tools_result
+            return skills_result
+
+        db.execute = MagicMock(side_effect=execute_side_effect)
+
+        await svc._refresh_virtual_filesystem_if_needed(db=db, session=session, server=server, token_teams=None)
+
+        # Skills dir should have _meta.json
+        assert (session.skills_dir / "_meta.json").exists()
+
+
+# ===========================================================================
+# mount_skills
+# ===========================================================================
+
+
+class TestMountSkills:
+    """Tests for _mount_skills()."""
+
+    def test_mount_skills_python_writes_init(self, tmp_path: Path) -> None:
+        """_mount_skills creates __init__.py for python language."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path, language="python")
+
+        skill = SimpleNamespace(
+            id="sk1",
+            name="test skill",
+            version=1,
+            language="python",
+            source_code="def run(): return 42",
+            owner_email="o@t.com",
+            team_id=None,
+        )
+
+        svc._mount_skills(session=session, skills=[skill])
+
+        assert (session.skills_dir / "__init__.py").exists()
+        # Should have a .py file for the skill
+        py_files = list(session.skills_dir.glob("*.py"))
+        assert any("test" in f.name for f in py_files)
+
+    def test_mount_skills_typescript_no_init(self, tmp_path: Path) -> None:
+        """_mount_skills does NOT create __init__.py for typescript language."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path, language="typescript")
+
+        skill = SimpleNamespace(
+            id="sk2",
+            name="ts skill",
+            version=1,
+            language="typescript",
+            source_code="export async function run() { return 42; }",
+            owner_email="o@t.com",
+            team_id=None,
+        )
+
+        svc._mount_skills(session=session, skills=[skill])
+
+        assert not (session.skills_dir / "__init__.py").exists()
+        ts_files = list(session.skills_dir.glob("*.ts"))
+        assert any("ts" in f.name for f in ts_files)
+
+    def test_mount_skills_writes_meta(self, tmp_path: Path) -> None:
+        """_mount_skills writes _meta.json with skill metadata."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path, language="python")
+
+        skill = SimpleNamespace(
+            id="sk3",
+            name="search skill",
+            version=2,
+            language="python",
+            source_code="def search(): pass",
+            owner_email="owner@t.com",
+            team_id="team-1",
+        )
+
+        svc._mount_skills(session=session, skills=[skill])
+
+        import json as _json
+        meta = _json.loads((session.skills_dir / "_meta.json").read_text(encoding="utf-8"))
+        assert meta["skill_count"] == 1
+        assert meta["skills"][0]["name"] == "search skill"
+        assert meta["skills"][0]["version"] == 2
+
+    def test_mount_skills_empty_list(self, tmp_path: Path) -> None:
+        """_mount_skills with empty skills list creates empty meta."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path, language="python")
+
+        svc._mount_skills(session=session, skills=[])
+
+        import json as _json
+        meta = _json.loads((session.skills_dir / "_meta.json").read_text(encoding="utf-8"))
+        assert meta["skill_count"] == 0
+
+
+# ===========================================================================
+# Stub generation with Rust acceleration disabled
+# ===========================================================================
+
+
+class TestStubGeneration:
+    """Tests for _generate_typescript_stub() and _generate_python_stub()."""
+
+    def test_generate_typescript_stub_no_rust(self) -> None:
+        """_generate_typescript_stub falls back to Python template when Rust is unavailable."""
+        svc = CodeExecutionService()
+        svc._rust_acceleration_enabled = False
+
+        tool = SimpleNamespace(
+            name="get_data",
+            original_name="get_data",
+            custom_name_slug="get_data",
+            description="Fetch data from the API",
+            input_schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            gateway=None,
+        )
+
+        stub = svc._generate_typescript_stub(tool=tool, server_slug="my-server")
+        assert "get_data" in stub
+        assert "my-server" in stub
+        assert "async function" in stub
+        assert "__toolcall__" in stub
+
+    def test_generate_python_stub_no_rust(self) -> None:
+        """_generate_python_stub falls back to Python template when Rust is unavailable."""
+        svc = CodeExecutionService()
+        svc._rust_acceleration_enabled = False
+
+        tool = SimpleNamespace(
+            name="send_email",
+            original_name="send_email",
+            custom_name_slug="send_email",
+            description="Send an email to the recipient",
+            input_schema={"type": "object", "properties": {"to": {"type": "string"}, "body": {"type": "string"}}},
+            gateway=None,
+        )
+
+        stub = svc._generate_python_stub(tool=tool, server_slug="email-server")
+        assert "send_email" in stub
+        assert "email-server" in stub
+        assert "async def" in stub
+        assert "toolcall" in stub
+
+    def test_generate_typescript_stub_with_rust_fallback(self) -> None:
+        """_generate_typescript_stub falls back to Python template when Rust raises."""
+        svc = CodeExecutionService()
+        svc._rust_acceleration_enabled = True
+
+        import mcpgateway.services.code_execution_service as ces_mod
+        original = ces_mod.rust_json_schema_to_stubs
+        ces_mod.rust_json_schema_to_stubs = MagicMock(side_effect=Exception("rust failed"))
+        ces_mod._RUST_CODE_EXEC_AVAILABLE = True
+
+        try:
+            tool = SimpleNamespace(
+                name="my_tool",
+                original_name="my_tool",
+                custom_name_slug="my_tool",
+                description="A tool",
+                input_schema={"type": "object"},
+                gateway=None,
+            )
+            stub = svc._generate_typescript_stub(tool=tool, server_slug="server")
+            assert "async function" in stub
+        finally:
+            ces_mod.rust_json_schema_to_stubs = original
+            ces_mod._RUST_CODE_EXEC_AVAILABLE = False
+
+    def test_generate_python_stub_with_rust_fallback(self) -> None:
+        """_generate_python_stub falls back to Python template when Rust raises."""
+        svc = CodeExecutionService()
+        svc._rust_acceleration_enabled = True
+
+        import mcpgateway.services.code_execution_service as ces_mod
+        original = ces_mod.rust_json_schema_to_stubs
+        ces_mod.rust_json_schema_to_stubs = MagicMock(side_effect=Exception("rust failed"))
+        ces_mod._RUST_CODE_EXEC_AVAILABLE = True
+
+        try:
+            tool = SimpleNamespace(
+                name="my_tool",
+                original_name="my_tool",
+                custom_name_slug="my_tool",
+                description="A tool",
+                input_schema={"type": "object"},
+                gateway=None,
+            )
+            stub = svc._generate_python_stub(tool=tool, server_slug="server")
+            assert "async def" in stub
+        finally:
+            ces_mod.rust_json_schema_to_stubs = original
+            ces_mod._RUST_CODE_EXEC_AVAILABLE = False
+
+
+# ===========================================================================
+# replay_run
+# ===========================================================================
+
+
+class TestReplayRun:
+    """Tests for replay_run() including error cases."""
+
+    @pytest.mark.asyncio
+    async def test_replay_disabled_raises(self) -> None:
+        """replay_run raises when replay is disabled."""
+        svc = CodeExecutionService()
+        svc._replay_enabled = False
+        with pytest.raises(CodeExecutionError, match="disabled"):
+            await svc.replay_run(
+                db=MagicMock(),
+                server_id="s1",
+                run_id="r1",
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_replay_run_not_found(self) -> None:
+        """replay_run raises when run doesn't exist."""
+        svc = CodeExecutionService()
+        svc._replay_enabled = True
+        db = MagicMock()
+        db.get = MagicMock(return_value=None)
+        with pytest.raises(CodeExecutionError, match="Run not found"):
+            await svc.replay_run(
+                db=db,
+                server_id="s1",
+                run_id="missing",
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_replay_run_no_code_body_raises(self) -> None:
+        """replay_run raises when code_body was not persisted."""
+        svc = CodeExecutionService()
+        svc._replay_enabled = True
+        run = SimpleNamespace(id="r1", server_id="s1", code_body=None, metrics=None)
+        db = MagicMock()
+        db.get = MagicMock(return_value=run)
+        with pytest.raises(CodeExecutionError, match="not persisted"):
+            await svc.replay_run(
+                db=db,
+                server_id="s1",
+                run_id="r1",
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_replay_run_server_not_found(self) -> None:
+        """replay_run raises when the originating server is missing."""
+        svc = CodeExecutionService()
+        svc._replay_enabled = True
+        run = SimpleNamespace(id="r1", server_id="s1", code_body="x = 1", metrics=None)
+
+        def fake_db_get(model: Any, key: Any) -> Any:
+            if key == "r1":
+                return run
+            return None
+
+        db = MagicMock()
+        db.get = MagicMock(side_effect=fake_db_get)
+
+        with pytest.raises(CodeExecutionError, match="Server not found"):
+            await svc.replay_run(
+                db=db,
+                server_id="s1",
+                run_id="r1",
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_replay_run_success_includes_replayed_from(self, tmp_path: Path) -> None:
+        """replay_run returns result with replayed_from_run_id key."""
+        svc = CodeExecutionService()
+        svc._replay_enabled = True
+
+        run = SimpleNamespace(id="r1", server_id="s1", code_body="ls /tools", language="shell", metrics={"wall_time_ms": 100})
+        server = _make_mock_server(server_id="s1")
+
+        def fake_db_get(model: Any, key: Any) -> Any:
+            if key == "r1":
+                return run
+            if key == "s1":
+                return server
+            return None
+
+        db = MagicMock()
+        db.get = MagicMock(side_effect=fake_db_get)
+        scalars_mock = MagicMock()
+        scalars_mock.all = MagicMock(return_value=[])
+        execute_result = MagicMock()
+        execute_result.scalars = MagicMock(return_value=scalars_mock)
+        db.execute = MagicMock(return_value=execute_result)
+        db.add = MagicMock()
+        db.flush = MagicMock()
+
+        session = _make_session(tmp_path)
+        (session.tools_dir / "f.txt").write_text("data", encoding="utf-8")
+
+        async def fake_get_session(**kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = fake_get_session  # type: ignore[method-assign]
+
+        run_obj = SimpleNamespace(
+            id="r2",
+            server_id="s1",
+            session_id="session-1",
+            language="shell",
+            code_hash="abc",
+            code_body="ls /tools",
+            status="running",
+            started_at=None,
+            team_id=None,
+            token_teams=None,
+            runtime=None,
+            code_size_bytes=8,
+            output=None,
+            error=None,
+            metrics=None,
+            tool_calls_made=None,
+            security_events=None,
+            finished_at=None,
+        )
+
+        with patch("mcpgateway.services.code_execution_service.CodeExecutionRun", return_value=run_obj):
+            result = await svc.replay_run(
+                db=db,
+                server_id="s1",
+                run_id="r1",
+                user_email="u@t.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+        assert result["replayed_from_run_id"] == "r1"
+
+
+# ===========================================================================
+# _execute_python_inprocess tool bridge
+# ===========================================================================
+
+
+class TestInprocessToolBridge:
+    """Tests for _bridge() inside _execute_python_inprocess() - tool call routing."""
+
+    @pytest.mark.asyncio
+    async def test_bridge_tool_only_signature(self, tmp_path: Path) -> None:
+        """Bridge routes (tool, args) without server prefix correctly."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        session.mounted_tools["my_tool"] = {
+            "server_slug": "local",
+            "stub_basename": "my_tool",
+            "python_server_alias": "local",
+            "python_tool_alias": "my_tool",
+            "original_name": "my_tool",
+            "description": "test",
+            "input_schema": {"type": "object"},
+            "tags": [],
+        }
+        session.runtime_tool_index[("local", "my_tool")] = "my_tool"
+
+        captured: Dict[str, Any] = {}
+
+        async def fake_invoke(tool: str, args: Dict[str, Any]) -> Any:
+            captured["tool"] = tool
+            captured["args"] = args
+            return {"content": [{"text": "result"}]}
+
+        result = await svc._execute_python_inprocess(
+            code="result = await __toolcall__('my_tool', {'key': 'val'})\nprint(result)",
+            session=session,
+            timeout_ms=5000,
+            invoke_tool=fake_invoke,
+            policy=_policy(),
+            request_headers=None,
+            user_email="u@t.com",
+        )
+        # The bridge should have resolved and invoked the tool
+        assert "output" in result
+
+    @pytest.mark.asyncio
+    async def test_bridge_server_tool_args_signature(self, tmp_path: Path) -> None:
+        """Bridge routes (server, tool, args) three-arg signature correctly."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        session.mounted_tools["get_doc"] = {
+            "server_slug": "my-server",
+            "stub_basename": "get_doc",
+            "python_server_alias": "my_server",
+            "python_tool_alias": "get_doc",
+            "original_name": "get_doc",
+            "description": "fetch docs",
+            "input_schema": {"type": "object"},
+            "tags": [],
+        }
+        session.runtime_tool_index[("my_server", "get_doc")] = "get_doc"
+
+        async def fake_invoke(tool: str, args: Dict[str, Any]) -> Any:
+            return {"content": [{"text": "doc content"}]}
+
+        result = await svc._execute_python_inprocess(
+            code="result = await __toolcall__('my-server', 'get_doc', {'id': '1'})\nprint(result)",
+            session=session,
+            timeout_ms=5000,
+            invoke_tool=fake_invoke,
+            policy=_policy(),
+            request_headers=None,
+            user_email="u@t.com",
+        )
+        assert "output" in result
+
+
+# ===========================================================================
+# _run_internal_shell - timeout handling
+# ===========================================================================
+
+
+class TestRunInternalShell:
+    """Tests for _run_internal_shell()."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises_code_execution_error(self, tmp_path: Path) -> None:
+        """_run_internal_shell raises CodeExecutionError when pipeline times out."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        with patch("asyncio.wait_for", side_effect=TimeoutError("timed out")):
+            with pytest.raises(CodeExecutionError, match="timed out"):
+                await svc._run_internal_shell(session=session, command="ls /tools", timeout_ms=100, policy=_policy())
+
+    @pytest.mark.asyncio
+    async def test_normal_command_succeeds(self, tmp_path: Path) -> None:
+        """_run_internal_shell executes a simple ls command and returns result."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        (session.tools_dir / "file.txt").write_text("data", encoding="utf-8")
+
+        result = await svc._run_internal_shell(session=session, command="ls /tools", timeout_ms=5000, policy=_policy())
+        assert result.exit_code == 0
+        assert "file.txt" in result.stdout
+
+    @pytest.mark.asyncio
+    async def test_returns_sandbox_execution_result(self, tmp_path: Path) -> None:
+        """_run_internal_shell returns SandboxExecutionResult with wall_time_ms."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        result = await svc._run_internal_shell(session=session, command="ls /tools", timeout_ms=5000, policy=_policy())
+        assert isinstance(result, SandboxExecutionResult)
+        assert result.wall_time_ms >= 0
+
+
+# ===========================================================================
+# _build_search_index - hidden files and empty content skipping
+# ===========================================================================
+
+
+class TestBuildSearchIndexEdgeCases:
+    """Tests for edge cases in _build_search_index()."""
+
+    def test_hidden_files_skipped(self, tmp_path: Path) -> None:
+        """_build_search_index does not include hidden files in the index."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        (session.tools_dir / ".hidden_file").write_text("secret content", encoding="utf-8")
+        (session.tools_dir / "visible.py").write_text("def run(): pass", encoding="utf-8")
+
+        svc._build_search_index(session.tools_dir)
+        index_content = (session.tools_dir / ".search_index").read_text(encoding="utf-8")
+
+        assert "secret content" not in index_content
+        assert "run" in index_content
+
+    def test_empty_content_skipped(self, tmp_path: Path) -> None:
+        """_build_search_index skips files with no content."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        (session.tools_dir / "empty.py").write_text("", encoding="utf-8")
+        (session.tools_dir / "content.py").write_text("has content", encoding="utf-8")
+
+        svc._build_search_index(session.tools_dir)
+        index_content = (session.tools_dir / ".search_index").read_text(encoding="utf-8")
+
+        # empty.py should not appear in index
+        assert "empty.py" not in index_content
+        assert "has content" in index_content
+
+    def test_non_file_skipped(self, tmp_path: Path) -> None:
+        """_build_search_index skips directories."""
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        subdir = session.tools_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "tool.py").write_text("func body", encoding="utf-8")
+
+        svc._build_search_index(session.tools_dir)
+        index_content = (session.tools_dir / ".search_index").read_text(encoding="utf-8")
+
+        assert "func body" in index_content
+
+
+# ===========================================================================
+# _emit_security_event - exception path in logger
+# ===========================================================================
+
+
+class TestEmitSecurityEventException:
+    """Tests for the exception-handling path in _emit_security_event()."""
+
+    def test_emit_security_event_logger_exception_swallowed(self) -> None:
+        """_emit_security_event swallows exceptions from security_logger."""
+        svc = CodeExecutionService()
+
+        with patch("mcpgateway.services.code_execution_service.security_logger") as mock_logger:
+            mock_logger.log_suspicious_activity = MagicMock(side_effect=RuntimeError("logger failure"))
+            # Should not raise despite logger throwing
+            svc._emit_security_event(
+                user_email="u@t.com",
+                description="test event",
+                request_headers={"x-forwarded-for": "1.2.3.4", "user-agent": "agent"},
+                threat_indicators={"pattern": "test"},
+            )
+
+    def test_emit_security_event_extracts_x_real_ip(self) -> None:
+        """_emit_security_event falls back to x-real-ip header."""
+        svc = CodeExecutionService()
+
+        captured_args: Dict[str, Any] = {}
+
+        def fake_log(**kwargs: Any) -> None:
+            captured_args.update(kwargs)
+
+        with patch("mcpgateway.services.code_execution_service.security_logger") as mock_logger:
+            mock_logger.log_suspicious_activity = fake_log
+            svc._emit_security_event(
+                user_email="u@t.com",
+                description="test",
+                request_headers={"x-real-ip": "5.6.7.8"},
+                threat_indicators={},
+            )
+
+        assert captured_args.get("client_ip") == "5.6.7.8"
+
+    def test_emit_security_event_no_headers(self) -> None:
+        """_emit_security_event sets client_ip to 'unknown' when no headers."""
+        svc = CodeExecutionService()
+
+        captured_args: Dict[str, Any] = {}
+
+        def fake_log(**kwargs: Any) -> None:
+            captured_args.update(kwargs)
+
+        with patch("mcpgateway.services.code_execution_service.security_logger") as mock_logger:
+            mock_logger.log_suspicious_activity = fake_log
+            svc._emit_security_event(
+                user_email=None,
+                description="no headers",
+                request_headers=None,
+                threat_indicators={"reason": "test"},
+            )
+
+        assert captured_args.get("client_ip") == "unknown"
+
+
+# ===========================================================================
+# _matches_any_pattern with /** suffix (exact prefix match)
+# ===========================================================================
+
+
+class TestMatchesAnyPatternSuffix:
+    """Tests for the /** suffix exact-match branch in _matches_any_pattern()."""
+
+    def test_double_star_exact_prefix_match(self) -> None:
+        """Pattern /tools/** should match the exact value /tools."""
+        svc = CodeExecutionService()
+        assert svc._matches_any_pattern("/tools", ["/tools/**"]) is True
+
+    def test_double_star_no_match_different_prefix(self) -> None:
+        """Pattern /tools/** does NOT match /skills."""
+        svc = CodeExecutionService()
+        assert svc._matches_any_pattern("/skills", ["/tools/**"]) is False
+
+    def test_non_star_star_pattern_no_extra_match(self) -> None:
+        """Pattern without /** does not trigger the extra branch."""
+        svc = CodeExecutionService()
+        assert svc._matches_any_pattern("/tools", ["/tools/*"]) is False
+
+    def test_multiple_patterns_one_matches(self) -> None:
+        """Returns True when any pattern in the list matches."""
+        svc = CodeExecutionService()
+        assert svc._matches_any_pattern("/results", ["/tools/**", "/results/**"]) is True
+
+
+# ===========================================================================
+# _tool_matches_mount_rules - include_tools with original_name
+# ===========================================================================
+
+
+class TestToolMatchesMountRulesOriginalName:
+    """Tests for include_tools checking against original_name."""
+
+    def test_include_tools_matches_original_name(self) -> None:
+        """include_tools allows when original_name is in include set."""
+        svc = CodeExecutionService()
+        tool = SimpleNamespace(tags=[], name="aliased_name", original_name="real_name", gateway=None)
+        rules = {"include_tools": ["real_name"]}
+        assert svc._tool_matches_mount_rules(tool, rules) is True
+
+    def test_exclude_tools_blocks_via_original_name(self) -> None:
+        """exclude_tools blocks when original_name is in exclude set."""
+        svc = CodeExecutionService()
+        tool = SimpleNamespace(tags=[], name="aliased_name", original_name="real_name", gateway=None)
+        rules = {"exclude_tools": ["real_name"]}
+        assert svc._tool_matches_mount_rules(tool, rules) is False
+
+    def test_include_tools_neither_name_blocks(self) -> None:
+        """include_tools blocks when neither name nor original_name match."""
+        svc = CodeExecutionService()
+        tool = SimpleNamespace(tags=[], name="tool_a", original_name="tool_orig_a", gateway=None)
+        rules = {"include_tools": ["different_tool"]}
+        assert svc._tool_matches_mount_rules(tool, rules) is False

@@ -9,7 +9,7 @@
 
 use pyo3::prelude::*;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // Re-export the pii_filter library (note: lib name is pii_filter_rust in Cargo.toml)
 pub use pii_filter_rust as pii_filter;
@@ -31,7 +31,8 @@ fn json_schema_to_typescript_type(schema: &Value) -> String {
         "integer" | "number" => "number".to_string(),
         "boolean" => "boolean".to_string(),
         "array" => {
-            let item_ty = json_schema_to_typescript_type(schema.get("items").unwrap_or(&Value::Null));
+            let item_ty =
+                json_schema_to_typescript_type(schema.get("items").unwrap_or(&Value::Null));
             format!("{}[]", item_ty)
         }
         "object" => {
@@ -43,14 +44,22 @@ fn json_schema_to_typescript_type(schema: &Value) -> String {
             let required: Vec<String> = schema
                 .get("required")
                 .and_then(Value::as_array)
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             if props.is_empty() {
                 return "Record<string, any>".to_string();
             }
             let mut parts: Vec<String> = Vec::new();
             for (k, v) in props {
-                let optional = if required.iter().any(|r| r == &k) { "" } else { "?" };
+                let optional = if required.iter().any(|r| r == &k) {
+                    ""
+                } else {
+                    "?"
+                };
                 let ty = json_schema_to_typescript_type(&v);
                 parts.push(format!("{}{}: {};", k, optional, ty));
             }
@@ -104,7 +113,10 @@ fn json_schema_to_stubs(
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid JSON schema: {}", e))
     })?;
 
-    let safe_description = description.unwrap_or("").replace("*/", "* /").replace("\"\"\"", "\\\"\\\"\\\"");
+    let safe_description = description
+        .unwrap_or("")
+        .replace("*/", "* /")
+        .replace("\"\"\"", "\\\"\\\"\\\"");
     let fn_name = tool_name.replace('-', "_");
     let ts_args = json_schema_to_typescript_type(&schema);
     let py_args = json_schema_to_python_type(&schema);
