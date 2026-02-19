@@ -226,6 +226,92 @@ class TestExecuteWithTimeout:
         # Should still succeed despite provider failure
         assert result.continue_processing is True
 
+    @pytest.mark.asyncio
+    async def test_error_path_ends_span_with_error(self):
+        """When plugin execution raises, end_span is called with status='error'."""
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.return_value = "span-err"
+
+        class FailingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                raise RuntimeError("boom")
+
+        plugin = FailingPlugin(_make_config())
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        token = current_trace_id.set("trace-err")
+        try:
+            with pytest.raises(RuntimeError, match="boom"):
+                await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
+
+        mock_provider.start_span.assert_called_once()
+        mock_provider.end_span.assert_called_once_with(span_id="span-err", status="error")
+
+    @pytest.mark.asyncio
+    async def test_error_path_end_span_also_fails(self):
+        """When plugin raises AND end_span also raises, the original error propagates."""
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.return_value = "span-double-err"
+        mock_provider.end_span.side_effect = Exception("end_span also broke")
+
+        class FailingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                raise RuntimeError("plugin boom")
+
+        plugin = FailingPlugin(_make_config())
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        token = current_trace_id.set("trace-double-err")
+        try:
+            with pytest.raises(RuntimeError, match="plugin boom"):
+                await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
+
+        # end_span was attempted despite the error
+        mock_provider.end_span.assert_called_once_with(span_id="span-double-err", status="error")
+
+    @pytest.mark.asyncio
+    async def test_end_span_failure_on_success_path(self):
+        """When end_span raises after successful execution, the result is still returned."""
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.return_value = "span-ok"
+        mock_provider.end_span.side_effect = Exception("end_span broke")
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
+        hook_ref = _make_hook_ref()
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        token = current_trace_id.set("trace-ok")
+        try:
+            result = await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
+
+        # Plugin result is returned despite end_span failure
+        assert result.continue_processing is True
+        mock_provider.start_span.assert_called_once()
+        mock_provider.end_span.assert_called_once()
+
 
 # ===========================================================================
 # Permissive mode with no violation
