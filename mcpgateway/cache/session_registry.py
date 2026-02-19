@@ -1971,7 +1971,7 @@ class SessionRegistry(SessionBackend):
                 rpc_url = settings.internal_rpc_url
 
                 if not rpc_url:
-                    # Fallback to constructing RPC URL from base_url 
+                    # Fallback to constructing RPC URL from base_url
                     # Extract root URL from base_url (remove /servers/{id} path)
                     parsed_url = urlparse(base_url)
                     # Preserve the path up to the root path (before /servers/{id})
