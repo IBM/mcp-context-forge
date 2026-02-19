@@ -283,7 +283,7 @@ mcpContextForge:
     MCPGATEWAY_BULK_IMPORT_RATE_LIMIT: "10" # requests per minute for bulk import
 
     # ─ Code Execution (MCP Code Mode) ─
-    CODE_EXECUTION_ENABLED: "true" # enable code_execution virtual servers and meta-tools
+    CODE_EXECUTION_ENABLED: "false" # enable code_execution virtual servers and meta-tools (opt-in)
     CODE_EXECUTION_SHELL_EXEC_ENABLED: "true" # expose shell_exec meta-tool
     CODE_EXECUTION_FS_BROWSE_ENABLED: "true" # expose fs_browse meta-tool
     CODE_EXECUTION_REPLAY_ENABLED: "true" # enable replay of previous runs
