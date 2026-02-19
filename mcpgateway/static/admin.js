@@ -427,13 +427,32 @@ const CODE_EXECUTION_FIELD_TEMPLATES = Object.freeze({
     ),
 });
 
+// Map textarea IDs to their CodeMirror window globals.
+const _FIELD_ID_TO_EDITOR_VAR = Object.freeze({
+    "server-mount-rules": "serverMountRulesEditor",
+    "server-sandbox-policy": "serverSandboxPolicyEditor",
+    "server-tokenization": "serverTokenizationEditor",
+    "edit-server-mount-rules": "editServerMountRulesEditor",
+    "edit-server-sandbox-policy": "editServerSandboxPolicyEditor",
+    "edit-server-tokenization": "editServerTokenizationEditor",
+});
+
 function getCodeMirrorEditorForField(fieldElement) {
     if (!fieldElement) {
         return null;
     }
-    const editor = fieldElement.CodeMirror;
-    if (editor && typeof editor.getValue === "function") {
-        return editor;
+    // Prefer the .CodeMirror property set by fromTextArea (older CodeMirror).
+    const cmProp = fieldElement.CodeMirror;
+    if (cmProp && typeof cmProp.getValue === "function") {
+        return cmProp;
+    }
+    // Fall back to window-level editor globals used by our init code.
+    const varName = _FIELD_ID_TO_EDITOR_VAR[fieldElement.id];
+    if (varName) {
+        const winEditor = window[varName];
+        if (winEditor && typeof winEditor.getValue === "function") {
+            return winEditor;
+        }
     }
     return null;
 }
