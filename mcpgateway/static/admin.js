@@ -7000,7 +7000,9 @@ function getEditSelections(containerId) {
 }
 
 function resetEditSelections() {
-    window.editServerSelections = {};
+    ["edit-server-tools", "edit-server-resources", "edit-server-prompts"].forEach((k) => {
+        delete window.editServerSelections[k];
+    });
 }
 
 function ensureEditStoreListeners() {
@@ -7032,6 +7034,43 @@ function ensureEditStoreListeners() {
             }
         });
     });
+}
+
+function ensureAddStoreListeners() {
+    if (window._addStoreListenersAttached) return;
+    window._addStoreListenersAttached = true;
+
+    ["associatedTools", "associatedResources", "associatedPrompts"].forEach((containerId) => {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.addEventListener("change", function (e) {
+            const target = e.target;
+            if (
+                target.type === "checkbox" &&
+                (target.name === "associatedTools" ||
+                    target.name === "associatedResources" ||
+                    target.name === "associatedPrompts")
+            ) {
+                const sel = getEditSelections(containerId);
+                const value = String(target.value);
+                if (target.checked) {
+                    sel.add(value);
+                } else {
+                    sel.delete(value);
+                }
+            }
+        });
+    });
+
+    // Clear selections when the add-server form is reset
+    const form = document.getElementById("add-server-form");
+    if (form) {
+        form.addEventListener("reset", function () {
+            ["associatedTools", "associatedResources", "associatedPrompts"].forEach((k) => {
+                delete window.editServerSelections[k];
+            });
+        });
+    }
 }
 
 // ===================================================================
@@ -7200,34 +7239,19 @@ if (window.htmx && !window._toolsHtmxHandlerAttached) {
                     }
                     // If we're in the Add Server tools container, restore persisted selections
                     else if (container.id === "associatedTools") {
-                        try {
-                            const dataAttr = container.getAttribute(
-                                "data-selected-tools",
-                            );
-                            if (dataAttr) {
-                                const selectedIds = JSON.parse(dataAttr);
-                                if (
-                                    Array.isArray(selectedIds) &&
-                                    selectedIds.length > 0
-                                ) {
-                                    newCheckboxes.forEach((cb) => {
-                                        if (selectedIds.includes(cb.value)) {
-                                            cb.checked = true;
-                                        }
-                                        cb.removeAttribute("data-auto-check");
-                                    });
-
-                                    const event = new Event("change", {
-                                        bubbles: true,
-                                    });
-                                    container.dispatchEvent(event);
+                        const addToolSel = getEditSelections("associatedTools");
+                        if (addToolSel.size > 0) {
+                            newCheckboxes.forEach((cb) => {
+                                if (addToolSel.has(cb.value)) {
+                                    cb.checked = true;
                                 }
-                            }
-                        } catch (e) {
-                            console.warn(
-                                "Error restoring associatedTools selections:",
-                                e,
-                            );
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
                         }
                     }
                 }
@@ -7350,34 +7374,19 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
 
                     // If we're in the Add Server resources container, restore persisted selections
                     else if (container.id === "associatedResources") {
-                        try {
-                            const dataAttr = container.getAttribute(
-                                "data-selected-resources",
-                            );
-                            if (dataAttr) {
-                                const selectedIds = JSON.parse(dataAttr);
-                                if (
-                                    Array.isArray(selectedIds) &&
-                                    selectedIds.length > 0
-                                ) {
-                                    newCheckboxes.forEach((cb) => {
-                                        if (selectedIds.includes(cb.value)) {
-                                            cb.checked = true;
-                                        }
-                                        cb.removeAttribute("data-auto-check");
-                                    });
-
-                                    const event = new Event("change", {
-                                        bubbles: true,
-                                    });
-                                    container.dispatchEvent(event);
+                        const addResSel = getEditSelections("associatedResources");
+                        if (addResSel.size > 0) {
+                            newCheckboxes.forEach((cb) => {
+                                if (addResSel.has(cb.value)) {
+                                    cb.checked = true;
                                 }
-                            }
-                        } catch (e) {
-                            console.warn(
-                                "Error restoring associatedResources selections:",
-                                e,
-                            );
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
                         }
                     }
                 }
@@ -7499,34 +7508,19 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
 
                     // If we're in the Add Server prompts container, restore persisted selections
                     else if (container.id === "associatedPrompts") {
-                        try {
-                            const dataAttr = container.getAttribute(
-                                "data-selected-prompts",
-                            );
-                            if (dataAttr) {
-                                const selectedIds = JSON.parse(dataAttr);
-                                if (
-                                    Array.isArray(selectedIds) &&
-                                    selectedIds.length > 0
-                                ) {
-                                    newCheckboxes.forEach((cb) => {
-                                        if (selectedIds.includes(cb.value)) {
-                                            cb.checked = true;
-                                        }
-                                        cb.removeAttribute("data-auto-check");
-                                    });
-
-                                    const event = new Event("change", {
-                                        bubbles: true,
-                                    });
-                                    container.dispatchEvent(event);
+                        const addPromptSel = getEditSelections("associatedPrompts");
+                        if (addPromptSel.size > 0) {
+                            newCheckboxes.forEach((cb) => {
+                                if (addPromptSel.has(cb.value)) {
+                                    cb.checked = true;
                                 }
-                            }
-                        } catch (e) {
-                            console.warn(
-                                "Error restoring associatedPrompts selections:",
-                                e,
-                            );
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
                         }
                     }
                 }
@@ -8780,44 +8774,6 @@ function initToolSelect(
         return;
     }
 
-    // Instrument changes to the data-selected-tools attribute for debugging
-    if (!container.dataset.attrObserverAttached) {
-        try {
-            const attrObserver = new MutationObserver((mutationsList) => {
-                for (const mut of mutationsList) {
-                    if (
-                        mut.type === "attributes" &&
-                        mut.attributeName === "data-selected-tools"
-                    ) {
-                        const oldVal = mut.oldValue;
-                        const newVal = container.getAttribute(
-                            "data-selected-tools",
-                        );
-                        console.info(
-                            `[DATA-INSTRUMENT] ${selectId} data-selected-tools changed — old: ${oldVal} new: ${newVal}`,
-                        );
-                    }
-                }
-            });
-
-            // Observe attribute changes and capture previous value
-            attrObserver.observe(container, {
-                attributes: true,
-                attributeOldValue: true,
-                attributeFilter: ["data-selected-tools"],
-            });
-
-            // Prevent double attaching
-            container.dataset.attrObserverAttached = "true";
-            // Keep a reference so it doesn't get GC'd (and so we could disconnect if needed)
-            container._dbgAttrObserver = attrObserver;
-        } catch (e) {
-            console.error(
-                "[DATA-INSTRUMENT] failed to attach attribute observer:",
-                e,
-            );
-        }
-    }
 
     const pillClasses =
         "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
@@ -8840,23 +8796,11 @@ function initToolSelect(
             // Check if this is the edit server tools container
             const isEditServerMode = selectId === "edit-server-tools";
 
-            // Get persisted selections for Add Server mode
+            // Get persisted selections for Add Server mode from the Map store
             let persistedToolIds = [];
             if (selectId === "associatedTools") {
-                const dataAttr = container.getAttribute("data-selected-tools");
-                if (dataAttr) {
-                    try {
-                        persistedToolIds = JSON.parse(dataAttr);
-                    } catch (e) {
-                        console.error("Error parsing data-selected-tools:", e);
-                    }
-                }
-                if (
-                    (!persistedToolIds || persistedToolIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedTools)
-                ) {
-                    persistedToolIds = window._selectedAssociatedTools.slice();
-                }
+                const addToolSel = getEditSelections("associatedTools");
+                persistedToolIds = Array.from(addToolSel);
             }
 
             // Get edit server selection store for edit mode
@@ -9192,75 +9136,17 @@ function initToolSelect(
                 // If we're in the Add Server tools container, persist selected IDs
                 else if (selectId === "associatedTools") {
                     try {
-                        // Incrementally update persisted selection instead of
-                        // replacing it wholesale. This preserves selections made
-                        // in previous filtered views where those checkboxes are
-                        // not present in the current DOM.
                         const changedEl = e.target;
-                        const changedId = changedEl.value;
-
-                        // Load existing persisted set: prefer container attribute,
-                        // fall back to the in-memory window variable.
-                        let persisted = [];
-                        const dataAttr = container.getAttribute(
-                            "data-selected-tools",
-                        );
-                        if (dataAttr) {
-                            try {
-                                const parsed = JSON.parse(dataAttr);
-                                if (Array.isArray(parsed)) {
-                                    persisted = parsed.slice();
-                                }
-                            } catch (parseErr) {
-                                console.error(
-                                    "Error parsing existing data-selected-tools:",
-                                    parseErr,
-                                );
-                            }
-                        } else if (
-                            Array.isArray(window._selectedAssociatedTools)
-                        ) {
-                            persisted = window._selectedAssociatedTools.slice();
-                        }
-
+                        const changedId = String(changedEl.value);
+                        const addToolSel = getEditSelections("associatedTools");
                         if (changedEl.checked) {
-                            if (!persisted.includes(changedId)) {
-                                persisted.push(changedId);
-                            }
+                            addToolSel.add(changedId);
                         } else {
-                            persisted = persisted.filter(
-                                (x) => x !== changedId,
-                            );
-                        }
-
-                        // Ensure any currently visible checked boxes are included
-                        const visibleChecked = Array.from(
-                            container.querySelectorAll(
-                                'input[type="checkbox"]:checked',
-                            ),
-                        ).map((cb) => cb.value);
-                        visibleChecked.forEach((id) => {
-                            if (!persisted.includes(id)) {
-                                persisted.push(id);
-                            }
-                        });
-
-                        // Persist back to both the container attribute and global fallback
-                        container.setAttribute(
-                            "data-selected-tools",
-                            JSON.stringify(persisted),
-                        );
-                        try {
-                            window._selectedAssociatedTools = persisted.slice();
-                        } catch (e) {
-                            console.error(
-                                "Error persisting window._selectedAssociatedTools:",
-                                e,
-                            );
+                            addToolSel.delete(changedId);
                         }
                     } catch (err) {
                         console.error(
-                            "Error updating data-selected-tools (incremental):",
+                            "Error updating associatedTools store (incremental):",
                             err,
                         );
                     }
@@ -9314,30 +9200,11 @@ function initResourceSelect(
             // Check if this is the edit server resources container
             const isEditServerMode = selectId === "edit-server-resources";
 
-            // Get persisted selections for Add Server mode
+            // Get persisted selections for Add Server mode from the Map store
             let persistedResourceIds = [];
             if (selectId === "associatedResources") {
-                const dataAttr = container.getAttribute(
-                    "data-selected-resources",
-                );
-                if (dataAttr) {
-                    try {
-                        persistedResourceIds = JSON.parse(dataAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing data-selected-resources:",
-                            e,
-                        );
-                    }
-                }
-                if (
-                    (!persistedResourceIds ||
-                        persistedResourceIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedResources)
-                ) {
-                    persistedResourceIds =
-                        window._selectedAssociatedResources.slice();
-                }
+                const addResSel = getEditSelections("associatedResources");
+                persistedResourceIds = Array.from(addResSel);
             }
 
             // Get edit server selection store for edit mode
@@ -9677,68 +9544,16 @@ function initResourceSelect(
                 else if (selectId === "associatedResources") {
                     try {
                         const changedEl = e.target;
-                        const changedId = changedEl.value;
-
-                        let persisted = [];
-                        const dataAttr = container.getAttribute(
-                            "data-selected-resources",
-                        );
-                        if (dataAttr) {
-                            try {
-                                const parsed = JSON.parse(dataAttr);
-                                if (Array.isArray(parsed)) {
-                                    persisted = parsed.slice();
-                                }
-                            } catch (parseErr) {
-                                console.error(
-                                    "Error parsing existing data-selected-resources:",
-                                    parseErr,
-                                );
-                            }
-                        } else if (
-                            Array.isArray(window._selectedAssociatedResources)
-                        ) {
-                            persisted =
-                                window._selectedAssociatedResources.slice();
-                        }
-
+                        const changedId = String(changedEl.value);
+                        const addResSel = getEditSelections("associatedResources");
                         if (changedEl.checked) {
-                            if (!persisted.includes(changedId)) {
-                                persisted.push(changedId);
-                            }
+                            addResSel.add(changedId);
                         } else {
-                            persisted = persisted.filter(
-                                (x) => x !== changedId,
-                            );
-                        }
-
-                        const visibleChecked = Array.from(
-                            container.querySelectorAll(
-                                'input[type="checkbox"]:checked',
-                            ),
-                        ).map((cb) => cb.value);
-                        visibleChecked.forEach((id) => {
-                            if (!persisted.includes(id)) {
-                                persisted.push(id);
-                            }
-                        });
-
-                        container.setAttribute(
-                            "data-selected-resources",
-                            JSON.stringify(persisted),
-                        );
-                        try {
-                            window._selectedAssociatedResources =
-                                persisted.slice();
-                        } catch (err) {
-                            console.error(
-                                "Error persisting window._selectedAssociatedResources:",
-                                err,
-                            );
+                            addResSel.delete(changedId);
                         }
                     } catch (err) {
                         console.error(
-                            "Error updating data-selected-resources (incremental):",
+                            "Error updating associatedResources store (incremental):",
                             err,
                         );
                     }
@@ -9792,29 +9607,11 @@ function initPromptSelect(
             // Check if this is the edit server prompts container
             const isEditServerMode = selectId === "edit-server-prompts";
 
-            // Get persisted selections for Add Server mode
+            // Get persisted selections for Add Server mode from the Map store
             let persistedPromptIds = [];
             if (selectId === "associatedPrompts") {
-                const dataAttr = container.getAttribute(
-                    "data-selected-prompts",
-                );
-                if (dataAttr) {
-                    try {
-                        persistedPromptIds = JSON.parse(dataAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing data-selected-prompts:",
-                            e,
-                        );
-                    }
-                }
-                if (
-                    (!persistedPromptIds || persistedPromptIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedPrompts)
-                ) {
-                    persistedPromptIds =
-                        window._selectedAssociatedPrompts.slice();
-                }
+                const addPromptSel = getEditSelections("associatedPrompts");
+                persistedPromptIds = Array.from(addPromptSel);
             }
 
             // Get edit server selection store for edit mode
@@ -10153,68 +9950,16 @@ function initPromptSelect(
                 else if (selectId === "associatedPrompts") {
                     try {
                         const changedEl = e.target;
-                        const changedId = changedEl.value;
-
-                        let persisted = [];
-                        const dataAttr = container.getAttribute(
-                            "data-selected-prompts",
-                        );
-                        if (dataAttr) {
-                            try {
-                                const parsed = JSON.parse(dataAttr);
-                                if (Array.isArray(parsed)) {
-                                    persisted = parsed.slice();
-                                }
-                            } catch (parseErr) {
-                                console.error(
-                                    "Error parsing existing data-selected-prompts:",
-                                    parseErr,
-                                );
-                            }
-                        } else if (
-                            Array.isArray(window._selectedAssociatedPrompts)
-                        ) {
-                            persisted =
-                                window._selectedAssociatedPrompts.slice();
-                        }
-
+                        const changedId = String(changedEl.value);
+                        const addPromptSel = getEditSelections("associatedPrompts");
                         if (changedEl.checked) {
-                            if (!persisted.includes(changedId)) {
-                                persisted.push(changedId);
-                            }
+                            addPromptSel.add(changedId);
                         } else {
-                            persisted = persisted.filter(
-                                (x) => x !== changedId,
-                            );
-                        }
-
-                        const visibleChecked = Array.from(
-                            container.querySelectorAll(
-                                'input[type="checkbox"]:checked',
-                            ),
-                        ).map((cb) => cb.value);
-                        visibleChecked.forEach((id) => {
-                            if (!persisted.includes(id)) {
-                                persisted.push(id);
-                            }
-                        });
-
-                        container.setAttribute(
-                            "data-selected-prompts",
-                            JSON.stringify(persisted),
-                        );
-                        try {
-                            window._selectedAssociatedPrompts =
-                                persisted.slice();
-                        } catch (err) {
-                            console.error(
-                                "Error persisting window._selectedAssociatedPrompts:",
-                                err,
-                            );
+                            addPromptSel.delete(changedId);
                         }
                     } catch (err) {
                         console.error(
-                            "Error updating data-selected-prompts (incremental):",
+                            "Error updating associatedPrompts store (incremental):",
                             err,
                         );
                     }
@@ -10819,59 +10564,23 @@ function reloadAssociatedItems() {
                     "[Filter Update DEBUG] Resources fetch successful, HTML length:",
                     html.length,
                 );
-                // Persist current selections to window fallback before replacing container
-                // AND preserve the data-selected-resources attribute
-                let persistedResourceIds = [];
-                try {
-                    // First, try to get from the container's data attribute
-                    const dataAttr = resourcesContainer.getAttribute(
-                        "data-selected-resources",
-                    );
-                    if (dataAttr) {
-                        try {
-                            const parsed = JSON.parse(dataAttr);
-                            if (Array.isArray(parsed)) {
-                                persistedResourceIds = parsed.slice();
+                // Flush current DOM state into the Map store before replacing container
+                if (resourcesContainerId === "associatedResources") {
+                    const addResSel = getEditSelections("associatedResources");
+                    resourcesContainer
+                        .querySelectorAll('input[name="associatedResources"]')
+                        .forEach((cb) => {
+                            const value = String(cb.value);
+                            if (cb.checked) {
+                                addResSel.add(value);
+                            } else {
+                                addResSel.delete(value);
                             }
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-resources:",
-                                e,
-                            );
-                        }
-                    }
-
-                    // Merge with currently checked items
-                    const currentChecked = Array.from(
-                        resourcesContainer.querySelectorAll(
-                            'input[type="checkbox"]:checked',
-                        ),
-                    ).map((cb) => cb.value);
-                    const merged = new Set([
-                        ...persistedResourceIds,
-                        ...currentChecked,
-                    ]);
-                    persistedResourceIds = Array.from(merged);
-
-                    // Update window fallback
-                    window._selectedAssociatedResources =
-                        persistedResourceIds.slice();
-                } catch (e) {
-                    console.error(
-                        "Error capturing current resource selections before reload:",
-                        e,
-                    );
+                        });
                 }
 
                 resourcesContainer.innerHTML = html;
 
-                // Immediately restore the data-selected-resources attribute after innerHTML replacement
-                if (persistedResourceIds.length > 0) {
-                    resourcesContainer.setAttribute(
-                        "data-selected-resources",
-                        JSON.stringify(persistedResourceIds),
-                    );
-                }
                 // If HTMX is available, process the newly-inserted HTML so hx-*
                 // triggers (like the infinite-scroll 'intersect' trigger) are
                 // initialized. To avoid HTMX re-triggering the container's
@@ -10939,89 +10648,27 @@ function reloadAssociatedItems() {
                     ? "clearAllEditResourcesBtn"
                     : "clearAllResourcesBtn";
 
-                // The data-selected-resources attribute should already be restored above,
-                // but double-check and merge with window fallback if needed
-                try {
-                    const dataAttr = resourcesContainer.getAttribute(
-                        "data-selected-resources",
-                    );
-                    let selectedIds = [];
-                    if (dataAttr) {
-                        try {
-                            const parsed = JSON.parse(dataAttr);
-                            if (Array.isArray(parsed)) {
-                                selectedIds = parsed.slice();
-                            }
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-resources:",
-                                e,
-                            );
-                        }
-                    }
-
-                    // Merge with window fallback if it has additional selections
-                    if (
-                        Array.isArray(window._selectedAssociatedResources) &&
-                        window._selectedAssociatedResources.length > 0
-                    ) {
-                        const merged = new Set([
-                            ...selectedIds,
-                            ...window._selectedAssociatedResources,
-                        ]);
-                        const mergedArray = Array.from(merged);
-                        if (mergedArray.length > selectedIds.length) {
-                            resourcesContainer.setAttribute(
-                                "data-selected-resources",
-                                JSON.stringify(mergedArray),
-                            );
-                            console.log(
-                                "[Filter Update DEBUG] Merged additional selections from window fallback",
-                            );
-                        }
-                    }
-                } catch (e) {
-                    console.error(
-                        "Error restoring data-selected-resources after fetch reload:",
-                        e,
-                    );
-                }
-
-                // First restore persisted selections from data-selected-resources (Add Server mode)
-                try {
-                    const dataAttr = resourcesContainer.getAttribute(
-                        "data-selected-resources",
-                    );
-                    if (
-                        dataAttr &&
-                        resourcesContainerId === "associatedResources"
-                    ) {
-                        const selectedIds = JSON.parse(dataAttr);
-                        if (
-                            Array.isArray(selectedIds) &&
-                            selectedIds.length > 0
-                        ) {
+                // Restore persisted selections from Map store (Add Server mode)
+                if (resourcesContainerId === "associatedResources") {
+                    try {
+                        const addResSel = getEditSelections("associatedResources");
+                        if (addResSel.size > 0) {
                             const resourceCheckboxes =
                                 resourcesContainer.querySelectorAll(
                                     'input[type="checkbox"][name="associatedResources"]',
                                 );
                             resourceCheckboxes.forEach((cb) => {
-                                if (selectedIds.includes(cb.value)) {
+                                if (addResSel.has(String(cb.value))) {
                                     cb.checked = true;
                                 }
                             });
-                            console.log(
-                                "[Filter Update DEBUG] Restored",
-                                selectedIds.length,
-                                "persisted resource selections",
-                            );
                         }
+                    } catch (e) {
+                        console.warn(
+                            "Error restoring persisted resource selections:",
+                            e,
+                        );
                     }
-                } catch (e) {
-                    console.warn(
-                        "Error restoring persisted resource selections:",
-                        e,
-                    );
                 }
 
                 initResourceSelect(
@@ -11093,31 +10740,26 @@ function reloadAssociatedItems() {
             ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
 
-        // Persist current prompt selections before HTMX replaces the container
-        try {
-            const currentCheckedPrompts = Array.from(
-                promptsContainer.querySelectorAll(
-                    'input[type="checkbox"]:checked',
-                ),
-            ).map((cb) => cb.value);
-            if (
-                !Array.isArray(window._selectedAssociatedPrompts) ||
-                window._selectedAssociatedPrompts.length === 0
-            ) {
-                window._selectedAssociatedPrompts =
-                    currentCheckedPrompts.slice();
-            } else {
-                const merged = new Set([
-                    ...(window._selectedAssociatedPrompts || []),
-                    ...currentCheckedPrompts,
-                ]);
-                window._selectedAssociatedPrompts = Array.from(merged);
+        // Flush current DOM state into the Map store before HTMX replaces the container
+        if (promptsContainerId === "associatedPrompts") {
+            try {
+                const addPromptSel = getEditSelections("associatedPrompts");
+                promptsContainer
+                    .querySelectorAll('input[name="associatedPrompts"]')
+                    .forEach((cb) => {
+                        const value = String(cb.value);
+                        if (cb.checked) {
+                            addPromptSel.add(value);
+                        } else {
+                            addPromptSel.delete(value);
+                        }
+                    });
+            } catch (e) {
+                console.error(
+                    "Error capturing current prompt selections before reload:",
+                    e,
+                );
             }
-        } catch (e) {
-            console.error(
-                "Error capturing current prompt selections before reload:",
-                e,
-            );
         }
 
         if (window.htmx) {
@@ -11125,58 +10767,27 @@ function reloadAssociatedItems() {
                 target: `#${promptsContainerId}`,
                 swap: "innerHTML",
             }).then(() => {
-                try {
-                    const containerEl =
-                        document.getElementById(promptsContainerId);
-                    if (containerEl) {
-                        const existingAttr = containerEl.getAttribute(
-                            "data-selected-prompts",
+                // Restore persisted selections from Map store (Add Server mode)
+                if (promptsContainerId === "associatedPrompts") {
+                    try {
+                        const addPromptSel = getEditSelections("associatedPrompts");
+                        const containerEl = document.getElementById(promptsContainerId);
+                        if (containerEl && addPromptSel.size > 0) {
+                            const promptCheckboxes = containerEl.querySelectorAll(
+                                'input[type="checkbox"][name="associatedPrompts"]',
+                            );
+                            promptCheckboxes.forEach((cb) => {
+                                if (addPromptSel.has(String(cb.value))) {
+                                    cb.checked = true;
+                                }
+                            });
+                        }
+                    } catch (e) {
+                        console.error(
+                            "Error restoring prompt selections after HTMX reload:",
+                            e,
                         );
-                        let existingIds = null;
-                        if (existingAttr) {
-                            try {
-                                existingIds = JSON.parse(existingAttr);
-                            } catch (e) {
-                                console.error(
-                                    "Error parsing existing data-selected-prompts after reload:",
-                                    e,
-                                );
-                            }
-                        }
-
-                        if (
-                            (!existingIds ||
-                                !Array.isArray(existingIds) ||
-                                existingIds.length === 0) &&
-                            Array.isArray(window._selectedAssociatedPrompts) &&
-                            window._selectedAssociatedPrompts.length > 0
-                        ) {
-                            containerEl.setAttribute(
-                                "data-selected-prompts",
-                                JSON.stringify(
-                                    window._selectedAssociatedPrompts.slice(),
-                                ),
-                            );
-                        } else if (
-                            Array.isArray(existingIds) &&
-                            Array.isArray(window._selectedAssociatedPrompts) &&
-                            window._selectedAssociatedPrompts.length > 0
-                        ) {
-                            const merged = new Set([
-                                ...(existingIds || []),
-                                ...window._selectedAssociatedPrompts,
-                            ]);
-                            containerEl.setAttribute(
-                                "data-selected-prompts",
-                                JSON.stringify(Array.from(merged)),
-                            );
-                        }
                     }
-                } catch (e) {
-                    console.error(
-                        "Error restoring data-selected-prompts after HTMX reload:",
-                        e,
-                    );
                 }
                 // Re-initialize the prompt select after content is loaded
                 const pPills = useEditContainers
@@ -15390,137 +15001,52 @@ async function handleServerFormSubmit(e) {
         );
         teamId && formData.append("team_id", teamId);
 
-        // Merge persisted selections from Add Server container into FormData
-        // to include tools selected across multiple searches
+        // Build tools selection from Map (includes selections across pagination + search)
         const toolsContainer = document.getElementById("associatedTools");
         if (toolsContainer) {
-            // Get persisted selections from container attribute
-            let persistedToolIds = [];
-            const dataAttr = toolsContainer.getAttribute("data-selected-tools");
-            if (dataAttr) {
-                try {
-                    persistedToolIds = JSON.parse(dataAttr);
-                } catch (e) {
-                    console.error("Error parsing data-selected-tools:", e);
-                }
-            }
-            // Fallback to global variable
-            if (
-                (!persistedToolIds || persistedToolIds.length === 0) &&
-                Array.isArray(window._selectedAssociatedTools)
-            ) {
-                persistedToolIds = window._selectedAssociatedTools.slice();
-            }
-
-            // Also capture currently visible checked boxes
-            const visibleChecked = Array.from(
-                toolsContainer.querySelectorAll(
-                    'input[name="associatedTools"]:checked',
-                ),
-            ).map((cb) => cb.value);
-
-            // Merge visible selections into persisted set
-            visibleChecked.forEach((id) => {
-                if (!persistedToolIds.includes(id)) {
-                    persistedToolIds.push(id);
-                }
-            });
-
-            // Override FormData with the full merged set
-            if (persistedToolIds.length > 0) {
-                formData.delete("associatedTools");
-                persistedToolIds.forEach((id) => {
-                    formData.append("associatedTools", id);
+            const toolSel = getEditSelections("associatedTools");
+            // Also flush any currently visible checked boxes in case listeners missed something
+            toolsContainer
+                .querySelectorAll('input[name="associatedTools"]')
+                .forEach((cb) => {
+                    if (cb.checked) toolSel.add(String(cb.value));
                 });
+            if (toolSel.size > 0) {
+                formData.delete("associatedTools");
+                toolSel.forEach((id) => formData.append("associatedTools", id));
             }
-
         }
 
-        // Handle resources
+        // Build resources selection from Map
         const resourcesContainer = document.getElementById(
             "associatedResources",
         );
         if (resourcesContainer) {
-            let persistedResourceIds = [];
-            const dataAttr = resourcesContainer.getAttribute(
-                "data-selected-resources",
-            );
-            if (dataAttr) {
-                try {
-                    persistedResourceIds = JSON.parse(dataAttr);
-                } catch (e) {
-                    console.error("Error parsing data-selected-resources:", e);
-                }
-            }
-            if (
-                (!persistedResourceIds || persistedResourceIds.length === 0) &&
-                Array.isArray(window._selectedAssociatedResources)
-            ) {
-                persistedResourceIds =
-                    window._selectedAssociatedResources.slice();
-            }
-
-            const visibleChecked = Array.from(
-                resourcesContainer.querySelectorAll(
-                    'input[name="associatedResources"]:checked',
-                ),
-            ).map((cb) => String(cb.value));
-
-            visibleChecked.forEach((id) => {
-                if (!persistedResourceIds.includes(id)) {
-                    persistedResourceIds.push(id);
-                }
-            });
-
-            if (persistedResourceIds.length > 0) {
-                formData.delete("associatedResources");
-                persistedResourceIds.forEach((id) => {
-                    formData.append("associatedResources", id);
+            const resSel = getEditSelections("associatedResources");
+            resourcesContainer
+                .querySelectorAll('input[name="associatedResources"]')
+                .forEach((cb) => {
+                    if (cb.checked) resSel.add(String(cb.value));
                 });
+            if (resSel.size > 0) {
+                formData.delete("associatedResources");
+                resSel.forEach((id) => formData.append("associatedResources", id));
             }
-
         }
 
-        // Handle prompts
+        // Build prompts selection from Map
         const promptsContainer = document.getElementById("associatedPrompts");
         if (promptsContainer) {
-            let persistedPromptIds = [];
-            const dataAttr = promptsContainer.getAttribute(
-                "data-selected-prompts",
-            );
-            if (dataAttr) {
-                try {
-                    persistedPromptIds = JSON.parse(dataAttr);
-                } catch (e) {
-                    console.error("Error parsing data-selected-prompts:", e);
-                }
-            }
-            if (
-                (!persistedPromptIds || persistedPromptIds.length === 0) &&
-                Array.isArray(window._selectedAssociatedPrompts)
-            ) {
-                persistedPromptIds = window._selectedAssociatedPrompts.slice();
-            }
-
-            const visibleChecked = Array.from(
-                promptsContainer.querySelectorAll(
-                    'input[name="associatedPrompts"]:checked',
-                ),
-            ).map((cb) => String(cb.value));
-
-            visibleChecked.forEach((id) => {
-                if (!persistedPromptIds.includes(id)) {
-                    persistedPromptIds.push(id);
-                }
-            });
-
-            if (persistedPromptIds.length > 0) {
-                formData.delete("associatedPrompts");
-                persistedPromptIds.forEach((id) => {
-                    formData.append("associatedPrompts", id);
+            const promptSel = getEditSelections("associatedPrompts");
+            promptsContainer
+                .querySelectorAll('input[name="associatedPrompts"]')
+                .forEach((cb) => {
+                    if (cb.checked) promptSel.add(String(cb.value));
                 });
+            if (promptSel.size > 0) {
+                formData.delete("associatedPrompts");
+                promptSel.forEach((id) => formData.append("associatedPrompts", id));
             }
-
         }
 
         const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
@@ -16649,6 +16175,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 2. Initialize tool selects
         initializeToolSelects();
+        ensureAddStoreListeners();
 
         // 3. Set up all event listeners
         initializeEventListeners();
@@ -27081,103 +26608,18 @@ async function serverSideToolSearch(searchTerm) {
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
 
-    console.log(
-        `[Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
-
-    // --- DOM instrumentation for debugging replacement during searches ---
-    // Assign a stable debug id to the container (persists through innerHTML swaps
-    // but will change if the element is replaced). Observe the parent node for
-    // childList mutations and log if the container is removed or replaced.
-    let _domInstrObserver = null;
-    let _domInstrId = null;
-    try {
-        if (!container.dataset.debugNodeId) {
-            container.dataset.debugNodeId = `dbg-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-        }
-        _domInstrId = container.dataset.debugNodeId;
-        console.info(
-            `[DOM-INSTRUMENT] serverSideToolSearch start for #associatedTools debugId=${_domInstrId} searchTerm='${searchTerm}'`,
-        );
-
-        const parentNode = container.parentNode;
-        if (parentNode) {
-            _domInstrObserver = new MutationObserver((mutationsList) => {
-                for (const mut of mutationsList) {
-                    if (mut.type === "childList") {
-                        const current =
-                            document.getElementById("associatedTools");
-                        if (!current) {
-                            console.warn(
-                                `[DOM-INSTRUMENT] associatedTools element REMOVED during search (original debugId=${_domInstrId})`,
-                                mut,
-                            );
-                        } else {
-                            const curId = current.dataset.debugNodeId || null;
-                            if (curId !== _domInstrId) {
-                                console.warn(
-                                    `[DOM-INSTRUMENT] associatedTools element REPLACED during search. original=${_domInstrId} current=${curId}`,
-                                    mut,
-                                );
-                            }
-                        }
-                    }
-                }
-            });
-            try {
-                _domInstrObserver.observe(parentNode, { childList: true });
-            } catch (e) {
-                console.error(
-                    "[DOM-INSTRUMENT] Failed to observe parent node for associatedTools:",
-                    e,
-                );
+    // Flush current DOM state into the persistent selection store before clearing the container
+    const toolSel = getEditSelections("associatedTools");
+    container
+        .querySelectorAll('input[name="associatedTools"]')
+        .forEach((cb) => {
+            const value = String(cb.value);
+            if (cb.checked) {
+                toolSel.add(value);
+            } else {
+                toolSel.delete(value);
             }
-        }
-    } catch (e) {
-        console.error("[DOM-INSTRUMENT] setup error:", e);
-    }
-
-    // Persist current selections to window fallback AND data attribute before we replace/clear the container
-    let persistedToolIds = [];
-    try {
-        // First get from data attribute if it exists
-        const dataAttr = container.getAttribute("data-selected-tools");
-        if (dataAttr) {
-            try {
-                const parsed = JSON.parse(dataAttr);
-                if (Array.isArray(parsed)) {
-                    persistedToolIds = parsed.slice();
-                }
-            } catch (e) {
-                console.error("Error parsing data-selected-tools:", e);
-            }
-        }
-
-        // Then merge with currently checked items (important for search results)
-        const currentChecked = Array.from(
-            container.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((cb) => String(cb.value));
-        // Normalize persisted IDs to strings as well
-        const normalizedPersisted = persistedToolIds.map((id) => String(id));
-        const merged = new Set([...normalizedPersisted, ...currentChecked]);
-        persistedToolIds = Array.from(merged);
-
-        // Update both the window fallback and the container attribute
-        window._selectedAssociatedTools = persistedToolIds.slice();
-        if (persistedToolIds.length > 0) {
-            container.setAttribute(
-                "data-selected-tools",
-                JSON.stringify(persistedToolIds),
-            );
-        }
-
-        console.log(
-            `[Tool Search] Persisted ${persistedToolIds.length} tool selections before search:`,
-            persistedToolIds,
-        );
-    } catch (e) {
-        console.error("Error capturing current selections before search:", e);
-    }
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -27205,60 +26647,8 @@ async function serverSideToolSearch(searchTerm) {
             if (response.ok) {
                 const html = await response.text();
 
-                // Preserve the data-selected-tools attribute before replacing innerHTML
-                let persistedToolIds = [];
-                try {
-                    const dataAttr = container.getAttribute(
-                        "data-selected-tools",
-                    );
-                    if (dataAttr) {
-                        try {
-                            const parsed = JSON.parse(dataAttr);
-                            if (Array.isArray(parsed)) {
-                                persistedToolIds = parsed.slice();
-                            }
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-tools before clearing search:",
-                                e,
-                            );
-                        }
-                    }
-
-                    // Merge with currently checked items
-                    const currentChecked = Array.from(
-                        container.querySelectorAll(
-                            'input[type="checkbox"]:checked',
-                        ),
-                    ).map((cb) => cb.value);
-                    const merged = new Set([
-                        ...persistedToolIds,
-                        ...currentChecked,
-                    ]);
-                    persistedToolIds = Array.from(merged);
-
-                    // Update window fallback
-                    window._selectedAssociatedTools = persistedToolIds.slice();
-                } catch (e) {
-                    console.error(
-                        "Error capturing current tool selections before clearing search:",
-                        e,
-                    );
-                }
-
                 container.innerHTML = html;
 
-                // Immediately restore the data-selected-tools attribute after innerHTML replacement
-                if (persistedToolIds.length > 0) {
-                    container.setAttribute(
-                        "data-selected-tools",
-                        JSON.stringify(persistedToolIds),
-                    );
-                }
-
-                // If the container has been re-rendered server-side and our
-                // `data-selected-tools` attribute was lost, restore from the
-                // global fallback `window._selectedAssociatedTools`.
                 try {
                     updateToolMapping(container);
 
@@ -27272,40 +26662,15 @@ async function serverSideToolSearch(searchTerm) {
                         "clearAllToolsBtn",
                     );
 
-                    const dataAttr = container.getAttribute(
-                        "data-selected-tools",
-                    );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing server data-selected-tools:",
-                                e,
-                            );
-                        }
-                    }
-
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedTools)
-                    ) {
-                        selectedIds = window._selectedAssociatedTools.slice();
-                    }
-
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                    if (toolSel.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedTools"]',
                         );
                         checkboxes.forEach((cb) => {
-                            if (selectedIds.includes(cb.value)) {
+                            if (toolSel.has(String(cb.value))) {
                                 cb.checked = true;
                             }
                         });
-
                         const firstCb = container.querySelector(
                             'input[type="checkbox"]',
                         );
@@ -27392,59 +26757,6 @@ async function serverSideToolSearch(searchTerm) {
             });
 
             container.innerHTML = searchResultsHtml;
-            // If server-side didn't provide `data-selected-tools` (or provided
-            // an empty array), restore/merge from the in-memory fallback so
-            // the attribute isn't left empty and selectors can pick it up.
-            try {
-                const existingAttr = container.getAttribute(
-                    "data-selected-tools",
-                );
-                let existingIds = null;
-                if (existingAttr) {
-                    try {
-                        existingIds = JSON.parse(existingAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing existing data-selected-tools after search insert:",
-                            e,
-                        );
-                    }
-                }
-
-                if (
-                    (!existingIds ||
-                        !Array.isArray(existingIds) ||
-                        existingIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedTools) &&
-                    window._selectedAssociatedTools.length > 0
-                ) {
-                    // Write a merged view back to the container attribute so
-                    // subsequent init/observers see the selection
-                    container.setAttribute(
-                        "data-selected-tools",
-                        JSON.stringify(window._selectedAssociatedTools.slice()),
-                    );
-                } else if (
-                    Array.isArray(existingIds) &&
-                    Array.isArray(window._selectedAssociatedTools) &&
-                    window._selectedAssociatedTools.length > 0
-                ) {
-                    // Merge the two sets to avoid losing either
-                    const merged = new Set([
-                        ...(existingIds || []),
-                        ...window._selectedAssociatedTools,
-                    ]);
-                    container.setAttribute(
-                        "data-selected-tools",
-                        JSON.stringify(Array.from(merged)),
-                    );
-                }
-            } catch (e) {
-                console.error(
-                    "Error restoring data-selected-tools attribute after inserting search results:",
-                    e,
-                );
-            }
 
             // Update tool mapping with search results
             updateToolMapping(container);
@@ -27460,63 +26772,24 @@ async function serverSideToolSearch(searchTerm) {
                     "clearAllToolsBtn",
                 );
 
-                // Restore any previously selected tool IDs stored on the container
-                try {
-                    const dataAttr = container.getAttribute(
-                        "data-selected-tools",
+                if (toolSel.size > 0) {
+                    const checkboxes = container.querySelectorAll(
+                        'input[name="associatedTools"]',
                     );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-tools:",
-                                e,
-                            );
+                    const normalizedIds = Array.from(toolSel);
+                    checkboxes.forEach((cb) => {
+                        if (normalizedIds.includes(String(cb.value))) {
+                            cb.checked = true;
                         }
-                    }
-
-                    // If parsed attribute is missing or an empty array, fall back
-                    // to the in-memory `window._selectedAssociatedTools` saved earlier.
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedTools)
-                    ) {
-                        selectedIds = window._selectedAssociatedTools.slice();
-                    }
-
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
-                        const checkboxes = container.querySelectorAll(
-                            'input[name="associatedTools"]',
-                        );
-                        // Convert all IDs to strings for comparison
-                        const normalizedIds = selectedIds.map((id) =>
-                            String(id),
-                        );
-                        checkboxes.forEach((cb) => {
-                            if (normalizedIds.includes(String(cb.value))) {
-                                cb.checked = true;
-                            }
-                        });
-
-                        // Trigger update so pills/counts refresh
-                        const firstCb = container.querySelector(
-                            'input[type="checkbox"]',
-                        );
-                        if (firstCb) {
-                            firstCb.dispatchEvent(
-                                new Event("change", { bubbles: true }),
-                            );
-                        }
-                    }
-                } catch (e) {
-                    console.error(
-                        "Error restoring data-selected-tools after search:",
-                        e,
+                    });
+                    const firstCb = container.querySelector(
+                        'input[type="checkbox"]',
                     );
+                    if (firstCb) {
+                        firstCb.dispatchEvent(
+                            new Event("change", { bubbles: true }),
+                        );
+                    }
                 }
             } catch (e) {
                 console.error(
@@ -27637,33 +26910,18 @@ async function serverSidePromptSearch(searchTerm) {
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
 
-    console.log(
-        `[Prompt Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
-
-    // Persist current selections to window fallback before we replace/clear the container
-    try {
-        const currentChecked = Array.from(
-            container.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((cb) => cb.value);
-        if (
-            !Array.isArray(window._selectedAssociatedPrompts) ||
-            window._selectedAssociatedPrompts.length === 0
-        ) {
-            window._selectedAssociatedPrompts = currentChecked.slice();
-        } else {
-            const merged = new Set([
-                ...(window._selectedAssociatedPrompts || []),
-                ...currentChecked,
-            ]);
-            window._selectedAssociatedPrompts = Array.from(merged);
-        }
-    } catch (e) {
-        console.error(
-            "Error capturing current prompt selections before search:",
-            e,
-        );
-    }
+    // Flush current DOM state into the persistent selection store before clearing the container
+    const promptSel = getEditSelections("associatedPrompts");
+    container
+        .querySelectorAll('input[name="associatedPrompts"]')
+        .forEach((cb) => {
+            const value = String(cb.value);
+            if (cb.checked) {
+                promptSel.add(value);
+            } else {
+                promptSel.delete(value);
+            }
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -27701,33 +26959,6 @@ async function serverSidePromptSearch(searchTerm) {
                 }
 
                 try {
-                    // Update mapping and ensure persisted selections are applied
-                    // Initialize prompt mapping if needed
-                    // If the server did not supply `data-selected-prompts`, restore from fallback
-                    const dataAttr = container.getAttribute(
-                        "data-selected-prompts",
-                    );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing server data-selected-prompts:",
-                                e,
-                            );
-                        }
-                    }
-
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedPrompts)
-                    ) {
-                        selectedIds = window._selectedAssociatedPrompts.slice();
-                    }
-
                     initPromptSelect(
                         "associatedPrompts",
                         "selectedPromptsPills",
@@ -27737,16 +26968,12 @@ async function serverSidePromptSearch(searchTerm) {
                         "clearAllPromptsBtn",
                     );
 
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                    if (promptSel.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedPrompts"]',
                         );
-                        // Convert all IDs to strings for comparison
-                        const normalizedIds = selectedIds.map((id) =>
-                            String(id),
-                        );
                         checkboxes.forEach((cb) => {
-                            if (normalizedIds.includes(String(cb.value))) {
+                            if (promptSel.has(String(cb.value))) {
                                 cb.checked = true;
                             }
                         });
@@ -27827,57 +27054,6 @@ async function serverSidePromptSearch(searchTerm) {
                 `;
             });
 
-            // Before initializing, ensure any persisted selections are merged into the container
-            try {
-                const existingAttr = container.getAttribute(
-                    "data-selected-prompts",
-                );
-                let existingIds = null;
-                if (existingAttr) {
-                    try {
-                        existingIds = JSON.parse(existingAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing existing data-selected-prompts after search insert:",
-                            e,
-                        );
-                    }
-                }
-
-                if (
-                    (!existingIds ||
-                        !Array.isArray(existingIds) ||
-                        existingIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedPrompts) &&
-                    window._selectedAssociatedPrompts.length > 0
-                ) {
-                    container.setAttribute(
-                        "data-selected-prompts",
-                        JSON.stringify(
-                            window._selectedAssociatedPrompts.slice(),
-                        ),
-                    );
-                } else if (
-                    Array.isArray(existingIds) &&
-                    Array.isArray(window._selectedAssociatedPrompts) &&
-                    window._selectedAssociatedPrompts.length > 0
-                ) {
-                    const merged = new Set([
-                        ...(existingIds || []),
-                        ...window._selectedAssociatedPrompts,
-                    ]);
-                    container.setAttribute(
-                        "data-selected-prompts",
-                        JSON.stringify(Array.from(merged)),
-                    );
-                }
-            } catch (e) {
-                console.error(
-                    "Error restoring data-selected-prompts attribute after inserting search results:",
-                    e,
-                );
-            }
-
             container.innerHTML = searchResultsHtml;
 
             // Populate prompt mapping for pill display names
@@ -27892,6 +27068,26 @@ async function serverSidePromptSearch(searchTerm) {
                 "selectAllPromptsBtn",
                 "clearAllPromptsBtn",
             );
+
+            if (promptSel.size > 0) {
+                const checkboxes = container.querySelectorAll(
+                    'input[name="associatedPrompts"]',
+                );
+                const normalizedIds = Array.from(promptSel);
+                checkboxes.forEach((cb) => {
+                    if (normalizedIds.includes(String(cb.value))) {
+                        cb.checked = true;
+                    }
+                });
+                const firstCb = container.querySelector(
+                    'input[type="checkbox"]',
+                );
+                if (firstCb) {
+                    firstCb.dispatchEvent(
+                        new Event("change", { bubbles: true }),
+                    );
+                }
+            }
 
             if (noResultsMessage) {
                 noResultsMessage.style.display = "none";
@@ -27935,33 +27131,18 @@ async function serverSideResourceSearch(searchTerm) {
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
 
-    console.log(
-        `[Resource Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
-
-    // Persist current selections to window fallback before we replace/clear the container
-    try {
-        const currentChecked = Array.from(
-            container.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((cb) => cb.value);
-        if (
-            !Array.isArray(window._selectedAssociatedResources) ||
-            window._selectedAssociatedResources.length === 0
-        ) {
-            window._selectedAssociatedResources = currentChecked.slice();
-        } else {
-            const merged = new Set([
-                ...(window._selectedAssociatedResources || []),
-                ...currentChecked,
-            ]);
-            window._selectedAssociatedResources = Array.from(merged);
-        }
-    } catch (e) {
-        console.error(
-            "Error capturing current resource selections before search:",
-            e,
-        );
-    }
+    // Flush current DOM state into the persistent selection store before clearing the container
+    const resSel = getEditSelections("associatedResources");
+    container
+        .querySelectorAll('input[name="associatedResources"]')
+        .forEach((cb) => {
+            const value = String(cb.value);
+            if (cb.checked) {
+                resSel.add(value);
+            } else {
+                resSel.delete(value);
+            }
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -27989,44 +27170,12 @@ async function serverSideResourceSearch(searchTerm) {
             if (response.ok) {
                 const html = await response.text();
 
-                // Persist current selections to window fallback before we replace/clear the container
-                try {
-                    const currentChecked = Array.from(
-                        container.querySelectorAll(
-                            'input[type="checkbox"]:checked',
-                        ),
-                    ).map((cb) => cb.value);
-                    if (
-                        !Array.isArray(window._selectedAssociatedResources) ||
-                        window._selectedAssociatedResources.length === 0
-                    ) {
-                        window._selectedAssociatedResources =
-                            currentChecked.slice();
-                    } else {
-                        const merged = new Set([
-                            ...(window._selectedAssociatedResources || []),
-                            ...currentChecked,
-                        ]);
-                        window._selectedAssociatedResources =
-                            Array.from(merged);
-                    }
-                } catch (e) {
-                    console.error(
-                        "Error capturing current resource selections before search:",
-                        e,
-                    );
-                }
-
                 container.innerHTML = html;
 
                 // Populate resource mapping for pill display names
                 updateResourceMapping(container);
 
-                // If the container has been re-rendered server-side and our
-                // `data-selected-resources` attribute was lost, restore from the
-                // global fallback `window._selectedAssociatedResources`.
                 try {
-                    // Initialize resource mapping if needed
                     initResourceSelect(
                         "associatedResources",
                         "selectedResourcesPills",
@@ -28036,41 +27185,15 @@ async function serverSideResourceSearch(searchTerm) {
                         "clearAllResourcesBtn",
                     );
 
-                    const dataAttr = container.getAttribute(
-                        "data-selected-resources",
-                    );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing server data-selected-resources:",
-                                e,
-                            );
-                        }
-                    }
-
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedResources)
-                    ) {
-                        selectedIds =
-                            window._selectedAssociatedResources.slice();
-                    }
-
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                    if (resSel.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedResources"]',
                         );
                         checkboxes.forEach((cb) => {
-                            if (selectedIds.includes(cb.value)) {
+                            if (resSel.has(String(cb.value))) {
                                 cb.checked = true;
                             }
                         });
-
                         const firstCb = container.querySelector(
                             'input[type="checkbox"]',
                         );
@@ -28146,59 +27269,6 @@ async function serverSideResourceSearch(searchTerm) {
 
             container.innerHTML = searchResultsHtml;
 
-            // Before initializing, ensure any persisted selections are merged into the container
-            try {
-                const existingAttr = container.getAttribute(
-                    "data-selected-resources",
-                );
-                let existingIds = null;
-                if (existingAttr) {
-                    try {
-                        existingIds = JSON.parse(existingAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing existing data-selected-resources after search insert:",
-                            e,
-                        );
-                    }
-                }
-
-                if (
-                    (!existingIds ||
-                        !Array.isArray(existingIds) ||
-                        existingIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedResources) &&
-                    window._selectedAssociatedResources.length > 0
-                ) {
-                    container.setAttribute(
-                        "data-selected-resources",
-                        JSON.stringify(
-                            window._selectedAssociatedResources.slice(),
-                        ),
-                    );
-                } else if (
-                    Array.isArray(existingIds) &&
-                    Array.isArray(window._selectedAssociatedResources) &&
-                    window._selectedAssociatedResources.length > 0
-                ) {
-                    const merged = new Set([
-                        ...(existingIds || []),
-                        ...window._selectedAssociatedResources,
-                    ]);
-                    container.setAttribute(
-                        "data-selected-resources",
-                        JSON.stringify(Array.from(merged)),
-                    );
-                }
-            } catch (e) {
-                console.error(
-                    "Error restoring data-selected-resources attribute after inserting search results:",
-                    e,
-                );
-            }
-
-            container.innerHTML = searchResultsHtml;
-
             // Populate resource mapping for pill display names
             updateResourceMapping(container);
 
@@ -28211,6 +27281,26 @@ async function serverSideResourceSearch(searchTerm) {
                 "selectAllResourcesBtn",
                 "clearAllResourcesBtn",
             );
+
+            if (resSel.size > 0) {
+                const checkboxes = container.querySelectorAll(
+                    'input[name="associatedResources"]',
+                );
+                const normalizedIds = Array.from(resSel);
+                checkboxes.forEach((cb) => {
+                    if (normalizedIds.includes(String(cb.value))) {
+                        cb.checked = true;
+                    }
+                });
+                const firstCb = container.querySelector(
+                    'input[type="checkbox"]',
+                );
+                if (firstCb) {
+                    firstCb.dispatchEvent(
+                        new Event("change", { bubbles: true }),
+                    );
+                }
+            }
 
             if (noResultsMessage) {
                 noResultsMessage.style.display = "none";
