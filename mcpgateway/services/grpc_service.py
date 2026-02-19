@@ -722,7 +722,7 @@ class GrpcService:
                         version=1,
                         team_id=service.team_id,
                         owner_email=service.owner_email,
-                        visibility="public",
+                        visibility=service.visibility,
                         grpc_service_id=service.id,
                     )
                     db.add(db_tool)
