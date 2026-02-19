@@ -270,6 +270,7 @@ export const runGlobalSearch = async function (query) {
     "agents",
     "teams",
     "users",
+    "roots",
   ];
   const visibleEntityTypes = searchableEntityTypes.filter((entityType) => {
     if (entityType === "users" && !isAdminUser()) {
