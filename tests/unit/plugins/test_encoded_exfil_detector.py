@@ -10,11 +10,11 @@ import pytest
 
 # First-Party
 from mcpgateway.plugins.framework import GlobalContext, PluginConfig, PluginContext, PromptPrehookPayload, PromptHookType, ToolHookType, ToolPostInvokePayload
-from plugins.encoded_exfil_detector.encoded_exfil_detector import EncodedExfilDetectorConfig, EncodedExfilDetectorPlugin, _scan_container
+from plugins.encoded_exfil_detection.encoded_exfil_detector import EncodedExfilDetectorConfig, EncodedExfilDetectorPlugin, _scan_container
 
 # Optional Rust extension
 try:
-    import encoded_exfil_detection as _rust_encoded_exfil_detection  # noqa: F401
+    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container as encoded_exfil_detection_rust  # noqa: F401
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -191,7 +191,7 @@ class TestEncodedExfilPluginHooks:
         return EncodedExfilDetectorPlugin(
             PluginConfig(
                 name="EncodedExfilDetector",
-                kind="plugins.encoded_exfil_detector.encoded_exfil_detector.EncodedExfilDetectorPlugin",
+                kind="plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin",
                 hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_POST_INVOKE],
                 config=config,
             )

@@ -30,7 +30,7 @@ from plugins.pii_filter.pii_filter import PIIDetector as PythonPIIDetector  # no
 from plugins.pii_filter.pii_filter import PIIFilterConfig  # noqa: E402
 
 try:
-    from plugins.pii_filter.pii_filter_rust import RustPIIDetector, RUST_AVAILABLE
+    from plugins.pii_filter.pii_filter import RustPIIDetector, RUST_AVAILABLE
 except ImportError:
     RUST_AVAILABLE = False
     RustPIIDetector = None

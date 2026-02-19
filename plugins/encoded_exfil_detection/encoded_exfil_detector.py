@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./plugins/encoded_exfil_detector/encoded_exfil_detector.py
+"""Location: ./plugins/encoded_exfil_detection/encoded_exfil_detector.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import Rust-accelerated implementation
 try:
-    import encoded_exfil_detection
+    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container as encoded_exfil_detection
 
     _RUST_AVAILABLE = True
     logger.info("🦀 Rust encoded exfil detector available - using high-performance implementation")

@@ -313,7 +313,7 @@ repos:
         description: Checks XML files for parseable syntax.
         types: [xml]
 
-      - id: check-byte-order-marker
+      - id: fix-byte-order-marker
         name: ✅ Check Byte Order Marker
         description: Forbids files which have a UTF-8 byte-order marker.
         types: [text]

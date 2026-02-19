@@ -99,6 +99,8 @@ recursive-include plugins_rust *.rs
 recursive-include plugins_rust *.toml
 recursive-include plugins_rust *.md
 recursive-include plugins_rust *.py
+recursive-include plugins_rust *.pyi
+recursive-include plugins_rust *.lock
 recursive-include plugins_rust Makefile
 prune plugins_rust/target
 

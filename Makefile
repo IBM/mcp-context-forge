@@ -1449,6 +1449,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
+# help: bench-compare          - Run performance comparisons for Rust plugins
 # help:
 # help: Environment variables:
 # help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
@@ -1492,6 +1493,9 @@ benchmark-status:                          ## Show status of benchmark services
 
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+bench-compare:                             ## Run performance comparisons for Rust plugins
+	@$(MAKE) -C plugins_rust bench-compare
 
 # =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
@@ -7454,18 +7458,21 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help:
 # help: Rust Plugin Framework (Optional - auto-installs Rust + maturin if needed)
 # help: ========================================================================================================
-# help: rust-build                 - Build Rust plugins in release mode (native)
-# help: rust-dev                   - Build and install Rust plugins in development mode
-# help: rust-test                  - Run Rust plugin tests
-# help: rust-test-integration      - Run Rust integration tests
-# help: rust-test-all              - Run all Rust and Python integration tests
-# help: rust-bench                 - Run Rust plugin benchmarks
-# help: rust-bench-compare         - Compare Rust vs Python performance
-# help: rust-check                 - Run all Rust checks (format, lint, test)
-# help: rust-clean                 - Clean Rust build artifacts
-# help: rust-verify                - Verify Rust plugin installation
+# help: rust-install                          - Install all Rust plugins into venv
+# help: rust-ensure-deps                      - Ensure Rust toolchain, maturin, and all plugins are installed
+# help: rust-build                            - Build Rust plugins in release mode (native)
+# help: rust-dev                              - Build and install Rust plugins in development mode
+# help: rust-test                             - Run Rust plugin tests
+# help: rust-test-integration                 - Run Rust integration tests
+# help: rust-test-all                         - Run all Rust and Python integration tests
+# help: rust-bench                            - Run Rust plugin benchmarks
+# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
+# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
+# help: rust-check                            - Run all Rust checks (format, lint, test)
+# help: rust-verify                           - Verify Rust plugin installation
+# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for all Rust plugins
+# help: rust-clean                            - Clean Rust build artifacts
 # help:
-# help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are installed
 # help: rust-install-deps                     - Install all Rust build dependencies
 # help: rust-install-targets                  - Install all Rust cross-compilation targets
 # help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
@@ -7474,20 +7481,21 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-cross                            - Install targets + build all Linux (convenience)
 # help: rust-cross-install-build              - Install targets + build all platforms (one command)
 
-.PHONY: rust-build rust-dev rust-test rust-test-integration rust-test-all rust-bench rust-bench-compare rust-check rust-clean rust-verify
-.PHONY: rust-ensure-deps rust-install-deps rust-install-targets
+.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 
-rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are installed
+rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
 	@if ! command -v rustup > /dev/null 2>&1; then \
 		echo "🦀 Rust not found. Installing Rust toolchain..."; \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
-		echo "🦀 Rust installed. Sourcing environment..."; \
-		. "$$HOME/.cargo/env"; \
+		echo "✅ Rust installed successfully."; \
+		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
+		exit 1; \
 	fi
 	@if ! command -v cargo > /dev/null 2>&1; then \
-		echo "⚠️  cargo not in PATH. Sourcing $$HOME/.cargo/env..."; \
-		. "$$HOME/.cargo/env"; \
+		echo "⚠️  cargo not in PATH. Please run 'source \"$$HOME/.cargo/env\"' or restart your shell."; \
+		exit 1; \
 	fi
 	@rustup component add rustfmt clippy 2>/dev/null || true
 	@if ! command -v maturin > /dev/null 2>&1; then \
@@ -7503,6 +7511,9 @@ rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are
 		fi; \
 	fi
 
+rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
+	@$(MAKE) -C plugins_rust install
+
 rust-build: rust-ensure-deps            ## Build Rust plugins (release)
 	@$(MAKE) -C plugins_rust build
 
@@ -7512,17 +7523,19 @@ rust-dev: rust-ensure-deps              ## Build and install Rust plugins (devel
 rust-test: rust-ensure-deps             ## Run Rust plugin tests
 	@$(MAKE) -C plugins_rust test
 
-rust-test-integration: rust-ensure-deps ## Run Rust integration tests
-	@$(MAKE) -C plugins_rust test-integration
+rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
+	@$(MAKE) -C plugins_rust test-python
 
-rust-test-all: rust-ensure-deps         ## Run all Rust and Python tests
-	@$(MAKE) -C plugins_rust test-all
+rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
 
 rust-bench: rust-ensure-deps            ## Run Rust benchmarks
 	@$(MAKE) -C plugins_rust bench
 
 rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
 	@$(MAKE) -C plugins_rust bench-compare
+
+rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
+	@$(MAKE) -C plugins_rust compare
 
 rust-check: rust-ensure-deps            ## Run all Rust checks (format, lint, test)
 	@$(MAKE) -C plugins_rust check
@@ -7545,11 +7558,21 @@ rust-release: rust-ensure-deps          ## Build release wheels for all Rust plu
 rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
 	@$(MAKE) -C plugins_rust release-publish
 
-rust-clean: rust-ensure-deps            ## Clean Rust build artifacts
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
+	@$(MAKE) -C plugins_rust uninstall
+
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
+	@$(MAKE) -C plugins_rust uninstall
 	@$(MAKE) -C plugins_rust clean
 
 rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
 	@$(MAKE) -C plugins_rust verify
+
+rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
+	@$(MAKE) -C plugins_rust verify-stubs
+
+rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
+	@$(MAKE) -C plugins_rust clean-stubs
 
 rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
 	@echo "✅ Rust build dependencies installed"

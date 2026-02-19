@@ -665,7 +665,7 @@ plugins:
 
   # Encoded Exfil Detector - detect suspicious encoded payloads in prompts/tool outputs
   - name: "EncodedExfilDetector"
-    kind: "plugins.encoded_exfil_detector.encoded_exfil_detector.EncodedExfilDetectorPlugin"
+    kind: "plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin"
     description: "Detects suspicious encoded exfiltration patterns in prompt args and tool outputs"
     version: "0.1.0"
     author: "Mihai Criveti"
