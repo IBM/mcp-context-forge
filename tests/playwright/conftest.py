@@ -187,8 +187,8 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             page.goto("/admin/", wait_until="domcontentloaded")
             _wait_for_admin_transition(page)
 
-    # Verify we're on the admin page
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    # Verify we're on the admin page (generous timeout for slow JWT-cookie redirects)
+    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=15000)
 
     # Wait for the application shell to load (retry once on transient stalls)
     shell_ready = False
