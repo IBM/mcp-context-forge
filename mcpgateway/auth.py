@@ -277,9 +277,8 @@ async def _resolve_session_teams(payload: Dict[str, Any], email: str, user_info)
     if isinstance(payload_teams, list) and len(payload_teams) == 1:
         # Single-team optimization: use embedded team from token
         return normalize_token_teams(payload)
-    else:
-        # Multi-team or no teams: resolve from DB/cache
-        return await _resolve_teams_from_db(email, user_info)
+    # Multi-team or no teams: resolve from DB/cache
+    return await _resolve_teams_from_db(email, user_info)
 
 
 async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
