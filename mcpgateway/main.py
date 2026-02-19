@@ -1458,21 +1458,14 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     UI_BASE_PATH = settings.mcpgateway_ui_base_path
 
     # Public paths under UI base path that do not require prior authentication.
-    # These are built dynamically based on UI_BASE_PATH
-    @classmethod
-    def get_exempt_paths(cls) -> list[str]:
-        """Get list of exempt paths based on configured UI base path.
-
-        Returns:
-            list[str]: List of paths that are exempt from authentication.
-        """
-        return [
-            f"{cls.UI_BASE_PATH}/login",
-            f"{cls.UI_BASE_PATH}/logout",
-            f"{cls.UI_BASE_PATH}/forgot-password",
-            f"{cls.UI_BASE_PATH}/reset-password",
-            f"{cls.UI_BASE_PATH}/static",
-        ]
+    # Built once at import-time since settings.mcpgateway_ui_base_path is static.
+    EXEMPT_PATHS = [
+        f"{UI_BASE_PATH}/login",
+        f"{UI_BASE_PATH}/logout",
+        f"{UI_BASE_PATH}/forgot-password",
+        f"{UI_BASE_PATH}/reset-password",
+        f"{UI_BASE_PATH}/static",
+    ]
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -1532,7 +1525,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.get_exempt_paths())
+        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
         if is_exempt:
             return await call_next(request)
 
@@ -7425,49 +7418,25 @@ if UI_ENABLED:
 
     # Backward compatibility redirect from /admin/* to configured UI base path
     # This can be disabled via MCPGATEWAY_UI_LEGACY_REDIRECT=false after migration
+    # Use middleware to preserve HTTP methods (308) and catch non-GET requests.
     if settings.mcpgateway_ui_legacy_redirect and settings.mcpgateway_ui_base_path != "/admin":
 
-        @app.get("/admin/{path:path}", include_in_schema=False)
-        async def admin_legacy_redirect(path: str) -> RedirectResponse:
-            """Redirect legacy /admin/* paths to the configured UI base path.
+        @app.middleware("http")
+        async def legacy_admin_redirect(request: Request, call_next):
+            """Redirect legacy /admin paths to the configured UI base path.
 
-            This provides backward compatibility after renaming /admin to /ui.
-            The redirect is gated behind MCPGATEWAY_UI_LEGACY_REDIRECT (default: true).
-            Set MCPGATEWAY_UI_LEGACY_REDIRECT=false to return 404 for /admin paths.
-
-            Args:
-                path: The path segment after /admin/
-
-            Returns:
-                RedirectResponse: 301 permanent redirect to the new UI path.
+            Uses 308 to preserve the original HTTP method (POST/PUT/DELETE).
             """
-            ui_base_path = settings.mcpgateway_ui_base_path
-            root_path = settings.app_root_path
-            new_url = f"{root_path}{ui_base_path}/{path}" if path else f"{root_path}{ui_base_path}/"
-            logger.warning(
-                "Deprecated: /admin is now %s. Update your bookmarks. Redirecting /admin/%s to %s",
-                ui_base_path,
-                path,
-                new_url,
-            )
-            return RedirectResponse(url=new_url, status_code=301)
-
-        @app.get("/admin", include_in_schema=False)
-        async def admin_legacy_redirect_root() -> RedirectResponse:
-            """Redirect legacy /admin root to the configured UI base path.
-
-            Returns:
-                RedirectResponse: 301 permanent redirect to the new UI path.
-            """
-            ui_base_path = settings.mcpgateway_ui_base_path
-            root_path = settings.app_root_path
-            new_url = f"{root_path}{ui_base_path}/"
-            logger.warning(
-                "Deprecated: /admin is now %s. Update your bookmarks. Redirecting /admin to %s",
-                ui_base_path,
-                new_url,
-            )
-            return RedirectResponse(url=new_url, status_code=301)
+            # Normalize path from request (root_path handled elsewhere)
+            req_path = request.url.path
+            if req_path.startswith("/admin"):
+                ui_base_path = settings.mcpgateway_ui_base_path
+                root_path = settings.app_root_path
+                new_path = req_path.replace("/admin", ui_base_path, 1)
+                new_url = f"{root_path}{new_path}" if root_path else new_path
+                logger.warning("Deprecated: /admin is now %s. Redirecting %s to %s", ui_base_path, req_path, new_url)
+                return RedirectResponse(url=new_url, status_code=308)
+            return await call_next(request)
 
 else:
     # If UI is disabled, provide API info at root

@@ -16746,13 +16746,11 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.mcpgateway_ui_base_path = "/ui"
-            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = False
             response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
             assert response.headers["location"].endswith("/root/ui/login")
 
         with patch("mcpgateway.admin.settings") as mock_settings:
-            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = False

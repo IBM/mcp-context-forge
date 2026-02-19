@@ -256,7 +256,11 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     accept_header = request.headers.get("accept", "")
     is_htmx = request.headers.get("hx-request") == "true"
     referer = request.headers.get("referer", "")
-    is_admin_ui_request = settings.mcpgateway_ui_base_path in referer
+    # Avoid accidental substring matches in arbitrary referers (e.g. "/guide" contains "/ui").
+    is_admin_ui_request = False
+    if referer:
+        base = settings.mcpgateway_ui_base_path.rstrip("/")
+        is_admin_ui_request = f"{base}/" in referer or referer.endswith(base)
     is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
 
     # SECURITY: Reject cookie-only authentication for API requests
