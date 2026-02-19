@@ -1458,14 +1458,25 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     UI_BASE_PATH = settings.mcpgateway_ui_base_path
 
     # Public paths under UI base path that do not require prior authentication.
-    # Built once at import-time since settings.mcpgateway_ui_base_path is static.
-    EXEMPT_PATHS = [
-        f"{UI_BASE_PATH}/login",
-        f"{UI_BASE_PATH}/logout",
-        f"{UI_BASE_PATH}/forgot-password",
-        f"{UI_BASE_PATH}/reset-password",
-        f"{UI_BASE_PATH}/static",
-    ]
+    # Compute dynamically at dispatch time so tests can override `UI_BASE_PATH`.
+    EXEMPT_PATHS = None
+    _EXEMPT_UI_BASE = None
+    _EXEMPT_CACHE = None
+
+    @classmethod
+    def get_exempt_paths(cls) -> list:
+        """Return cached exempt paths; rebuild if UI base changed."""
+        ui_base = getattr(cls, "UI_BASE_PATH", settings.mcpgateway_ui_base_path)
+        if cls._EXEMPT_CACHE is None or cls._EXEMPT_UI_BASE != ui_base:
+            cls._EXEMPT_UI_BASE = ui_base
+            cls._EXEMPT_CACHE = [
+                f"{ui_base}/login",
+                f"{ui_base}/logout",
+                f"{ui_base}/forgot-password",
+                f"{ui_base}/reset-password",
+                f"{ui_base}/static",
+            ]
+        return cls._EXEMPT_CACHE
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -1525,7 +1536,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        is_exempt = any(scope_path.startswith(p) for p in self.get_exempt_paths())
         if is_exempt:
             return await call_next(request)
 
@@ -7163,6 +7174,7 @@ app.include_router(resource_router)
 app.include_router(prompt_router)
 app.include_router(gateway_router)
 app.include_router(root_router)
+app.include_router(well_known_router)
 app.include_router(utility_router)
 app.include_router(server_router)
 app.include_router(server_well_known_router, prefix="/servers")
@@ -7429,13 +7441,20 @@ if UI_ENABLED:
             """
             # Normalize path from request (root_path handled elsewhere)
             req_path = request.url.path
+            # Allow admin API well-known status to be handled by router (don't redirect)
+            if req_path.startswith("/admin/well-known"):
+                return await call_next(request)
+
             if req_path.startswith("/admin"):
                 ui_base_path = settings.mcpgateway_ui_base_path
                 root_path = settings.app_root_path
                 new_path = req_path.replace("/admin", ui_base_path, 1)
                 new_url = f"{root_path}{new_path}" if root_path else new_path
                 logger.warning("Deprecated: /admin is now %s. Redirecting %s to %s", ui_base_path, req_path, new_url)
-                return RedirectResponse(url=new_url, status_code=308)
+                # Preserve original HTTP method for non-GET requests using 308.
+                # Use 301 for GET to retain previous behavior expected by many clients/tests.
+                status = 301 if request.method in ("GET", "HEAD") else 308
+                return RedirectResponse(url=new_url, status_code=status)
             return await call_next(request)
 
 else:
