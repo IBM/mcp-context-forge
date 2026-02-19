@@ -2,7 +2,6 @@
 """Unit tests for SecurityLogger service."""
 
 # Standard
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 # Third-Party
@@ -10,7 +9,6 @@ import pytest
 
 # First-Party
 from mcpgateway.services.security_logger import (
-    SecurityEventType,
     SecurityLogger,
     SecuritySeverity,
     get_security_logger,
@@ -152,6 +150,29 @@ def test_create_security_event_db_none_creates_session(sec_logger):
         )
     assert event is not None
     mock_session.close.assert_called_once()
+
+
+def test_create_security_event_siem_only_mode_skips_db(sec_logger, mock_db):
+    mock_siem = MagicMock()
+    mock_siem.submit_event.return_value = True
+
+    with patch("mcpgateway.services.security_logger.get_siem_export_service", return_value=mock_siem):
+        event = sec_logger._create_security_event(
+            event_type="test",
+            severity=SecuritySeverity.LOW,
+            category="test",
+            client_ip="1.2.3.4",
+            description="test event",
+            threat_score=0.1,
+            db=mock_db,
+            source="auth",
+            persist=False,
+        )
+
+    assert event is None
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_called()
+    mock_siem.submit_event.assert_called_once()
 
 
 def test_create_security_event_exception_rollback(sec_logger, mock_db):
