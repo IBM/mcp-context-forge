@@ -260,9 +260,10 @@ def _resolve_teams_from_db_sync(email: str, is_admin: bool) -> Optional[List[str
 async def _resolve_session_teams(payload: Dict[str, Any], email: str, user_info) -> Optional[List[str]]:
     """Resolve teams for session tokens based on payload and DB/cache.
 
-    This is the single source of truth for session token team resolution.
     It handles the optimization where single-team tokens use embedded teams,
     while multi-team or no-team tokens query the database.
+    The support of single team is only to keep inline with API Tokens which
+    currently support "All Teams" or a "Single" team.
 
     Args:
         payload: JWT payload containing token claims
