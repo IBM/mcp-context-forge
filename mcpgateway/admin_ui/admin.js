@@ -271,6 +271,11 @@ Admin.submitApiKeyForm = submitApiKeyForm;
 Admin.toggleGrpcTlsFields = toggleGrpcTlsFields;
 Admin.viewGrpcMethods = viewGrpcMethods;
 
+// Pagination
+import { paginationData } from "./pagination.js"
+
+Admin.paginationData = paginationData;
+
 // Plugins
 import {
   closePluginDetails,
