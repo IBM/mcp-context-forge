@@ -193,7 +193,6 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
         # Sanitize output
         if self.sanitize:
-            logger.info(f"self.sanitize :{self.sanitize}")
             response = await self._sanitize_response(response)
 
         return response
@@ -248,11 +247,11 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 if not body:
                     return
 
-                # Check body size threshold
+                # Check body size threshold - reject oversized bodies
                 body_size = len(body)
                 if self.max_body_size > 0 and body_size > self.max_body_size:
-                    logger.info("[VALIDATION] Skipping validation for large request body: %d bytes (threshold: %d)", body_size, self.max_body_size)
-                    return
+                    logger.warning("[VALIDATION] Request body exceeds maximum size: %d bytes (threshold: %d)", body_size, self.max_body_size)
+                    raise HTTPException(status_code=413, detail=f"Request body too large: {body_size} bytes (max: {self.max_body_size})")
                 # Check cache for identical payloads
                 if self.cache:
                     cache_key = self._get_cache_key(body)
@@ -371,13 +370,21 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: Sanitized response
+
+        Note:
+            When sampling is enabled for large responses, only ~3 samples from
+            beginning/middle/end are checked (~10KB total by default). This means
+            the majority of large responses (e.g., ~87KB of a 100KB response) goes
+            unchecked. Additionally, joining non-contiguous segments creates artificial
+            byte adjacencies that could produce misleading regex matches at join boundaries.
+            This is a performance-vs-security trade-off that should be carefully considered
+            for your deployment.
         """
         if not hasattr(response, "body"):
             return response
 
         try:
             body = response.body
-            logger.info("[VALIDATION] Sanitizing response: %d bytes", len(body))
             if not body:
                 return response
 

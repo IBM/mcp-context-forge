@@ -125,9 +125,9 @@ class TestValidationMiddlewarePerformance:
         assert response is not None
 
     @pytest.mark.asyncio
-    async def test_large_body_skips_validation(self, middleware):
-        """Test that large request bodies skip validation."""
-        # Create large body exceeding threshold
+    async def test_large_body_rejected_with_413(self, middleware):
+        """Test that large request bodies are rejected with HTTP 413."""
+        # Create large body exceeding threshold (1024 bytes in test config)
         large_body = b'{"data": "' + b"x" * 2000 + b'"}'
 
         request = MagicMock(spec=Request)
@@ -139,9 +139,11 @@ class TestValidationMiddlewarePerformance:
 
         call_next = AsyncMock(return_value=Response())
 
-        # Should not raise exception despite large body
-        response = await middleware.dispatch(request, call_next)
-        assert response is not None
+        # Should raise 413 for oversized body
+        with pytest.raises(HTTPException) as exc_info:
+            await middleware.dispatch(request, call_next)
+        assert exc_info.value.status_code == 413
+        assert "too large" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_validation(self, middleware):
