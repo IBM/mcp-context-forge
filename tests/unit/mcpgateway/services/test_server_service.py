@@ -710,6 +710,47 @@ class TestServerService:
         assert result.name == "updated_server"
 
     @pytest.mark.asyncio
+    async def test_update_server_vfs_fields(self, server_service, mock_server, test_db):
+        """Updating server_type, stub_format, and mount_rules persists VFS fields."""
+        mock_result_get_server = Mock(scalar_one_or_none=Mock(return_value=mock_server))
+        mock_result_name_conflict = Mock(scalar_one_or_none=Mock(return_value=None))
+        mock_result_tools = Mock()
+        mock_result_tools.scalars.return_value.all.return_value = []
+        mock_result_resources = Mock()
+        mock_result_resources.scalars.return_value.all.return_value = []
+        mock_result_prompts = Mock()
+        mock_result_prompts.scalars.return_value.all.return_value = []
+
+        test_db.execute = Mock(
+            side_effect=[mock_result_get_server, mock_result_name_conflict, mock_result_tools, mock_result_resources, mock_result_prompts]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_server.tools = []
+        mock_server.resources = []
+        mock_server.prompts = []
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1", name="test_server", description="desc", icon="icon.png",
+                created_at="2023-01-01T00:00:00", updated_at="2023-01-01T00:00:00",
+                enabled=True, server_type="vfs", stub_format="python",
+                metrics={"total_executions": 0, "successful_executions": 0, "failed_executions": 0, "failure_rate": 0.0,
+                         "min_response_time": None, "max_response_time": None, "avg_response_time": None, "last_execution_time": None},
+            )
+        )
+
+        server_update = ServerUpdate(name="test_server", server_type="vfs", stub_format="python", mount_rules={"include_tags": ["ml"]})
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, 1, server_update, "user@example.com")
+
+        assert mock_server.server_type == "vfs"
+        assert mock_server.stub_format == "python"
+        assert mock_server.mount_rules == {"include_tags": ["ml"]}
+
+    @pytest.mark.asyncio
     async def test_update_server_not_found(self, server_service, test_db):
         test_db.get = Mock(return_value=None)
         update_data = ServerUpdate(name="updated_server")
