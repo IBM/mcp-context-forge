@@ -136,7 +136,7 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-xml
-      - id: check-byte-order-marker
+      - id: fix-byte-order-marker
 
   # YAML linter
   - repo: https://github.com/adrienverge/yamllint
