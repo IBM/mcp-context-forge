@@ -20,6 +20,7 @@ Structure:
 """
 
 # Standard
+import contextvars
 from typing import Any
 
 # Third-Party
@@ -66,7 +67,7 @@ logger = logging_service.get_logger(__name__)
 # i.e; `execute_prompt` method used in different ALTK toolops modules is overrided with custom execute prompt
 # that uses MCP context forge LLM inferencing modules.
 
-TOOLOPS_MODEL_ID = None
+_toolops_model_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("toolops_model_id", default=None)
 
 
 #  custom execute prompt to support MCP-CF LLM providers
@@ -90,7 +91,7 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
         # To suppress pylint errors creating dummy altk params and asserting
         altk_dummy_params = {"client": client, "gen_mode": gen_mode, "parameters": parameters, "max_new_tokens": max_new_tokens, "stop_sequences": stop_sequences}
         logger.debug(altk_dummy_params)
-        chat_llm_instance, _ = get_llm_instance(model_id=TOOLOPS_MODEL_ID)
+        chat_llm_instance, _ = get_llm_instance(model_id=_toolops_model_id_var.get())
         llm_response = chat_llm_instance.invoke(prompt)
         response = llm_response.content
         return response
@@ -134,8 +135,7 @@ async def validation_generate_test_cases(model_id, tool_id, tool_service: ToolSe
         test_cases: list of tool test cases
     """
     test_cases = []
-    global TOOLOPS_MODEL_ID  # pylint: disable=W0603
-    TOOLOPS_MODEL_ID = model_id
+    _toolops_model_id_var.set(model_id)
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
         # check if test case generation is required
@@ -239,8 +239,7 @@ async def enrich_tool(model_id: str, tool_id: str, tool_service: ToolService, db
     Raises:
         Exception: If the tool cannot be retrieved or converted to schema.
     """
-    global TOOLOPS_MODEL_ID  # pylint: disable=W0603
-    TOOLOPS_MODEL_ID = model_id
+    _toolops_model_id_var.set(model_id)
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
         mcp_cf_tool = tool_schema.to_dict(use_alias=True)
