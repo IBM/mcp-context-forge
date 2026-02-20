@@ -11682,6 +11682,42 @@ async function loadTools() {
 
 document.addEventListener("DOMContentLoaded", loadTools);
 
+async function loadToolOpsModels() {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/models?enabled_only=false&page=1&page_size=50`,
+            { headers: { "Cache-Control": "no-cache" } },
+        );
+        if (!response.ok) return;
+        const data = await response.json();
+        const select = document.getElementById("toolops-model-select");
+        if (!select) return;
+        // Clear existing options using DOM API
+        while (select.firstChild) {
+            select.removeChild(select.firstChild);
+        }
+        const defaultOpt = document.createElement("option");
+        defaultOpt.value = "";
+        defaultOpt.textContent = "-- Select Model --";
+        select.appendChild(defaultOpt);
+        (data.items || data || []).forEach((model) => {
+            const option = document.createElement("option");
+            option.value = model.model_id;
+            option.textContent = model.model_id + ` (${model.provider_name})`;
+            select.appendChild(option);
+        });
+    } catch (e) {
+        console.error("Failed to load ToolOps models:", e);
+    }
+}
+
+document.addEventListener("DOMContentLoaded", loadToolOpsModels);
+
+function getToolOpsModelId() {
+    const select = document.getElementById("toolops-model-select");
+    return select ? select.value : "";
+}
+
 async function enrichTool(toolId) {
     try {
         console.log(`Enriching tool ID: ${toolId}`);
@@ -11734,8 +11770,9 @@ async function enrichTool(toolId) {
 
         // 6. MAKE REQUEST with increased timeout
         //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
+        const modelId = getToolOpsModelId();
         const response = await fetchWithTimeout(
-            `/toolops/enrichment/enrich_tool?tool_id=${toolId}`,
+            `/toolops/enrichment/enrich_tool?model_id=${modelId}&tool_id=${toolId}`,
             {
                 method: "POST",
                 headers: {
@@ -11894,17 +11931,21 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         try {
             console.log(selectedToolIds);
+            const modelId = getToolOpsModelId();
             selectedToolIds.forEach((toolId) => {
                 console.log(toolId);
-                fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
-                    method: "POST",
-                    headers: {
-                        "Cache-Control": "no-cache",
-                        Pragma: "no-cache",
-                        "Content-Type": "application/json",
+                fetch(
+                    `/toolops/enrichment/enrich_tool?model_id=${modelId}&tool_id=${toolId}`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Cache-Control": "no-cache",
+                            Pragma: "no-cache",
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ tool_id: toolId }),
                     },
-                    body: JSON.stringify({ tool_id: toolId }),
-                });
+                );
             });
             showSuccessMessage("Tool description enrichment has started.");
             // Uncheck all checkboxes
@@ -11955,9 +11996,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         try {
+            const modelId = getToolOpsModelId();
             for (const toolId of selectedToolIds) {
                 fetch(
-                    `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+                    `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
                     {
                         method: "POST",
                         headers: {
@@ -12112,8 +12154,9 @@ async function generateTestCases() {
             "Test case generation started successfully for the tool.",
         );
         closeModal("testcase-gen-modal");
+        const modelId = getToolOpsModelId();
         const response = await fetch(
-            `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+            `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
             {
                 method: "POST",
                 headers: {
@@ -12338,8 +12381,9 @@ async function validateTool(toolId) {
             { id: "t2", name: "Test Case 2", input_parameters: {} },
         ];
 
+        const modelId = getToolOpsModelId();
         const validationStatusResponse = await fetchWithTimeout(
-            `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=status`,
+            `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&mode=status`,
             {
                 method: "POST",
                 headers: {
@@ -12377,7 +12421,7 @@ async function validateTool(toolId) {
                     );
                 } else {
                     const validationResponse = await fetchWithTimeout(
-                        `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=query`,
+                        `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&mode=query`,
                         {
                             method: "POST",
                             headers: {
@@ -13212,7 +13256,12 @@ async function runToolAgentValidation(testIndex) {
         );
         console.log("Running validation for the Tool Id: ", toolId);
 
-        const payload = { tool_id: toolId, tool_nl_test_cases: nlTestCases };
+        const modelId = getToolOpsModelId();
+        const payload = {
+            tool_id: toolId,
+            tool_nl_test_cases: nlTestCases,
+            model_id: modelId,
+        };
 
         // Parse custom headers from the passthrough headers field
         const requestHeaders = {
