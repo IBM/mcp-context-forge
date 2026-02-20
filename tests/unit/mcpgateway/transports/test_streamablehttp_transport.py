@@ -5412,11 +5412,10 @@ async def test_forwarded_post_exception_falls_through(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
-    """Test internally-forwarded POST injects server_id from URL path into JSON-RPC params.
+    """Test internally-forwarded POST injects server_id when params dict is missing.
 
-    This verifies the bug fix at lines 1862-1870 where server_id extraction from
-    /servers/{server_id}/mcp URL pattern is injected into params before forwarding to /rpc.
-    Tests both cases: when params exists and when it needs to be created (line 1865).
+    Verifies server_id extraction from /servers/{server_id}/mcp URL pattern is
+    injected into newly-created params dict before forwarding to /rpc.
     """
     # Third-Party
     import orjson
@@ -5467,6 +5466,62 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
 
+
+@pytest.mark.asyncio
+async def test_forwarded_post_injects_server_id_with_existing_params(monkeypatch):
+    """Test internally-forwarded POST injects server_id into existing params dict.
+
+    Verifies that when params already contains other keys, server_id is merged
+    in without overwriting existing values.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-123-def-456"
+    send, messages = _make_send_collector()
+    # Body WITH existing params containing other keys
+    body = b'{"jsonrpc":"2.0","method":"tools/list","params":{"cursor":"page2","extra":"value"},"id":1}'
+    scope = _make_scope(
+        f"/servers/{server_id}/mcp",
+        method="POST",
+        headers=[(b"x-forwarded-internally", b"true")],
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
+
+    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+
+        mock_client.post.assert_called_once()
+        posted_content = mock_client.post.call_args.kwargs["content"]
+        posted_json = orjson.loads(posted_content)
+
+        assert posted_json["params"]["server_id"] == server_id
+        assert posted_json["params"]["cursor"] == "page2", "Existing params should be preserved"
+        assert posted_json["params"]["extra"] == "value", "Existing params should be preserved"
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
 
 
 @pytest.mark.asyncio
@@ -5532,6 +5587,7 @@ async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
     Notifications return 202 early and should not go through server_id injection
     or routing to /rpc, even if the URL contains /servers/{id}/.
     """
+
     class DummySessionManager:
         @asynccontextmanager
         async def run(self):
