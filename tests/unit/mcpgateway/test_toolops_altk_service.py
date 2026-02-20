@@ -215,7 +215,7 @@ async def test_execute_tool_nl_testcases_json_decode_error_maps_to_http_400(monk
 
     with pytest.raises(HTTPException) as exc_info:
         await router.execute_tool_nl_testcases(
-            router.ToolNLTestInput(tool_id="tool-1", tool_nl_test_cases=["ping"]),
+            router.ToolNLTestInput(tool_id="tool-1", tool_nl_test_cases=["ping"], model_id="model-1"),
             db=MagicMock(),
             _user={"email": "test@example.com"},
         )
@@ -292,7 +292,7 @@ def test_import_with_altk_present_overrides_execute_prompt_and_builds_llm_config
     monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
 
-    assert module.TOOLOPS_MODEL_ID is None  # Initially None, set per-request
+    assert module._toolops_model_id_var.get() is None  # Initially None, set per-request
     assert module.llm_util.execute_prompt is module.custom_mcp_cf_execute_prompt
     assert module.prompt_execution.execute_prompt is module.custom_mcp_cf_execute_prompt
     assert module.nlg_util.execute_prompt is module.custom_mcp_cf_execute_prompt

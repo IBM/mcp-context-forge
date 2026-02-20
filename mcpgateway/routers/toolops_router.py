@@ -58,7 +58,7 @@ class ToolNLTestInput(BaseModel):
 
     tool_id: str | None = Field(default=None, title="Tool ID", max_length=300)
     tool_nl_test_cases: list | None = Field(default=None, title="List of natural language test cases for testing MCP tool with the agent")
-    model_id: str | None = Field(default=None, title="LLM Model ID", max_length=300)
+    model_id: str = Field(..., title="LLM Model ID", max_length=300)
 
 
 # ---------- ROUTES ----------
@@ -69,7 +69,7 @@ class ToolNLTestInput(BaseModel):
 @toolops_router.post("/validation/generate_testcases")
 @require_permission("admin.system_config")
 async def generate_testcases_for_tool(
-    model_id: str = Query(None, description="LLM Model ID for toolops"),
+    model_id: str = Query(..., description="LLM Model ID for toolops"),
     tool_id: str = Query(None, description="Tool ID"),
     number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),
     number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),
@@ -151,7 +151,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
 @toolops_router.post("/enrichment/enrich_tool")
 @require_permission("admin.system_config")
 async def enrich_a_tool(
-    model_id: str = Query(None, description="LLM Model ID for toolops"),
+    model_id: str = Query(..., description="LLM Model ID for toolops"),
     tool_id: str = Query(None, description="Tool ID"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
