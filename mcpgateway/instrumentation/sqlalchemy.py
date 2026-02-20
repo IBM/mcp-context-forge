@@ -91,14 +91,13 @@ class InstrumentationQueue:
         Returns:
             True if span was enqueued, False if queue was full.
         """
+        with self._lock:
+            self._total_count += 1
         try:
             self._queue.put_nowait(span)
-            with self._lock:
-                self._total_count += 1
             return True
         except queue.Full:
             with self._lock:
-                self._total_count += 1
                 self._dropped_count += 1
             return False
 
@@ -245,10 +244,7 @@ def _write_span_to_db(span_data: dict) -> None:
         logger.warning(f"Failed to write query span: {e}")
     finally:
         # Clear recursion guard even if errors occurred
-        try:
-            setattr(_instrumentation_context, "inside_span_creation", False)
-        except Exception as e:  # pylint: disable=broad-except
-            logger.debug(f"Failed to clear instrumentation context flag: {e}")
+        setattr(_instrumentation_context, "inside_span_creation", False)
 
 
 def _span_writer_worker() -> None:
@@ -447,39 +443,12 @@ def _create_query_span(
             "row_count": row_count,
         }
 
-        # Enqueue for background processing using non-blocking semantics.
-        # Support both the custom InstrumentationQueue (which exposes
-        # `put` returning bool and `put_nowait`) and plain `queue.Queue`
-        # instances (which expose `put_nowait`). Prefer non-blocking
-        # `put_nowait` when available to avoid blocking the producer.
+        # Enqueue for background processing
         try:
-            if hasattr(_span_queue, "put_nowait"):
-                try:
-                    _span_queue.put_nowait(span_data)
-                    logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
-                except queue.Full:
-                    logger.warning("Span queue is full, dropping span data")
-            else:
-                # Fallback: call `put` and interpret boolean return when
-                # provided by a custom implementation. If `put` returns
-                # None, treat it as success (best-effort).
-                put_fn = getattr(_span_queue, "put", None)
-                if put_fn is None:
-                    logger.warning("No queue put available, dropping span data")
-                else:
-                    try:
-                        res = put_fn(span_data)
-                        if res is True:
-                            logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
-                        elif res is False:
-                            logger.warning("Span queue is full, dropping span data")
-                        else:
-                            # treat None/other as success
-                            logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
-                    except Exception as e:  # pragma: no cover - defensive
-                        logger.warning(f"Failed to enqueue span data: {e}")
-        except Exception as e:  # pragma: no cover - defensive
-            logger.warning(f"Failed to enqueue span data: {e}")
+            _span_queue.put_nowait(span_data)
+            logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
+        except queue.Full:
+            logger.warning("Span queue is full, dropping span data")
 
     except Exception as e:  # pylint: disable=broad-except
         # Don't fail the query if span creation fails
