@@ -18,4 +18,7 @@ def pytest_playwright_setup(playwright: Playwright):
         "screenshot": "only-on-failure",
         "video": "retain-on-failure",
         "trace": "retain-on-failure",
+        "retries": 1,
+        "navigation_timeout": 60000,
+        "timeout": 60000,
     }

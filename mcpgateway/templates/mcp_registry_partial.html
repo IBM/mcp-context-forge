@@ -57,7 +57,7 @@
         MCP Registry
       </h2>
       <button
-        onclick="refreshCatalog()"
+        onclick="Admin.refreshCatalog()"
         class="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center gap-2"
         title="Refresh catalog"
       >
@@ -176,7 +176,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if is_all_selected %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %} cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
           data-filter-type="category"
           data-filter-value=""
-          onclick="filterByCategory('')" onkeydown="handleKeydown(event, () => filterByCategory(''))" role="button" tabindex="0"
+          onclick="filterByCategory('')" onkeydown="Admin.handleKeydown(event, () => filterByCategory(''))" role="button" tabindex="0"
         >
           All Categories
           <span class="ml-1 text-xs {% if is_all_selected %}text-blue-600 dark:text-blue-300{% else %}text-gray-500 dark:text-gray-400{% endif %}"
@@ -190,7 +190,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if is_selected %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %} cursor-pointer hover:bg-blue-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="category"
           data-filter-value="{{ category }}"
-          onclick="filterByCategory('{{ category }}')" onkeydown="handleKeydown(event, () => filterByCategory('{{ category }}'))" role="button" tabindex="0"
+          onclick="filterByCategory('{{ category }}')" onkeydown="Admin.handleKeydown(event, () => filterByCategory('{{ category }}'))" role="button" tabindex="0"
         >
           {{ category }}
           <span class="ml-1 text-xs {% if is_selected %}text-blue-600 dark:text-blue-300{% else %}text-gray-500 dark:text-gray-400{% endif %}"
@@ -226,7 +226,7 @@
           class="flex justify-between items-center p-2 {% if is_all_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
           data-filter-type="auth"
           data-filter-value=""
-          onclick="filterByAuthType('')" onkeydown="handleKeydown(event, () => filterByAuthType(''))" role="button" tabindex="0"
+          onclick="filterByAuthType('')" onkeydown="Admin.handleKeydown(event, () => filterByAuthType(''))" role="button" tabindex="0"
         >
           <span
             class="text-sm font-medium {% if is_all_auth_selected %}text-blue-700 dark:text-blue-300{% else %}text-gray-700 dark:text-gray-300{% endif %}"
@@ -245,7 +245,7 @@
           class="flex justify-between items-center p-2 {% if is_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="auth"
           data-filter-value="{{ auth_type }}"
-          onclick="filterByAuthType('{{ auth_type }}')" onkeydown="handleKeydown(event, () => filterByAuthType('{{ auth_type }}'))" role="button" tabindex="0"
+          onclick="filterByAuthType('{{ auth_type }}')" onkeydown="Admin.handleKeydown(event, () => filterByAuthType('{{ auth_type }}'))" role="button" tabindex="0"
         >
           <span class="text-sm font-medium {% if is_auth_selected %}text-blue-700 dark:text-blue-300{% else %}text-gray-700 dark:text-gray-300{% endif %}"
             >{{ auth_type }}</span
@@ -284,7 +284,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
           data-filter-type="provider"
           data-filter-value=""
-          onclick="filterByProvider('')" onkeydown="handleKeydown(event, () => filterByProvider(''))" role="button" tabindex="0"
+          onclick="filterByProvider('')" onkeydown="Admin.handleKeydown(event, () => filterByProvider(''))" role="button" tabindex="0"
         >
           All Providers
           <span class="ml-1 text-xs text-blue-600 dark:text-blue-300"
@@ -297,7 +297,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="provider"
           data-filter-value="{{ provider | lower }}"
-          onclick="filterByProvider('{{ provider | lower }}')" onkeydown="handleKeydown(event, () => filterByProvider('{{ provider | lower }}'))" role="button" tabindex="0"
+          onclick="filterByProvider('{{ provider | lower }}')" onkeydown="Admin.handleKeydown(event, () => filterByProvider('{{ provider | lower }}'))" role="button" tabindex="0"
         >
           {{ provider }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -512,7 +512,7 @@
       Key", "OAuth2.1 & API Key"] %}
       <button
         class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-        onclick="showApiKeyModal('{{ server.id }}', '{{ server.name }}', '{{ server.url }}')"
+        onclick="Admin.showApiKeyModal('{{ server.id }}', '{{ server.name }}', '{{ server.url }}')"
       >
         Add Server
       </button>
@@ -578,7 +578,7 @@
           Add Server
         </h3>
         <button
-          onclick="closeApiKeyModal()"
+          onclick="Admin.closeApiKeyModal()"
           class="text-gray-400 hover:text-gray-500"
         >
           <svg
@@ -627,7 +627,7 @@
           placeholder="Enter your API key"
         />
         <button
-          onclick="registerServerWithApiKey()"
+          onclick="Admin.registerServerWithApiKey()"
           class="w-full mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
         >
           Register Server

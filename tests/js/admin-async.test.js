@@ -1,326 +1,371 @@
 /**
- * Unit tests for admin.js async/fetch-related functions.
+ * Unit tests for async/fetch-related functions.
+ * Tests pure functions with mocked fetch - no DOM required.
  */
 
-import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
-import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
-
-let win;
-
-beforeAll(() => {
-    win = loadAdminJs();
-});
-
-afterAll(() => {
-    cleanupAdminJs();
-});
+import { describe, test, expect, vi, beforeEach } from "vitest";
+import {
+  parseErrorResponse,
+  safeParseJsonResponse,
+} from "../../mcpgateway/admin_ui/security.js";
+import {
+  getAuthToken,
+  fetchWithAuth,
+} from "../../mcpgateway/admin_ui/tokens.js";
+import { fetchWithTimeout } from "../../mcpgateway/admin_ui/utils.js";
 
 // ---------------------------------------------------------------------------
 // Helper: create a mock Response-like object
 // ---------------------------------------------------------------------------
 function mockResponse({
-    ok = true,
-    status = 200,
-    body = "",
-    contentType = "text/plain",
-    headers = {},
+  ok = true,
+  status = 200,
+  body = "",
+  contentType = "text/plain",
+  headers = {},
 } = {}) {
-    const allHeaders = { "content-type": contentType, ...headers };
-    const textValue = typeof body === "string" ? body : JSON.stringify(body);
-    // json() lazily parses: if body is already an object, return it directly;
-    // otherwise attempt JSON.parse (may fail, which is expected for non-JSON).
-    const jsonValue = typeof body === "object" && body !== null
-        ? body
-        : (() => { try { return JSON.parse(body || "{}"); } catch { return {}; } })();
-    return {
-        ok,
-        status,
-        headers: {
-            get(name) {
-                return allHeaders[name.toLowerCase()] || null;
-            },
-        },
-        json: vi.fn().mockResolvedValue(jsonValue),
-        text: vi.fn().mockResolvedValue(textValue),
-        clone() {
-            return mockResponse({ ok, status, body, contentType, headers });
-        },
-    };
+  const allHeaders = { "content-type": contentType, ...headers };
+  const textValue = typeof body === "string" ? body : JSON.stringify(body);
+  // json() lazily parses: if body is already an object, return it directly;
+  // otherwise attempt JSON.parse (may fail, which is expected for non-JSON).
+  const jsonValue =
+    typeof body === "object" && body !== null
+      ? body
+      : (() => {
+        try {
+          return JSON.parse(body || "{}");
+        } catch {
+          return {};
+        }
+      })();
+  return {
+    ok,
+    status,
+    headers: {
+      get(name) {
+        return allHeaders[name.toLowerCase()] || null;
+      },
+    },
+    json: vi.fn().mockResolvedValue(jsonValue),
+    text: vi.fn().mockResolvedValue(textValue),
+    clone() {
+      return mockResponse({ ok, status, body, contentType, headers });
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
 // parseErrorResponse
 // ---------------------------------------------------------------------------
 describe("parseErrorResponse", () => {
-    const f = () => win.parseErrorResponse;
-
-    test("parses JSON error body", async () => {
-        const resp = mockResponse({
-            ok: false,
-            status: 400,
-            contentType: "application/json",
-            body: { detail: "Bad request" },
-        });
-        const result = await f()(resp, "fallback");
-        expect(result).toContain("Bad request");
+  test("parses JSON error body", async () => {
+    const resp = mockResponse({
+      ok: false,
+      status: 400,
+      contentType: "application/json",
+      body: { detail: "Bad request" },
     });
+    const result = await parseErrorResponse(resp, "fallback");
+    expect(result).toContain("Bad request");
+  });
 
-    test("returns text body for non-JSON response", async () => {
-        const resp = mockResponse({
-            ok: false,
-            status: 500,
-            body: "Internal Server Error",
-        });
-        const result = await f()(resp, "fallback");
-        expect(result).toBe("Internal Server Error");
+  test("returns text body for non-JSON response", async () => {
+    const resp = mockResponse({
+      ok: false,
+      status: 500,
+      body: "Internal Server Error",
     });
+    const result = await parseErrorResponse(resp, "fallback");
+    expect(result).toBe("Internal Server Error");
+  });
 
-    test("returns fallback for empty text body", async () => {
-        const resp = mockResponse({
-            ok: false,
-            status: 500,
-            body: "",
-        });
-        const result = await f()(resp, "fallback");
-        expect(result).toBe("fallback");
+  test("returns fallback for empty text body", async () => {
+    const resp = mockResponse({
+      ok: false,
+      status: 500,
+      body: "",
     });
+    const result = await parseErrorResponse(resp, "fallback");
+    expect(result).toBe("fallback");
+  });
 
-    test("detects HTML responses and returns generic message", async () => {
-        const resp = mockResponse({
-            ok: false,
-            status: 502,
-            body: "<!DOCTYPE html><html><body>Bad Gateway</body></html>",
-        });
-        const result = await f()(resp, "Error occurred");
-        expect(result).toContain("Error occurred");
-        expect(result).toContain("HTML error page");
+  test("detects HTML responses and returns generic message", async () => {
+    const resp = mockResponse({
+      ok: false,
+      status: 502,
+      body: "<!DOCTYPE html><html><body>Bad Gateway</body></html>",
     });
+    const result = await parseErrorResponse(resp, "Error occurred");
+    expect(result).toContain("Error occurred");
+    expect(result).toContain("HTML error page");
+  });
 
-    test("detects <html starting responses", async () => {
-        const resp = mockResponse({
-            ok: false,
-            status: 502,
-            body: "<html><body>Error</body></html>",
-        });
-        const result = await f()(resp, "Error occurred");
-        expect(result).toContain("HTML error page");
+  test("detects <html starting responses", async () => {
+    const resp = mockResponse({
+      ok: false,
+      status: 502,
+      body: "<html><body>Error</body></html>",
     });
+    const result = await parseErrorResponse(resp, "Error occurred");
+    expect(result).toContain("HTML error page");
+  });
 
-    test("truncates long text responses", async () => {
-        const longText = "x".repeat(300);
-        const resp = mockResponse({
-            ok: false,
-            status: 500,
-            body: longText,
-        });
-        const result = await f()(resp, "fallback");
-        expect(result.length).toBeLessThan(300);
-        expect(result).toContain("...");
+  test("truncates long text responses", async () => {
+    const longText = "x".repeat(300);
+    const resp = mockResponse({
+      ok: false,
+      status: 500,
+      body: longText,
     });
+    const result = await parseErrorResponse(resp, "fallback");
+    expect(result.length).toBeLessThan(300);
+    expect(result).toContain("...");
+  });
 
-    test("returns fallback on exception", async () => {
-        const resp = {
-            headers: {
-                get() {
-                    throw new Error("broken");
-                },
-            },
-        };
-        const result = await f()(resp, "safe fallback");
-        expect(result).toBe("safe fallback");
-    });
+  test("returns fallback on exception", async () => {
+    const resp = {
+      headers: {
+        get() {
+          throw new Error("broken");
+        },
+      },
+    };
+    const result = await parseErrorResponse(resp, "safe fallback");
+    expect(result).toBe("safe fallback");
+  });
 
-    test("uses default fallback message", async () => {
-        const resp = mockResponse({ ok: false, status: 500, body: "" });
-        const result = await f()(resp);
-        expect(result).toBe("An error occurred");
-    });
+  test("uses default fallback message", async () => {
+    const resp = mockResponse({ ok: false, status: 500, body: "" });
+    const result = await parseErrorResponse(resp);
+    expect(result).toBe("An error occurred");
+  });
 });
 
 // ---------------------------------------------------------------------------
 // safeParseJsonResponse
 // ---------------------------------------------------------------------------
 describe("safeParseJsonResponse", () => {
-    const f = () => win.safeParseJsonResponse;
-
-    test("parses JSON from OK response", async () => {
-        const resp = mockResponse({
-            ok: true,
-            status: 200,
-            contentType: "application/json",
-            body: { result: "success" },
-        });
-        const data = await f()(resp);
-        expect(data.result).toBe("success");
+  test("parses JSON from OK response", async () => {
+    const resp = mockResponse({
+      ok: true,
+      status: 200,
+      contentType: "application/json",
+      body: { result: "success" },
     });
+    const data = await safeParseJsonResponse(resp);
+    expect(data.result).toBe("success");
+  });
 
-    test("throws for non-OK response", async () => {
-        const resp = mockResponse({
-            ok: false,
-            status: 400,
-            contentType: "application/json",
-            body: { detail: "Bad request" },
-        });
-        await expect(f()(resp)).rejects.toThrow();
+  test("throws for non-OK response", async () => {
+    const resp = mockResponse({
+      ok: false,
+      status: 400,
+      contentType: "application/json",
+      body: { detail: "Bad request" },
     });
+    await expect(safeParseJsonResponse(resp)).rejects.toThrow();
+  });
 
-    test("throws for non-JSON content type on OK response", async () => {
-        const resp = mockResponse({
-            ok: true,
-            status: 200,
-            contentType: "text/html",
-            body: "<html></html>",
-        });
-        await expect(f()(resp)).rejects.toThrow(/unexpected response/);
+  test("throws for non-JSON content type on OK response", async () => {
+    const resp = mockResponse({
+      ok: true,
+      status: 200,
+      contentType: "text/html",
+      body: "<html></html>",
     });
+    await expect(safeParseJsonResponse(resp)).rejects.toThrow(
+      /unexpected response/
+    );
+  });
 
-    test("includes custom fallback error in thrown message", async () => {
-        const resp = mockResponse({
-            ok: false,
-            status: 500,
-            body: "",
-        });
-        await expect(f()(resp, "Custom error")).rejects.toThrow(/Custom error/);
+  test("includes custom fallback error in thrown message", async () => {
+    const resp = mockResponse({
+      ok: false,
+      status: 500,
+      body: "",
     });
+    await expect(safeParseJsonResponse(resp, "Custom error")).rejects.toThrow(
+      /Custom error/
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
 // fetchWithTimeout
 // ---------------------------------------------------------------------------
 describe("fetchWithTimeout", () => {
-    const f = () => win.fetchWithTimeout;
+  let originalFetch;
 
-    test("calls fetch with merged headers", async () => {
-        const fakeResponse = mockResponse({
-            ok: true,
-            status: 200,
-            body: "ok",
-        });
-        win.fetch = vi.fn().mockResolvedValue(fakeResponse);
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
 
-        const result = await f()("/api/test", { headers: { "X-Custom": "1" } });
-        expect(win.fetch).toHaveBeenCalledTimes(1);
-
-        const callArgs = win.fetch.mock.calls[0];
-        expect(callArgs[0]).toBe("/api/test");
-        expect(callArgs[1].headers["X-Custom"]).toBe("1");
-        expect(callArgs[1].headers["Cache-Control"]).toBe("no-cache");
+  test("calls fetch with merged headers", async () => {
+    const fakeResponse = mockResponse({
+      ok: true,
+      status: 200,
+      body: "ok",
     });
+    global.fetch = vi.fn().mockResolvedValue(fakeResponse);
 
-    test("throws on status 0 (network error)", async () => {
-        const fakeResponse = mockResponse({ ok: false, status: 0 });
-        win.fetch = vi.fn().mockResolvedValue(fakeResponse);
-
-        await expect(f()("/api/test")).rejects.toThrow(/Network error/);
+    await fetchWithTimeout("/api/test", {
+      headers: { "X-Custom": "1" },
     });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
 
-    test("re-throws AbortError as timeout message", async () => {
-        const abortErr = new Error("The operation was aborted");
-        abortErr.name = "AbortError";
-        win.fetch = vi.fn().mockRejectedValue(abortErr);
+    const callArgs = global.fetch.mock.calls[0];
+    expect(callArgs[0]).toBe("/api/test");
+    expect(callArgs[1].headers["X-Custom"]).toBe("1");
+    expect(callArgs[1].headers["Cache-Control"]).toBe("no-cache");
 
-        await expect(f()("/api/test", {}, 100)).rejects.toThrow(/timed out/);
-    });
+    global.fetch = originalFetch;
+  });
 
-    test("re-throws Failed to fetch as connection error", async () => {
-        win.fetch = vi.fn().mockRejectedValue(new Error("Failed to fetch"));
+  test("throws on status 0 (network error)", async () => {
+    const fakeResponse = mockResponse({ ok: false, status: 0 });
+    global.fetch = vi.fn().mockResolvedValue(fakeResponse);
 
-        await expect(f()("/api/test")).rejects.toThrow(/Unable to connect/);
-    });
+    await expect(fetchWithTimeout("/api/test")).rejects.toThrow(
+      /Network error/
+    );
 
-    test("re-throws empty response errors", async () => {
-        win.fetch = vi.fn().mockRejectedValue(
-            new Error("ERR_EMPTY_RESPONSE"),
-        );
+    global.fetch = originalFetch;
+  });
 
-        await expect(f()("/api/test")).rejects.toThrow(/empty response/);
-    });
+  test("re-throws AbortError as timeout message", async () => {
+    const abortErr = new Error("The operation was aborted");
+    abortErr.name = "AbortError";
+    global.fetch = vi.fn().mockRejectedValue(abortErr);
 
-    test("passes through other errors unchanged", async () => {
-        win.fetch = vi.fn().mockRejectedValue(new Error("custom error"));
+    await expect(fetchWithTimeout("/api/test", {}, 100)).rejects.toThrow(
+      /timed out/
+    );
 
-        await expect(f()("/api/test")).rejects.toThrow("custom error");
-    });
+    global.fetch = originalFetch;
+  });
 
-    test("returns response for non-200 OK responses", async () => {
-        const fakeResponse = mockResponse({ ok: false, status: 404 });
-        win.fetch = vi.fn().mockResolvedValue(fakeResponse);
+  test("re-throws Failed to fetch as connection error", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("Failed to fetch"));
 
-        const result = await f()("/api/test");
-        expect(result.status).toBe(404);
-    });
+    await expect(fetchWithTimeout("/api/test")).rejects.toThrow(
+      /Unable to connect/
+    );
+
+    global.fetch = originalFetch;
+  });
+
+  test("re-throws empty response errors", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("ERR_EMPTY_RESPONSE"));
+
+    await expect(fetchWithTimeout("/api/test")).rejects.toThrow(
+      /empty response/
+    );
+
+    global.fetch = originalFetch;
+  });
+
+  test("passes through other errors unchanged", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("custom error"));
+
+    await expect(fetchWithTimeout("/api/test")).rejects.toThrow("custom error");
+
+    global.fetch = originalFetch;
+  });
+
+  test("returns response for non-200 OK responses", async () => {
+    const fakeResponse = mockResponse({ ok: false, status: 404 });
+    global.fetch = vi.fn().mockResolvedValue(fakeResponse);
+
+    const result = await fetchWithTimeout("/api/test");
+    expect(result.status).toBe(404);
+
+    global.fetch = originalFetch;
+  });
 });
 
 // ---------------------------------------------------------------------------
 // getAuthToken
 // ---------------------------------------------------------------------------
 describe("getAuthToken", () => {
-    const f = () => win.getAuthToken;
+  beforeEach(() => {
+    // Clear cookies before each test
+    document.cookie = "jwt_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = "token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
 
-    test("returns jwt_token cookie value", async () => {
-        win.document.cookie = "jwt_token=my-secret-token";
-        const token = await f()();
-        expect(token).toBe("my-secret-token");
-    });
+  test("returns jwt_token cookie value", async () => {
+    document.cookie = "jwt_token=my-secret-token";
+    const token = await getAuthToken();
+    expect(token).toBe("my-secret-token");
+  });
 
-    test("returns empty string when no token found", async () => {
-        // Clear cookies by setting them expired
-        win.document.cookie =
-            "jwt_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-        win.document.cookie =
-            "token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-        const token = await f()();
-        expect(typeof token).toBe("string");
-    });
+  test("returns empty string when no token found", async () => {
+    const token = await getAuthToken();
+    expect(typeof token).toBe("string");
+  });
 });
 
 // ---------------------------------------------------------------------------
 // fetchWithAuth
 // ---------------------------------------------------------------------------
 describe("fetchWithAuth", () => {
-    const f = () => win.fetchWithAuth;
+  let originalFetch;
 
-    test("adds Authorization header when token exists", async () => {
-        win.document.cookie = "jwt_token=test-token-123";
-        win.fetch = vi.fn().mockResolvedValue(mockResponse());
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    // Clear cookies
+    document.cookie = "jwt_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
 
-        await f()("/api/data");
+  test("adds Authorization header when token exists", async () => {
+    document.cookie = "jwt_token=test-token-123";
+    global.fetch = vi.fn().mockResolvedValue(mockResponse());
 
-        const callArgs = win.fetch.mock.calls[0];
-        const headers = callArgs[1].headers;
-        // Headers object - check via get method
-        expect(headers.get("Authorization")).toBe("Bearer test-token-123");
+    await fetchWithAuth("/api/data");
+
+    const callArgs = global.fetch.mock.calls[0];
+    const headers = callArgs[1].headers;
+    // Headers object - check via get method
+    expect(headers.get("Authorization")).toBe("Bearer test-token-123");
+
+    global.fetch = originalFetch;
+  });
+
+  test("sets credentials to same-origin by default", async () => {
+    global.fetch = vi.fn().mockResolvedValue(mockResponse());
+
+    await fetchWithAuth("/api/data");
+
+    const callArgs = global.fetch.mock.calls[0];
+    expect(callArgs[1].credentials).toBe("same-origin");
+
+    global.fetch = originalFetch;
+  });
+
+  test("preserves caller-provided credentials", async () => {
+    global.fetch = vi.fn().mockResolvedValue(mockResponse());
+
+    await fetchWithAuth("/api/data", { credentials: "include" });
+
+    const callArgs = global.fetch.mock.calls[0];
+    expect(callArgs[1].credentials).toBe("include");
+
+    global.fetch = originalFetch;
+  });
+
+  test("preserves caller-provided headers", async () => {
+    document.cookie = "jwt_token=tok";
+    global.fetch = vi.fn().mockResolvedValue(mockResponse());
+
+    await fetchWithAuth("/api/data", {
+      headers: { "X-Custom": "value" },
     });
 
-    test("sets credentials to same-origin by default", async () => {
-        win.fetch = vi.fn().mockResolvedValue(mockResponse());
+    const callArgs = global.fetch.mock.calls[0];
+    const headers = callArgs[1].headers;
+    expect(headers.get("X-Custom")).toBe("value");
+    expect(headers.get("Authorization")).toBe("Bearer tok");
 
-        await f()("/api/data");
-
-        const callArgs = win.fetch.mock.calls[0];
-        expect(callArgs[1].credentials).toBe("same-origin");
-    });
-
-    test("preserves caller-provided credentials", async () => {
-        win.fetch = vi.fn().mockResolvedValue(mockResponse());
-
-        await f()("/api/data", { credentials: "include" });
-
-        const callArgs = win.fetch.mock.calls[0];
-        expect(callArgs[1].credentials).toBe("include");
-    });
-
-    test("preserves caller-provided headers", async () => {
-        win.document.cookie = "jwt_token=tok";
-        win.fetch = vi.fn().mockResolvedValue(mockResponse());
-
-        await f()("/api/data", {
-            headers: { "X-Custom": "value" },
-        });
-
-        const callArgs = win.fetch.mock.calls[0];
-        const headers = callArgs[1].headers;
-        expect(headers.get("X-Custom")).toBe("value");
-        expect(headers.get("Authorization")).toBe("Bearer tok");
-    });
+    global.fetch = originalFetch;
+  });
 });

@@ -1,0 +1,1762 @@
+import {
+  handleAuthTypeChange,
+  handleAuthTypeSelection,
+  handleEditOAuthGrantTypeChange,
+  handleOAuthGrantTypeChange,
+} from "./auth.js";
+import {
+  handleDragLeave,
+  handleDragOver,
+  handleExportAll,
+  handleExportSelected,
+  handleFileDrop,
+  handleFileSelect,
+  handleImport,
+  loadRecentImports,
+} from "./fileTransfer.js";
+import {
+  handleAddParameter,
+  handleAddPassthrough,
+  updateEditToolRequestTypes,
+  updateRequestTypeOptions,
+  updateSchemaPreview,
+} from "./formFieldHandlers.js";
+import {
+  handleA2AFormSubmit,
+  handleEditA2AAgentFormSubmit,
+  handleEditGatewayFormSubmit,
+  handleEditPromptFormSubmit,
+  handleEditResFormSubmit,
+  handleEditServerFormSubmit,
+  handleEditToolFormSubmit,
+  handleGatewayFormSubmit,
+  handleGrpcServiceFormSubmit,
+  handlePromptFormSubmit,
+  handleResourceFormSubmit,
+  handleServerFormSubmit,
+  handleToolFormSubmit,
+} from "./formSubmitHandlers.js";
+import {
+  serverSideEditPromptsSearch,
+  serverSideEditResourcesSearch,
+  serverSideEditToolSearch,
+  serverSidePromptSearch,
+  serverSideResourceSearch,
+  serverSideToolSearch,
+} from "./llmChat.js";
+import { closeModal, openModal } from "./modals.js";
+import { initPromptSelect } from "./prompts.js";
+import { initResourceSelect } from "./resources.js";
+import { escapeHtml, safeSetInnerHTML } from "./security.js";
+import {
+  ADMIN_ONLY_TABS,
+  getDefaultTabName,
+  getUiHiddenSections,
+  getVisibleSidebarTabs,
+  isAdminOnlyTab,
+  isTabAvailable,
+  isTabHidden,
+  normalizeTabName,
+  resolveTabForNavigation,
+  showTab,
+  updateHashForTab,
+} from "./tabs.js";
+import { initToolSelect } from "./tools.js";
+import { fetchWithTimeout, isAdminUser, safeGetElement } from "./utils.js";
+import { debouncedServerSideTokenSearch, getTeamNameById } from "./tokens.js";
+import {
+  closeGlobalSearchModal,
+  getPanelSearchStateFromUrl,
+  navigateToGlobalSearchResult,
+  openGlobalSearchModal,
+  queueSearchablePanelReload,
+  runGlobalSearch,
+} from "./search.js";
+import { PANEL_SEARCH_CONFIG } from "./constants.js";
+
+// ===================================================================
+// SINGLE CONSOLIDATED INITIALIZATION SYSTEM
+// ===================================================================
+
+// Separate initialization functions
+export const initializeCodeMirrorEditors = function () {
+  console.log("Initializing CodeMirror editors...");
+
+  const editorConfigs = [
+    {
+      id: "headers-editor",
+      mode: "application/json",
+      varName: "headersEditor",
+    },
+    {
+      id: "schema-editor",
+      mode: "application/json",
+      varName: "schemaEditor",
+    },
+    {
+      id: "resource-content-editor",
+      mode: "text/plain",
+      varName: "resourceContentEditor",
+    },
+    {
+      id: "prompt-template-editor",
+      mode: "text/plain",
+      varName: "promptTemplateEditor",
+    },
+    {
+      id: "prompt-args-editor",
+      mode: "application/json",
+      varName: "promptArgsEditor",
+    },
+    {
+      id: "edit-tool-headers",
+      mode: "application/json",
+      varName: "editToolHeadersEditor",
+    },
+    {
+      id: "edit-tool-schema",
+      mode: "application/json",
+      varName: "editToolSchemaEditor",
+    },
+    {
+      id: "output-schema-editor",
+      mode: "application/json",
+      varName: "outputSchemaEditor",
+    },
+    {
+      id: "edit-tool-output-schema",
+      mode: "application/json",
+      varName: "editToolOutputSchemaEditor",
+    },
+    {
+      id: "edit-resource-content",
+      mode: "text/plain",
+      varName: "editResourceContentEditor",
+    },
+    {
+      id: "edit-prompt-template",
+      mode: "text/plain",
+      varName: "editPromptTemplateEditor",
+    },
+    {
+      id: "edit-prompt-arguments",
+      mode: "application/json",
+      varName: "editPromptArgumentsEditor",
+    },
+  ];
+
+  editorConfigs.forEach((config) => {
+    const element = safeGetElement(config.id);
+    if (element && window.CodeMirror) {
+      try {
+        window[config.varName] = window.CodeMirror.fromTextArea(element, {
+          mode: config.mode,
+          theme: "monokai",
+          lineNumbers: false,
+          autoCloseBrackets: true,
+          matchBrackets: true,
+          tabSize: 2,
+          lineWrapping: true,
+        });
+        console.log(`✓ Initialized ${config.varName}`);
+      } catch (error) {
+        console.error(`Failed to initialize ${config.varName}:`, error);
+      }
+    } else {
+      console.warn(
+        `Element ${config.id} not found or CodeMirror not available`
+      );
+    }
+  });
+};
+
+export const initializeToolSelects = function () {
+  console.log("Initializing tool selects...");
+
+  // Add Server form
+  initToolSelect(
+    "associatedTools",
+    "selectedToolsPills",
+    "selectedToolsWarning",
+    6,
+    "selectAllToolsBtn",
+    "clearAllToolsBtn"
+  );
+
+  initResourceSelect(
+    "associatedResources",
+    "selectedResourcesPills",
+    "selectedResourcesWarning",
+    10,
+    "selectAllResourcesBtn",
+    "clearAllResourcesBtn"
+  );
+
+  initPromptSelect(
+    "associatedPrompts",
+    "selectedPromptsPills",
+    "selectedPromptsWarning",
+    8,
+    "selectAllPromptsBtn",
+    "clearAllPromptsBtn"
+  );
+
+  // Edit Server form
+  initToolSelect(
+    "edit-server-tools",
+    "selectedEditToolsPills",
+    "selectedEditToolsWarning",
+    6,
+    "selectAllEditToolsBtn",
+    "clearAllEditToolsBtn"
+  );
+
+  // Initialize resource selector
+  initResourceSelect(
+    "edit-server-resources",
+    "selectedEditResourcesPills",
+    "selectedEditResourcesWarning",
+    10,
+    "selectAllEditResourcesBtn",
+    "clearAllEditResourcesBtn"
+  );
+
+  // Initialize prompt selector
+  initPromptSelect(
+    "edit-server-prompts",
+    "selectedEditPromptsPills",
+    "selectedEditPromptsWarning",
+    8,
+    "selectAllEditPromptsBtn",
+    "clearAllEditPromptsBtn"
+  );
+};
+
+export const initializeEventListeners = function () {
+  console.log("🎯 Setting up event listeners...");
+
+  setupTabNavigation();
+  setupHTMXHooks();
+  console.log("✅ HTMX hooks registered");
+  setupAuthenticationToggles();
+  setupFormHandlers();
+  setupSchemaModeHandlers();
+  setupIntegrationTypeHandlers();
+  console.log("✅ All event listeners initialized");
+};
+
+export const setupTabNavigation = function () {
+  const availableTabs = getVisibleSidebarTabs().filter((tabName) => {
+    if (isTabHidden(tabName)) {
+      return false;
+    }
+    if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+      return false;
+    }
+    return isTabAvailable(tabName);
+  });
+
+  availableTabs.forEach((tabName) => {
+    const tabElement = safeGetElement(`tab-${tabName}`, true);
+    if (!tabElement) {
+      return;
+    }
+    // The sidebar anchors already have inline onclick handlers in admin.html.
+    // Avoid adding a second click handler that would call showTab twice.
+    if (tabElement.hasAttribute("onclick")) {
+      return;
+    }
+    if (tabElement.dataset.tabBound === "true") {
+      return;
+    }
+    tabElement.dataset.tabBound = "true";
+    tabElement.addEventListener("click", () => showTab(tabName));
+  });
+};
+
+const setupHTMXHooks = function () {
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.target.id === "tab-version-info") {
+      console.log("HTMX: Sending request for version info partial");
+    }
+  });
+
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id === "version-info-panel") {
+      console.log("HTMX: Content swapped into version-info-panel");
+    }
+  });
+};
+
+const setupAuthenticationToggles = function () {
+  const authHandlers = [
+    {
+      id: "auth-type",
+      basicId: "auth-basic-fields",
+      bearerId: "auth-bearer-fields",
+      headersId: "auth-headers-fields",
+    },
+
+    // Gateway Add Form auth fields
+
+    {
+      id: "auth-type-gw",
+      basicId: "auth-basic-fields-gw",
+      bearerId: "auth-bearer-fields-gw",
+      headersId: "auth-headers-fields-gw",
+      queryParamId: "auth-query_param-fields-gw",
+    },
+
+    // A2A Add Form auth fields
+
+    {
+      id: "auth-type-a2a",
+      basicId: "auth-basic-fields-a2a",
+      bearerId: "auth-bearer-fields-a2a",
+      headersId: "auth-headers-fields-a2a",
+      queryParamId: "auth-query_param-fields-a2a",
+    },
+
+    // Gateway Edit Form auth fields
+
+    {
+      id: "auth-type-gw-edit",
+      basicId: "auth-basic-fields-gw-edit",
+      bearerId: "auth-bearer-fields-gw-edit",
+      headersId: "auth-headers-fields-gw-edit",
+      oauthId: "auth-oauth-fields-gw-edit",
+      queryParamId: "auth-query_param-fields-gw-edit",
+    },
+
+    // A2A Edit Form auth fields
+
+    {
+      id: "auth-type-a2a-edit",
+      basicId: "auth-basic-fields-a2a-edit",
+      bearerId: "auth-bearer-fields-a2a-edit",
+      headersId: "auth-headers-fields-a2a-edit",
+      oauthId: "auth-oauth-fields-a2a-edit",
+      queryParamId: "auth-query_param-fields-a2a-edit",
+    },
+
+    {
+      id: "edit-auth-type",
+      basicId: "edit-auth-basic-fields",
+      bearerId: "edit-auth-bearer-fields",
+      headersId: "edit-auth-headers-fields",
+    },
+  ];
+
+  authHandlers.forEach((handler) => {
+    const element = safeGetElement(handler.id);
+    if (element) {
+      element.addEventListener("change", function () {
+        const basicFields = safeGetElement(handler.basicId);
+        const bearerFields = safeGetElement(handler.bearerId);
+        const headersFields = safeGetElement(handler.headersId);
+        const oauthFields = handler.oauthId
+          ? safeGetElement(handler.oauthId)
+          : null;
+        const queryParamFields = handler.queryParamId
+          ? safeGetElement(handler.queryParamId)
+          : null;
+        handleAuthTypeSelection(
+          this.value,
+          basicFields,
+          bearerFields,
+          headersFields,
+          oauthFields,
+          queryParamFields
+        );
+      });
+    }
+  });
+};
+
+const setupFormHandlers = function () {
+  const gatewayForm = safeGetElement("add-gateway-form");
+  if (gatewayForm) {
+    gatewayForm.addEventListener("submit", handleGatewayFormSubmit);
+
+    // Add OAuth authentication type change handler
+    const authTypeField = safeGetElement("auth-type-gw");
+    if (authTypeField) {
+      authTypeField.addEventListener("change", handleAuthTypeChange);
+    }
+
+    // Add OAuth grant type change handler for Gateway
+    const oauthGrantTypeField = safeGetElement("oauth-grant-type-gw");
+    if (oauthGrantTypeField) {
+      oauthGrantTypeField.addEventListener(
+        "change",
+        handleOAuthGrantTypeChange
+      );
+    }
+  }
+
+  // Add A2A Form
+  const a2aForm = safeGetElement("add-a2a-form");
+
+  if (a2aForm) {
+    a2aForm.addEventListener("submit", handleA2AFormSubmit);
+
+    // Add OAuth authentication type change handler
+    const authTypeField = safeGetElement("auth-type-a2a");
+    if (authTypeField) {
+      authTypeField.addEventListener("change", handleAuthTypeChange);
+    }
+
+    const oauthGrantTypeField = safeGetElement("oauth-grant-type-a2a");
+    if (oauthGrantTypeField) {
+      oauthGrantTypeField.addEventListener(
+        "change",
+        handleOAuthGrantTypeChange
+      );
+    }
+  }
+
+  const resourceForm = safeGetElement("add-resource-form");
+  if (resourceForm) {
+    resourceForm.addEventListener("submit", handleResourceFormSubmit);
+  }
+
+  const promptForm = safeGetElement("add-prompt-form");
+  if (promptForm) {
+    promptForm.addEventListener("submit", handlePromptFormSubmit);
+  }
+
+  const editPromptForm = safeGetElement("edit-prompt-form");
+  if (editPromptForm) {
+    editPromptForm.addEventListener("submit", handleEditPromptFormSubmit);
+    editPromptForm.addEventListener("click", () => {
+      if (getComputedStyle(editPromptForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  // Add OAuth grant type change handler for Edit Gateway modal
+  // Checkpoint commented
+  /*
+  const editOAuthGrantTypeField = safeGetElement("oauth-grant-type-gw-edit");
+  if (editOAuthGrantTypeField) {
+  editOAuthGrantTypeField.addEventListener(
+  "change",
+  handleEditOAuthGrantTypeChange,
+  );
+  }
+
+  */
+
+  // Checkpoint Started
+  ["oauth-grant-type-gw-edit", "oauth-grant-type-a2a-edit"].forEach((id) => {
+    const field = safeGetElement(id);
+    if (field) {
+      field.addEventListener("change", handleEditOAuthGrantTypeChange);
+    }
+  });
+  // Checkpoint Ended
+
+  const toolForm = safeGetElement("add-tool-form");
+  if (toolForm) {
+    toolForm.addEventListener("submit", handleToolFormSubmit);
+    toolForm.addEventListener("click", () => {
+      if (getComputedStyle(toolForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  const paramButton = safeGetElement("add-parameter-btn");
+  if (paramButton) {
+    paramButton.addEventListener("click", handleAddParameter);
+  }
+
+  const passthroughButton = safeGetElement("add-passthrough-btn");
+  if (passthroughButton) {
+    passthroughButton.addEventListener("click", handleAddPassthrough);
+  }
+
+  const serverForm = safeGetElement("add-server-form");
+  if (serverForm) {
+    serverForm.addEventListener("submit", handleServerFormSubmit);
+  }
+
+  const editServerForm = safeGetElement("edit-server-form");
+  if (editServerForm) {
+    editServerForm.addEventListener("submit", handleEditServerFormSubmit);
+    editServerForm.addEventListener("click", () => {
+      if (getComputedStyle(editServerForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  const editResourceForm = safeGetElement("edit-resource-form");
+  if (editResourceForm) {
+    editResourceForm.addEventListener("submit", handleEditResFormSubmit);
+    editResourceForm.addEventListener("click", () => {
+      if (getComputedStyle(editResourceForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  const editToolForm = safeGetElement("edit-tool-form");
+  if (editToolForm) {
+    editToolForm.addEventListener("submit", handleEditToolFormSubmit);
+    editToolForm.addEventListener("click", () => {
+      if (getComputedStyle(editToolForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  const editGatewayForm = safeGetElement("edit-gateway-form");
+  if (editGatewayForm) {
+    editGatewayForm.addEventListener("submit", handleEditGatewayFormSubmit);
+    editGatewayForm.addEventListener("click", () => {
+      if (getComputedStyle(editGatewayForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  const editA2AAgentForm = safeGetElement("edit-a2a-agent-form");
+  if (editA2AAgentForm) {
+    editA2AAgentForm.addEventListener("submit", handleEditA2AAgentFormSubmit);
+    editA2AAgentForm.addEventListener("click", () => {
+      if (getComputedStyle(editA2AAgentForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  const addGrpcServiceForm = safeGetElement("add-grpc-service-form");
+  if (addGrpcServiceForm) {
+    addGrpcServiceForm.addEventListener("submit", handleGrpcServiceFormSubmit);
+  }
+
+  // Setup search functionality for selectors
+  setupSelectorSearch();
+};
+
+/**
+ * Setup search functionality for multi-select dropdowns
+ */
+const setupSelectorSearch = function () {
+  // Tools search - server-side search
+  const searchTools = safeGetElement("searchTools", true);
+  if (searchTools) {
+    let searchTimeout;
+    searchTools.addEventListener("input", function () {
+      const searchTerm = this.value;
+
+      // Clear previous timeout
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+
+      // Debounce search to avoid too many API calls
+      searchTimeout = setTimeout(() => {
+        serverSideToolSearch(searchTerm);
+      }, 300);
+    });
+  }
+
+  // Edit-server tools search (server-side, mirror of searchTools)
+  const searchEditTools = safeGetElement("searchEditTools", true);
+  if (searchEditTools) {
+    let editSearchTimeout;
+    searchEditTools.addEventListener("input", function () {
+      const searchTerm = this.value;
+      if (editSearchTimeout) {
+        clearTimeout(editSearchTimeout);
+      }
+      editSearchTimeout = setTimeout(() => {
+        serverSideEditToolSearch(searchTerm);
+      }, 300);
+    });
+
+    // If HTMX swaps/paginates the edit tools container, re-run server-side search
+    const editToolsContainer = safeGetElement("edit-server-tools");
+    if (editToolsContainer) {
+      editToolsContainer.addEventListener("htmx:afterSwap", function () {
+        try {
+          const current = searchEditTools.value || "";
+          if (current && current.trim() !== "") {
+            serverSideEditToolSearch(current);
+          } else {
+            // No active search — ensure the selector is initialized
+            initToolSelect(
+              "edit-server-tools",
+              "selectedEditToolsPills",
+              "selectedEditToolsWarning",
+              6,
+              "selectAllEditToolsBtn",
+              "clearAllEditToolsBtn"
+            );
+          }
+        } catch (err) {
+          console.error("Error handling edit-tools afterSwap:", err);
+        }
+      });
+    }
+  }
+
+  // Prompts search (server-side)
+  const searchPrompts = safeGetElement("searchPrompts", true);
+  if (searchPrompts) {
+    let promptSearchTimeout;
+    searchPrompts.addEventListener("input", function () {
+      const searchTerm = this.value;
+      if (promptSearchTimeout) {
+        clearTimeout(promptSearchTimeout);
+      }
+      promptSearchTimeout = setTimeout(() => {
+        serverSidePromptSearch(searchTerm);
+      }, 300);
+    });
+  }
+
+  // Edit-server prompts search (server-side, mirror of searchPrompts)
+  const searchEditPrompts = safeGetElement("searchEditPrompts", true);
+  if (searchEditPrompts) {
+    let editSearchTimeout;
+    searchEditPrompts.addEventListener("input", function () {
+      const searchTerm = this.value;
+      if (editSearchTimeout) {
+        clearTimeout(editSearchTimeout);
+      }
+      editSearchTimeout = setTimeout(() => {
+        serverSideEditPromptsSearch(searchTerm);
+      }, 300);
+    });
+
+    // If HTMX swaps/paginates the edit prompts container, re-run server-side search
+    const editPromptsContainer = safeGetElement("edit-server-prompts");
+    if (editPromptsContainer) {
+      editPromptsContainer.addEventListener("htmx:afterSwap", function () {
+        try {
+          const current = searchEditPrompts.value || "";
+          if (current && current.trim() !== "") {
+            serverSideEditPromptsSearch(current);
+          } else {
+            // No active search — ensure the selector is initialized
+            initPromptSelect(
+              "edit-server-prompts",
+              "selectedEditPromptsPills",
+              "selectedEditPromptsWarning",
+              6,
+              "selectAllEditPromptsBtn",
+              "clearAllEditPromptsBtn"
+            );
+          }
+        } catch (err) {
+          console.error("Error handling edit-prompts afterSwap:", err);
+        }
+      });
+    }
+  }
+
+  // Resources search (server-side)
+  const searchResources = safeGetElement("searchResources", true);
+  if (searchResources) {
+    let resourceSearchTimeout;
+    searchResources.addEventListener("input", function () {
+      const searchTerm = this.value;
+      if (resourceSearchTimeout) {
+        clearTimeout(resourceSearchTimeout);
+      }
+      resourceSearchTimeout = setTimeout(() => {
+        serverSideResourceSearch(searchTerm);
+      }, 300);
+    });
+  }
+
+  // Edit-server resources search (server-side, mirror of searchResources)
+  const searchEditResources = safeGetElement("searchEditResources", true);
+  if (searchEditResources) {
+    let editSearchTimeout;
+    searchEditResources.addEventListener("input", function () {
+      const searchTerm = this.value;
+      if (editSearchTimeout) {
+        clearTimeout(editSearchTimeout);
+      }
+      editSearchTimeout = setTimeout(() => {
+        serverSideEditResourcesSearch(searchTerm);
+      }, 300);
+    });
+
+    // If HTMX swaps/paginates the edit resources container, re-run server-side search
+    const editResourcesContainer = safeGetElement("edit-server-resources");
+    if (editResourcesContainer) {
+      editResourcesContainer.addEventListener("htmx:afterSwap", function () {
+        try {
+          const current = searchEditResources.value || "";
+          if (current && current.trim() !== "") {
+            serverSideEditResourcesSearch(current);
+          } else {
+            // No active search — ensure the selector is initialized
+            initResourceSelect(
+              "edit-server-resources",
+              "selectedEditResourcesPills",
+              "selectedEditResourcesWarning",
+              6,
+              "selectAllEditResourcesBtn",
+              "clearAllEditResourcesBtn"
+            );
+          }
+        } catch (err) {
+          console.error("Error handling edit-resources afterSwap:", err);
+        }
+      });
+    }
+  }
+};
+
+/**
+ * Initialize search inputs for all entity types
+ * This function also handles re-initialization after HTMX content loads
+ */
+export const initializeSearchInputs = function () {
+  console.log("🔍 Initializing search inputs...");
+
+  // Clone inputs to remove existing listeners from previous initialization runs.
+  Object.values(PANEL_SEARCH_CONFIG).forEach((panelConfig) => {
+    const input = document.getElementById(panelConfig.searchInputId);
+    if (input) {
+      const clonedInput = input.cloneNode(true);
+      clonedInput.removeAttribute("oninput");
+      input.parentNode.replaceChild(clonedInput, input);
+    }
+  });
+
+  Object.entries(PANEL_SEARCH_CONFIG).forEach(([entityType, panelConfig]) => {
+    const searchInput = document.getElementById(panelConfig.searchInputId);
+    const tagInput = document.getElementById(panelConfig.tagInputId);
+    if (!searchInput) {
+      return;
+    }
+
+    const searchState = getPanelSearchStateFromUrl(panelConfig.tableName);
+    if (searchState.query) {
+      searchInput.value = searchState.query;
+    }
+    if (tagInput && searchState.tags) {
+      tagInput.value = searchState.tags;
+    }
+
+    searchInput.addEventListener("input", () => {
+      queueSearchablePanelReload(entityType, 250);
+    });
+
+    const panel = document.getElementById(`${entityType}-panel`);
+    const isVisible = Boolean(panel && !panel.classList.contains("hidden"));
+    if (isVisible && (searchState.query || searchState.tags)) {
+      queueSearchablePanelReload(entityType, 0);
+    }
+  });
+
+  // Tokens search (server-side, not part of PANEL_SEARCH_CONFIG)
+  const tokensSearchInput = document.getElementById("tokens-search-input");
+  if (tokensSearchInput) {
+    const clonedTokensInput = tokensSearchInput.cloneNode(true);
+    tokensSearchInput.parentNode.replaceChild(
+      clonedTokensInput,
+      tokensSearchInput
+    );
+    const freshTokensInput = document.getElementById("tokens-search-input");
+    if (freshTokensInput) {
+      freshTokensInput.addEventListener("input", function () {
+        debouncedServerSideTokenSearch(this.value);
+      });
+    }
+  }
+};
+
+let globalSearchDebounceTimer = null;
+export const initializeGlobalSearch = function () {
+  const input = document.getElementById("global-search-input");
+  if (input && !input.dataset.listenerAttached) {
+    input.dataset.listenerAttached = "true";
+    input.addEventListener("input", (event) => {
+      const value = event.target?.value || "";
+      if (globalSearchDebounceTimer) {
+        clearTimeout(globalSearchDebounceTimer);
+      }
+      globalSearchDebounceTimer = setTimeout(() => {
+        runGlobalSearch(value);
+      }, 220);
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeGlobalSearchModal();
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "Enter") {
+        const firstResult = document.querySelector(
+          "#global-search-results .global-search-result-item"
+        );
+        if (firstResult) {
+          navigateToGlobalSearchResult(firstResult);
+          event.preventDefault();
+        }
+      }
+    });
+  }
+
+  if (!window.__globalSearchHotkeysBound) {
+    window.__globalSearchHotkeysBound = true;
+    document.addEventListener("keydown", (event) => {
+      const isShortcut =
+        (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
+      if (isShortcut) {
+        event.preventDefault();
+        openGlobalSearchModal();
+        return;
+      }
+      if (event.key === "Escape") {
+        const modal = document.getElementById("global-search-modal");
+        if (modal && !modal.classList.contains("hidden")) {
+          closeGlobalSearchModal();
+          event.preventDefault();
+        }
+      }
+    });
+  }
+};
+
+let tabHashChangeListenerRegistered = false;
+
+export const initializeTabState = function () {
+  console.log("Initializing tab state...");
+
+  const initialHashTab = normalizeTabName(window.location.hash);
+  const initialRequestedTab = initialHashTab || getDefaultTabName();
+  const initialTab = resolveTabForNavigation(initialRequestedTab);
+
+  if (initialTab) {
+    if (initialHashTab && initialHashTab !== initialTab) {
+      updateHashForTab(initialTab);
+    }
+    showTab(initialTab);
+  } else {
+    console.warn("No available tabs found during initialization");
+  }
+
+  if (!tabHashChangeListenerRegistered) {
+    window.addEventListener("hashchange", () => {
+      const hashTab = normalizeTabName(window.location.hash);
+      const requestedTab = hashTab || getDefaultTabName();
+      const resolvedTab = resolveTabForNavigation(requestedTab);
+
+      if (!resolvedTab) {
+        return;
+      }
+
+      if (hashTab && hashTab !== resolvedTab) {
+        updateHashForTab(resolvedTab);
+      }
+
+      showTab(resolvedTab);
+    });
+    tabHashChangeListenerRegistered = true;
+  }
+
+  // Pre-load version info if that's the initial tab
+  if (isAdminUser() && initialTab === "version-info") {
+    setTimeout(() => {
+      const panel = safeGetElement("version-info-panel");
+      if (panel && panel.innerHTML.trim() === "") {
+        fetchWithTimeout(`${window.ROOT_PATH}/version?partial=true`)
+          .then((resp) => {
+            if (!resp.ok) {
+              throw new Error("Network response was not ok");
+            }
+            return resp.text();
+          })
+          .then((html) => {
+            safeSetInnerHTML(panel, html, true);
+          })
+          .catch((err) => {
+            console.error("Failed to preload version info:", err);
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent = "Failed to load version info.";
+            panel.innerHTML = "";
+            panel.appendChild(errorDiv);
+          });
+      }
+    }, 100);
+  }
+
+  // Pre-load maintenance panel if that's the initial tab
+  if (isAdminUser() && initialTab === "maintenance") {
+    setTimeout(() => {
+      const panel = safeGetElement("maintenance-panel");
+      if (panel && panel.innerHTML.trim() === "") {
+        fetchWithTimeout(`${window.ROOT_PATH}/admin/maintenance/partial`)
+          .then((resp) => {
+            if (!resp.ok) {
+              if (resp.status === 403) {
+                throw new Error("Platform administrator access required");
+              }
+              throw new Error("Network response was not ok");
+            }
+            return resp.text();
+          })
+          .then((html) => {
+            safeSetInnerHTML(panel, html, true);
+          })
+          .catch((err) => {
+            console.error("Failed to preload maintenance panel:", err);
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent =
+              err.message || "Failed to load maintenance panel.";
+            panel.innerHTML = "";
+            panel.appendChild(errorDiv);
+          });
+      }
+    }, 100);
+  }
+
+  // Set checkbox states based on URL parameters (namespaced per table, with legacy fallback)
+  const urlParams = new URLSearchParams(window.location.search);
+  const legacyIncludeInactive = urlParams.get("include_inactive") === "true";
+
+  // Map checkbox IDs to their table names for namespaced URL params
+  const checkboxTableMap = {
+    "show-inactive-tools": "tools",
+    "show-inactive-resources": "resources",
+    "show-inactive-prompts": "prompts",
+    "show-inactive-gateways": "gateways",
+    "show-inactive-servers": "servers",
+    "show-inactive-a2a-agents": "agents",
+    "show-inactive-tools-toolops": "toolops",
+  };
+  Object.entries(checkboxTableMap).forEach(([id, tableName]) => {
+    const checkbox = safeGetElement(id);
+    if (checkbox) {
+      // Prefer namespaced param, fall back to legacy for backwards compatibility
+      const namespacedValue = urlParams.get(tableName + "_inactive");
+      if (namespacedValue !== null) {
+        checkbox.checked = namespacedValue === "true";
+      } else {
+        checkbox.checked = legacyIncludeInactive;
+      }
+    }
+  });
+
+  // Note: URL state persistence for show-inactive toggles is now handled by
+  // Admin.updateInactiveUrlState() in admin.html via @change handlers on checkboxes.
+  // The handlers write namespaced params (e.g., servers_inactive, tools_inactive).
+
+  // Disable toggle until its target exists (prevents race with initial HTMX load)
+  document.querySelectorAll(".show-inactive-toggle").forEach((checkbox) => {
+    const targetSelector = checkbox.getAttribute("hx-target");
+    if (targetSelector && !document.querySelector(targetSelector)) {
+      checkbox.disabled = true;
+    }
+  });
+
+  // Enable toggles after HTMX swaps complete
+  window.addEventListener("htmx:afterSettle", (event) => {
+    document
+      .querySelectorAll(".show-inactive-toggle[disabled]")
+      .forEach((checkbox) => {
+        const targetSelector = checkbox.getAttribute("hx-target");
+        if (targetSelector && document.querySelector(targetSelector)) {
+          checkbox.disabled = false;
+        }
+      });
+  });
+};
+
+export const setupSchemaModeHandlers = function () {
+  const schemaModeRadios = document.getElementsByName("schema_input_mode");
+  const uiBuilderDiv = safeGetElement("ui-builder");
+  const jsonInputContainer = safeGetElement("json-input-container");
+
+  if (schemaModeRadios.length === 0) {
+    console.warn("Schema mode radios not found");
+    return;
+  }
+
+  Array.from(schemaModeRadios).forEach((radio) => {
+    radio.addEventListener("change", () => {
+      try {
+        if (radio.value === "ui" && radio.checked) {
+          if (uiBuilderDiv) {
+            uiBuilderDiv.style.display = "block";
+          }
+          if (jsonInputContainer) {
+            jsonInputContainer.style.display = "none";
+          }
+        } else if (radio.value === "json" && radio.checked) {
+          if (uiBuilderDiv) {
+            uiBuilderDiv.style.display = "none";
+          }
+          if (jsonInputContainer) {
+            jsonInputContainer.style.display = "block";
+          }
+          updateSchemaPreview();
+        }
+      } catch (error) {
+        console.error("Error handling schema mode change:", error);
+      }
+    });
+  });
+
+  console.log("✓ Schema mode handlers set up successfully");
+};
+
+export const setupIntegrationTypeHandlers = function () {
+  const integrationTypeSelect = safeGetElement("integrationType");
+  if (integrationTypeSelect) {
+    const defaultIntegration =
+      integrationTypeSelect.dataset.default ||
+      integrationTypeSelect.options[0].value;
+    integrationTypeSelect.value = defaultIntegration;
+    updateRequestTypeOptions();
+    integrationTypeSelect.addEventListener("change", () =>
+      updateRequestTypeOptions()
+    );
+  }
+
+  const editToolTypeSelect = safeGetElement("edit-tool-type");
+  if (editToolTypeSelect) {
+    editToolTypeSelect.addEventListener(
+      "change",
+      () => updateEditToolRequestTypes()
+      // updateEditToolUrl(),
+    );
+  }
+};
+
+// ===================================================================
+// BULK IMPORT TOOLS — MODAL WIRING
+// ===================================================================
+
+export const setupBulkImportModal = function () {
+  const openBtn = safeGetElement("open-bulk-import", true);
+  const modalId = "bulk-import-modal";
+  const modal = safeGetElement(modalId, true);
+
+  if (!openBtn || !modal) {
+    // Bulk import feature not available - skip silently
+    return;
+  }
+
+  // avoid double-binding if admin.js gets evaluated more than once
+  if (openBtn.dataset.wired === "1") {
+    return;
+  }
+  openBtn.dataset.wired = "1";
+
+  const closeBtn = safeGetElement("close-bulk-import", true);
+  const backdrop = safeGetElement("bulk-import-backdrop", true);
+  const resultEl = safeGetElement("import-result", true);
+
+  const focusTarget =
+    modal?.querySelector("#tools_json") ||
+    modal?.querySelector("#tools_file") ||
+    modal?.querySelector("[data-autofocus]");
+
+  // helpers
+  const open = (e) => {
+    if (e) {
+      e.preventDefault();
+    }
+    // clear previous results each time we open
+    if (resultEl) {
+      resultEl.innerHTML = "";
+    }
+    openModal(modalId);
+    // prevent background scroll
+    document.documentElement.classList.add("overflow-hidden");
+    document.body.classList.add("overflow-hidden");
+    if (focusTarget) {
+      setTimeout(() => focusTarget.focus(), 0);
+    }
+    return false;
+  };
+
+  const close = () => {
+    // also clear results on close to keep things tidy
+    closeModal(modalId, "import-result");
+    document.documentElement.classList.remove("overflow-hidden");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  // wire events
+  openBtn.addEventListener("click", open);
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      close();
+    });
+  }
+
+  // click on backdrop only (not the dialog content) closes the modal
+  if (backdrop) {
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) {
+        close();
+      }
+    });
+  }
+
+  // ESC to close
+  modal.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      close();
+    }
+  });
+
+  // FORM SUBMISSION → handle bulk import
+  const form = safeGetElement("bulk-import-form", true);
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const resultEl = safeGetElement("import-result", true);
+      const indicator = safeGetElement("bulk-import-indicator", true);
+
+      try {
+        const formData = new FormData();
+
+        // Get JSON from textarea or file
+        const jsonTextarea = form?.querySelector('[name="tools_json"]');
+        const fileInput = form?.querySelector('[name="tools_file"]');
+
+        let hasData = false;
+
+        // Check for file upload first (takes precedence)
+        if (fileInput && fileInput.files.length > 0) {
+          formData.append("tools_file", fileInput.files[0]);
+          hasData = true;
+        } else if (jsonTextarea && jsonTextarea.value.trim()) {
+          // Validate JSON before sending
+          try {
+            const toolsData = JSON.parse(jsonTextarea.value);
+            if (!Array.isArray(toolsData)) {
+              throw new Error("JSON must be an array of tools");
+            }
+            formData.append("tools", jsonTextarea.value);
+            hasData = true;
+          } catch (err) {
+            if (resultEl) {
+              resultEl.innerHTML = `
+                                    <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                        <p class="font-semibold">Invalid JSON</p>
+                                        <p class="text-sm mt-1">${escapeHtml(err.message)}</p>
+                                    </div>
+                                `;
+            }
+            return;
+          }
+        }
+
+        if (!hasData) {
+          if (resultEl) {
+            resultEl.innerHTML = `
+                                <div class="mt-2 p-3 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+                                    <p class="text-sm">Please provide JSON data or upload a file</p>
+                                </div>
+                            `;
+          }
+          return;
+        }
+
+        // Show loading state
+        if (indicator) {
+          indicator.style.display = "flex";
+        }
+
+        // Submit to backend
+        const response = await fetchWithTimeout(
+          `${window.ROOT_PATH}/admin/tools/import`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+        const result = await response.json();
+
+        // Display results
+        if (resultEl) {
+          if (result.success) {
+            resultEl.innerHTML = `
+                                <div class="mt-2 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+                                    <p class="font-semibold">Import Successful</p>
+                                    <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                                </div>
+                            `;
+
+            // Close modal and refresh page after delay
+            setTimeout(() => {
+              closeModal("bulk-import-modal");
+              window.location.reload();
+            }, 2000);
+          } else if (result.imported > 0) {
+            // Partial success
+            let detailsHtml = "";
+            if (result.details && result.details.failed) {
+              detailsHtml = '<ul class="mt-2 text-sm list-disc list-inside">';
+              result.details.failed.forEach((item) => {
+                detailsHtml += `<li><strong>${escapeHtml(item.name)}:</strong> ${escapeHtml(item.error)}</li>`;
+              });
+              detailsHtml += "</ul>";
+            }
+
+            resultEl.innerHTML = `
+                                <div class="mt-2 p-3 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+                                    <p class="font-semibold">Partial Import</p>
+                                    <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                                    ${detailsHtml}
+                                </div>
+                            `;
+          } else {
+            // Complete failure
+            resultEl.innerHTML = `
+                                <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                    <p class="font-semibold">Import Failed</p>
+                                    <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                                </div>
+                            `;
+          }
+        }
+      } catch (error) {
+        console.error("Bulk import error:", error);
+        if (resultEl) {
+          resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                <p class="font-semibold">Import Error</p>
+                                <p class="text-sm mt-1">${escapeHtml(error.message || "An unexpected error occurred")}</p>
+                            </div>
+                        `;
+        }
+      } finally {
+        // Hide loading state
+        if (indicator) {
+          indicator.style.display = "none";
+        }
+      }
+
+      return false;
+    });
+  }
+};
+
+// ===================================================================
+// EXPORT/IMPORT FUNCTIONALITY
+// ===================================================================
+
+export const initializeExportImport = function () {
+  // Prevent double initialization
+  if (window.exportImportInitialized) {
+    console.log("🔄 Export/import already initialized, skipping");
+    return;
+  }
+
+  console.log("🔄 Initializing export/import functionality");
+
+  // Export button handlers
+  const exportAllBtn = safeGetElement("export-all-btn");
+  const exportSelectedBtn = safeGetElement("export-selected-btn");
+
+  if (exportAllBtn) {
+    exportAllBtn.addEventListener("click", handleExportAll);
+  }
+
+  if (exportSelectedBtn) {
+    exportSelectedBtn.addEventListener("click", handleExportSelected);
+  }
+
+  // Import functionality
+  const importDropZone = safeGetElement("import-drop-zone");
+  const importFileInput = safeGetElement("import-file-input");
+  const importValidateBtn = safeGetElement("import-validate-btn");
+  const importExecuteBtn = safeGetElement("import-execute-btn");
+
+  if (importDropZone && importFileInput) {
+    // File input handler
+    importDropZone.addEventListener("click", () => importFileInput.click());
+    importFileInput.addEventListener("change", handleFileSelect);
+
+    // Drag and drop handlers
+    importDropZone.addEventListener("dragover", handleDragOver);
+    importDropZone.addEventListener("drop", handleFileDrop);
+    importDropZone.addEventListener("dragleave", handleDragLeave);
+  }
+
+  if (importValidateBtn) {
+    importValidateBtn.addEventListener("click", () => handleImport(true));
+  }
+
+  if (importExecuteBtn) {
+    importExecuteBtn.addEventListener("click", () => handleImport(false));
+  }
+
+  // Load recent imports when tab is shown
+  loadRecentImports();
+
+  // Mark as initialized
+  window.Admin.exportImportInitialized = true;
+};
+
+// ===================================================================
+// ENHANCED EDITOR REFRESH with Safety Checks
+// ===================================================================
+
+const refreshEditors = function () {
+  setTimeout(() => {
+    if (
+      window.headersEditor &&
+      typeof window.headersEditor.refresh === "function"
+    ) {
+      try {
+        window.headersEditor.refresh();
+        console.log("✓ Refreshed headersEditor");
+      } catch (error) {
+        console.error("Failed to refresh headersEditor:", error);
+      }
+    }
+
+    if (
+      window.schemaEditor &&
+      typeof window.schemaEditor.refresh === "function"
+    ) {
+      try {
+        window.schemaEditor.refresh();
+        console.log("✓ Refreshed schemaEditor");
+      } catch (error) {
+        console.error("Failed to refresh schemaEditor:", error);
+      }
+    }
+  }, 100);
+};
+
+// ===================================================================
+// Tool Tips for components with Alpine.js
+// ===================================================================
+
+export const setupTooltipsWithAlpine = function () {
+  document.addEventListener("alpine:init", () => {
+    console.log("Initializing Alpine tooltip directive...");
+
+    window.Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
+      let tooltipEl = null;
+      let animationFrameId = null; // Track animation frame
+
+      const moveTooltip = (e) => {
+        if (!tooltipEl) {
+          return;
+        }
+
+        const paddingX = 12;
+        const paddingY = 20;
+        const tipRect = tooltipEl.getBoundingClientRect();
+
+        let left = e.clientX + paddingX;
+        let top = e.clientY + paddingY;
+
+        if (left + tipRect.width > window.innerWidth - 8) {
+          left = e.clientX - tipRect.width - paddingX;
+        }
+        if (top + tipRect.height > window.innerHeight - 8) {
+          top = e.clientY - tipRect.height - paddingY;
+        }
+
+        tooltipEl.style.left = `${left}px`;
+        tooltipEl.style.top = `${top}px`;
+      };
+
+      const showTooltip = (event) => {
+        const text = evaluate(expression);
+        if (!text) {
+          return;
+        }
+
+        hideTooltip(); // Clean up any existing tooltip
+
+        tooltipEl = document.createElement("div");
+        tooltipEl.textContent = text;
+        tooltipEl.setAttribute("role", "tooltip");
+        tooltipEl.className =
+          "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
+
+        document.body.appendChild(tooltipEl);
+
+        if (event?.clientX && event?.clientY) {
+          moveTooltip(event);
+          el.addEventListener("mousemove", moveTooltip);
+        } else {
+          const rect = el.getBoundingClientRect();
+          const scrollY = window.scrollY || window.pageYOffset;
+          const scrollX = window.scrollX || window.pageXOffset;
+          tooltipEl.style.left = `${rect.left + scrollX}px`;
+          tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
+        }
+
+        // FIX: Cancel any pending animation frame before setting a new one
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+        }
+
+        animationFrameId = requestAnimationFrame(() => {
+          // FIX: Check if tooltipEl still exists before accessing its style
+          if (tooltipEl) {
+            tooltipEl.style.opacity = "1";
+          }
+          animationFrameId = null;
+        });
+
+        window.addEventListener("scroll", hideTooltip, {
+          passive: true,
+        });
+        window.addEventListener("resize", hideTooltip, {
+          passive: true,
+        });
+      };
+
+      const hideTooltip = () => {
+        if (!tooltipEl) {
+          return;
+        }
+
+        // FIX: Cancel any pending animation frame
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+
+        tooltipEl.style.opacity = "0";
+        el.removeEventListener("mousemove", moveTooltip);
+        window.removeEventListener("scroll", hideTooltip);
+        window.removeEventListener("resize", hideTooltip);
+        el.removeEventListener("click", hideTooltip);
+
+        const toRemove = tooltipEl;
+        tooltipEl = null; // Set to null immediately
+
+        setTimeout(() => {
+          if (toRemove && toRemove.parentNode) {
+            toRemove.parentNode.removeChild(toRemove);
+          }
+        }, 200);
+      };
+
+      el.addEventListener("mouseenter", showTooltip);
+      el.addEventListener("mouseleave", hideTooltip);
+      el.addEventListener("focus", showTooltip);
+      el.addEventListener("blur", hideTooltip);
+      el.addEventListener("click", hideTooltip);
+    });
+  });
+};
+
+export const registerReloadAllResourceSections = function () {
+  // list of sections we manage
+  const SECTION_NAMES = [
+    "tools",
+    "resources",
+    "prompts",
+    "servers",
+    "gateways",
+    "catalog",
+  ];
+
+  const SECTION_HIDE_KEY_OVERRIDES = {
+    catalog: "servers",
+  };
+
+  function isSectionHidden(sectionName) {
+    const hideKey = SECTION_HIDE_KEY_OVERRIDES[sectionName] || sectionName;
+    return getUiHiddenSections().has(hideKey);
+  }
+
+  // Save initial markup on first full load so we can restore exactly if needed
+  document.addEventListener("DOMContentLoaded", () => {
+    window.Admin.__initialSectionMarkup = window.__initialSectionMarkup || {};
+    SECTION_NAMES.forEach((s) => {
+      if (isSectionHidden(s)) {
+        return;
+      }
+      const el = safeGetElement(`${s}-section`);
+      if (el && !(s in window.__initialSectionMarkup)) {
+        // store the exact innerHTML produced by the server initially
+        window.Admin.__initialSectionMarkup[s] = el.innerHTML;
+      }
+    });
+  });
+
+  // Helper: try to re-run common initializers after a section's DOM is replaced
+  const reinitializeSection = function (sectionEl, sectionName) {
+    try {
+      if (!sectionEl) {
+        return;
+      }
+
+      // 1) Re-init Alpine for the new subtree (if Alpine is present)
+      try {
+        if (window.Alpine) {
+          // For Alpine 3 use initTree if available
+          if (typeof window.Alpine.initTree === "function") {
+            window.Alpine.initTree(sectionEl);
+          } else if (
+            typeof window.Alpine.discoverAndRegisterComponents === "function"
+          ) {
+            // fallback: attempt a component discovery if available
+            window.Alpine.discoverAndRegisterComponents(sectionEl);
+          }
+        }
+      } catch (err) {
+        console.warn("Alpine re-init failed for section", sectionName, err);
+      }
+
+      // 2) Re-initialize tool/resource/pill helpers that expect DOM structure
+      try {
+        // these functions exist elsewhere in admin.js; call them if present
+        if (typeof initResourceSelect === "function") {
+          // Many panels use specific ids — attempt to call generic initializers if they exist
+          initResourceSelect(
+            "associatedResources",
+            "selectedResourcePills",
+            "selectedResourceWarning",
+            10,
+            null,
+            null
+          );
+        }
+        if (typeof initToolSelect === "function") {
+          initToolSelect(
+            "associatedTools",
+            "selectedToolsPills",
+            "selectedToolsWarning",
+            10,
+            null,
+            null
+          );
+        }
+        // restore generic tool/resource selection areas if present
+        if (typeof initResourceSelect === "function") {
+          // try specific common containers if present (safeGetElement suppresses warnings)
+          const containers = ["edit-server-resources", "edit-server-tools"];
+          containers.forEach((cid) => {
+            const c = safeGetElement(cid);
+            if (c && typeof initResourceSelect === "function") {
+              // caller may have different arg signature — best-effort call is OK
+              // we don't want to throw here if arguments mismatch
+              try {
+                /* no args: assume function will find DOM by ids */ initResourceSelect();
+              } catch (e) {
+                /* ignore */
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("Select/pill reinit error", err);
+      }
+
+      // 3) Re-run integration & schema handlers which attach behaviour to new inputs
+      try {
+        if (typeof setupIntegrationTypeHandlers === "function") {
+          setupIntegrationTypeHandlers();
+        }
+        if (typeof setupSchemaModeHandlers === "function") {
+          setupSchemaModeHandlers();
+        }
+      } catch (err) {
+        console.warn("Integration/schema handler reinit failed", err);
+      }
+
+      // 4) Reinitialize CodeMirror editors within the replaced DOM (if CodeMirror used)
+      try {
+        if (window.CodeMirror) {
+          // For any <textarea class="codemirror"> re-create or refresh editors
+          const textareas = sectionEl.querySelectorAll("textarea");
+          textareas.forEach((ta) => {
+            // If the page previously attached a CodeMirror instance on same textarea,
+            // the existing instance may have been stored on the element. If refresh available, refresh it.
+            if (ta.CodeMirror && typeof ta.CodeMirror.refresh === "function") {
+              ta.CodeMirror.refresh();
+            } else {
+              // Create a new CodeMirror instance only when an explicit init function is present on page
+              if (typeof window.createCodeMirrorForTextarea === "function") {
+                try {
+                  window.createCodeMirrorForTextarea(ta);
+                } catch (e) {
+                  // ignore - not all textareas need CodeMirror
+                }
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("CodeMirror reinit failed", err);
+      }
+
+      // 5) Re-attach generic event wiring that is expected by the UI (checkboxes, buttons)
+      try {
+        // checkbox-driven pill updates
+        const checkboxChangeEvent = new Event("change", {
+          bubbles: true,
+        });
+        sectionEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+          // If there were checkbox-specific change functions on page, they will now re-run
+          cb.dispatchEvent(checkboxChangeEvent);
+        });
+
+        // Reconnect any HTMX triggers that expect a load event
+        if (window.htmx && typeof window.htmx.trigger === "function") {
+          // find elements with data-htmx or that previously had an HTMX load
+          const htmxTargets = sectionEl.querySelectorAll(
+            "[hx-get], [hx-post], [data-hx-load]"
+          );
+          htmxTargets.forEach((el) => {
+            try {
+              window.htmx.trigger(el, "load");
+            } catch (e) {
+              /* ignore */
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("Event wiring re-attach failed", err);
+      }
+
+      // 6) Accessibility / visual: force a small layout reflow, useful in some browsers
+      try {
+        // eslint-disable-next-line no-unused-expressions
+        sectionEl.offsetHeight; // read to force reflow
+      } catch (e) {
+        /* ignore */
+      }
+    } catch (err) {
+      console.error("Error reinitializing section", sectionName, err);
+    }
+  };
+
+  const updateSectionHeaders = function (teamId) {
+    const sections = [
+      "tools",
+      "resources",
+      "prompts",
+      "servers",
+      "gateways",
+    ].filter((sectionName) => !isSectionHidden(sectionName));
+
+    sections.forEach((section) => {
+      const header = document.querySelector("#" + section + "-section h2");
+      if (header) {
+        // Remove existing team badge
+        const existingBadge = header.querySelector(".team-badge");
+        if (existingBadge) {
+          existingBadge.remove();
+        }
+
+        // Add team badge if team is selected
+        if (teamId && teamId !== "") {
+          const teamName = getTeamNameById(teamId);
+          if (teamName) {
+            const badge = document.createElement("span");
+            badge.className =
+              "team-badge inline-flex items-center px-2 py-1 ml-2 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full";
+            badge.textContent = teamName;
+            header.appendChild(badge);
+          }
+        }
+      }
+    });
+  };
+
+  // The exported function: reloadAllResourceSections
+  window.Admin.reloadAllResourceSections = async function (teamId) {
+    const sections = [
+      "tools",
+      "resources",
+      "prompts",
+      "servers",
+      "gateways",
+    ].filter((sectionName) => !isSectionHidden(sectionName));
+
+    // ensure there is a ROOT_PATH set
+    if (!window.ROOT_PATH) {
+      console.warn("ROOT_PATH not defined; aborting reloadAllResourceSections");
+      return;
+    }
+
+    // Iterate sections sequentially to avoid overloading the server and to ensure consistent order.
+    for (const section of sections) {
+      const sectionEl = safeGetElement(`${section}-section`);
+      if (!sectionEl) {
+        console.warn(`Section element not found: ${section}-section`);
+        continue;
+      }
+
+      // Build server partial URL (server should return the *full HTML fragment* for the section)
+      // Server endpoint pattern: /admin/sections/{section}?partial=true
+      let url = `${window.ROOT_PATH}/admin/sections/${section}?partial=true`;
+      if (teamId && teamId !== "") {
+        url += `&team_id=${encodeURIComponent(teamId)}`;
+      }
+
+      try {
+        const resp = await fetchWithTimeout(
+          url,
+          { credentials: "same-origin" },
+          window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000
+        );
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const html = await resp.text();
+
+        // Replace entire section's innerHTML with server-provided HTML to keep DOM identical.
+        // Use safeSetInnerHTML with isTrusted = true because this is server-rendered trusted content.
+        safeSetInnerHTML(sectionEl, html, true);
+
+        // After replacement, re-run local initializers so the new DOM behaves like initial load
+        reinitializeSection(sectionEl, section);
+      } catch (err) {
+        console.error(`Failed to load section ${section} from server:`, err);
+
+        // Restore the original markup exactly as it was on initial load (fallback)
+        if (
+          window.__initialSectionMarkup &&
+          window.__initialSectionMarkup[section]
+        ) {
+          sectionEl.innerHTML = window.__initialSectionMarkup[section];
+          // Re-run initializers on restored markup as well
+          reinitializeSection(sectionEl, section);
+          console.log(`Restored initial markup for section ${section}`);
+        } else {
+          // No fallback available: leave existing DOM intact and show error to console
+          console.warn(
+            `No saved initial markup for section ${section}; leaving DOM untouched`
+          );
+        }
+      }
+    }
+
+    // Update headers (team badges) after reload
+    try {
+      if (typeof updateSectionHeaders === "function") {
+        updateSectionHeaders(teamId);
+      }
+    } catch (err) {
+      console.warn("updateSectionHeaders failed after reload", err);
+    }
+
+    console.log("✓ reloadAllResourceSections completed");
+  };
+};

@@ -185,7 +185,6 @@ except ImportError:
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
-
 UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "overview": ("overview",),
     "servers": ("catalog",),
@@ -210,6 +209,50 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
 UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
 UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
+
+# Cache for the bundle filename to avoid reading manifest on every request
+# Using a mutable dict to avoid the need for a global statement in the accessor function
+_bundle_js_cache: dict[str, Optional[str]] = {"filename": None}
+
+
+def get_bundle_js_filename() -> str:
+    """Get the hashed bundle.js filename from Vite manifest.
+
+    Reads the Vite manifest file to get the current hashed bundle filename.
+    Falls back to scanning for bundle-*.js on disk if the manifest is unreadable.
+    Invalidates the cache when the cached bundle file no longer exists on disk.
+
+    Returns:
+        str: The bundle filename (e.g., 'bundle-abc123.js')
+    """
+    static_dir = Path(__file__).parent / "static"
+
+    # Use cache if the bundle file still exists on disk
+    cached = _bundle_js_cache["filename"]
+    if cached is not None and (static_dir / cached).exists():
+        return cached
+
+    manifest_path = static_dir / ".vite" / "manifest.json"
+    try:
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = orjson.loads(f.read())
+                # The key is the input path relative to the project root
+                entry_key = "mcpgateway/admin_ui/index.js"
+                if entry_key in manifest and manifest[entry_key].get("file"):
+                    _bundle_js_cache["filename"] = manifest[entry_key]["file"]
+                    return _bundle_js_cache["filename"]  # type: ignore[return-value]
+    except Exception as e:
+        LOGGER.warning(f"Failed to read Vite manifest: {e}")
+
+    # Manifest unreadable or missing entry — find bundle file directly on disk
+    bundles = sorted(static_dir.glob("bundle-*.js"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if bundles:
+        _bundle_js_cache["filename"] = bundles[0].name
+        return _bundle_js_cache["filename"]  # type: ignore[return-value]
+
+    LOGGER.error("No bundle-*.js found in %s — admin UI will not load", static_dir)
+    return ""
 
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
@@ -3291,6 +3334,7 @@ async def admin_ui(
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
+            "bundle_js": get_bundle_js_filename(),
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
@@ -5289,7 +5333,7 @@ async def admin_get_team_edit(
                     </select>
                 </div>
                 <div class="flex justify-end space-x-3">
-                    <button type="button" onclick="hideTeamEditModal()"
+                    <button type="button" onclick="Admin.hideTeamEditModal()"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         Cancel
                     </button>
@@ -6985,7 +7029,7 @@ async def admin_get_user_edit(
 
         # Create edit form HTML
         edit_form = f"""
-        <div class="space-y-4">
+        <div id="user-edit-modal-content" class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
             <div id="edit-user-error"></div>
             <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
@@ -7009,13 +7053,13 @@ async def admin_get_user_edit(
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
-                           oninput="validatePasswordRequirements(); validatePasswordMatch();">
+                           oninput="Admin.validatePasswordRequirements(); Admin.validatePasswordMatch();">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Confirm New Password</label>
                     <input type="password" name="confirm_password" id="confirm-password-field"
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
-                           oninput="validatePasswordMatch()">
+                           oninput="Admin.validatePasswordMatch()">
                     <div id="password-match-message" class="mt-1 text-sm text-red-600 hidden">Passwords do not match</div>
                 </div>
                 {password_requirements_html}
@@ -7029,7 +7073,7 @@ async def admin_get_user_edit(
                     data-require-special="{"true" if settings.password_require_special else "false"}"
                 ></div>
                 <div class="flex justify-end space-x-3">
-                    <button type="button" onclick="hideUserEditModal()"
+                    <button type="button" onclick="Admin.hideUserEditModal()"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         Cancel
                     </button>
@@ -7123,6 +7167,9 @@ async def admin_update_user(
         success_html = """
         <div class="text-green-500 text-center p-4">
             <p>User updated successfully</p>
+            <button type="button" onclick="Admin.hideUserEditModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+                Close
+            </button>
         </div>
         """
         response = HTMLResponse(content=success_html)

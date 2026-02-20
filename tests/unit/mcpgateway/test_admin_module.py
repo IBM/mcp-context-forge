@@ -6,6 +6,7 @@ import base64
 from datetime import datetime, timezone
 import inspect
 import json
+import os
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -1444,3 +1445,137 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
     )
     assert isinstance(response, HTMLResponse)
     assert request.app.state.templates.TemplateResponse.call_args[0][1] == "servers_partial.html"
+
+
+# ---------------------------------------------------------------------------
+# get_bundle_js_filename
+# ---------------------------------------------------------------------------
+
+
+def _setup_static_dir(tmp_path):
+    """Create the static directory under tmp_path and return its path."""
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    return static_dir
+
+
+def _write_manifest(static_dir, entry):
+    """Write a Vite manifest.json with the given entry dict."""
+    vite_dir = static_dir / ".vite"
+    vite_dir.mkdir(exist_ok=True)
+    manifest = {"mcpgateway/admin_ui/index.js": entry}
+    (vite_dir / "manifest.json").write_text(json.dumps(manifest))
+
+
+def test_get_bundle_js_filename_cache_hit(monkeypatch, tmp_path):
+    """Cache is warm and the file still exists on disk — returns cached value without any I/O."""
+    static_dir = _setup_static_dir(tmp_path)
+    (static_dir / "bundle-cached.js").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": "bundle-cached.js"})
+
+    assert admin.get_bundle_js_filename() == "bundle-cached.js"
+
+
+def test_get_bundle_js_filename_stale_cache_reads_manifest(monkeypatch, tmp_path):
+    """Cached filename no longer exists on disk — falls through and reads the manifest."""
+    static_dir = _setup_static_dir(tmp_path)
+    _write_manifest(static_dir, {"file": "bundle-new.js"})
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": "bundle-stale.js"})  # stale; file absent
+
+    assert admin.get_bundle_js_filename() == "bundle-new.js"
+    assert admin._bundle_js_cache["filename"] == "bundle-new.js"
+
+
+def test_get_bundle_js_filename_reads_manifest(monkeypatch, tmp_path):
+    """No cache — reads bundle filename from the Vite manifest and populates the cache."""
+    static_dir = _setup_static_dir(tmp_path)
+    _write_manifest(static_dir, {"file": "bundle-abc123.js"})
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
+
+    result = admin.get_bundle_js_filename()
+    assert result == "bundle-abc123.js"
+    assert admin._bundle_js_cache["filename"] == "bundle-abc123.js"
+
+
+def test_get_bundle_js_filename_manifest_missing_entry_key_falls_back_to_glob(monkeypatch, tmp_path):
+    """Manifest exists but lacks the expected entry key — falls back to disk scan."""
+    static_dir = _setup_static_dir(tmp_path)
+    vite_dir = static_dir / ".vite"
+    vite_dir.mkdir()
+    (vite_dir / "manifest.json").write_text(json.dumps({"other/entry.js": {"file": "other.js"}}))
+    (static_dir / "bundle-fallback.js").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
+
+    assert admin.get_bundle_js_filename() == "bundle-fallback.js"
+
+
+def test_get_bundle_js_filename_manifest_missing_file_field_falls_back_to_glob(monkeypatch, tmp_path):
+    """Manifest entry exists but has no 'file' field — falls back to disk scan."""
+    static_dir = _setup_static_dir(tmp_path)
+    _write_manifest(static_dir, {"isEntry": True})  # no 'file' key
+    (static_dir / "bundle-fallback.js").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
+
+    assert admin.get_bundle_js_filename() == "bundle-fallback.js"
+
+
+def test_get_bundle_js_filename_no_manifest_falls_back_to_glob(monkeypatch, tmp_path):
+    """No manifest file on disk at all — falls back to disk scan."""
+    static_dir = _setup_static_dir(tmp_path)
+    (static_dir / "bundle-disk.js").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
+
+    assert admin.get_bundle_js_filename() == "bundle-disk.js"
+
+
+def test_get_bundle_js_filename_malformed_manifest_falls_back_to_glob(monkeypatch, tmp_path):
+    """Malformed manifest JSON — logs a warning and falls back to disk scan."""
+    static_dir = _setup_static_dir(tmp_path)
+    vite_dir = static_dir / ".vite"
+    vite_dir.mkdir()
+    (vite_dir / "manifest.json").write_text("not { valid json <<<")
+    (static_dir / "bundle-fallback.js").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
+
+    assert admin.get_bundle_js_filename() == "bundle-fallback.js"
+
+
+def test_get_bundle_js_filename_glob_returns_newest_bundle(monkeypatch, tmp_path):
+    """When multiple bundle files exist on disk, the newest by mtime is returned."""
+    static_dir = _setup_static_dir(tmp_path)
+    old_bundle = static_dir / "bundle-old.js"
+    new_bundle = static_dir / "bundle-new.js"
+    old_bundle.touch()
+    new_bundle.touch()
+    # Force a deterministic mtime ordering
+    old_time = time.time() - 60
+    os.utime(old_bundle, (old_time, old_time))
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
+
+    assert admin.get_bundle_js_filename() == "bundle-new.js"
+
+
+def test_get_bundle_js_filename_no_bundles_returns_empty_string(monkeypatch, tmp_path):
+    """No bundle files anywhere — returns empty string."""
+    _setup_static_dir(tmp_path)
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
+
+    assert admin.get_bundle_js_filename() == ""

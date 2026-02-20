@@ -23,7 +23,7 @@
           <div class="flex flex-col gap-y-1 max-w-48">
             <!-- Row 1: Test -->
             <button
-              onclick="testGateway('{{ gateway.url }}')"
+              onclick="Admin.testGateway('{{ gateway.url }}')"
               class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
               x-tooltip="'💡Test this gateway with sample arguments'"
             >
@@ -38,7 +38,7 @@
               🔐 Authorize
             </a>
             <!-- Row 3:  Fetch Tools -->
-            <button onclick="fetchToolsForGateway({{ gateway.id|tojson }}, {{ gateway.name|tojson }})"
+            <button onclick="Admin.fetchToolsForGateway({{ gateway.id|tojson }}, {{ gateway.name|tojson }})"
               class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
               x-tooltip="'🔧 Fetch Tools from MCP Server'" id="fetch-tools-{{ gateway.id }}">
               🔧 Fetch Tools
@@ -47,20 +47,20 @@
 
             <!-- Row 4:  View | Edit -->
             <div class="flex gap-x-2">
-              <button onclick="viewGateway('{{ gateway.id }}')" class="flex-1 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+              <button onclick="Admin.viewGateway('{{ gateway.id }}')" class="flex-1 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
               {% if can_modify %}
-              <button onclick="editGateway('{{ gateway.id }}')" class="flex-1 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+              <button onclick="Admin.editGateway('{{ gateway.id }}')" class="flex-1 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
               {% endif %}
             </div>
 
             {% if can_modify %}
             <!-- Row 5:  Activate/Deactivate -->
-            <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'gateways')">
+            <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'gateways')">
               <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
               <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if gateway.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
             </form>
             <!-- Row 6:  Delete -->
-            <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'gateway', '{{ gateway_label }}', 'gateways')">
+            <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return Admin.handleDeleteSubmit(event, 'gateway', '{{ gateway_label }}', 'gateways')">
               <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
             </form>
             {% endif %}
