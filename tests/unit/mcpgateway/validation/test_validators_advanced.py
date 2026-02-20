@@ -55,7 +55,7 @@ class DummySettings:
     validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern = r"^[a-zA-Z0-9_.\-\s]+$"  # Names can have spaces
+    validation_name_pattern = r"^[a-zA-Z0-9_.\- ]+$"  # Names can have spaces (literal space, not \s to reject control chars)
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"  # IDs cannot have spaces
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern = r'[<>"\'\\]'
