@@ -1729,6 +1729,20 @@ Disallow: /
     well_known_cache_max_age: int = 3600  # 1 hour default
 
     # ===================================
+    # Virtual Tool Filesystem (VFS)
+    # ===================================
+    vfs_enabled: bool = Field(default=False, description="Enable VFS virtual servers (server_type='vfs') with fs_browse/fs_read/fs_write meta-tools")
+    vfs_base_dir: str = Field(default="", description="Base directory for VFS session files. Empty uses system temp dir.")
+    vfs_session_ttl_seconds: int = Field(default=900, ge=60, le=86400, description="TTL for VFS sessions (seconds)")
+    vfs_fs_browse_enabled: bool = Field(default=True, description="Enable fs_browse meta-tool for VFS servers")
+    vfs_fs_read_enabled: bool = Field(default=True, description="Enable fs_read meta-tool for VFS servers")
+    vfs_fs_write_enabled: bool = Field(default=True, description="Enable fs_write meta-tool for VFS servers")
+    vfs_fs_read_max_size_bytes: int = Field(default=1048576, ge=1024, le=10485760, description="Maximum file size in bytes for fs_read (default 1MB)")
+    vfs_fs_browse_default_max_entries: int = Field(default=200, ge=1, le=5000, description="Default max_entries for fs_browse")
+    vfs_fs_browse_max_entries: int = Field(default=1000, ge=1, le=10000, description="Hard maximum max_entries for fs_browse")
+    vfs_default_stub_format: Literal["python", "typescript", "json"] = Field(default="json", description="Default stub format for VFS tool metadata")
+
+    # ===================================
     # Performance / Startup Tuning
     # ===================================
 

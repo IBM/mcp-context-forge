@@ -3092,6 +3092,42 @@
               </div>
             </div>
 
+            <!-- Virtual Tool Filesystem (VFS) Configuration -->
+            <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-type">Server Type</label>
+                <select
+                  name="server_type"
+                  id="server-type"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 px-1.5 py-1.5"
+                  onchange="document.getElementById('vfs-config-section').classList.toggle('hidden', this.value !== 'vfs')"
+                >
+                  <option value="standard">Standard (normal proxy)</option>
+                  <option value="vfs">VFS (virtual tool filesystem)</option>
+                </select>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  VFS servers expose fs_browse/fs_read/fs_write meta-tools for browsable tool metadata.
+                </p>
+              </div>
+              <div id="vfs-config-section" class="hidden space-y-4 pl-6 border-l-2 border-indigo-200 dark:border-indigo-800">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-stub-format">Stub Format</label>
+                  <select
+                    name="stub_format"
+                    id="server-stub-format"
+                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 px-1.5 py-1.5"
+                  >
+                    <option value="json">JSON (MCP raw schema)</option>
+                    <option value="python">Python (type-annotated stubs)</option>
+                    <option value="typescript">TypeScript (interface stubs)</option>
+                  </select>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Format for generated tool stubs in the virtual filesystem.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
             <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
               <div class="flex items-center mb-4">

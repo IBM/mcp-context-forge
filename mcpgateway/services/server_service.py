@@ -299,6 +299,10 @@ class ServerService:
             # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
             "oauth_enabled": getattr(server, "oauth_enabled", False),
             "oauth_config": getattr(server, "oauth_config", None),
+            # Virtual Tool Filesystem (VFS) fields
+            "server_type": getattr(server, "server_type", "standard") or "standard",
+            "stub_format": getattr(server, "stub_format", None),
+            "mount_rules": getattr(server, "mount_rules", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -492,6 +496,10 @@ class ServerService:
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=getattr(server_in, "oauth_config", None),
+                # Virtual Tool Filesystem (VFS) fields
+                server_type=getattr(server_in, "server_type", "standard") or "standard",
+                stub_format=getattr(server_in, "stub_format", None),
+                mount_rules=getattr(server_in, "mount_rules", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -1284,6 +1292,14 @@ class ServerService:
                     server.oauth_config = server_update.oauth_config
                 elif server_update.oauth_config is not None:
                     server.oauth_config = server_update.oauth_config
+
+            # Update VFS fields if provided
+            if getattr(server_update, "server_type", None) is not None:
+                server.server_type = server_update.server_type
+            if getattr(server_update, "stub_format", None) is not None:
+                server.stub_format = server_update.stub_format
+            if hasattr(server_update, "model_fields_set") and "mount_rules" in server_update.model_fields_set:
+                server.mount_rules = server_update.mount_rules
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)

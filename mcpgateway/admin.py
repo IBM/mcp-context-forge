@@ -2282,6 +2282,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                 oauth_enabled = False
                 oauth_config = None
 
+        # VFS configuration
+        server_type = str(form.get("server_type", "standard")).strip() or "standard"
+        stub_format_raw = str(form.get("stub_format", "")).strip()
+        stub_format = stub_format_raw if stub_format_raw in ("python", "typescript", "json") else None
+
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
@@ -2294,6 +2299,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             visibility=visibility,
             oauth_enabled=oauth_enabled,
             oauth_config=oauth_config,
+            server_type=server_type,
+            stub_format=stub_format,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -2456,6 +2463,11 @@ async def admin_edit_server(
                 oauth_enabled = False
                 oauth_config = None
 
+        # VFS configuration
+        edit_server_type = str(form.get("server_type", "")).strip() or None
+        edit_stub_format_raw = str(form.get("stub_format", "")).strip()
+        edit_stub_format = edit_stub_format_raw if edit_stub_format_raw in ("python", "typescript", "json") else None
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
@@ -2470,6 +2482,8 @@ async def admin_edit_server(
             owner_email=user_email,
             oauth_enabled=oauth_enabled,
             oauth_config=oauth_config,
+            server_type=edit_server_type,
+            stub_format=edit_stub_format,
         )
 
         await server_service.update_server(

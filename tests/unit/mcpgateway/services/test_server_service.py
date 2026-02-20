@@ -104,6 +104,11 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.oauth_enabled = False
     server.oauth_config = None
 
+    # Virtual Tool Filesystem (VFS) fields
+    server.server_type = "standard"
+    server.stub_format = None
+    server.mount_rules = None
+
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]
