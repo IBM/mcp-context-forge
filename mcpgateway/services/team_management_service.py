@@ -20,7 +20,7 @@ Examples:
 # Standard
 import asyncio
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-Party
@@ -952,9 +952,6 @@ class TeamManagementService:
                                 dt = datetime.fromisoformat(value)
                                 # Ensure timezone-aware (UTC) to match DB model
                                 if dt.tzinfo is None:
-                                    # Standard
-                                    from datetime import timezone
-
                                     dt = dt.replace(tzinfo=timezone.utc)
                                 team_data[key] = dt
                         teams.append(CachedTeamData(**team_data))
