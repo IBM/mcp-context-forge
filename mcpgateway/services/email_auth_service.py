@@ -433,7 +433,17 @@ class EmailAuthService:
         return int(count or 0)
 
     async def get_user_by_email(self, email: str) -> Optional[EmailUser]:
-        """Get user by email address.
+        """Get user by email address with service-level caching.
+
+        This method implements a two-tier cache (L1 in-memory + L2 Redis) to reduce
+        database load during authentication hot paths. Cached data is stored as plain
+        dicts to avoid SQLAlchemy DetachedInstanceError when accessing lazy-loaded
+        relationships.
+
+        Cache TTL: 60 seconds (configurable via auth_cache_user_ttl)
+        Staleness Window: Up to 60 seconds of stale data possible between cache
+        invalidation and expiry. This is acceptable for user lookups as critical
+        changes (password resets, deactivation) trigger explicit cache invalidation.
 
         Args:
             email: Email address to look up
@@ -445,15 +455,47 @@ class EmailAuthService:
             # Assuming database has user "test@example.com"
             # user = await service.get_user_by_email("test@example.com")
             # user.email if user else None  # Returns: 'test@example.com'
+
+        Note:
+            Cache is automatically invalidated when user data changes via:
+            - update_user()
+            - reset_password_with_token()
+            - unlock_user_account()
+            - deactivate_user()
         """
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import CachedEmailUser  # pylint: disable=import-outside-toplevel
+
+        normalized_email = email.lower()
+        cache_version = CachedEmailUser.CACHE_VERSION
+
+        # Try cache first with version - catch only cache-related errors
         try:
-            stmt = select(EmailUser).where(EmailUser.email == email.lower())
-            result = self.db.execute(stmt)
-            user = result.scalar_one_or_none()
-            return user
+            cached_user_data = await auth_cache.get_user_by_email(normalized_email, cache_version)
+            if cached_user_data is not None:
+                # Reconstruct EmailUser from cached Pydantic model
+                # This avoids DetachedInstanceError by creating a fresh instance
+                cached_model = CachedEmailUser(**cached_user_data)
+                return cached_model.to_orm()
         except Exception as e:
-            logger.error(f"Error getting user by email {email}: {e}")
-            return None
+            # Log cache errors but continue to database query
+            logger.warning(f"Cache error for user {email}, falling back to database: {e}")
+
+        # Cache miss or error - query database
+        stmt = select(EmailUser).where(EmailUser.email == normalized_email)
+        result = self.db.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if user:
+            # Try to cache the user data - don't fail if caching fails
+            try:
+                cached_model = CachedEmailUser.from_orm(user)
+                await auth_cache.cache_user_by_email(normalized_email, cached_model.model_dump(), cache_version)
+            except Exception as e:
+                logger.warning(f"Failed to cache user {email}: {e}")
+
+        return user
 
     async def create_user(
         self,
@@ -938,6 +980,10 @@ class EmailAuthService:
         user.locked_until = None
         user.updated_at = utc_now()
         self.db.commit()
+
+        # Invalidate cache after unlocking account
+        await self._invalidate_user_auth_cache(user.email)
+
         self._log_auth_event(
             event_type="ACCOUNT_UNLOCKED",
             success=True,
@@ -1574,6 +1620,9 @@ class EmailAuthService:
 
             self.db.commit()
 
+            # Invalidate cache after successful update
+            await self._invalidate_user_auth_cache(email)
+
             return user
 
         except Exception as e:
@@ -1605,6 +1654,9 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+
+            # Invalidate cache after activation
+            await self._invalidate_user_auth_cache(email)
 
             logger.info(f"User {email} activated")
             return user
@@ -1638,6 +1690,9 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+
+            # Invalidate cache after deactivation
+            await self._invalidate_user_auth_cache(email)
 
             logger.info(f"User {email} deactivated")
             return user

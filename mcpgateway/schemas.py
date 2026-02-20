@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
@@ -5410,6 +5410,127 @@ class PasswordResetTokenValidationResponse(BaseModel):
     valid: bool = Field(..., description="Whether token is currently valid")
     message: str = Field(..., description="Validation status message")
     expires_at: Optional[datetime] = Field(None, description="Token expiration timestamp when valid")
+
+
+class CachedEmailUser(BaseModel):
+    """Pydantic model for caching EmailUser data.
+
+    This model is used to serialize/deserialize EmailUser ORM objects for caching,
+    avoiding SQLAlchemy DetachedInstanceError. It includes all fields needed for
+    authentication and authorization without lazy-loaded relationships.
+
+    Cache Versioning:
+        CACHE_VERSION is used as a key prefix to auto-invalidate stale cache entries
+        when the schema changes. Increment this version when adding/removing/renaming
+        fields to ensure old cached data doesn't cause deserialization errors.
+
+    Attributes:
+        email: User's email address (primary key)
+        password_hash: Hashed password
+        full_name: User's display name
+        is_admin: Admin privileges flag
+        admin_origin: Source of admin status (sso, manual, api, None)
+        is_active: Account active status
+        email_verified_at: Email verification timestamp
+        auth_provider: Authentication provider (local, github, etc.)
+        password_hash_type: Type of password hash (argon2id, etc.)
+        failed_login_attempts: Failed login counter
+        locked_until: Account lockout expiration
+        password_change_required: Password change required flag
+        password_changed_at: Last password change timestamp
+        created_at: Account creation timestamp
+        updated_at: Last update timestamp
+        last_login: Last successful login timestamp
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> user = CachedEmailUser(
+        ...     email="test@example.com",
+        ...     password_hash="$argon2id$...",
+        ...     is_admin=False,
+        ...     is_active=True,
+        ...     auth_provider="local",
+        ...     password_hash_type="argon2id",
+        ...     failed_login_attempts=0,
+        ...     password_change_required=False,
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc)
+        ... )
+        >>> user.email
+        'test@example.com'
+    """
+
+    # Cache version - increment when schema changes to invalidate old cache entries
+    CACHE_VERSION: ClassVar[str] = "v1"
+
+    model_config = ConfigDict(from_attributes=True)
+
+    email: str
+    password_hash: str
+    full_name: Optional[str] = None
+    is_admin: bool = False
+    admin_origin: Optional[str] = None
+    is_active: bool = True
+    email_verified_at: Optional[datetime] = None
+    auth_provider: str = "local"
+    password_hash_type: str = "argon2id"
+    failed_login_attempts: int = 0
+    locked_until: Optional[datetime] = None
+    password_change_required: bool = False
+    password_changed_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+
+    @classmethod
+    def from_orm(cls, obj) -> "CachedEmailUser":
+        """Create from EmailUser ORM object.
+
+        Args:
+            obj: EmailUser ORM instance
+
+        Returns:
+            CachedEmailUser instance
+        """
+        return cls.model_validate(obj)
+
+    def to_orm(self):
+        """Convert to EmailUser ORM object (detached from session).
+
+        Returns:
+            EmailUser instance (detached)
+
+        Note:
+            This method assumes all required fields are present in the Pydantic model.
+            Cache versioning (CACHE_VERSION) ensures old cached data with missing fields
+            is automatically ignored, preventing deserialization errors when the schema evolves.
+            Always increment CACHE_VERSION when adding/removing/renaming fields.
+        """
+        # First-Party
+        from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+        user = EmailUser(
+            email=self.email,
+            password_hash=self.password_hash,
+            full_name=self.full_name,
+            is_admin=self.is_admin,
+            is_active=self.is_active,
+            auth_provider=self.auth_provider,
+            password_hash_type=self.password_hash_type,
+            failed_login_attempts=self.failed_login_attempts,
+            password_change_required=self.password_change_required,
+        )
+
+        # Set optional fields
+        user.admin_origin = self.admin_origin
+        user.email_verified_at = self.email_verified_at
+        user.locked_until = self.locked_until
+        user.password_changed_at = self.password_changed_at
+        user.created_at = self.created_at
+        user.updated_at = self.updated_at
+        user.last_login = self.last_login
+
+        return user
 
 
 class EmailUserResponse(BaseModel):

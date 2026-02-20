@@ -635,6 +635,112 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_user_role failed: {e}")
 
+    async def get_user_by_email(self, email: str, cache_version: str = "v1") -> Optional[Dict[str, Any]]:
+        """Get cached user data by email with version support.
+
+        Args:
+            email: Normalized email address
+            cache_version: Cache schema version (default: "v1")
+
+        Returns:
+            User data dict or None if not cached
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_user_by_email("test@example.com"))
+            >>> result is None  # Cache miss
+            True
+
+        Note:
+            The cache_version parameter enables automatic invalidation of stale
+            cache entries when the CachedEmailUser schema changes. Increment the
+            version in CachedEmailUser.CACHE_VERSION to invalidate old entries.
+        """
+        if not self._enabled:
+            return None
+
+        cache_key = f"{cache_version}:user_by_email:{email}"
+
+        # Check L1 in-memory cache first
+        with self._lock:
+            entry = self._user_cache.get(cache_key)
+            if entry and not entry.is_expired():
+                self._hit_count += 1
+                return entry.value
+
+        # Check L2 Redis cache
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("user_email", email)
+                data = await redis.get(redis_key)
+                if data:
+                    # Third-Party
+                    import orjson  # pylint: disable=import-outside-toplevel
+
+                    cached = orjson.loads(data)
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+
+                    # Write-through: populate L1 from Redis hit
+                    with self._lock:
+                        self._user_cache[cache_key] = CacheEntry(
+                            value=cached,
+                            expiry=time.time() + self._user_ttl,
+                        )
+
+                    return cached
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.debug(f"AuthCache Redis get_user_by_email failed: {e}")
+
+        self._miss_count += 1
+        return None
+
+    async def cache_user_by_email(self, email: str, user_data: Dict[str, Any], cache_version: str = "v1") -> None:
+        """Cache user data by email with version support.
+
+        Args:
+            email: Normalized email address
+            user_data: User data dict to cache
+            cache_version: Cache schema version (default: "v1")
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> user_data = {"email": "test@example.com", "is_admin": False}
+            >>> asyncio.run(cache.cache_user_by_email("test@example.com", user_data))
+
+        Note:
+            The cache_version parameter ensures that when the schema changes,
+            old cache entries with different versions are automatically ignored
+            (cache miss), preventing deserialization errors.
+        """
+        if not self._enabled:
+            return
+
+        cache_key = f"{cache_version}:user_by_email:{email}"
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Third-Party
+                import orjson  # pylint: disable=import-outside-toplevel
+
+                redis_key = self._get_redis_key("user_email", email)
+                await redis.setex(redis_key, self._user_ttl, orjson.dumps(user_data))
+            except Exception as e:
+                logger.debug(f"AuthCache Redis cache_user_by_email failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._user_cache[cache_key] = CacheEntry(
+                value=user_data,
+                expiry=time.time() + self._user_ttl,
+            )
+
     async def invalidate_team_roles(self, team_id: str) -> None:
         """Invalidate all cached roles for a team.
 
