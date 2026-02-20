@@ -16,6 +16,7 @@ import {
 } from "./initialization.js";
 import { closeModal } from "./modals.js";
 import { initializeRealTimeMonitoring } from "./monitoring.js";
+import { paginationData } from "./pagination.js";
 import { initializeTagFiltering } from "./tags.js";
 import { hideTeamEditModal, initializeAddMembersForms, initializePasswordValidation, updateDefaultVisibility } from "./teams.js";
 import { initializeTeamScopingMonitor } from "./tokens.js";
@@ -680,3 +681,43 @@ import {
     }
   });
 })(window.Admin);
+
+// Keyboard shortcuts for pagination (← / →).
+// Registered once here; the previous per-include <script> block registered
+// this listener N times (once per pagination control on the page).
+//
+// Tracks the last-clicked pagination root so that arrow keys target the
+// correct control when multiple pagination components are on the page.
+document.addEventListener("alpine:init", () => {
+
+  // Record which pagination component the user most recently interacted with.
+  document.addEventListener("click", (e) => {
+    const root = e.target.closest("[data-table-name]");
+    if (root) AppState.setLastActivePaginationRoot(root);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+      return;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+
+    e.preventDefault();
+
+    // Use the last-interacted control; fall back to the first visible one.
+    let root = AppState.getLastActivePaginationRoot();
+    if (!root || root.offsetParent === null) {
+      root = Array.from(document.querySelectorAll("[data-table-name]")).find(
+        (el) => el.offsetParent !== null
+      );
+    }
+    if (!root) return;
+
+    const selector =
+      e.key === "ArrowLeft"
+        ? '[\\@click="prevPage()"]'
+        : '[\\@click="nextPage()"]';
+    const btn = root.querySelector(selector);
+    if (btn && !btn.disabled) btn.click();
+  });
+});

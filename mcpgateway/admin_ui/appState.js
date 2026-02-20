@@ -17,6 +17,7 @@ export const AppState = {
   pendingRequests: new Set(),
   currentTeamRelationshipFilter: "all",
   restrictedContextLogged: false,
+  lastActivePaginationRoot: null,
   editors: {
     gateway: {
       headers: null,
@@ -25,6 +26,7 @@ export const AppState = {
       closeHandler: null,
     },
   },
+  _paginationQuerySetters: {},
 
   // Track active modals to prevent multiple opens
   activeModals: new Set(),
@@ -114,4 +116,12 @@ export const AppState = {
   setRestrictedContextLogged(value) {
     this.restrictedContextLogged = value;
   },
+
+  getLastActivePaginationRoot() {
+    return this.lastActivePaginationRoot;
+  },
+
+  setLastActivePaginationRoot(value) {
+    this.lastActivePaginationRoot = value;
+  }
 };
