@@ -1861,7 +1861,7 @@ class SessionManagerWrapper:
                 # Inject server_id from URL path into params for /rpc routing
                 if match:
                     server_id = match.group("server_id")
-                    if "params" not in json_body:
+                    if not isinstance(json_body.get("params"), dict):
                         json_body["params"] = {}
                     json_body["params"]["server_id"] = server_id
                     # Re-serialize body with injected server_id
@@ -2013,7 +2013,7 @@ class SessionManagerWrapper:
                         # Inject server_id from URL path into params for /rpc routing
                         if match:
                             server_id = match.group("server_id")
-                            if "params" not in json_body:
+                            if not isinstance(json_body.get("params"), dict):
                                 json_body["params"] = {}
                             json_body["params"]["server_id"] = server_id
                             # Re-serialize body with injected server_id

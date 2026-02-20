@@ -5525,6 +5525,68 @@ async def test_forwarded_post_injects_server_id_with_existing_params(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params_value,params_json",
+    [
+        ("null", b'{"jsonrpc":"2.0","method":"tools/list","params":null,"id":1}'),
+        ("empty list", b'{"jsonrpc":"2.0","method":"tools/list","params":[],"id":1}'),
+    ],
+)
+async def test_forwarded_post_injects_server_id_with_non_dict_params(monkeypatch, params_value, params_json):
+    """Test internally-forwarded POST handles non-dict params (null, list) gracefully.
+
+    Verifies that params is coerced to a dict and server_id is injected
+    instead of crashing with TypeError and falling through to the SDK path.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not fall through to SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-123-def-456"
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        f"/servers/{server_id}/mcp",
+        method="POST",
+        headers=[(b"x-forwarded-internally", b"true")],
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
+
+    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, _make_receive(params_json), send)
+
+        # Must reach /rpc (not fall through to SDK)
+        mock_client.post.assert_called_once()
+        posted_content = mock_client.post.call_args.kwargs["content"]
+        posted_json = orjson.loads(posted_content)
+
+        assert isinstance(posted_json["params"], dict), f"params should be dict, was {type(posted_json['params'])}"
+        assert posted_json["params"]["server_id"] == server_id
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
+
+
+@pytest.mark.asyncio
 async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
     """Test internally-forwarded POST without server_id pattern in URL does not inject server_id.
 
@@ -5678,6 +5740,76 @@ async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
         posted_json = orjson.loads(posted_content)
 
         assert "params" in posted_json
+        assert posted_json["params"]["server_id"] == server_id
+
+    await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params_value,params_json",
+    [
+        ("null", b'{"jsonrpc":"2.0","method":"tools/list","params":null,"id":1}'),
+        ("empty list", b'{"jsonrpc":"2.0","method":"tools/list","params":[],"id":1}'),
+    ],
+)
+async def test_local_affinity_post_injects_server_id_with_non_dict_params(monkeypatch, params_value, params_json):
+    """Test local-owner affinity POST handles non-dict params (null, list) gracefully.
+
+    Mirrors the forwarded-branch test to ensure parity between both injection paths.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-def-123-456"
+    scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+    receive = _make_receive(params_json)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{},"id":1}'
+
+    with (
+        patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
+        patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class),
+        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        mock_client.post.assert_called_once()
+        posted_content = mock_client.post.call_args.kwargs["content"]
+        posted_json = orjson.loads(posted_content)
+
+        assert isinstance(posted_json["params"], dict), f"params should be dict, was {type(posted_json['params'])}"
         assert posted_json["params"]["server_id"] == server_id
 
     await wrapper.shutdown()
