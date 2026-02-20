@@ -99,6 +99,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_generic_token_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token',
         ...     sso_generic_userinfo_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo',
         ...     sso_generic_issuer='https://keycloak.company.com/auth/realms/master',
+        ...     sso_generic_jwks_uri='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/certs',
         ...     sso_generic_scope='openid profile email'
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
@@ -245,6 +246,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                         "token_url": endpoints["token_url"],
                         "userinfo_url": endpoints["userinfo_url"],
                         "issuer": endpoints["issuer"],
+                        "jwks_uri": endpoints.get("jwks_uri"),
                         "scope": "openid profile email",
                         "trusted_domains": settings.sso_trusted_domains,
                         "auto_create_users": settings.sso_auto_create_users,
@@ -258,8 +260,6 @@ def get_predefined_sso_providers() -> List[Dict]:
                             "username_claim": settings.sso_keycloak_username_claim,
                             "email_claim": settings.sso_keycloak_email_claim,
                             "groups_claim": settings.sso_keycloak_groups_claim,
-                            # Keep JWKS endpoint in provider metadata because SSOProvider
-                            # model has no dedicated jwks_uri column.
                             "jwks_uri": endpoints.get("jwks_uri"),
                             "role_mappings": getattr(settings, "sso_keycloak_role_mappings", {}),
                             "default_role": getattr(settings, "sso_keycloak_default_role", None),
@@ -277,24 +277,25 @@ def get_predefined_sso_providers() -> List[Dict]:
         provider_id = settings.sso_generic_provider_id
         display_name = settings.sso_generic_display_name or provider_id.title()
 
-        providers.append(
-            {
-                "id": provider_id,
-                "name": provider_id,
-                "display_name": display_name,
-                "provider_type": "oidc",
-                "client_id": settings.sso_generic_client_id,
-                "client_secret": settings.sso_generic_client_secret.get_secret_value() if settings.sso_generic_client_secret else "",
-                "authorization_url": settings.sso_generic_authorization_url,
-                "token_url": settings.sso_generic_token_url,
-                "userinfo_url": settings.sso_generic_userinfo_url,
-                "issuer": settings.sso_generic_issuer,
-                "scope": settings.sso_generic_scope,
-                "trusted_domains": settings.sso_trusted_domains,
-                "auto_create_users": settings.sso_auto_create_users,
-                "team_mapping": {},
-            }
-        )
+        provider_config = {
+            "id": provider_id,
+            "name": provider_id,
+            "display_name": display_name,
+            "provider_type": "oidc",
+            "client_id": settings.sso_generic_client_id,
+            "client_secret": settings.sso_generic_client_secret.get_secret_value() if settings.sso_generic_client_secret else "",
+            "authorization_url": settings.sso_generic_authorization_url,
+            "token_url": settings.sso_generic_token_url,
+            "userinfo_url": settings.sso_generic_userinfo_url,
+            "issuer": settings.sso_generic_issuer,
+            "scope": settings.sso_generic_scope,
+            "trusted_domains": settings.sso_trusted_domains,
+            "auto_create_users": settings.sso_auto_create_users,
+            "team_mapping": {},
+        }
+        if settings.sso_generic_jwks_uri:
+            provider_config["jwks_uri"] = settings.sso_generic_jwks_uri
+        providers.append(provider_config)
 
     return providers
 

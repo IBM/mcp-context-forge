@@ -5163,6 +5163,7 @@ class SSOProvider(Base):
         token_url (str): OAuth token endpoint
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
+        jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5200,6 +5201,7 @@ class SSOProvider(Base):
     token_url: Mapped[str] = mapped_column(String(500), nullable=False)
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
+    jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
