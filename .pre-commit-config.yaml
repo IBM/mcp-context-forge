@@ -304,11 +304,6 @@ repos:
         description: Checks XML files for parseable syntax.
         types: [xml]
 
-      - id: check-byte-order-marker
-        name: ✅ Check Byte Order Marker
-        description: Forbids files which have a UTF-8 byte-order marker.
-        types: [text]
-
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.38.0
     hooks:

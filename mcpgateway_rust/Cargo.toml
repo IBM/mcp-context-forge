@@ -1,0 +1,48 @@
+[workspace]
+members = [".", "services/a2a_service"]
+resolver = "3"
+
+[workspace.package]
+version = "1.0.0-BETA-2"
+edition = "2024"
+authors = ["MCP Gateway Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
+
+[workspace.dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.28", features = ["abi3-py311"] }
+
+# HTTP client
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls",
+    "json",
+    "stream",
+    "http2",
+] }
+
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[package]
+name = "mcpgateway_rust"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust implementation of the MCP Gateway"
+
+[dependencies]
+pyo3.workspace = true
+a2a_service = { path = "services/a2a_service" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true

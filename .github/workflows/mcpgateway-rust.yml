@@ -1,0 +1,224 @@
+name: MCP Gateway Rust CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "mcpgateway_rust/**"
+      - ".github/workflows/mcpgateway-rust.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "mcpgateway_rust/**"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Rust unit tests and linting
+  rust-tests:
+    name: Rust Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: |
+          rustup toolchain install stable
+          rustup component add rustfmt clippy
+          rustup default stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: mcpgateway_rust/target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: make rust-gateway-fmt-check
+
+      - name: Run Clippy
+        run: make rust-gateway-clippy
+
+      - name: Run Rust tests
+        run: make rust-gateway-test-verbose
+
+
+  # Build wheels for multiple platforms (native builds)
+  build-wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build wheels
+        working-directory: mcpgateway_rust
+        run: maturin build --release --out dist
+
+      - name: Upload wheels as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: mcpgateway_rust/dist/*.whl
+
+  # Security audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: make rust-gateway-audit
+
+  # Coverage report
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust stable and components
+        run: |
+          rustup default stable
+          rustup component add llvm-tools-preview
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.2"
+
+      - name: Install maturin as CLI tool
+        run: uv tool install maturin
+
+      - name: Create virtual environment
+        run: uv venv
+
+      - name: Install coverage tools
+        run: |
+          uv pip install -e ".[dev]"
+          cargo install cargo-tarpaulin
+
+      - name: Build Rust extension
+        run: make rust-gateway-install-debug
+
+      - name: Run Rust tests with coverage
+        working-directory: mcpgateway_rust
+        run: cargo tarpaulin --workspace --out Xml --output-dir coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./mcpgateway_rust/coverage/cobertura.xml
+          flags: mcpgateway-rust
+          name: mcpgateway-rust-coverage
+
+  # Build documentation
+  documentation:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Build Rust docs
+        run: make rust-gateway-doc
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpgateway-rust-docs
+          path: mcpgateway_rust/target/doc
+
+  # Release build (only on tags)
+  release:
+    name: Release Build
+    runs-on: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [rust-tests, python-integration]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build release wheels
+        working-directory: mcpgateway_rust
+        run: maturin build --release --out dist
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-wheels-${{ matrix.os }}
+          path: mcpgateway_rust/dist/*.whl
+
+      - name: Publish to PyPI (if tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        working-directory: mcpgateway_rust
+        run: maturin publish --username __token__ --password $MATURIN_PYPI_TOKEN
