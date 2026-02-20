@@ -202,7 +202,25 @@ def _start_migrations() -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         # No running loop (import-time); run migrations in a daemon thread to avoid blocking startup
-        t = Thread(target=lambda: asyncio.run(bootstrap_db()), daemon=True)
+        # Run migrations in a background thread but capture failures and update migration_status
+        def _run_bootstrap_background() -> None:
+            try:
+                asyncio.run(bootstrap_db())
+            except Exception as exc:  # Capture and log exceptions from background migrations
+                logger.exception("Background migrations failed: %s", exc)
+                try:
+                    # Update the shared migration_status under the lock; these globals exist in bootstrap_db_module
+                    with bootstrap_db_module.migration_status_lock:
+                        bootstrap_db_module.migration_status["state"] = "failed"
+                        try:
+                            bootstrap_db_module.migration_status["finished_at"] = bootstrap_db_module.utc_now().isoformat()
+                        except Exception:
+                            bootstrap_db_module.migration_status["finished_at"] = None
+                        bootstrap_db_module.migration_status["message"] = str(exc)
+                except Exception:
+                    logger.debug("Failed to update migration_status after background failure", exc_info=True)
+
+        t = Thread(target=_run_bootstrap_background, daemon=True)
         t.start()
     else:
         loop.create_task(bootstrap_db())
@@ -6706,8 +6724,16 @@ def healthcheck():
         db.commit()
         result = {"status": "healthy"}
         try:
-            # Attach migration status if available
-            result["migration"] = getattr(bootstrap_db_module, "migration_status", None)
+            # Attach migration status if available; read it under the module lock
+            try:
+                with bootstrap_db_module.migration_status_lock:
+                    result["migration"] = bootstrap_db_module.migration_status.copy()
+            except Exception:
+                # If lock or status not available or any error occurs, fall back to direct attribute read
+                try:
+                    result["migration"] = bootstrap_db_module.migration_status
+                except Exception:
+                    result["migration"] = None
         except Exception:
             result["migration"] = None
         return result

@@ -38,20 +38,20 @@ import os
 from pathlib import Path
 import tempfile
 from typing import cast
-from datetime import datetime
+import threading
 import time
 
 # Third-Party
 from alembic import command
 from alembic.config import Config
 from filelock import FileLock
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, text, bindparam
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
+from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
@@ -60,6 +60,8 @@ _MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration
 # Module-level migration status so other parts of the app (health) can inspect
 # Possible states: pending, running, succeeded, failed, skipped
 migration_status: dict = {"state": "pending", "started_at": None, "finished_at": None, "message": None}
+# Protect access to migration_status across threads
+migration_status_lock = threading.Lock()
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -562,9 +564,16 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
         logger.error(f"Failed to bootstrap resource assignments: {e}")
 
 
+# NOTE: Batched update helper was removed as it was unused in the PR.
+# If/when required, reintroduce with expanding bindparams (sqlalchemy.bindparam(..., expanding=True)).
+
+
 def run_batched_update(connection: Connection, select_sql: str, update_sql: str, batch_size: int = 1000) -> int:
     """
     Helper to run large data migrations in batches.
+
+    Uses SQLAlchemy's expanding bind parameter to safely pass Python lists
+    into a ``IN (:ids)`` style query when necessary.
 
     Args:
         connection: Locked SQLAlchemy connection
@@ -577,12 +586,13 @@ def run_batched_update(connection: Connection, select_sql: str, update_sql: str,
     """
     total = 0
     while True:
-        ids = [row[0] for row in connection.execute(text(select_sql), {"batch": batch_size}).fetchall()]
+        rows = connection.execute(text(select_sql), {"batch": batch_size}).fetchall()
+        ids = [row[0] for row in rows]
         if not ids:
             break
-        # Execute update for this batch
-        connection.execute(text(update_sql).bindparams(ids=ids), {"ids": ids})
-        # Commit per batch; allow exceptions to propagate to caller
+
+        # Use expanding bindparam so SQLAlchemy expands the list into positional params
+        connection.execute(text(update_sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
         connection.commit()
         total += len(ids)
     return total
@@ -607,8 +617,9 @@ async def main() -> None:
         Exception: If migration or bootstrap fails for other reasons.
     """
     # Mark migration as running so health endpoint can report
-    migration_status["state"] = "running"
-    migration_status["started_at"] = datetime.utcnow().isoformat()
+    with migration_status_lock:
+        migration_status["state"] = "running"
+        migration_status["started_at"] = utc_now().isoformat()
 
     engine = create_engine(settings.database_url)
     ini_path = files("mcpgateway").joinpath("alembic.ini")
@@ -682,18 +693,20 @@ async def main() -> None:
                 conn.commit()  # Ensure all migration changes are permanently committed
     except Exception as e:
         logger.error(f"Migration/Bootstrap failed: {e}")
-        migration_status["state"] = "failed"
-        migration_status["finished_at"] = datetime.utcnow().isoformat()
-        migration_status["message"] = str(e)
+        with migration_status_lock:
+            migration_status["state"] = "failed"
+            migration_status["finished_at"] = utc_now().isoformat()
+            migration_status["message"] = str(e)
         # Allow retry logic or container restart to handle transient issues
         raise
     finally:
         # Dispose the engine to close all connections in the pool
         engine.dispose()
 
-    migration_status["state"] = "succeeded"
-    migration_status["finished_at"] = datetime.utcnow().isoformat()
-    migration_status["message"] = None
+    with migration_status_lock:
+        migration_status["state"] = "succeeded"
+        migration_status["finished_at"] = utc_now().isoformat()
+        migration_status["message"] = None
 
     logger.info("Database ready")
 
