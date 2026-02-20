@@ -13,8 +13,8 @@ import orjson
 import pytest
 
 # First-Party
-import mcpgateway.toolops.toolops_altk_service as svc
 import mcpgateway.services.mcp_client_chat_service as mcs
+import mcpgateway.toolops.toolops_altk_service as svc
 
 
 class DummyTool:
@@ -32,7 +32,7 @@ class DummyTool:
 def test_custom_execute_prompt_success(monkeypatch):
     llm = MagicMock()
     llm.invoke.return_value = MagicMock(content="ok")
-    monkeypatch.setattr(svc, "get_llm_instance", lambda model_id="model-1",model_type="chat": (llm, None))
+    monkeypatch.setattr(svc, "get_llm_instance", lambda model_id="model-1", model_type="chat": (llm, None))
     assert svc.custom_mcp_cf_execute_prompt("hello") == "ok"
 
 
@@ -103,7 +103,7 @@ async def test_validation_generate_test_cases_status_with_record(monkeypatch):
     record = MagicMock(run_status="in-progress")
     monkeypatch.setattr(svc, "query_testcases_table", lambda _tool_id, _db: record)
 
-    result = await svc.validation_generate_test_cases("tool-1", tool_service, db=MagicMock(), mode="status")
+    result = await svc.validation_generate_test_cases("model-1", "tool-1", tool_service, db=MagicMock(), mode="status")
     assert result == [{"status": "in-progress", "tool_id": "tool-1"}]
 
 
@@ -136,7 +136,9 @@ async def test_execute_tool_nl_test_cases_transport(monkeypatch, path, expected_
     monkeypatch.setattr(svc, "query_tool_auth", lambda _tool_id, _db: {"Authorization": "Bearer t"})
     llm = MagicMock()
     llm.invoke.return_value = MagicMock(content="ok")
-    monkeypatch.setattr(svc, "get_llm_instance", lambda model_id="model-1",model_type="chat": (llm, mcs.LLMConfig(provider="gateway",config=mcs.GatewayConfig(model="model-1", temperature=0, max_tokens=100))))
+    monkeypatch.setattr(
+        svc, "get_llm_instance", lambda model_id="model-1", model_type="chat": (llm, mcs.LLMConfig(provider="gateway", config=mcs.GatewayConfig(model="model-1", temperature=0, max_tokens=100)))
+    )
 
     created_configs = []
 
@@ -184,7 +186,7 @@ async def test_enrich_tool_update_tool_failure_does_not_raise(monkeypatch):
 
     monkeypatch.setattr(svc, "ToolOpsMCPCFToolEnrichment", lambda llm_client=None, gen_mode=None: DummyEnrichment())
 
-    description, tool_schema = await svc.enrich_tool("tool-1", tool_service, db=MagicMock())
+    description, tool_schema = await svc.enrich_tool("model-1", "tool-1", tool_service, db=MagicMock())
     assert description == "enriched"
     assert tool_schema.name == "tool-name"
 
@@ -195,7 +197,7 @@ async def test_enrich_tool_conversion_failure_raises(monkeypatch):
     tool_service.get_tool = AsyncMock(side_effect=RuntimeError("boom"))
 
     with pytest.raises(RuntimeError, match="boom"):
-        await svc.enrich_tool("tool-1", tool_service, db=MagicMock())
+        await svc.enrich_tool("model-1", "tool-1", tool_service, db=MagicMock())
 
 
 @pytest.mark.asyncio
@@ -224,6 +226,7 @@ async def test_execute_tool_nl_testcases_json_decode_error_maps_to_http_400(monk
 
 def test_import_with_altk_present_overrides_execute_prompt_and_builds_llm_config(monkeypatch):
     # Patch MCP-CF get_llm_instance (imported by toolops module at import time) so the module creates TOOLOPS_LLM_CONFIG.
+    # First-Party
     import mcpgateway.toolops.utils.llm_util as mcpgw_llm_util
 
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
@@ -289,7 +292,7 @@ def test_import_with_altk_present_overrides_execute_prompt_and_builds_llm_config
     monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
 
-    assert module.TOOLOPS_LLM_CONFIG is not None
+    assert module.TOOLOPS_MODEL_ID is None  # Initially None, set per-request
     assert module.llm_util.execute_prompt is module.custom_mcp_cf_execute_prompt
     assert module.prompt_execution.execute_prompt is module.custom_mcp_cf_execute_prompt
     assert module.nlg_util.execute_prompt is module.custom_mcp_cf_execute_prompt
