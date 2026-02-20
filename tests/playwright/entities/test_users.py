@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/playwright/entities/test_users.py
+"""CRUD tests for Users entity in MCP Gateway Admin UI.
+
+Location: ./tests/playwright/entities/test_users.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Marek Dano
-
-CRUD tests for Users entity in MCP Gateway Admin UI.
 """
 
 # Third-Party
@@ -25,11 +25,7 @@ def _create_user_and_navigate(users_page: UsersPage, test_user_data: dict) -> No
     users_page.navigate_to_users_tab()
     users_page.wait_for_visible(users_page.create_user_form, timeout=15000)
 
-    with users_page.page.expect_response(
-        lambda response: "/admin/users" in response.url
-        and response.request.method == "POST"
-        and "/partial" not in response.url
-    ) as response_info:
+    with users_page.page.expect_response(lambda response: "/admin/users" in response.url and response.request.method == "POST" and "/partial" not in response.url) as response_info:
         users_page.create_user(
             email=test_user_data["email"],
             full_name=test_user_data["full_name"],
@@ -66,10 +62,7 @@ class TestUsersCRUD:
         updated_name = f"Updated {test_user_data['full_name']}"
         users_page.click_edit_button(test_user_data["email"])
 
-        with users_page.page.expect_response(
-            lambda response: "/update" in response.url
-            and response.request.method == "POST"
-        ) as response_info:
+        with users_page.page.expect_response(lambda response: "/update" in response.url and response.request.method == "POST") as response_info:
             users_page.submit_edit_form(full_name=updated_name)
         response = response_info.value
         assert response.status < 400, f"User edit failed with status {response.status}"
@@ -79,7 +72,8 @@ class TestUsersCRUD:
 
         # Verify the updated name appears in the user card
         card = users_page.find_user_card(test_user_data["email"])
-        assert updated_name in card.text_content()
+        card_text = card.text_content() or ""
+        assert updated_name in card_text
 
         # Cleanup
         cleanup_user(users_page.page, test_user_data["email"])
@@ -89,10 +83,7 @@ class TestUsersCRUD:
         _create_user_and_navigate(users_page, test_user_data)
 
         # Delete user (accepts hx-confirm dialog)
-        with users_page.page.expect_response(
-            lambda response: "/admin/users" in response.url
-            and response.request.method == "DELETE"
-        ) as response_info:
+        with users_page.page.expect_response(lambda response: "/admin/users" in response.url and response.request.method == "DELETE") as response_info:
             users_page.click_delete(test_user_data["email"])
         response = response_info.value
         assert response.status < 400, f"User deletion failed with status {response.status}"
@@ -107,10 +98,7 @@ class TestUsersCRUD:
         _create_user_and_navigate(users_page, test_user_data)
 
         # Deactivate user (in-place HTMX outerHTML swap on .user-card)
-        with users_page.page.expect_response(
-            lambda response: "/deactivate" in response.url
-            and response.request.method == "POST"
-        ) as response_info:
+        with users_page.page.expect_response(lambda response: "/deactivate" in response.url and response.request.method == "POST") as response_info:
             users_page.click_deactivate(test_user_data["email"])
         response = response_info.value
         assert response.status < 400, f"User deactivation failed with status {response.status}"
@@ -127,18 +115,13 @@ class TestUsersCRUD:
         _create_user_and_navigate(users_page, test_user_data)
 
         # Deactivate user first (in-place swap)
-        with users_page.page.expect_response(
-            lambda response: "/deactivate" in response.url
-            and response.request.method == "POST"
-        ):
+        with users_page.page.expect_response(lambda response: "/deactivate" in response.url and response.request.method == "POST") as deactivate_info:
             users_page.click_deactivate(test_user_data["email"])
+        assert deactivate_info.value.status < 400, f"User deactivation (setup) failed with status {deactivate_info.value.status}"  # nosec B101
         users_page.page.wait_for_timeout(1000)
 
         # Now activate user (in-place swap)
-        with users_page.page.expect_response(
-            lambda response: "/activate" in response.url
-            and response.request.method == "POST"
-        ) as response_info:
+        with users_page.page.expect_response(lambda response: "/activate" in response.url and response.request.method == "POST") as response_info:
             users_page.click_activate(test_user_data["email"])
         response = response_info.value
         assert response.status < 400, f"User activation failed with status {response.status}"
@@ -155,10 +138,7 @@ class TestUsersCRUD:
         _create_user_and_navigate(users_page, test_user_data)
 
         # Force password change (in-place swap)
-        with users_page.page.expect_response(
-            lambda response: "/force-password-change" in response.url
-            and response.request.method == "POST"
-        ) as response_info:
+        with users_page.page.expect_response(lambda response: "/force-password-change" in response.url and response.request.method == "POST") as response_info:
             users_page.click_force_password_change(test_user_data["email"])
         response = response_info.value
         assert response.status < 400, f"Force password change failed with status {response.status}"

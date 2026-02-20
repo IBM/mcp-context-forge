@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/playwright/pages/users_page.py
+"""Users page object for User Management features in the admin UI.
+
+Location: ./tests/playwright/pages/users_page.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Marek Dano
-
-Users page object for User Management features in the admin UI.
 """
 
 # Third-Party
@@ -198,7 +198,7 @@ class UsersPage(BasePage):
             True if the badge is present on the user card
         """
         card = self.find_user_card(email)
-        return card.locator(f"span:has-text('{badge_text}')").count() > 0
+        return card.get_by_text(badge_text, exact=True).count() > 0
 
     # ==================== User Card Actions ====================
 
