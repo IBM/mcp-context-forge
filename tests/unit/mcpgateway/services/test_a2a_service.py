@@ -2551,7 +2551,7 @@ class TestSetAgentStateToolCascade:
 
     async def test_cascade_deactivates_tool(self, service, mock_db, monkeypatch):
         """Deactivating agent with tool_id cascades to tool (lines 1236-1240)."""
-        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1")
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool"))
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -2570,16 +2570,20 @@ class TestSetAgentStateToolCascade:
             invalidate_tools=AsyncMock(),
         )
         monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        dummy_tool_lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_tool_lookup_cache", lambda: dummy_tool_lookup_cache)
 
         await service.set_agent_state(mock_db, "a1", activate=False)
 
         assert agent.enabled is False
         assert mock_db.execute.call_count == 2
         dummy_cache.invalidate_tools.assert_awaited_once()
+        dummy_tool_lookup_cache.invalidate.assert_awaited_once_with("my-tool")
 
     async def test_cascade_activates_tool(self, service, mock_db, monkeypatch):
         """Activating agent with tool_id cascades to tool."""
-        agent = SimpleNamespace(id="a1", enabled=False, name="ag", reachable=True, tool_id="t1")
+        agent = SimpleNamespace(id="a1", enabled=False, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool"))
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -2599,14 +2603,18 @@ class TestSetAgentStateToolCascade:
         )
         monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
 
+        dummy_tool_lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_tool_lookup_cache", lambda: dummy_tool_lookup_cache)
+
         await service.set_agent_state(mock_db, "a1", activate=True)
 
         assert agent.enabled is True
         dummy_cache.invalidate_tools.assert_awaited_once()
+        dummy_tool_lookup_cache.invalidate.assert_awaited_once_with("my-tool")
 
     async def test_cascade_no_tool_id_skips_update(self, service, mock_db, monkeypatch):
         """Agent without tool_id skips tool cascade."""
-        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id=None)
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id=None, tool=None)
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -2625,7 +2633,7 @@ class TestSetAgentStateToolCascade:
 
     async def test_cascade_tool_already_matching_no_commit(self, service, mock_db, monkeypatch):
         """Tool already in desired state — rowcount=0, no extra commit or cache invalidation."""
-        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1")
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool"))
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -2649,3 +2657,43 @@ class TestSetAgentStateToolCascade:
 
         assert mock_db.execute.call_count == 2
         dummy_cache.invalidate_tools.assert_not_awaited()
+
+    async def test_cascade_tool_update_failure_logs_warning(self, service, mock_db, monkeypatch):
+        """Tool cascade failure is caught and logged, agent state change is preserved."""
+        agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool"))
+
+        # First call returns agent, second call (tool UPDATE) raises
+        execute_results = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=agent)),
+        ]
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return execute_results[0]
+            raise RuntimeError("DB write failed")
+
+        mock_db.execute.side_effect = side_effect
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        dummy_cache = SimpleNamespace(
+            invalidate_agents=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
+
+        with patch("mcpgateway.services.a2a_service.logger") as mock_logger:
+            result = await service.set_agent_state(mock_db, "a1", activate=False)
+
+        # Agent state was committed successfully before cascade
+        assert agent.enabled is False
+        assert result is not None
+        # Tool cache was NOT invalidated since cascade failed
+        dummy_cache.invalidate_tools.assert_not_awaited()
+        # Warning was logged
+        mock_logger.warning.assert_called_once()
+        assert "Failed to cascade tool state" in mock_logger.warning.call_args[0][0]

@@ -41,6 +41,7 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+_TOOL_LOOKUP_CACHE = None
 
 
 def _get_registry_cache():
@@ -56,6 +57,21 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+def _get_tool_lookup_cache():
+    """Get tool lookup cache singleton lazily.
+
+    Returns:
+        ToolLookupCache instance.
+    """
+    global _TOOL_LOOKUP_CACHE  # pylint: disable=global-statement
+    if _TOOL_LOOKUP_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+        _TOOL_LOOKUP_CACHE = tool_lookup_cache
+    return _TOOL_LOOKUP_CACHE
 
 
 # Initialize logging service first
@@ -1233,11 +1249,17 @@ class A2AAgentService:
 
         # Cascade: update associated tool's enabled status to match agent
         if agent.tool_id:
-            now = datetime.now(timezone.utc)
-            tool_result = db.execute(update(DbTool).where(DbTool.id == agent.tool_id).where(DbTool.enabled != activate).values(enabled=activate, updated_at=now))
-            if tool_result.rowcount > 0:
-                db.commit()
-                await cache.invalidate_tools()
+            try:
+                now = datetime.now(timezone.utc)
+                tool_result = db.execute(update(DbTool).where(DbTool.id == agent.tool_id).where(DbTool.enabled != activate).values(enabled=activate, updated_at=now))
+                if tool_result.rowcount > 0:
+                    db.commit()
+                    await cache.invalidate_tools()
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    if agent.tool and agent.tool.name:
+                        await tool_lookup_cache.invalidate(agent.tool.name)
+            except Exception:
+                logger.warning("Failed to cascade tool state for A2A agent %s (tool_id=%s)", agent.id, agent.tool_id, exc_info=True)
 
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
