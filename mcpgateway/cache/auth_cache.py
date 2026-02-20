@@ -100,15 +100,41 @@ class AuthCache:
     - User data (email, is_admin, is_active, etc.)
     - Personal team ID for the user
     - Token revocation status
+    - Team memberships and roles
 
     Cache lookup checks L1 (in-memory) first for lowest latency, then L2
     (Redis) for distributed consistency. Redis hits are written through
     to L1 for subsequent requests.
 
+    TTL Design Rationale (Auth Hot Path):
+        user_ttl (60s): Balances performance with freshness for user data.
+            - Staleness window: Up to 60 seconds for user attribute changes
+            - Acceptable for most use cases (email, is_admin, is_active)
+            - Cache invalidation on user updates reduces actual staleness
+            - Consider 30s for high-security environments
+
+        revocation_ttl (30s): Shorter TTL for security-critical revocation data.
+            - Staleness window: Up to 30 seconds for token revocation
+            - Limits exposure window for revoked tokens
+            - Balances security with performance (revocation checks are frequent)
+            - Cache invalidation on revocation reduces actual staleness to ~0s
+
+        team_ttl (60s): Team membership and role data.
+            - Staleness window: Up to 60 seconds for team changes
+            - Cache invalidation on membership changes reduces actual staleness
+            - Acceptable for authorization decisions in most scenarios
+
+    Staleness Mitigation:
+        - Proactive cache invalidation on all mutations (user update, team change, etc.)
+        - Actual staleness is typically <1s due to invalidation
+        - TTL acts as safety net for missed invalidations or distributed cache lag
+        - Redis pub/sub propagates invalidations across workers
+
     Attributes:
         user_ttl: TTL in seconds for user data cache (default: 60)
         revocation_ttl: TTL in seconds for revocation cache (default: 30)
         team_ttl: TTL in seconds for team cache (default: 60)
+        role_ttl: TTL in seconds for role cache (default: 60)
 
     Examples:
         >>> cache = AuthCache(user_ttl=60, revocation_ttl=30)
@@ -129,11 +155,19 @@ class AuthCache:
         """Initialize the auth cache.
 
         Args:
-            user_ttl: TTL for user data cache in seconds (default: from settings or 60)
-            revocation_ttl: TTL for revocation cache in seconds (default: from settings or 30)
-            team_ttl: TTL for team cache in seconds (default: from settings or 60)
-            role_ttl: TTL for role cache in seconds (default: from settings or 60)
-            enabled: Whether caching is enabled (default: from settings or True)
+            user_ttl: TTL for user data cache in seconds (default: from settings or 60).
+                Recommended: 30-60s for auth hot path. Shorter TTL (30s) for high-security
+                environments where user attribute changes must propagate quickly.
+            revocation_ttl: TTL for revocation cache in seconds (default: from settings or 30).
+                Recommended: 30s to limit exposure window for revoked tokens. This is the
+                maximum time a revoked token could still be accepted (actual staleness is
+                typically <1s due to proactive cache invalidation).
+            team_ttl: TTL for team cache in seconds (default: from settings or 60).
+                Recommended: 60s for team membership and role data. Cache invalidation on
+                membership changes keeps actual staleness low.
+            role_ttl: TTL for role cache in seconds (default: from settings or 60).
+                Recommended: 60s for RBAC role assignments.
+            enabled: Whether caching is enabled (default: from settings or True).
 
         Examples:
             >>> cache = AuthCache(user_ttl=120, revocation_ttl=30)
