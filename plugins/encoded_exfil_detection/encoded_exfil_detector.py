@@ -311,7 +311,11 @@ def _scan_container(container: Any, cfg: EncodedExfilDetectorConfig, path: str =
     """Recursively scan container for encoded exfiltration patterns."""
     if use_rust and _RUST_AVAILABLE and encoded_exfil_detection is not None:
         try:
-            count, redacted, findings = encoded_exfil_detection.py_scan_container(container, cfg)
+            # Validate that encoded_exfil_detection is callable (should be py_scan_container function)
+            if not callable(encoded_exfil_detection):
+                raise TypeError(f"encoded_exfil_detection is not callable: {type(encoded_exfil_detection)}")
+            # Function signature: py_scan_container(container, config) -> (count, redacted, findings)
+            count, redacted, findings = encoded_exfil_detection(container, cfg)
             normalized_findings = []
             for finding in findings:
                 if isinstance(finding, dict):

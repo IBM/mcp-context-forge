@@ -117,8 +117,12 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
     # Use Rust implementation if available and requested
     if use_rust and _RUST_AVAILABLE and secrets_detection is not None:
         try:
+            # Validate that secrets_detection is callable (should be py_scan_container function)
+            if not callable(secrets_detection):
+                raise TypeError(f"secrets_detection is not callable: {type(secrets_detection)}")
             logger.debug("Using Rust implementation")
             # Pass Pydantic model directly - Rust extracts attributes
+            # Function signature: py_scan_container(container, config) -> (count, redacted, findings)
             return secrets_detection(container, cfg)
         except Exception as e:
             logger.warning(f"Rust scan failed, falling back to Python: {e}")

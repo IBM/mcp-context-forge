@@ -168,7 +168,7 @@ class PIIDetector:
                         mask_strategy=MaskingStrategy.PARTIAL,
                     ),
                     # Generic ID context
-                    # Note: Phone numbers are filtered by phone detector which runs first
+                    # Note: This runs before phone detector, so may match phone numbers with ID context
                     PIIPattern(
                         type=PIIType.BSN,
                         pattern=r"\b(?:ID|Order|Invoice|Tracking|Numbers?)[:\s#]*\d{9}\b",
@@ -463,9 +463,17 @@ class PIIFilterPlugin(Plugin):
 
         # Auto-detect and use Rust implementation if available
         if _RUST_AVAILABLE and _RustPIIDetector is not None:
-            self.detector = _RustPIIDetector(self.pii_config)
-            self.implementation = "Rust"
-            logger.info("🦀 PIIFilterPlugin initialized with Rust acceleration (5-100x speedup)")
+            try:
+                # Validate that Rust detector can be instantiated
+                self.detector = _RustPIIDetector(self.pii_config)
+                self.implementation = "Rust"
+                logger.info("🦀 PIIFilterPlugin initialized with Rust acceleration (5-100x speedup)")
+            except Exception as e:
+                # Fall back to Python if Rust initialization fails
+                logger.warning(f"⚠️  Rust PII detector initialization failed, falling back to Python: {e}")
+                self.detector = PIIDetector(self.pii_config)
+                self.implementation = "Python"
+                logger.info("🐍 PIIFilterPlugin initialized with Python implementation (Rust unavailable)")
         else:
             self.detector = PIIDetector(self.pii_config)
             self.implementation = "Python"

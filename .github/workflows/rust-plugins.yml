@@ -247,11 +247,13 @@ jobs:
       - name: Build and publish release wheels
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          make rust-release
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            make rust-release-publish
-          fi
+        run: make rust-release
+
+      - name: Publish release wheels (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: make rust-release-publish
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4

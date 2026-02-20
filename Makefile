@@ -7463,7 +7463,6 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-build                            - Build Rust plugins in release mode (native)
 # help: rust-dev                              - Build and install Rust plugins in development mode
 # help: rust-test                             - Run Rust plugin tests
-# help: rust-test-integration                 - Run Rust integration tests
 # help: rust-test-all                         - Run all Rust and Python integration tests
 # help: rust-bench                            - Run Rust plugin benchmarks
 # help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
@@ -7481,7 +7480,7 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-cross                            - Install targets + build all Linux (convenience)
 # help: rust-cross-install-build              - Install targets + build all platforms (one command)
 
-.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-build rust-dev rust-test rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 

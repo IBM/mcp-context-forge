@@ -477,7 +477,9 @@ async def oauth_callback(
 
                 try {{
                     const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id))}', {{
-                        method: 'POST'
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {{ 'Accept': 'text/html' }}
                     }});
 
                     const result = await response.json();

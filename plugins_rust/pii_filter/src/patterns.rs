@@ -42,7 +42,7 @@ static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 // Match 9-digit numbers with BSN context keywords to avoid false positives
 // Positive context: BSN, Citizen ID, Burgerservicenummer, ID, Order, Invoice, Tracking, Numbers, etc.
 // Note: Removed negative lookbehind (not supported by standard regex crate)
-// Phone numbers are filtered by the phone detector which runs first
+// BSN detection takes precedence over phone detection (BSN patterns are added first in compile_patterns)
 static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
         (
