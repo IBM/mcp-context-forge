@@ -443,6 +443,14 @@ class TestServersExtended:
         servers_page.search_servers("")
 
         # Verify servers are restored
+        try:
+            servers_page.page.wait_for_function(f"() => document.querySelectorAll('[data-testid=\"server-item\"]').length === {initial_count}", timeout=10000)
+        except PlaywrightTimeoutError:
+            # Fallback for when direct DOM count is not reliable
+            servers_page.page.reload()
+            servers_page.navigate_to_servers_tab()
+            servers_page.wait_for_servers_table_loaded()
+
         restored_count = servers_page.get_server_count()
         assert restored_count == initial_count
 

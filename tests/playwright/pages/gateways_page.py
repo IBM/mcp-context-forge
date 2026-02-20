@@ -294,6 +294,7 @@ class GatewaysPage(BasePage):
 
     def navigate_to_gateways_tab(self) -> None:
         """Navigate to Gateways tab and wait for panel to be visible."""
+        self.wait_for_visible(self.sidebar.servers_tab)
         self.sidebar.click_gateways_tab()
 
     # ==================== High-Level Gateway Operations ====================
