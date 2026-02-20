@@ -976,3 +976,174 @@ class TestValidationMiddleware:
             result = await middleware._sanitize_response(response)
             # Should return unchanged
             assert result.body == large_body
+
+    def test_lru_cache_expiration(self):
+        """Test LRU cache TTL expiration."""
+        from mcpgateway.middleware.validation_middleware import LRUCache
+        import time
+        
+        cache = LRUCache(max_size=10, ttl=1)
+        cache.set("key1", True)
+        
+        # Should exist initially
+        assert cache.get("key1") is True
+        
+        # Wait for expiration
+        time.sleep(1.1)
+        
+        # Should be expired and return None (lines 67-68)
+        assert cache.get("key1") is None
+
+    def test_lru_cache_update_existing(self):
+        """Test updating existing cache entry."""
+        from mcpgateway.middleware.validation_middleware import LRUCache
+        
+        cache = LRUCache(max_size=10, ttl=300)
+        cache.set("key1", True)
+        
+        # Update existing entry (lines 83-84)
+        cache.set("key1", False)
+        
+        assert cache.get("key1") is False
+
+    def test_lru_cache_eviction(self):
+        """Test LRU cache eviction when full."""
+        from mcpgateway.middleware.validation_middleware import LRUCache
+        
+        cache = LRUCache(max_size=3, ttl=300)
+        cache.set("key1", True)
+        cache.set("key2", True)
+        cache.set("key3", True)
+        
+        # Cache is now full, adding key4 should evict key1 (line 87)
+        cache.set("key4", True)
+        
+        assert cache.get("key1") is None
+        assert cache.get("key4") is True
+
+    def test_invalid_skip_endpoint_regex(self):
+        """Test handling of invalid regex in skip endpoints."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            # Invalid regex pattern (lines 145-146)
+            mock_settings.validation_skip_endpoints = [r"^/health$", r"[invalid(regex"]
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            # Should not crash, just skip invalid pattern
+            middleware = ValidationMiddleware(app=None)
+            
+            # Valid pattern should still work
+            assert middleware._should_skip_endpoint("/health") is True
+
+    @pytest.mark.asyncio
+    async def test_skip_endpoint_dispatch(self):
+        """Test that skipped endpoints bypass validation."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = [r"^/health$"]
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create request for skipped endpoint (lines 175-177)
+            scope = {
+                "type": "http",
+                "method": "GET",
+                "path": "/health",
+                "query_string": b"",
+                "headers": [],
+            }
+            request = Request(scope)
+
+            async def call_next(req):
+                return Response("ok")
+
+            response = await middleware.dispatch(request, call_next)
+            assert response.body == b"ok"
+
+    @pytest.mark.asyncio
+    async def test_sanitize_empty_response(self):
+        """Test sanitization of empty response body."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Empty response (line 389)
+            response = Response(content=b"")
+            response.body = b""
+
+            result = await middleware._sanitize_response(response)
+            assert result.body == b""
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_string_sampling(self):
+        """Test response sanitization with string body sampling."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = True
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # String body (not bytes) for sampling (lines 408-409)
+            large_body = "clean data " * 200  # ~2200 chars
+            response = Response(content=large_body)
+            response.body = large_body
+
+            result = await middleware._sanitize_response(response)
+            assert result is not None
