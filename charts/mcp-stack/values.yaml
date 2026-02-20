@@ -941,6 +941,9 @@ mcpContextForge:
     SSO_ENTRA_ROLE_MAPPINGS: "{}"          # map groups to roles (JSON)
     SSO_ENTRA_DEFAULT_ROLE: ""             # default role for unmapped users
     SSO_ENTRA_SYNC_ROLES_ON_LOGIN: "true"  # sync roles on each login
+    SSO_ENTRA_GRAPH_API_ENABLED: "true"    # call Graph API for groups overage fallback
+    SSO_ENTRA_GRAPH_API_TIMEOUT: "10"      # timeout (seconds) for Graph fallback call
+    SSO_ENTRA_GRAPH_API_MAX_GROUPS: "0"    # cap Graph-fetched groups (0 = no cap)
 
     # ─ Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.) ─
     SSO_GENERIC_ENABLED: "false"           # enable generic OIDC provider authentication
