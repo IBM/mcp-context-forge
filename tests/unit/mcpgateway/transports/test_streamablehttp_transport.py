@@ -429,8 +429,11 @@ async def test_proxy_list_prompts_forwards_meta(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
 
     class FakeSession:
-        async def __aenter__(self): return mock_session
-        async def __aexit__(self, *a): pass
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
 
     @asynccontextmanager
     async def fake_client(url, headers, timeout):
@@ -440,6 +443,7 @@ async def test_proxy_list_prompts_forwards_meta(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
 
     from mcp.types import RequestParams
+
     meta = RequestParams.Meta(progressToken="tok-1")
     result = await _proxy_list_prompts_to_gateway(mock_gateway, {}, {}, meta=meta)
 
@@ -470,8 +474,11 @@ async def test_proxy_list_prompts_no_meta(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
 
     class FakeSession:
-        async def __aenter__(self): return mock_session
-        async def __aexit__(self, *a): pass
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
 
     @asynccontextmanager
     async def fake_client(url, headers, timeout):
@@ -650,8 +657,9 @@ async def test_list_prompts_direct_proxy_delegates_to_helper(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
-                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False})))
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
     type(mcp_app).request_context = property(lambda self: mock_ctx)
 
     mock_db_result = MagicMock()
@@ -684,8 +692,7 @@ async def test_list_prompts_direct_proxy_access_denied(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
-                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
 
     mock_db_result = MagicMock()
     mock_db_result.scalar_one_or_none.return_value = mock_gateway
@@ -730,8 +737,11 @@ async def test_proxy_get_prompt_returns_result(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
 
     class FakeSession:
-        async def __aenter__(self): return mock_session
-        async def __aexit__(self, *a): pass
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
 
     @asynccontextmanager
     async def fake_client(url, headers, timeout):
@@ -740,7 +750,7 @@ async def test_proxy_get_prompt_returns_result(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
 
-    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="my-prompt", arguments={"lang": "en"}, meta=None)
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "my-prompt", {"lang": "en"}, None)
 
     assert result is not None
     assert result.description == "A prompt"
@@ -771,8 +781,11 @@ async def test_proxy_get_prompt_forwards_meta_via_send_request(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
 
     class FakeSession:
-        async def __aenter__(self): return mock_session
-        async def __aexit__(self, *a): pass
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
 
     @asynccontextmanager
     async def fake_client(url, headers, timeout):
@@ -782,7 +795,7 @@ async def test_proxy_get_prompt_forwards_meta_via_send_request(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
 
     meta = {"progressToken": "tok-42"}
-    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="meta-prompt", arguments=None, meta=meta)
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "meta-prompt", None, meta)
 
     assert result is not None
     mock_session.send_request.assert_called_once()
@@ -810,7 +823,7 @@ async def test_proxy_get_prompt_exception_returns_none(monkeypatch):
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
 
-    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="p", arguments=None)
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "p", None)
     assert result is None
 
 
@@ -961,8 +974,9 @@ async def test_get_prompt_direct_proxy_delegates_to_helper(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
-                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False})))
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
     type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
 
     mock_db_result = MagicMock()
@@ -981,9 +995,9 @@ async def test_get_prompt_direct_proxy_delegates_to_helper(monkeypatch):
     assert result is not None
     assert len(result.messages) == 1
     proxy_mock.assert_called_once()
-    call_kwargs = proxy_mock.call_args[1]
-    assert call_kwargs["name"] == "my-prompt"
-    assert call_kwargs["arguments"] == {"lang": "en"}
+    call_args = proxy_mock.call_args[0]
+    assert call_args[2] == "my-prompt"
+    assert call_args[3] == {"lang": "en"}
 
 
 @pytest.mark.asyncio
@@ -991,6 +1005,7 @@ async def test_get_prompt_direct_proxy_access_denied(monkeypatch):
     """get_prompt returns [] when direct_proxy RBAC check fails."""
     from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app
     from contextlib import asynccontextmanager
+    import mcp.types as types
 
     mock_gateway = MagicMock()
     mock_gateway.id = "gw-deny"
@@ -999,8 +1014,7 @@ async def test_get_prompt_direct_proxy_access_denied(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
-                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
     type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
 
     mock_db_result = MagicMock()
@@ -1015,7 +1029,7 @@ async def test_get_prompt_direct_proxy_access_denied(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
 
     result = await get_prompt("denied-prompt", None)
-    assert result == []
+    assert result == types.GetPromptResult(messages=[], description=None)
 
 
 # ---------------------------------------------------------------------------
@@ -3977,8 +3991,9 @@ async def test_complete_direct_proxy_delegates_to_helper(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
-                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False})))
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
 
     mock_meta = MagicMock()
     mock_meta.model_dump.return_value = {"progressToken": "tok-1"}
@@ -4020,8 +4035,7 @@ async def test_complete_direct_proxy_access_denied(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
-                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
     type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
 
     mock_db_result = MagicMock()
@@ -4113,8 +4127,11 @@ async def test_proxy_complete_returns_result(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
 
     class FakeSession:
-        async def __aenter__(self): return mock_session
-        async def __aexit__(self, *a): pass
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
 
     @asynccontextmanager
     async def fake_client(url, headers, timeout):
@@ -4156,8 +4173,11 @@ async def test_proxy_complete_forwards_meta_via_send_request(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
 
     class FakeSession:
-        async def __aenter__(self): return mock_session
-        async def __aexit__(self, *a): pass
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
 
     @asynccontextmanager
     async def fake_client(url, headers, timeout):
