@@ -169,8 +169,10 @@ class SSOService:
                     enabled = False
                 else:
                     logger.warning("Invalid provider_metadata.graph_api_enabled=%s; using configured default %s", metadata_enabled, enabled)
+            elif isinstance(metadata_enabled, int):
+                enabled = metadata_enabled != 0
             else:
-                enabled = bool(metadata_enabled)
+                logger.warning("Invalid provider_metadata.graph_api_enabled=%s (type %s); using configured default %s", metadata_enabled, type(metadata_enabled).__name__, enabled)
 
         metadata_timeout = metadata.get("graph_api_timeout")
         if metadata_timeout is not None:
