@@ -2943,11 +2943,7 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 		export HELM_CONFIG_HOME='$(LINT_HELM_ROOT)/config'; \
 		mkdir -p '$(LINT_HELM_ROOT)/plugins' '$(LINT_HELM_ROOT)/data' '$(LINT_HELM_ROOT)/cache' '$(LINT_HELM_ROOT)/config'; \
 		if ! helm plugin list 2>/dev/null | grep -q '^unittest[[:space:]]'; then \
-			if helm plugin install --help 2>/dev/null | grep -q -- '--verify'; then \
-				helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 --verify=false >/dev/null; \
-			else \
-				helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 >/dev/null; \
-			fi; \
+			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 >/dev/null; \
 		fi; \
 		helm unittest $(CHART_DIR)"
 
