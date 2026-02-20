@@ -375,6 +375,26 @@ class TestTeamManagementService:
             assert result is False
             mock_db.rollback.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_update_team_cache_invalidation_error(self, service, mock_db, mock_team):
+        """Test team update succeeds even if cache invalidation fails."""
+        # Create mock memberships
+        mock_membership = MagicMock()
+        mock_membership.user_email = "member@example.com"
+        mock_db.query.return_value.filter.return_value.all.return_value = [mock_membership]
+
+        # Mock auth_cache.invalidate_user_teams to raise an exception
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            with patch("mcpgateway.services.team_management_service.auth_cache") as mock_auth_cache:
+                mock_auth_cache.invalidate_user_teams.side_effect = Exception("Cache error")
+
+                result = await service.update_team(team_id="team123", name="Updated Team")
+
+                # Update should still succeed despite cache error
+                assert result is True
+                assert mock_team.name == "Updated Team"
+                mock_db.commit.assert_called_once()
+
     # =========================================================================
     # Team Deletion Tests
     # =========================================================================
