@@ -77,7 +77,15 @@ class VfsSecurityError(VfsError):
 
 
 def _is_path_within(child: Path, parent: Path) -> bool:
-    """Return True if *child* is equal to or inside *parent* (symlink-safe)."""
+    """Return True if *child* is equal to or inside *parent* (symlink-safe).
+
+    Args:
+        child: Path to test for containment.
+        parent: Enclosing directory path.
+
+    Returns:
+        True if *child* resolves to a location inside *parent*.
+    """
     try:
         child.resolve().relative_to(parent.resolve())
         return True
@@ -105,7 +113,11 @@ class VfsSession:
 
     @property
     def all_dirs(self) -> Tuple[Path, Path, Path]:
-        """Return primary virtual directories."""
+        """Return primary virtual directories.
+
+        Returns:
+            Tuple of (tools_dir, scratch_dir, results_dir).
+        """
         return (self.tools_dir, self.scratch_dir, self.results_dir)
 
 
@@ -139,7 +151,15 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def _deterministic_session_id(self, server_id: str, user_email: str) -> str:
-        """Generate a deterministic session ID from server + user."""
+        """Generate a deterministic session ID from server + user.
+
+        Args:
+            server_id: Unique server identifier.
+            user_email: Email address of the requesting user.
+
+        Returns:
+            A 24-character hex digest uniquely identifying the session.
+        """
         raw = f"{server_id}:{user_email}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
@@ -150,7 +170,17 @@ class VfsService:
         user_email: str,
         token_teams: Optional[List[str]] = None,
     ) -> VfsSession:
-        """Get an existing VFS session or create a new one."""
+        """Get an existing VFS session or create a new one.
+
+        Args:
+            db: SQLAlchemy database session.
+            server: The VFS server record.
+            user_email: Email address of the requesting user.
+            token_teams: JWT team scopes for visibility filtering.
+
+        Returns:
+            The existing or newly created VfsSession.
+        """
         stub_format = getattr(server, "stub_format", None) or self._default_stub_format
         if stub_format not in {"python", "typescript", "json"}:
             stub_format = self._default_stub_format
@@ -189,7 +219,14 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def get_meta_tools(self, server: DbServer) -> List[Dict[str, Any]]:  # noqa: ARG002  # pylint: disable=unused-argument
-        """Return the list of VFS meta-tool definitions for a server."""
+        """Return the list of VFS meta-tool definitions for a server.
+
+        Args:
+            server: The VFS server record.
+
+        Returns:
+            List of MCP tool-definition dicts for enabled meta-tools.
+        """
         browse_tool = {
             "name": META_TOOL_FS_BROWSE,
             "description": "Browse the virtual tool filesystem. Lists files and directories under /tools (read-only tool stubs), /scratch (read-write workspace), and /results (outputs).",
@@ -249,7 +286,24 @@ class VfsService:
         user_email: Optional[str],
         token_teams: Optional[List[str]],
     ) -> Dict[str, Any]:
-        """Browse virtual filesystem for a VFS server."""
+        """Browse virtual filesystem for a VFS server.
+
+        Args:
+            db: SQLAlchemy database session.
+            server: The VFS server record.
+            path: Virtual path to browse (e.g. ``/``, ``/tools``).
+            include_hidden: Whether to include dot-prefixed files.
+            max_entries: Maximum number of directory entries to return.
+            user_email: Email address of the requesting user.
+            token_teams: JWT team scopes for visibility filtering.
+
+        Returns:
+            Dict with ``path``, ``entries``, and ``truncated`` keys.
+
+        Raises:
+            VfsError: If the meta-tool is disabled or the path is not found.
+            VfsSecurityError: If the path is outside the virtual filesystem.
+        """
         if not self._fs_browse_enabled:
             raise VfsError("fs_browse meta-tool is disabled by configuration")
 
@@ -336,7 +390,22 @@ class VfsService:
         user_email: Optional[str],
         token_teams: Optional[List[str]],
     ) -> Dict[str, Any]:
-        """Read a file from the virtual filesystem."""
+        """Read a file from the virtual filesystem.
+
+        Args:
+            db: SQLAlchemy database session.
+            server: The VFS server record.
+            path: Virtual path of the file to read.
+            user_email: Email address of the requesting user.
+            token_teams: JWT team scopes for visibility filtering.
+
+        Returns:
+            Dict with ``path``, ``content``, ``size_bytes``, and ``modified_at``.
+
+        Raises:
+            VfsError: If the meta-tool is disabled, path is missing, or file not found.
+            VfsSecurityError: If the path is outside the virtual filesystem.
+        """
         if not self._fs_read_enabled:
             raise VfsError("fs_read meta-tool is disabled by configuration")
         if not path or not path.strip():
@@ -376,7 +445,23 @@ class VfsService:
         user_email: Optional[str],
         token_teams: Optional[List[str]],
     ) -> Dict[str, Any]:
-        """Write a file to the virtual filesystem (only /scratch and /results)."""
+        """Write a file to the virtual filesystem (only /scratch and /results).
+
+        Args:
+            db: SQLAlchemy database session.
+            server: The VFS server record.
+            path: Virtual path to write (must be under /scratch or /results).
+            content: File content to write.
+            user_email: Email address of the requesting user.
+            token_teams: JWT team scopes for visibility filtering.
+
+        Returns:
+            Dict with ``path``, ``size_bytes``, and ``modified_at``.
+
+        Raises:
+            VfsError: If the meta-tool is disabled, path or content is missing.
+            VfsSecurityError: If the path is outside writable directories.
+        """
         if not self._fs_write_enabled:
             raise VfsError("fs_write meta-tool is disabled by configuration")
         if not path or not path.strip():
@@ -419,7 +504,14 @@ class VfsService:
         server: DbServer,
         token_teams: Optional[List[str]],
     ) -> None:
-        """Regenerate mounted tool stubs if source content changed."""
+        """Regenerate mounted tool stubs if source content changed.
+
+        Args:
+            db: SQLAlchemy database session.
+            session: The current VFS session.
+            server: The VFS server record.
+            token_teams: JWT team scopes for visibility filtering.
+        """
         mounted = self._resolve_mounted_tools(db=db, server=server, user_email=session.user_email, token_teams=token_teams)
         digest_src = [f"{tool.id}:{tool.updated_at.isoformat() if getattr(tool, 'updated_at', None) else ''}:{tool.name}" for tool in mounted]
         digest = hashlib.sha256("\n".join(sorted(digest_src)).encode("utf-8")).hexdigest()
@@ -498,7 +590,15 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def _generate_python_stub(self, tool: DbTool, server_slug: str) -> str:
-        """Generate a Python type-annotated stub for a tool."""
+        """Generate a Python type-annotated stub for a tool.
+
+        Args:
+            tool: The database tool record.
+            server_slug: Slugified server name used in the stub header.
+
+        Returns:
+            Python source code string for the tool stub.
+        """
         function_name = self._python_identifier(self._tool_file_name(tool))
         if self._rust_acceleration_enabled and rust_json_schema_to_stubs is not None:
             with contextlib.suppress(Exception):
@@ -523,7 +623,15 @@ class VfsService:
         )
 
     def _generate_typescript_stub(self, tool: DbTool, server_slug: str) -> str:
-        """Generate a TypeScript interface stub for a tool."""
+        """Generate a TypeScript interface stub for a tool.
+
+        Args:
+            tool: The database tool record.
+            server_slug: Slugified server name used in the stub header.
+
+        Returns:
+            TypeScript source code string for the tool stub.
+        """
         function_name = self._python_identifier(self._tool_file_name(tool))
         if self._rust_acceleration_enabled and rust_json_schema_to_stubs is not None:
             with contextlib.suppress(Exception):
@@ -550,7 +658,15 @@ class VfsService:
         )
 
     def _generate_json_schema(self, tool: DbTool, server_slug: str) -> str:
-        """Generate raw MCP JSON tool schema."""
+        """Generate raw MCP JSON tool schema.
+
+        Args:
+            tool: The database tool record.
+            server_slug: Slugified server name used in the schema payload.
+
+        Returns:
+            JSON string of the tool schema.
+        """
         return json.dumps(
             {
                 "name": tool.name,
@@ -567,7 +683,14 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def _schema_to_python_type(self, schema: Dict[str, Any]) -> str:
-        """Map JSON Schema fragments to Python typing annotations."""
+        """Map JSON Schema fragments to Python typing annotations.
+
+        Args:
+            schema: A JSON Schema dict (or fragment) to convert.
+
+        Returns:
+            Python typing annotation string (e.g. ``str``, ``Dict[str, Any]``).
+        """
         schema_type = schema.get("type")
         if schema.get("enum"):
             values = [repr(v) for v in schema.get("enum", [])]
@@ -587,7 +710,14 @@ class VfsService:
         return "Any"
 
     def _schema_to_typescript_type(self, schema: Dict[str, Any]) -> str:
-        """Map JSON Schema fragments to TypeScript type expressions."""
+        """Map JSON Schema fragments to TypeScript type expressions.
+
+        Args:
+            schema: A JSON Schema dict (or fragment) to convert.
+
+        Returns:
+            TypeScript type expression string (e.g. ``string``, ``Record<string, any>``).
+        """
         schema_type = schema.get("type")
         if schema.get("enum"):
             options = [json.dumps(v) for v in schema.get("enum", [])]
@@ -618,7 +748,15 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def _virtual_to_real_path(self, session: VfsSession, virtual_path: str) -> Optional[Path]:
-        """Resolve a virtual path into a session-scoped real filesystem path."""
+        """Resolve a virtual path into a session-scoped real filesystem path.
+
+        Args:
+            session: The current VFS session providing root directories.
+            virtual_path: Virtual path string (e.g. ``/tools/server/tool.py``).
+
+        Returns:
+            The resolved real Path, or None if the path is outside the session.
+        """
         normalized = "/" + virtual_path.strip().lstrip("/")
         mapping = {
             "/tools": session.tools_dir,
@@ -640,7 +778,15 @@ class VfsService:
         return None
 
     def _real_to_virtual_path(self, session: VfsSession, real_path: Path) -> str:
-        """Convert a real path under session roots back into virtual notation."""
+        """Convert a real path under session roots back into virtual notation.
+
+        Args:
+            session: The current VFS session providing root directories.
+            real_path: Absolute filesystem path to convert.
+
+        Returns:
+            Virtual path string (e.g. ``/tools/server/tool.py``).
+        """
         candidates = (
             (session.tools_dir.resolve(), "/tools"),
             (session.scratch_dir.resolve(), "/scratch"),
@@ -664,7 +810,17 @@ class VfsService:
         user_email: Optional[str],
         token_teams: Optional[List[str]],
     ) -> List[DbTool]:
-        """Resolve all reachable tools visible to the current scope."""
+        """Resolve all reachable tools visible to the current scope.
+
+        Args:
+            db: SQLAlchemy database session.
+            server: The VFS server record providing mount rules.
+            user_email: Email address of the requesting user.
+            token_teams: JWT team scopes for visibility filtering.
+
+        Returns:
+            List of DbTool records that pass scoping and mount-rule filters.
+        """
         query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.enabled.is_(True), DbTool.reachable.is_(True))
         tools = db.execute(query).scalars().all()
         mount_rules = self._server_mount_rules(server)
@@ -679,7 +835,16 @@ class VfsService:
         return resolved
 
     def _tool_visible_for_scope(self, tool: DbTool, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
-        """Return whether a tool is visible under token-team scoping rules."""
+        """Return whether a tool is visible under token-team scoping rules.
+
+        Args:
+            tool: The candidate tool to check.
+            user_email: Email address of the requesting user.
+            token_teams: JWT team scopes for visibility filtering.
+
+        Returns:
+            True if the tool should be visible to the current user/scope.
+        """
         if token_teams is None:
             return True
         if len(token_teams) == 0:
@@ -691,7 +856,15 @@ class VfsService:
         return tool.team_id in token_teams and tool.visibility in {"team", "public"}
 
     def _tool_matches_mount_rules(self, tool: DbTool, mount_rules: Dict[str, Any]) -> bool:
-        """Evaluate include/exclude mount rules against a candidate tool."""
+        """Evaluate include/exclude mount rules against a candidate tool.
+
+        Args:
+            tool: The candidate tool to check.
+            mount_rules: Normalized dict of include/exclude tag, tool, and server rules.
+
+        Returns:
+            True if the tool passes all mount-rule filters.
+        """
         raw_tags = tool.tags or []
         tags = set(t if isinstance(t, str) else t.get("name", str(t)) for t in raw_tags)
         include_tags = set(mount_rules.get("include_tags") or [])
@@ -717,7 +890,14 @@ class VfsService:
         return True
 
     def _server_mount_rules(self, server: DbServer) -> Dict[str, Any]:
-        """Normalize server mount-rules payload to a plain dict."""
+        """Normalize server mount-rules payload to a plain dict.
+
+        Args:
+            server: The VFS server record.
+
+        Returns:
+            Plain dict of mount rules, or empty dict if none configured.
+        """
         raw = getattr(server, "mount_rules", None) or {}
         if hasattr(raw, "model_dump"):
             raw = raw.model_dump()
@@ -730,7 +910,15 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def _enforce_fs_permission(self, operation: str, virtual_path: str) -> None:
-        """Enforce filesystem allow/deny rules for a virtual path."""
+        """Enforce filesystem allow/deny rules for a virtual path.
+
+        Args:
+            operation: The operation type (``read`` or ``write``).
+            virtual_path: Virtual path to check against allow/deny patterns.
+
+        Raises:
+            VfsSecurityError: If the path is denied or not in the allow list.
+        """
         deny = list(_DEFAULT_FS_DENY)
         read_allow = list(_DEFAULT_FS_READ)
         write_allow = list(_DEFAULT_FS_WRITE)
@@ -745,7 +933,15 @@ class VfsService:
             raise VfsSecurityError(f"EACCES: {operation} denied for path: {normalized}")
 
     def _matches_any_pattern(self, value: str, patterns: Sequence[str]) -> bool:
-        """Return True when a value matches any configured glob pattern."""
+        """Return True when a value matches any configured glob pattern.
+
+        Args:
+            value: The virtual path string to test.
+            patterns: Sequence of glob patterns to match against.
+
+        Returns:
+            True if at least one pattern matches the value.
+        """
         for pattern in patterns or []:
             if fnmatch.fnmatch(value, pattern):
                 return True
@@ -758,7 +954,14 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def _tool_server_slug(self, tool: DbTool) -> str:
-        """Return a stable server slug for a mounted tool."""
+        """Return a stable server slug for a mounted tool.
+
+        Args:
+            tool: The database tool record.
+
+        Returns:
+            Slugified server name string (e.g. ``my_server``).
+        """
         gateway = getattr(tool, "gateway", None)
         if gateway:
             slug = getattr(gateway, "slug", None) or slugify(getattr(gateway, "name", "gateway"))
@@ -766,12 +969,26 @@ class VfsService:
         return "local"
 
     def _tool_file_name(self, tool: DbTool) -> str:
-        """Return a deterministic filesystem-safe base filename for a tool."""
+        """Return a deterministic filesystem-safe base filename for a tool.
+
+        Args:
+            tool: The database tool record.
+
+        Returns:
+            Filesystem-safe base filename string (without extension).
+        """
         value = getattr(tool, "custom_name_slug", None) or getattr(tool, "original_name", None) or tool.name
         return slugify(value).replace("-", "_")
 
     def _python_identifier(self, value: str) -> str:
-        """Convert arbitrary strings into valid Python identifiers."""
+        """Convert arbitrary strings into valid Python identifiers.
+
+        Args:
+            value: Arbitrary string to normalize.
+
+        Returns:
+            A valid Python identifier derived from *value*.
+        """
         normalized = re.sub(r"[^a-zA-Z0-9_]", "_", value)
         if not normalized:
             normalized = "x"
@@ -784,19 +1001,32 @@ class VfsService:
     # ------------------------------------------------------------------
 
     def _wipe_and_recreate_directory(self, path: Path) -> None:
-        """Recreate a directory from scratch, discarding previous contents."""
+        """Recreate a directory from scratch, discarding previous contents.
+
+        Args:
+            path: Directory path to wipe and recreate.
+        """
         shutil.rmtree(path, ignore_errors=True)
         path.mkdir(parents=True, exist_ok=True)
 
     def _write_catalog_json(self, tools_dir: Path, catalog_tools: List[Dict[str, Any]]) -> None:
-        """Write a _catalog.json index of all mounted tools."""
+        """Write a _catalog.json index of all mounted tools.
+
+        Args:
+            tools_dir: Directory where the catalog file is written.
+            catalog_tools: List of tool metadata dicts to include.
+        """
         (tools_dir / "_catalog.json").write_text(
             json.dumps({"version": VFS_SCHEMA_VERSION, "tool_count": len(catalog_tools), "tools": catalog_tools}, indent=2),
             encoding="utf-8",
         )
 
     def _build_search_index(self, tools_dir: Path) -> None:
-        """Build a simple text index for fast tool-search operations."""
+        """Build a simple text index for fast tool-search operations.
+
+        Args:
+            tools_dir: Root directory whose files are indexed.
+        """
         index_lines: List[str] = []
         for file_path in tools_dir.rglob("*"):
             if not file_path.is_file():

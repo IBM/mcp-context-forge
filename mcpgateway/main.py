@@ -5627,7 +5627,11 @@ _vfs_service_singleton: Optional[Any] = None
 
 
 def _get_vfs_service():
-    """Lazily initialise the VFS service singleton."""
+    """Lazily initialise the VFS service singleton.
+
+    Returns:
+        VfsService: The shared VFS service instance.
+    """
     global _vfs_service_singleton  # noqa: PLW0603  # pylint: disable=global-statement
     if _vfs_service_singleton is None:
         # First-Party
@@ -5638,7 +5642,15 @@ def _get_vfs_service():
 
 
 def _lookup_vfs_server(db: Session, server_id: str):
-    """Return the DbServer if *server_id* refers to a VFS server, else None."""
+    """Return the DbServer if *server_id* refers to a VFS server, else None.
+
+    Args:
+        db: Active database session.
+        server_id: Unique identifier of the server to look up.
+
+    Returns:
+        Optional[DbServer]: The matching VFS server record, or None.
+    """
     # First-Party
     from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
 
@@ -5649,7 +5661,19 @@ def _lookup_vfs_server(db: Session, server_id: str):
 
 
 async def _invoke_vfs_meta_tool(db: Session, server, name: str, arguments: Dict[str, Any], user_email: Optional[str], token_teams: Optional[List[str]]) -> Dict[str, Any]:
-    """Dispatch a VFS meta-tool call and return an MCP-compliant ToolResult dict."""
+    """Dispatch a VFS meta-tool call and return an MCP-compliant ToolResult dict.
+
+    Args:
+        db: Active database session.
+        server: The VFS server record to operate against.
+        name: Name of the meta-tool to invoke (e.g. fs_browse, fs_read, fs_write).
+        arguments: Tool-specific arguments forwarded to the VFS service.
+        user_email: Email of the calling user, used for access control.
+        token_teams: Team scopes from the caller's JWT token.
+
+    Returns:
+        Dict[str, Any]: MCP-compliant ToolResult with ``content`` and ``isError`` keys.
+    """
     # First-Party
     from mcpgateway.services.vfs_service import META_TOOL_FS_BROWSE, META_TOOL_FS_READ, META_TOOL_FS_WRITE, VfsError, VfsSecurityError  # pylint: disable=import-outside-toplevel
 
