@@ -1994,6 +1994,313 @@ class TestRPCEndpoints:
 
 
 # ----------------------------------------------------- #
+# VFS RPC Integration Tests                             #
+# ----------------------------------------------------- #
+class TestVFSRPCIntegration:
+    """Tests for VFS routing in the JSON-RPC handler."""
+
+    @patch("mcpgateway.main._lookup_vfs_server")
+    @patch("mcpgateway.main._get_vfs_service")
+    def test_rpc_tools_list_vfs_server(self, mock_get_vfs, mock_lookup, test_client, auth_headers, monkeypatch):
+        """tools/list returns VFS meta-tools for a VFS server."""
+        monkeypatch.setattr(settings, "vfs_enabled", True)
+        mock_server = MagicMock()
+        mock_lookup.return_value = mock_server
+        mock_vfs = MagicMock()
+        mock_vfs.get_meta_tools.return_value = [{"name": "fs_browse", "description": "Browse", "inputSchema": {"type": "object"}}]
+        mock_get_vfs.return_value = mock_vfs
+
+        req = {"jsonrpc": "2.0", "id": "t1", "method": "tools/list", "params": {"server_id": "vfs-server-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["result"]["tools"][0]["name"] == "fs_browse"
+        mock_lookup.assert_called_once()
+        mock_vfs.get_meta_tools.assert_called_once_with(mock_server)
+
+    @patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock)
+    @patch("mcpgateway.main._lookup_vfs_server")
+    def test_rpc_tools_list_non_vfs_server(self, mock_lookup, mock_list_tools, test_client, auth_headers, monkeypatch):
+        """tools/list falls through to normal path for non-VFS servers."""
+        monkeypatch.setattr(settings, "vfs_enabled", True)
+        mock_lookup.return_value = None  # Not a VFS server
+        mock_tool = MagicMock()
+        mock_tool.model_dump.return_value = MOCK_TOOL_READ
+        mock_list_tools.return_value = [mock_tool]
+
+        req = {"jsonrpc": "2.0", "id": "t2", "method": "tools/list", "params": {"server_id": "standard-server-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_list_tools.assert_called_once()
+
+    @patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock)
+    def test_rpc_tools_list_vfs_disabled(self, mock_list_tools, test_client, auth_headers, monkeypatch):
+        """tools/list skips VFS lookup when vfs_enabled=False."""
+        monkeypatch.setattr(settings, "vfs_enabled", False)
+        mock_tool = MagicMock()
+        mock_tool.model_dump.return_value = MOCK_TOOL_READ
+        mock_list_tools.return_value = [mock_tool]
+
+        req = {"jsonrpc": "2.0", "id": "t3", "method": "tools/list", "params": {"server_id": "server-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_list_tools.assert_called_once()
+
+    @patch("mcpgateway.main._lookup_vfs_server")
+    @patch("mcpgateway.main._get_vfs_service")
+    def test_rpc_legacy_list_tools_vfs(self, mock_get_vfs, mock_lookup, test_client, auth_headers, monkeypatch):
+        """Legacy list_tools returns VFS meta-tools for a VFS server."""
+        monkeypatch.setattr(settings, "vfs_enabled", True)
+        mock_server = MagicMock()
+        mock_lookup.return_value = mock_server
+        mock_vfs = MagicMock()
+        mock_vfs.get_meta_tools.return_value = [{"name": "fs_browse", "description": "Browse", "inputSchema": {"type": "object"}}]
+        mock_get_vfs.return_value = mock_vfs
+
+        req = {"jsonrpc": "2.0", "id": "t4", "method": "list_tools", "params": {"server_id": "vfs-server-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["result"]["tools"][0]["name"] == "fs_browse"
+
+    @patch("mcpgateway.main._invoke_vfs_meta_tool", new_callable=AsyncMock)
+    @patch("mcpgateway.main._lookup_vfs_server")
+    def test_rpc_tools_call_vfs_browse(self, mock_lookup, mock_invoke, test_client, auth_headers, monkeypatch):
+        """tools/call routes fs_browse to VFS handler."""
+        monkeypatch.setattr(settings, "vfs_enabled", True)
+        mock_server = MagicMock()
+        mock_lookup.return_value = mock_server
+        mock_invoke.return_value = {"content": [{"type": "text", "text": "{}"}], "isError": False}
+
+        req = {"jsonrpc": "2.0", "id": "t5", "method": "tools/call", "params": {"name": "fs_browse", "arguments": {"path": "/"}, "server_id": "vfs-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["result"]["isError"] is False
+        mock_invoke.assert_called_once()
+
+    @patch("mcpgateway.main._invoke_vfs_meta_tool", new_callable=AsyncMock)
+    @patch("mcpgateway.main._lookup_vfs_server")
+    def test_rpc_tools_call_vfs_read(self, mock_lookup, mock_invoke, test_client, auth_headers, monkeypatch):
+        """tools/call routes fs_read to VFS handler."""
+        monkeypatch.setattr(settings, "vfs_enabled", True)
+        mock_server = MagicMock()
+        mock_lookup.return_value = mock_server
+        mock_invoke.return_value = {"content": [{"type": "text", "text": "stub content"}], "isError": False}
+
+        req = {"jsonrpc": "2.0", "id": "t6", "method": "tools/call", "params": {"name": "fs_read", "arguments": {"path": "/tools/a.py"}, "server_id": "vfs-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"]["isError"] is False
+
+    @patch("mcpgateway.main._invoke_vfs_meta_tool", new_callable=AsyncMock)
+    @patch("mcpgateway.main._lookup_vfs_server")
+    def test_rpc_tools_call_vfs_write(self, mock_lookup, mock_invoke, test_client, auth_headers, monkeypatch):
+        """tools/call routes fs_write to VFS handler."""
+        monkeypatch.setattr(settings, "vfs_enabled", True)
+        mock_server = MagicMock()
+        mock_lookup.return_value = mock_server
+        mock_invoke.return_value = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+
+        req = {"jsonrpc": "2.0", "id": "t7", "method": "tools/call", "params": {"name": "fs_write", "arguments": {"path": "/scratch/x.py", "content": "x"}, "server_id": "vfs-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"]["isError"] is False
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    @patch("mcpgateway.main._lookup_vfs_server")
+    def test_rpc_tools_call_non_vfs_server_with_vfs_tool_name(self, mock_lookup, mock_invoke, test_client, auth_headers, monkeypatch):
+        """tools/call falls through to normal path for non-VFS server even with fs_browse name."""
+        monkeypatch.setattr(settings, "vfs_enabled", True)
+        mock_lookup.return_value = None  # Not a VFS server
+        mock_invoke.return_value = {"content": [{"type": "text", "text": "normal"}], "isError": False}
+
+        req = {"jsonrpc": "2.0", "id": "t8", "method": "tools/call", "params": {"name": "fs_browse", "arguments": {}, "server_id": "std-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_invoke.assert_called_once()
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    def test_rpc_tools_call_vfs_disabled(self, mock_invoke, test_client, auth_headers, monkeypatch):
+        """tools/call skips VFS routing when vfs_enabled=False."""
+        monkeypatch.setattr(settings, "vfs_enabled", False)
+        mock_invoke.return_value = {"content": [{"type": "text", "text": "normal"}], "isError": False}
+
+        req = {"jsonrpc": "2.0", "id": "t9", "method": "tools/call", "params": {"name": "fs_browse", "arguments": {}, "server_id": "srv-1"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_invoke.assert_called_once()
+
+
+# ----------------------------------------------------- #
+# VFS Helper Unit Tests                                 #
+# ----------------------------------------------------- #
+class TestVFSHelpers:
+    """Direct unit tests for _get_vfs_service, _lookup_vfs_server, _invoke_vfs_meta_tool."""
+
+    def test_get_vfs_service_returns_singleton(self):
+        """_get_vfs_service returns the same instance on repeated calls."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        original = main_mod._vfs_service_singleton
+        try:
+            main_mod._vfs_service_singleton = None
+            with patch("mcpgateway.services.vfs_service.VfsService") as MockVfs:
+                mock_inst = MagicMock()
+                MockVfs.return_value = mock_inst
+                first = main_mod._get_vfs_service()
+                second = main_mod._get_vfs_service()
+                assert first is second
+                MockVfs.assert_called_once()
+        finally:
+            main_mod._vfs_service_singleton = original
+
+    def test_lookup_vfs_server_found(self):
+        """_lookup_vfs_server returns server when server_type is vfs."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        mock_db = MagicMock()
+        mock_server = MagicMock()
+        mock_server.server_type = "vfs"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+        result = main_mod._lookup_vfs_server(mock_db, "vfs-1")
+        assert result is mock_server
+
+    def test_lookup_vfs_server_not_found(self):
+        """_lookup_vfs_server returns None for non-existent server."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        result = main_mod._lookup_vfs_server(mock_db, "missing-1")
+        assert result is None
+
+    def test_lookup_vfs_server_standard_type(self):
+        """_lookup_vfs_server returns None for standard server."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        mock_db = MagicMock()
+        mock_server = MagicMock()
+        mock_server.server_type = "standard"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+        result = main_mod._lookup_vfs_server(mock_db, "std-1")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_invoke_vfs_meta_tool_browse(self):
+        """_invoke_vfs_meta_tool dispatches fs_browse correctly."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        mock_db = MagicMock()
+        mock_server = MagicMock()
+        with patch.object(main_mod, "_get_vfs_service") as mock_get:
+            mock_vfs = MagicMock()
+            mock_vfs.fs_browse = AsyncMock(return_value={"entries": []})
+            mock_get.return_value = mock_vfs
+
+            result = await main_mod._invoke_vfs_meta_tool(mock_db, mock_server, "fs_browse", {"path": "/"}, user_email="u@e.com", token_teams=[])
+            assert result["isError"] is False
+            mock_vfs.fs_browse.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_invoke_vfs_meta_tool_read(self):
+        """_invoke_vfs_meta_tool dispatches fs_read correctly."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        mock_db = MagicMock()
+        mock_server = MagicMock()
+        with patch.object(main_mod, "_get_vfs_service") as mock_get:
+            mock_vfs = MagicMock()
+            mock_vfs.fs_read = AsyncMock(return_value={"content": "stub"})
+            mock_get.return_value = mock_vfs
+
+            result = await main_mod._invoke_vfs_meta_tool(mock_db, mock_server, "fs_read", {"path": "/tools/a.py"}, user_email="u@e.com", token_teams=[])
+            assert result["isError"] is False
+            mock_vfs.fs_read.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_invoke_vfs_meta_tool_write(self):
+        """_invoke_vfs_meta_tool dispatches fs_write correctly."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        mock_db = MagicMock()
+        mock_server = MagicMock()
+        with patch.object(main_mod, "_get_vfs_service") as mock_get:
+            mock_vfs = MagicMock()
+            mock_vfs.fs_write = AsyncMock(return_value={"path": "/scratch/x.py", "size_bytes": 5})
+            mock_get.return_value = mock_vfs
+
+            result = await main_mod._invoke_vfs_meta_tool(mock_db, mock_server, "fs_write", {"path": "/scratch/x.py", "content": "hello"}, user_email="u@e.com", token_teams=[])
+            assert result["isError"] is False
+            mock_vfs.fs_write.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_invoke_vfs_meta_tool_unknown(self):
+        """_invoke_vfs_meta_tool returns error for unknown tool name."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        result = await main_mod._invoke_vfs_meta_tool(MagicMock(), MagicMock(), "fs_unknown", {}, user_email=None, token_teams=None)
+        assert result["isError"] is True
+        assert "Unknown VFS meta-tool" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_invoke_vfs_meta_tool_security_error(self):
+        """_invoke_vfs_meta_tool catches VfsSecurityError."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        # First-Party
+        from mcpgateway.services.vfs_service import VfsSecurityError
+
+        with patch.object(main_mod, "_get_vfs_service") as mock_get:
+            mock_vfs = MagicMock()
+            mock_vfs.fs_browse = AsyncMock(side_effect=VfsSecurityError("denied"))
+            mock_get.return_value = mock_vfs
+
+            result = await main_mod._invoke_vfs_meta_tool(MagicMock(), MagicMock(), "fs_browse", {}, user_email=None, token_teams=None)
+            assert result["isError"] is True
+            assert "security error" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_invoke_vfs_meta_tool_vfs_error(self):
+        """_invoke_vfs_meta_tool catches VfsError."""
+        # Standard
+        import mcpgateway.main as main_mod
+
+        # First-Party
+        from mcpgateway.services.vfs_service import VfsError
+
+        with patch.object(main_mod, "_get_vfs_service") as mock_get:
+            mock_vfs = MagicMock()
+            mock_vfs.fs_read = AsyncMock(side_effect=VfsError("not found"))
+            mock_get.return_value = mock_vfs
+
+            result = await main_mod._invoke_vfs_meta_tool(MagicMock(), MagicMock(), "fs_read", {}, user_email=None, token_teams=None)
+            assert result["isError"] is True
+            assert "VFS error" in result["content"][0]["text"]
+
+
+# ----------------------------------------------------- #
 # WebSocket & SSE Tests                                 #
 # ----------------------------------------------------- #
 class TestRealtimeEndpoints:

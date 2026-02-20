@@ -5628,7 +5628,7 @@ _vfs_service_singleton: Optional[Any] = None
 
 def _get_vfs_service():
     """Lazily initialise the VFS service singleton."""
-    global _vfs_service_singleton  # noqa: PLW0603
+    global _vfs_service_singleton  # noqa: PLW0603  # pylint: disable=global-statement
     if _vfs_service_singleton is None:
         # First-Party
         from mcpgateway.services.vfs_service import VfsService  # pylint: disable=import-outside-toplevel

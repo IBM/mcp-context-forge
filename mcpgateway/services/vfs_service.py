@@ -45,12 +45,10 @@ from mcpgateway.utils.create_slug import slugify
 
 try:
     # First-Party
-    from plugins_rust import catalog_builder as rust_catalog_builder
     from plugins_rust import json_schema_to_stubs as rust_json_schema_to_stubs
 
     _RUST_VFS_AVAILABLE = True
 except ImportError:
-    rust_catalog_builder = None
     rust_json_schema_to_stubs = None
     _RUST_VFS_AVAILABLE = False
 
@@ -190,7 +188,7 @@ class VfsService:
     # Meta-tools
     # ------------------------------------------------------------------
 
-    def get_meta_tools(self, server: DbServer) -> List[Dict[str, Any]]:
+    def get_meta_tools(self, server: DbServer) -> List[Dict[str, Any]]:  # noqa: ARG002  # pylint: disable=unused-argument
         """Return the list of VFS meta-tool definitions for a server."""
         browse_tool = {
             "name": META_TOOL_FS_BROWSE,

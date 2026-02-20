@@ -794,6 +794,10 @@ class TestVisibilityScoping:
         assert vfs._tool_visible_for_scope(tool, "u@e.com", ["t2"]) is True
         assert vfs._tool_visible_for_scope(tool, "other@e.com", ["t2"]) is False
 
+    def test_public_tool_visible_with_nonempty_teams(self, vfs):
+        tool = _make_tool(visibility="public")
+        assert vfs._tool_visible_for_scope(tool, "u@e.com", ["t1"]) is True
+
 
 # --------------------------------------------------------------------------- #
 # Naming helpers
@@ -874,3 +878,214 @@ class TestFsUtilities:
         assert vfs._matches_any_pattern("/etc/passwd", ["/tools/**"]) is False
         # Direct root match
         assert vfs._matches_any_pattern("/tools", ["/tools/**"]) is True
+
+
+# --------------------------------------------------------------------------- #
+# Rust acceleration paths
+# --------------------------------------------------------------------------- #
+class TestRustAcceleration:
+    """Tests for rust stub generation paths (mocked)."""
+
+    def test_python_stub_rust_success(self, vfs):
+        """Rust acceleration returns a valid Python stub."""
+        tool = _make_tool(name="rust_tool")
+        vfs._rust_acceleration_enabled = True
+        import mcpgateway.services.vfs_service as vfs_mod
+
+        original = vfs_mod.rust_json_schema_to_stubs
+        try:
+            vfs_mod.rust_json_schema_to_stubs = lambda schema, server, func, desc: json.dumps({"python": "# rust-generated\nasync def rust_tool(args: dict) -> Any:\n    ...\n"})
+            result = vfs._generate_python_stub(tool, "srv")
+            assert "rust-generated" in result
+        finally:
+            vfs_mod.rust_json_schema_to_stubs = original
+            vfs._rust_acceleration_enabled = False
+
+    def test_typescript_stub_rust_success(self, vfs):
+        """Rust acceleration returns a valid TypeScript stub."""
+        tool = _make_tool(name="rust_tool")
+        vfs._rust_acceleration_enabled = True
+        import mcpgateway.services.vfs_service as vfs_mod
+
+        original = vfs_mod.rust_json_schema_to_stubs
+        try:
+            vfs_mod.rust_json_schema_to_stubs = lambda schema, server, func, desc: json.dumps({"typescript": "// rust-generated\nexport async function rust_tool(args: object): Promise<any> {}\n"})
+            result = vfs._generate_typescript_stub(tool, "srv")
+            assert "rust-generated" in result
+        finally:
+            vfs_mod.rust_json_schema_to_stubs = original
+            vfs._rust_acceleration_enabled = False
+
+    def test_python_stub_rust_empty_falls_back(self, vfs):
+        """Rust acceleration returning empty string falls back to Python generator."""
+        tool = _make_tool(name="fb_tool")
+        vfs._rust_acceleration_enabled = True
+        import mcpgateway.services.vfs_service as vfs_mod
+
+        original = vfs_mod.rust_json_schema_to_stubs
+        try:
+            vfs_mod.rust_json_schema_to_stubs = lambda schema, server, func, desc: json.dumps({"python": ""})
+            result = vfs._generate_python_stub(tool, "srv")
+            assert "Auto-generated" in result
+        finally:
+            vfs_mod.rust_json_schema_to_stubs = original
+            vfs._rust_acceleration_enabled = False
+
+    def test_python_stub_rust_exception_falls_back(self, vfs):
+        """Rust acceleration raising exception falls back gracefully."""
+        tool = _make_tool(name="exc_tool")
+        vfs._rust_acceleration_enabled = True
+        import mcpgateway.services.vfs_service as vfs_mod
+
+        original = vfs_mod.rust_json_schema_to_stubs
+        try:
+            vfs_mod.rust_json_schema_to_stubs = MagicMock(side_effect=RuntimeError("boom"))
+            result = vfs._generate_python_stub(tool, "srv")
+            assert "Auto-generated" in result
+        finally:
+            vfs_mod.rust_json_schema_to_stubs = original
+            vfs._rust_acceleration_enabled = False
+
+    def test_typescript_stub_rust_exception_falls_back(self, vfs):
+        """Rust acceleration raising exception falls back for TypeScript too."""
+        tool = _make_tool(name="exc_tool")
+        vfs._rust_acceleration_enabled = True
+        import mcpgateway.services.vfs_service as vfs_mod
+
+        original = vfs_mod.rust_json_schema_to_stubs
+        try:
+            vfs_mod.rust_json_schema_to_stubs = MagicMock(side_effect=RuntimeError("boom"))
+            result = vfs._generate_typescript_stub(tool, "srv")
+            assert "Auto-generated" in result
+        finally:
+            vfs_mod.rust_json_schema_to_stubs = original
+            vfs._rust_acceleration_enabled = False
+
+
+# --------------------------------------------------------------------------- #
+# _resolve_mounted_tools coverage
+# --------------------------------------------------------------------------- #
+class TestResolveMountedTools:
+    """Tests for tool resolution with visibility and mount-rule filtering."""
+
+    def test_filters_invisible_tools(self, vfs):
+        """Tools not visible to scope are excluded."""
+        mock_db = MagicMock()
+        tool_pub = _make_tool(name="pub", visibility="public")
+        tool_priv = _make_tool(name="priv", visibility="private", team_id="t1")
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [tool_pub, tool_priv]
+        server = MagicMock()
+        server.mount_rules = None
+        result = vfs._resolve_mounted_tools(mock_db, server, user_email=None, token_teams=[])
+        names = [t.name for t in result]
+        assert "pub" in names
+        assert "priv" not in names
+
+    def test_filters_by_mount_rules(self, vfs):
+        """Tools not matching mount rules are excluded."""
+        mock_db = MagicMock()
+        tool_a = _make_tool(name="allowed", tags=[{"name": "keep"}])
+        tool_b = _make_tool(name="excluded", tags=[{"name": "drop"}])
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [tool_a, tool_b]
+        server = MagicMock()
+        server.mount_rules = {"include_tags": ["keep"]}
+        result = vfs._resolve_mounted_tools(mock_db, server, user_email=None, token_teams=None)
+        names = [t.name for t in result]
+        assert "allowed" in names
+        assert "excluded" not in names
+
+
+# --------------------------------------------------------------------------- #
+# _real_to_virtual_path fallback
+# --------------------------------------------------------------------------- #
+class TestRealToVirtualFallback:
+    @pytest.mark.asyncio
+    async def test_unknown_path_returns_posix(self, vfs, server):
+        """Path outside all known roots falls back to absolute posix."""
+        session = await vfs.get_or_create_session(MagicMock(), server, user_email="u@e.com", token_teams=None)
+        from pathlib import Path
+
+        result = vfs._real_to_virtual_path(session, Path("/completely/unknown/path"))
+        assert result == "/completely/unknown/path"
+
+
+# --------------------------------------------------------------------------- #
+# _server_mount_rules edge cases
+# --------------------------------------------------------------------------- #
+class TestServerMountRulesEdge:
+    def test_pydantic_model_dump(self, vfs):
+        """mount_rules with model_dump is normalised."""
+        server = MagicMock()
+        model = MagicMock()
+        model.model_dump.return_value = {"include_tags": ["a"]}
+        server.mount_rules = model
+        result = vfs._server_mount_rules(server)
+        assert result == {"include_tags": ["a"]}
+
+    def test_non_dict_returns_empty(self, vfs):
+        """mount_rules that is not a dict returns {}."""
+        server = MagicMock()
+        server.mount_rules = "invalid"
+        result = vfs._server_mount_rules(server)
+        assert result == {}
+
+
+# --------------------------------------------------------------------------- #
+# _build_search_index edge cases
+# --------------------------------------------------------------------------- #
+class TestBuildSearchIndex:
+    def test_skips_unreadable_files(self, vfs, tmp_path):
+        """Binary/unreadable files are skipped in the search index."""
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        good = tools_dir / "good.py"
+        good.write_text("def hello(): pass")
+        bad = tools_dir / "bad.bin"
+        bad.write_bytes(b"\x80\x81\x82\x83" * 100)
+
+        vfs._build_search_index(tools_dir)
+        idx = (tools_dir / ".search_index").read_text()
+        assert "good.py" in idx
+
+    def test_skips_empty_files(self, vfs, tmp_path):
+        """Empty files are excluded from the search index."""
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        empty = tools_dir / "empty.py"
+        empty.write_text("")
+        content = tools_dir / "content.py"
+        content.write_text("x = 1")
+
+        vfs._build_search_index(tools_dir)
+        idx = (tools_dir / ".search_index").read_text()
+        assert "content.py" in idx
+        assert "empty.py" not in idx
+
+    def test_skips_hidden_files(self, vfs, tmp_path):
+        """Hidden (dot) files are excluded from the search index."""
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        hidden = tools_dir / ".hidden"
+        hidden.write_text("secret")
+        visible = tools_dir / "visible.py"
+        visible.write_text("x = 1")
+
+        vfs._build_search_index(tools_dir)
+        idx = (tools_dir / ".search_index").read_text()
+        assert "visible.py" in idx
+        assert ".hidden" not in idx
+
+
+# --------------------------------------------------------------------------- #
+# _tool_visible_for_scope — owner visibility
+# --------------------------------------------------------------------------- #
+class TestToolVisibleOwner:
+    def test_owner_with_teams_sees_private_tool(self, vfs):
+        """Tool owner can see their private tool even with team scope."""
+        tool = _make_tool(visibility="private", owner_email="owner@example.com", team_id="t1")
+        assert vfs._tool_visible_for_scope(tool, user_email="owner@example.com", token_teams=["t2"]) is True
+
+    def test_non_owner_team_member_sees_team_tool(self, vfs):
+        """Team member sees team-visible tool."""
+        tool = _make_tool(visibility="team", owner_email="other@example.com", team_id="t1")
+        assert vfs._tool_visible_for_scope(tool, user_email="me@example.com", token_teams=["t1"]) is True
