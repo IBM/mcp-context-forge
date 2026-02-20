@@ -2,13 +2,14 @@
 """Location: ./tests/playwright/pages/admin_utils.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Marek Dano
 
 Shared utility functions for admin page interactions.
 """
 
 # Standard
 import logging
+import urllib.parse
 
 # Third-Party
 from playwright.sync_api import Page
@@ -348,3 +349,70 @@ def cleanup_agent(page: Page, agent_name: str) -> bool:
         True if agent was found and deleted, False otherwise
     """
     return cleanup_entity(page, "a2a", agent_name)
+
+
+# ==================== User Operations ====================
+
+
+def find_user(page: Page, user_email: str, retries: int = 5):
+    """Find user by email via admin API.
+
+    Args:
+        page: Playwright page object
+        user_email: User email to search for
+        retries: Number of retry attempts
+
+    Returns:
+        User dict if found, None otherwise
+    """
+    headers = _get_auth_headers(page)
+    for attempt in range(retries):
+        cache_bust = str(attempt)
+        url = f"/admin/users?per_page=500&cache_bust={cache_bust}"
+        response = page.request.get(url, headers=headers)
+        if response.ok:
+            payload = response.json()
+            data = payload if isinstance(payload, list) else payload.get("data", [])
+            for item in data:
+                if item.get("email") == user_email:
+                    return item
+        else:
+            logger.warning("find_user: returned status=%d: %s", response.status, response.text()[:200])
+        page.wait_for_timeout(500)
+    return None
+
+
+def delete_user(page: Page, user_email: str) -> bool:
+    """Delete user by email via admin API.
+
+    Args:
+        page: Playwright page object
+        user_email: User email to delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    headers = _get_auth_headers(page)
+    # URL-encode the email for the path
+    encoded_email = urllib.parse.quote(user_email, safe="")
+    response = page.request.delete(
+        f"/admin/users/{encoded_email}",
+        headers=headers,
+    )
+    return response.status < 400
+
+
+def cleanup_user(page: Page, user_email: str) -> bool:
+    """Find and delete a user by email (convenience method for test cleanup).
+
+    Args:
+        page: Playwright page object
+        user_email: User email to find and delete
+
+    Returns:
+        True if user was found and deleted, False otherwise
+    """
+    user = find_user(page, user_email)
+    if user:
+        return delete_user(page, user_email)
+    return False
