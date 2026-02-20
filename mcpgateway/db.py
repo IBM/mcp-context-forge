@@ -4050,6 +4050,13 @@ class Server(Base):
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # Virtual filesystem (VFS) support
+    # standard: normal server exposing attached tools/resources/prompts
+    # vfs: exposes fs_browse/fs_read/fs_write meta-tools for tool metadata browsing
+    server_type: Mapped[str] = mapped_column(String(32), default="standard", nullable=False, index=True)
+    stub_format: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # python | typescript | json
+    mount_rules: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
 
     # Many-to-many relationships for associated items
