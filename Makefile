@@ -3088,12 +3088,10 @@ isort-check:
 flake8:                             ## 🐍  flake8 checks
 	@echo "🐍 flake8 $(TARGET)..." && $(VENV_DIR)/bin/flake8 $(TARGET)
 
-pylint: uv                             ## 🐛  pylint checks
+pylint:                                ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PYLINTHOME=\"$(CURDIR)/.pylint-cache\" UV_CACHE_DIR=\"$(CURDIR)/.uv-cache\" \
-		uv run --active pylint -j 0 --fail-on E --fail-under 10 $(TARGET)"
+	@PYLINTHOME="$(CURDIR)/.pylint-cache" $(VENV_DIR)/bin/pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present
@@ -3779,7 +3777,15 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
-	@uvx nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
+	@if command -v nodejsscan >/dev/null 2>&1; then \
+		nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true; \
+	elif [ -x "$(VENV_DIR)/bin/nodejsscan" ]; then \
+		"$(VENV_DIR)/bin/nodejsscan" --directory ./mcpgateway/static --directory ./mcpgateway/templates || true; \
+	else \
+		UV_CACHE_DIR="$(CURDIR)/.uv-cache" UV_TOOL_DIR="$(CURDIR)/.uv-tools" \
+			uvx nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates 2>/dev/null || \
+			echo "⚠️ nodejsscan is unavailable in this environment; skipping JS security scan."; \
+	fi
 
 eslint:
 	@echo "🔍 Linting JS files..."

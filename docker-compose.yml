@@ -48,6 +48,7 @@ volumes:                # Named volumes survive podman-compose down/up
   pgadmindata:
   redisinsight_data:
   nginx_cache:
+  code_exec_data:       # Shared code execution session storage (ADR-0042)
   grafanadata:
   prometheusdata:
   lokidata:
@@ -104,6 +105,17 @@ services:
         reservations:
           cpus: '2'
           memory: 512M
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Volume init - fix ownership for shared code execution volume (ADR-0042)
+  # Docker named volumes are created as root:root; the gateway runs as uid 1001.
+  # ──────────────────────────────────────────────────────────────────────
+  code_exec_init:
+    image: busybox:latest
+    command: ["sh", "-c", "chown -R 1001:0 /data && chmod 2775 /data"]
+    volumes:
+      - code_exec_data:/data
+    networks: [mcpnet]
 
   # ──────────────────────────────────────────────────────────────────────
   # MCP Gateway - the main API server for the MCP stack
@@ -281,6 +293,30 @@ services:
       # CSV list (or JSON array) of UI sections/header items to hide for embedded contexts
       - MCPGATEWAY_UI_HIDE_SECTIONS=
       - MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
+      # Code Execution (MCP Code Mode)
+      - CODE_EXECUTION_ENABLED=${CODE_EXECUTION_ENABLED:-true}
+      - CODE_EXECUTION_SHELL_EXEC_ENABLED=${CODE_EXECUTION_SHELL_EXEC_ENABLED:-true}
+      - CODE_EXECUTION_FS_BROWSE_ENABLED=${CODE_EXECUTION_FS_BROWSE_ENABLED:-true}
+      - CODE_EXECUTION_REPLAY_ENABLED=${CODE_EXECUTION_REPLAY_ENABLED:-true}
+      - CODE_EXECUTION_RUST_ACCELERATION_ENABLED=${CODE_EXECUTION_RUST_ACCELERATION_ENABLED:-true}
+      - CODE_EXECUTION_PYTHON_INPROCESS_FALLBACK_ENABLED=${CODE_EXECUTION_PYTHON_INPROCESS_FALLBACK_ENABLED:-true}
+      - CODE_EXECUTION_BASE_DIR=${CODE_EXECUTION_BASE_DIR:-/tmp/mcpgateway_code_execution}
+      - CODE_EXECUTION_SESSION_TTL_SECONDS=${CODE_EXECUTION_SESSION_TTL_SECONDS:-900}
+      - CODE_EXECUTION_DEFAULT_RUNTIME=${CODE_EXECUTION_DEFAULT_RUNTIME:-deno}
+      - CODE_EXECUTION_DEFAULT_MAX_EXECUTION_TIME_MS=${CODE_EXECUTION_DEFAULT_MAX_EXECUTION_TIME_MS:-30000}
+      - CODE_EXECUTION_DEFAULT_MAX_MEMORY_MB=${CODE_EXECUTION_DEFAULT_MAX_MEMORY_MB:-256}
+      - CODE_EXECUTION_DEFAULT_MAX_CPU_PERCENT=${CODE_EXECUTION_DEFAULT_MAX_CPU_PERCENT:-50}
+      - CODE_EXECUTION_DEFAULT_MAX_NETWORK_CONNECTIONS=${CODE_EXECUTION_DEFAULT_MAX_NETWORK_CONNECTIONS:-0}
+      - CODE_EXECUTION_DEFAULT_MAX_FILE_SIZE_MB=${CODE_EXECUTION_DEFAULT_MAX_FILE_SIZE_MB:-10}
+      - CODE_EXECUTION_DEFAULT_MAX_TOTAL_DISK_MB=${CODE_EXECUTION_DEFAULT_MAX_TOTAL_DISK_MB:-100}
+      - CODE_EXECUTION_DEFAULT_MAX_RUNS_PER_MINUTE=${CODE_EXECUTION_DEFAULT_MAX_RUNS_PER_MINUTE:-20}
+      - CODE_EXECUTION_DEFAULT_ALLOW_TOOL_CALLS=${CODE_EXECUTION_DEFAULT_ALLOW_TOOL_CALLS:-true}
+      - CODE_EXECUTION_DEFAULT_ALLOW_RAW_HTTP=${CODE_EXECUTION_DEFAULT_ALLOW_RAW_HTTP:-false}
+      - CODE_EXECUTION_DEFAULT_TOKENIZATION_ENABLED=${CODE_EXECUTION_DEFAULT_TOKENIZATION_ENABLED:-false}
+      - CODE_EXECUTION_DEFAULT_TOKENIZATION_STRATEGY=${CODE_EXECUTION_DEFAULT_TOKENIZATION_STRATEGY:-bidirectional}
+      - CODE_EXECUTION_FS_BROWSE_DEFAULT_MAX_ENTRIES=${CODE_EXECUTION_FS_BROWSE_DEFAULT_MAX_ENTRIES:-200}
+      - CODE_EXECUTION_FS_BROWSE_MAX_ENTRIES=${CODE_EXECUTION_FS_BROWSE_MAX_ENTRIES:-1000}
+      - CODE_EXECUTION_MAX_PERSISTED_OUTPUT_CHARS=${CODE_EXECUTION_MAX_PERSISTED_OUTPUT_CHARS:-200000}
       # Security configuration (using defaults)
       - ENVIRONMENT=development
       - SECURITY_HEADERS_ENABLED=true
@@ -558,6 +594,8 @@ services:
         condition: service_healthy   # ▶ wait for connection pooler
       redis:
         condition: service_started
+      code_exec_init:
+        condition: service_completed_successfully  # ▶ volume ownership fix (ADR-0042)
       # Direct PostgreSQL (uncomment if bypassing PgBouncer):
       # postgres:
       #   condition: service_healthy
@@ -603,6 +641,7 @@ services:
     # Mount catalog configuration and SSL certificates
     volumes:
       - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
+      - code_exec_data:/tmp/mcpgateway_code_execution  # shared code execution sessions (ADR-0042)
       # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:

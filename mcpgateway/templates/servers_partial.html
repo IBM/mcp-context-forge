@@ -20,8 +20,10 @@
   <tbody id="servers-table-body" data-testid="server-list" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
   {% for server in data %}
   {% set server_label = server.name or server.id %}
+  {% set server_type = (server.type if server.type is defined and server.type else (server.server_type if server.server_type is defined and server.server_type else 'standard')) %}
+  {% set is_code_execution_server = server_type == 'code_execution' %}
   {% set can_modify = is_admin or server.ownerEmail == current_user_email or (server.visibility == 'team' and server.teamId and user_team_roles.get(server.teamId|string) == 'owner') %}
-  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}">
+  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}" class="{% if is_code_execution_server %}bg-amber-50/40 dark:bg-amber-900/10{% endif %}">
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
         <!-- Row 1: View | Edit -->
@@ -56,7 +58,19 @@
     </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
     <td class="px-6 py-4 whitespace-normal break-all text-sm font-medium text-gray-900 dark:text-gray-300 max-w-32">{{ server.id }}</td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ server.name }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">
+      <div class="flex items-center gap-2">
+        {% if is_code_execution_server %}
+        <span class="inline-flex items-center justify-center text-sm" title="Code Execution virtual server">⚡</span>
+        {% endif %}
+        <span>{{ server.name }}</span>
+      </div>
+      {% if is_code_execution_server %}
+      <div class="mt-1">
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">💻 Code Mode</span>
+      </div>
+      {% endif %}
+    </td>
     <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ server.description | decode_html }}</td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
       {% if server.associatedTools %}

@@ -2208,7 +2208,7 @@ class PromptExecuteArgs(BaseModel):
         args (Dict[str, str]): Arguments for prompt execution.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     args: Dict[str, str] = Field(default_factory=dict, description="Arguments for prompt execution")
 
@@ -3720,6 +3720,39 @@ class ListFilters(BaseModelWithConfigDict):
 # --- Server Schemas ---
 
 
+class CodeExecutionMountRules(BaseModelWithConfigDict):
+    """Mount/filter rules for code execution virtual filesystems."""
+
+    include_tags: List[str] = Field(default_factory=list, description="Only include tools with any of these tags")
+    exclude_tags: List[str] = Field(default_factory=list, description="Exclude tools with any of these tags")
+    include_servers: List[str] = Field(default_factory=list, description="Only include tools from these server slugs/names")
+    exclude_servers: List[str] = Field(default_factory=list, description="Exclude tools from these server slugs/names")
+    include_tools: List[str] = Field(default_factory=list, description="Only include these explicit tool names")
+    exclude_tools: List[str] = Field(default_factory=list, description="Exclude these explicit tool names")
+
+
+class CodeExecutionSandboxPolicy(BaseModelWithConfigDict):
+    """Sandbox policy options for code execution servers."""
+
+    runtime: Literal["deno", "python"] = Field("deno", description="Runtime used by shell_exec")
+    max_execution_time_ms: int = Field(30000, ge=100, le=300000, description="Maximum execution time in milliseconds")
+    max_memory_mb: int = Field(256, ge=16, le=4096, description="Memory ceiling for sandbox execution")
+    max_cpu_percent: int = Field(50, ge=1, le=100, description="CPU soft limit (best effort)")
+    max_network_connections: int = Field(0, ge=0, le=32, description="Raw network connections allowed (0 = blocked)")
+    max_file_size_mb: int = Field(10, ge=1, le=1024, description="Maximum file size writable in scratch/results")
+    max_total_disk_mb: int = Field(100, ge=10, le=8192, description="Maximum total disk for virtual session")
+    max_runs_per_minute: int = Field(20, ge=1, le=1000, description="Rate limit for shell_exec per user+server")
+    allow_raw_http: bool = Field(False, description="Allow arbitrary raw HTTP from sandbox")
+
+
+class CodeExecutionTokenization(BaseModelWithConfigDict):
+    """Tokenization controls for code execution output/inputs."""
+
+    enabled: bool = Field(False, description="Enable bidirectional tokenization")
+    types: List[str] = Field(default_factory=lambda: ["email", "phone", "ssn", "credit_card", "name"], description="PII types to tokenize")
+    strategy: Literal["bidirectional"] = Field("bidirectional", description="Tokenization strategy")
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -3795,6 +3828,22 @@ class ServerCreate(BaseModel):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Code execution virtual server settings
+    server_type: Literal["standard", "code_execution"] = Field(
+        default="standard",
+        alias="type",
+        description="Server type: standard or code_execution",
+    )
+    stub_language: Optional[Literal["typescript", "python"]] = Field(
+        default=None,
+        description="Preferred language for generated tool stubs",
+    )
+    mount_rules: Optional[CodeExecutionMountRules] = Field(default=None, description="Mount rules used by code_execution servers")
+    sandbox_policy: Optional[CodeExecutionSandboxPolicy] = Field(default=None, description="Sandbox runtime policy for code execution")
+    tokenization: Optional[CodeExecutionTokenization] = Field(default=None, description="Tokenization policy for code execution")
+    skills_scope: Optional[str] = Field(default=None, description="Skill visibility scope (e.g., team:sales)")
+    skills_require_approval: bool = Field(default=False, description="Require approval before skill becomes active")
 
     @field_validator("name")
     @classmethod
@@ -3908,6 +3957,20 @@ class ServerCreate(BaseModel):
             return SecurityValidator.validate_uuid(v, "team_id")
         return v
 
+    @model_validator(mode="after")
+    def validate_code_execution_settings(self) -> Self:
+        """Validate code execution settings coherence."""
+        if self.server_type == "code_execution":
+            # Apply defaults only when this is a code execution server.
+            if self.stub_language is None:
+                runtime = self.sandbox_policy.runtime if self.sandbox_policy else settings.code_execution_default_runtime
+                self.stub_language = "typescript" if runtime == "deno" else "python"
+        else:
+            # Keep non-code_execution servers clean to avoid accidental config drift.
+            if self.mount_rules is not None or self.sandbox_policy is not None or self.tokenization is not None:
+                raise ValueError("mount_rules/sandbox_policy/tokenization are only valid for type='code_execution'")
+        return self
+
 
 class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
@@ -3929,6 +3992,22 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Code execution virtual server settings
+    server_type: Optional[Literal["standard", "code_execution"]] = Field(
+        default=None,
+        alias="type",
+        description="Server type: standard or code_execution",
+    )
+    stub_language: Optional[Literal["typescript", "python"]] = Field(
+        default=None,
+        description="Preferred language for generated tool stubs",
+    )
+    mount_rules: Optional[CodeExecutionMountRules] = Field(default=None, description="Mount rules used by code_execution servers")
+    sandbox_policy: Optional[CodeExecutionSandboxPolicy] = Field(default=None, description="Sandbox runtime policy for code execution")
+    tokenization: Optional[CodeExecutionTokenization] = Field(default=None, description="Tokenization policy for code execution")
+    skills_scope: Optional[str] = Field(default=None, description="Skill visibility scope (e.g., team:sales)")
+    skills_require_approval: Optional[bool] = Field(default=None, description="Require approval before skill becomes active")
 
     @field_validator("tags")
     @classmethod
@@ -4054,6 +4133,20 @@ class ServerUpdate(BaseModelWithConfigDict):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
+    @model_validator(mode="after")
+    def validate_code_execution_update_settings(self) -> Self:
+        """Validate partial code execution settings for updates.
+
+        Note: When server_type is omitted, the service layer will decide validity
+        based on the existing server record.
+        """
+        if self.server_type == "standard":
+            if self.mount_rules is not None or self.sandbox_policy is not None or self.tokenization is not None:
+                raise ValueError("mount_rules/sandbox_policy/tokenization are only valid for type='code_execution'")
+        if self.server_type == "code_execution" and self.stub_language is None and self.sandbox_policy is not None:
+            self.stub_language = "typescript" if self.sandbox_policy.runtime == "deno" else "python"
+        return self
+
 
 class ServerRead(BaseModelWithConfigDict):
     """Schema for reading server information.
@@ -4105,6 +4198,15 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Code execution virtual server settings
+    server_type: Literal["standard", "code_execution"] = Field(default="standard", alias="type", description="Server type")
+    stub_language: Optional[Literal["typescript", "python"]] = Field(default=None, description="Generated stub language")
+    mount_rules: Optional[CodeExecutionMountRules] = Field(default=None, description="Mount rules for code execution")
+    sandbox_policy: Optional[CodeExecutionSandboxPolicy] = Field(default=None, description="Sandbox policy")
+    tokenization: Optional[CodeExecutionTokenization] = Field(default=None, description="Tokenization policy")
+    skills_scope: Optional[str] = Field(default=None, description="Skill visibility scope")
+    skills_require_approval: bool = Field(default=False, description="Whether skill approval is mandatory")
 
     @model_validator(mode="before")
     @classmethod

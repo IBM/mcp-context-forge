@@ -198,10 +198,16 @@ class MCPRegistryPage(BasePage):
 
     def navigate_to_registry_tab(self) -> None:
         """Navigate to MCP Registry tab and wait for HTMX content to load."""
-        self.sidebar.click_registry_tab()
-        # The HTMX partial loads asynchronously after a 300ms debounce.
-        # Wait for the #server-grid element that only exists in the partial response.
-        self.page.wait_for_selector("#server-grid", state="attached", timeout=60000)
+        # Use expect_response to synchronise on the HTMX partial that loads
+        # after a 300ms JS debounce.  This avoids a race where #server-grid is
+        # queried before the network request has even been dispatched.
+        with self.page.expect_response(
+            lambda resp: "/admin/mcp-registry/partial" in resp.url and resp.status == 200,
+            timeout=60000,
+        ):
+            self.sidebar.click_registry_tab()
+        # The partial has arrived; wait for Playwright to attach the element.
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=15000)
 
     # ==================== High-Level Filter Operations ====================
 

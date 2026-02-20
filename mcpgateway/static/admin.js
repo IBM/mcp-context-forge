@@ -258,6 +258,528 @@ function updateDefaultVisibility() {
     });
 }
 
+function ensureCodeExecutionEditors(mode = "create") {
+    const isEdit = mode === "edit";
+    const configs = isEdit
+        ? [
+              {
+                  id: "edit-server-mount-rules",
+                  varName: "editServerMountRulesEditor",
+              },
+              {
+                  id: "edit-server-sandbox-policy",
+                  varName: "editServerSandboxPolicyEditor",
+              },
+              {
+                  id: "edit-server-tokenization",
+                  varName: "editServerTokenizationEditor",
+              },
+          ]
+        : [
+              {
+                  id: "server-mount-rules",
+                  varName: "serverMountRulesEditor",
+              },
+              {
+                  id: "server-sandbox-policy",
+                  varName: "serverSandboxPolicyEditor",
+              },
+              {
+                  id: "server-tokenization",
+                  varName: "serverTokenizationEditor",
+              },
+          ];
+    configs.forEach((config) => {
+        if (window[config.varName]) {
+            return;
+        }
+        const element = safeGetElement(config.id, true);
+        if (element && window.CodeMirror) {
+            try {
+                window[config.varName] = window.CodeMirror.fromTextArea(
+                    element,
+                    {
+                        mode: "application/json",
+                        theme: "monokai",
+                        lineNumbers: false,
+                        autoCloseBrackets: true,
+                        matchBrackets: true,
+                        tabSize: 2,
+                        lineWrapping: true,
+                    },
+                );
+                console.log(`✓ Lazy-initialized ${config.varName}`);
+            } catch (error) {
+                console.error(
+                    `Failed to lazy-initialize ${config.varName}:`,
+                    error,
+                );
+            }
+        }
+    });
+}
+
+function toggleServerCodeExecutionSection(mode = "create") {
+    const isEdit = mode === "edit";
+    const typeField = safeGetElement(
+        isEdit ? "edit-server-type" : "server-type",
+        true,
+    );
+    const section = safeGetElement(
+        isEdit
+            ? "edit-server-code-execution-section"
+            : "server-code-execution-section",
+        true,
+    );
+    if (!typeField || !section) {
+        return;
+    }
+    const typeValue = String(typeField.value || "")
+        .trim()
+        .toLowerCase();
+    const isCodeExecution = typeValue === "code_execution";
+    const wasHidden = section.classList.contains("hidden");
+    section.classList.toggle("hidden", !isCodeExecution);
+    if (isCodeExecution && wasHidden) {
+        if (typeof window.requestAnimationFrame === "function") {
+            window.requestAnimationFrame(() => {
+                ensureCodeExecutionEditors(mode);
+                refreshEditors();
+            });
+        } else {
+            window.setTimeout(() => {
+                ensureCodeExecutionEditors(mode);
+                refreshEditors();
+            }, 0);
+        }
+    }
+}
+
+function syncServerCodeExecutionSections() {
+    toggleServerCodeExecutionSection("create");
+    toggleServerCodeExecutionSection("edit");
+}
+
+function bindServerTypeToggle(mode = "create") {
+    const isEdit = mode === "edit";
+    const typeField = safeGetElement(
+        isEdit ? "edit-server-type" : "server-type",
+        true,
+    );
+    if (!typeField) {
+        return;
+    }
+
+    if (typeField.dataset.codeExecutionToggleBound === "true") {
+        // Keep state in sync even if listener was previously attached.
+        toggleServerCodeExecutionSection(mode);
+        return;
+    }
+
+    typeField.dataset.codeExecutionToggleBound = "true";
+    const sync = () => {
+        // Run immediately and on next frame in case other handlers mutate the DOM.
+        toggleServerCodeExecutionSection(mode);
+        window.requestAnimationFrame(() =>
+            toggleServerCodeExecutionSection(mode),
+        );
+    };
+
+    typeField.addEventListener("change", sync);
+    typeField.addEventListener("input", sync);
+    sync();
+}
+
+const CODE_EXECUTION_FIELD_TEMPLATES = Object.freeze({
+    skills_scope_team: "team:team-id",
+    skills_scope_user: "user:user@example.com",
+    mount_rules: JSON.stringify(
+        {
+            include_tags: ["prod"],
+            exclude_servers: ["admin-tools"],
+        },
+        null,
+        2,
+    ),
+    sandbox_policy: JSON.stringify(
+        {
+            runtime: "deno",
+            max_execution_time_ms: 30000,
+            max_memory_mb: 256,
+            max_cpu_percent: 50,
+            max_network_connections: 0,
+            max_file_size_mb: 10,
+            max_total_disk_mb: 100,
+            max_runs_per_minute: 20,
+            allow_raw_http: false,
+        },
+        null,
+        2,
+    ),
+    tokenization_policy: JSON.stringify(
+        {
+            enabled: true,
+            types: ["email", "phone", "ssn", "credit_card", "name"],
+            strategy: "bidirectional",
+        },
+        null,
+        2,
+    ),
+});
+
+// Map textarea IDs to their CodeMirror window globals.
+const _FIELD_ID_TO_EDITOR_VAR = Object.freeze({
+    "server-mount-rules": "serverMountRulesEditor",
+    "server-sandbox-policy": "serverSandboxPolicyEditor",
+    "server-tokenization": "serverTokenizationEditor",
+    "edit-server-mount-rules": "editServerMountRulesEditor",
+    "edit-server-sandbox-policy": "editServerSandboxPolicyEditor",
+    "edit-server-tokenization": "editServerTokenizationEditor",
+});
+
+function getCodeMirrorEditorForField(fieldElement) {
+    if (!fieldElement) {
+        return null;
+    }
+    // Prefer the .CodeMirror property set by fromTextArea (older CodeMirror).
+    const cmProp = fieldElement.CodeMirror;
+    if (cmProp && typeof cmProp.getValue === "function") {
+        return cmProp;
+    }
+    // Fall back to window-level editor globals used by our init code.
+    const varName = _FIELD_ID_TO_EDITOR_VAR[fieldElement.id];
+    if (varName) {
+        const winEditor = window[varName];
+        if (winEditor && typeof winEditor.getValue === "function") {
+            return winEditor;
+        }
+    }
+    return null;
+}
+
+function setTextareaOrEditorValue(fieldElement, nextValue) {
+    if (!fieldElement) {
+        return;
+    }
+    const normalizedValue =
+        nextValue === null || nextValue === undefined ? "" : String(nextValue);
+    const editor = getCodeMirrorEditorForField(fieldElement);
+    if (editor && typeof editor.setValue === "function") {
+        editor.setValue(normalizedValue);
+        if (typeof editor.refresh === "function") {
+            editor.refresh();
+        }
+        return;
+    }
+    fieldElement.value = normalizedValue;
+}
+
+function focusTextareaOrEditorAtEnd(fieldElement) {
+    if (!fieldElement) {
+        return;
+    }
+    const editor = getCodeMirrorEditorForField(fieldElement);
+    if (editor) {
+        if (typeof editor.focus === "function") {
+            editor.focus();
+        }
+        if (
+            typeof editor.setCursor === "function" &&
+            typeof editor.lineCount === "function" &&
+            typeof editor.getLine === "function"
+        ) {
+            const line = Math.max(editor.lineCount() - 1, 0);
+            const lineValue = editor.getLine(line) || "";
+            editor.setCursor({ line, ch: lineValue.length });
+        }
+        if (typeof editor.refresh === "function") {
+            editor.refresh();
+        }
+        return;
+    }
+    fieldElement.focus();
+    if (typeof fieldElement.setSelectionRange === "function") {
+        const end = fieldElement.value.length;
+        fieldElement.setSelectionRange(end, end);
+    }
+}
+
+function saveServerCodeExecutionEditors(mode = "create") {
+    const editorNames =
+        mode === "edit"
+            ? [
+                  "editServerMountRulesEditor",
+                  "editServerSandboxPolicyEditor",
+                  "editServerTokenizationEditor",
+              ]
+            : [
+                  "serverMountRulesEditor",
+                  "serverSandboxPolicyEditor",
+                  "serverTokenizationEditor",
+              ];
+    editorNames.forEach((editorName) => {
+        const editor = window[editorName];
+        if (editor && typeof editor.save === "function") {
+            editor.save();
+        }
+    });
+}
+
+function applyCodeExecutionFieldTemplate(fieldId, templateKey) {
+    const target = safeGetElement(fieldId, true);
+    const templateValue = CODE_EXECUTION_FIELD_TEMPLATES[templateKey];
+    if (!target || typeof templateValue !== "string") {
+        return;
+    }
+    setTextareaOrEditorValue(target, templateValue);
+    focusTextareaOrEditorAtEnd(target);
+}
+
+window.applyCodeExecutionFieldTemplate = applyCodeExecutionFieldTemplate;
+
+function parseOptionalPreviewJsonObject(formData, fieldName, label) {
+    const rawValue = formData.get(fieldName);
+    if (rawValue === null || rawValue === undefined) {
+        return null;
+    }
+    const text = String(rawValue).trim();
+    if (!text) {
+        return null;
+    }
+    let parsed = null;
+    try {
+        parsed = JSON.parse(text);
+    } catch (error) {
+        throw new Error(`${label} must be valid JSON.`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(`${label} must be a JSON object.`);
+    }
+    return parsed;
+}
+
+function collectAssociationIds(
+    formData,
+    containerId,
+    checkboxName,
+    selectAllFieldName,
+    allIdsFieldName,
+    dataAttributeName,
+    windowFallbackKey,
+) {
+    if (
+        String(formData.get(selectAllFieldName) || "").toLowerCase() === "true"
+    ) {
+        const rawIds = String(formData.get(allIdsFieldName) || "[]");
+        try {
+            const parsed = JSON.parse(rawIds);
+            if (Array.isArray(parsed)) {
+                return Array.from(
+                    new Set(
+                        parsed
+                            .map((value) => String(value || "").trim())
+                            .filter(Boolean),
+                    ),
+                );
+            }
+        } catch {
+            // Fall through to regular checkbox/data-attribute extraction.
+        }
+    }
+
+    const selectedIds = new Set(
+        formData
+            .getAll(checkboxName)
+            .map((value) => String(value || "").trim())
+            .filter(Boolean),
+    );
+
+    const container = safeGetElement(containerId, true);
+    if (container) {
+        const rawDataAttribute = container.getAttribute(dataAttributeName);
+        if (rawDataAttribute) {
+            try {
+                const parsed = JSON.parse(rawDataAttribute);
+                if (Array.isArray(parsed)) {
+                    parsed.forEach((value) => {
+                        const normalizedValue = String(value || "").trim();
+                        if (normalizedValue) {
+                            selectedIds.add(normalizedValue);
+                        }
+                    });
+                }
+            } catch {
+                // Ignore invalid persisted data in preview mode.
+            }
+        }
+    }
+
+    const fallbackValues = window[windowFallbackKey];
+    if (Array.isArray(fallbackValues)) {
+        fallbackValues.forEach((value) => {
+            const normalizedValue = String(value || "").trim();
+            if (normalizedValue) {
+                selectedIds.add(normalizedValue);
+            }
+        });
+    }
+
+    return Array.from(selectedIds);
+}
+
+function collectCreateServerPreviewPayload() {
+    const form = safeGetElement("add-server-form");
+    if (!form) {
+        throw new Error("Add Server form not found.");
+    }
+    saveServerCodeExecutionEditors("create");
+    const formData = new FormData(form);
+
+    const tagsRaw = String(formData.get("tags") || "");
+    const tags = tagsRaw
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+
+    const serverType = String(
+        formData.get("server_type") || formData.get("type") || "standard",
+    )
+        .trim()
+        .toLowerCase();
+    const normalizedServerType =
+        serverType === "code_execution" ? "code_execution" : "standard";
+
+    const oauthEnabled = formData.get("oauth_enabled") === "on";
+    const authorizationServer = String(
+        formData.get("oauth_authorization_server") || "",
+    ).trim();
+    const oauthScopes = String(formData.get("oauth_scopes") || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    const oauthTokenEndpoint = String(
+        formData.get("oauth_token_endpoint") || "",
+    ).trim();
+    let oauthConfig = null;
+    if (oauthEnabled && authorizationServer) {
+        oauthConfig = {
+            authorization_servers: [authorizationServer],
+        };
+        if (oauthScopes.length > 0) {
+            oauthConfig.scopes_supported = oauthScopes;
+        }
+        if (oauthTokenEndpoint) {
+            oauthConfig.token_endpoint = oauthTokenEndpoint;
+        }
+    }
+
+    const payload = {
+        id: String(formData.get("id") || "").trim() || null,
+        name: String(formData.get("name") || "").trim(),
+        description: String(formData.get("description") || "").trim() || null,
+        icon: String(formData.get("icon") || "").trim() || null,
+        tags,
+        visibility: String(formData.get("visibility") || "private")
+            .trim()
+            .toLowerCase(),
+        server_type: normalizedServerType,
+        associated_tools: collectAssociationIds(
+            formData,
+            "associatedTools",
+            "associatedTools",
+            "selectAllTools",
+            "allToolIds",
+            "data-selected-tools",
+            "_selectedAssociatedTools",
+        ),
+        associated_resources: collectAssociationIds(
+            formData,
+            "associatedResources",
+            "associatedResources",
+            "selectAllResources",
+            "allResourceIds",
+            "data-selected-resources",
+            "_selectedAssociatedResources",
+        ),
+        associated_prompts: collectAssociationIds(
+            formData,
+            "associatedPrompts",
+            "associatedPrompts",
+            "selectAllPrompts",
+            "allPromptIds",
+            "data-selected-prompts",
+            "_selectedAssociatedPrompts",
+        ),
+        oauth_enabled: oauthEnabled,
+        oauth_config: oauthConfig,
+    };
+
+    if (normalizedServerType === "code_execution") {
+        const stubLanguageRaw = String(formData.get("stub_language") || "")
+            .trim()
+            .toLowerCase();
+        payload.stub_language =
+            stubLanguageRaw === "typescript" || stubLanguageRaw === "python"
+                ? stubLanguageRaw
+                : null;
+        payload.skills_scope =
+            String(formData.get("skills_scope") || "").trim() || null;
+        payload.skills_require_approval =
+            formData.get("skills_require_approval") === "on";
+        payload.mount_rules = parseOptionalPreviewJsonObject(
+            formData,
+            "mount_rules",
+            "Mount Rules",
+        );
+        payload.sandbox_policy = parseOptionalPreviewJsonObject(
+            formData,
+            "sandbox_policy",
+            "Sandbox Policy",
+        );
+        payload.tokenization = parseOptionalPreviewJsonObject(
+            formData,
+            "tokenization",
+            "Tokenization Policy",
+        );
+    } else {
+        payload.stub_language = null;
+        payload.skills_scope = null;
+        payload.skills_require_approval = false;
+        payload.mount_rules = null;
+        payload.sandbox_policy = null;
+        payload.tokenization = null;
+    }
+
+    return payload;
+}
+
+function previewCreateVirtualServer() {
+    const previewContainer = safeGetElement("server-preview-container");
+    const previewJson = safeGetElement("server-preview-json");
+    const previewError = safeGetElement("server-preview-error");
+    if (!previewContainer || !previewJson || !previewError) {
+        return;
+    }
+
+    try {
+        const payload = collectCreateServerPreviewPayload();
+        previewError.classList.add("hidden");
+        previewError.textContent = "";
+        previewJson.textContent = JSON.stringify(payload, null, 2);
+        previewContainer.classList.remove("hidden");
+    } catch (error) {
+        previewJson.textContent = "";
+        previewError.textContent =
+            error instanceof Error
+                ? error.message
+                : "Unable to generate virtual server preview.";
+        previewError.classList.remove("hidden");
+        previewContainer.classList.remove("hidden");
+    }
+}
+
+window.previewCreateVirtualServer = previewCreateVirtualServer;
+
 // Attach event listener after DOM is loaded or when modal opens
 document.addEventListener("DOMContentLoaded", function () {
     const TypeField = document.getElementById("edit-tool-type");
@@ -269,6 +791,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize default visibility based on URL team_id
     updateDefaultVisibility();
+
+    bindServerTypeToggle("create");
+    bindServerTypeToggle("edit");
+    syncServerCodeExecutionSections();
+
+    document.body.addEventListener("htmx:afterSwap", function () {
+        syncServerCodeExecutionSections();
+    });
 
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
@@ -5923,6 +6453,192 @@ async function editGateway(gatewayId) {
 /**
  * SECURE: View Server function
  */
+function formatCodeExecutionTimestamp(value) {
+    if (!value) {
+        return "N/A";
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return String(value);
+    }
+    return parsed.toLocaleString();
+}
+
+function shortenCodeExecutionId(value, length = 8) {
+    if (!value) {
+        return "unknown";
+    }
+    const text = String(value);
+    return text.length <= length ? text : text.slice(0, length);
+}
+
+async function extractCodeExecutionError(response, fallbackMessage) {
+    try {
+        const payload = await response.json();
+        if (payload && typeof payload.detail === "string" && payload.detail) {
+            return payload.detail;
+        }
+    } catch {
+        // Ignore non-JSON payloads
+    }
+    return fallbackMessage || `Request failed: HTTP ${response.status}`;
+}
+
+async function replayCodeExecutionRun(serverId, runId) {
+    if (!runId) {
+        showErrorMessage("Run ID is required for replay.");
+        return;
+    }
+    if (!confirm(`Replay run ${shortenCodeExecutionId(runId)}?`)) {
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/code/runs/${runId}/replay`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: "{}",
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(
+                    response,
+                    `Failed to replay run ${shortenCodeExecutionId(runId)}`,
+                ),
+            );
+        }
+        showSuccessMessage(
+            `Run ${shortenCodeExecutionId(runId)} replayed successfully.`,
+        );
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(
+            error,
+            "replay code execution run",
+        );
+        showErrorMessage(errorMessage);
+    }
+}
+
+async function approveSkillApprovalRequest(serverId, approvalId) {
+    if (!approvalId) {
+        showErrorMessage("Approval ID is required.");
+        return;
+    }
+    const notes = window.prompt(
+        "Optional approval notes:",
+        "Approved by admin review",
+    );
+    if (notes === null) {
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/skills/approvals/${approvalId}/approve`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ notes }),
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(
+                    response,
+                    "Failed to approve skill request.",
+                ),
+            );
+        }
+        showSuccessMessage("Skill request approved.");
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(error, "approve skill request");
+        showErrorMessage(errorMessage);
+    }
+}
+
+async function rejectSkillApprovalRequest(serverId, approvalId) {
+    if (!approvalId) {
+        showErrorMessage("Approval ID is required.");
+        return;
+    }
+    const reason = window.prompt("Rejection reason:", "Rejected");
+    if (reason === null) {
+        return;
+    }
+    if (!reason.trim()) {
+        showErrorMessage("A rejection reason is required.");
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/skills/approvals/${approvalId}/reject`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reason: reason.trim() }),
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(
+                    response,
+                    "Failed to reject skill request.",
+                ),
+            );
+        }
+        showSuccessMessage("Skill request rejected.");
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(error, "reject skill request");
+        showErrorMessage(errorMessage);
+    }
+}
+
+async function revokeCodeExecutionSkill(serverId, skillId, skillName = "") {
+    if (!skillId) {
+        showErrorMessage("Skill ID is required.");
+        return;
+    }
+    const skillLabel = skillName || shortenCodeExecutionId(skillId);
+    if (
+        !confirm(
+            `Revoke skill ${skillLabel}? This will deactivate it for future sessions.`,
+        )
+    ) {
+        return;
+    }
+    const reason = window.prompt("Optional revoke reason:", "Revoked by admin");
+    if (reason === null) {
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/skills/${skillId}/revoke`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reason }),
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(
+                    response,
+                    "Failed to revoke skill.",
+                ),
+            );
+        }
+        showSuccessMessage(`Skill ${skillLabel} revoked.`);
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(error, "revoke skill");
+        showErrorMessage(errorMessage);
+    }
+}
+
 async function viewServer(serverId) {
     try {
         console.log(`Viewing server ID: ${serverId}`);
@@ -5990,7 +6706,10 @@ async function viewServer(serverId) {
             const fields = [
                 { label: "Server ID", value: server.id },
                 { label: "URL", value: getCatalogUrl(server) || "N/A" },
-                { label: "Type", value: "Virtual Server" },
+                {
+                    label: "Type",
+                    value: server.type || server.server_type || "standard",
+                },
                 { label: "Visibility", value: server.visibility || "private" },
             ];
 
@@ -6410,6 +7129,316 @@ async function viewServer(serverId) {
             metadataDiv.appendChild(metadataGrid);
             container.appendChild(metadataDiv);
 
+            const serverType = (server.type || server.server_type || "standard")
+                .toLowerCase()
+                .trim();
+            if (serverType === "code_execution") {
+                const codeExecSection = document.createElement("div");
+                codeExecSection.className = "mt-6 border-t pt-4";
+
+                const codeExecTitle = document.createElement("strong");
+                codeExecTitle.textContent = "Code Execution:";
+                codeExecSection.appendChild(codeExecTitle);
+
+                let runs = [];
+                let sessions = [];
+                let skills = [];
+                let approvals = [];
+                let securityEvents = [];
+                let approvalsAccessDenied = false;
+                try {
+                    const [
+                        runsResp,
+                        sessionsResp,
+                        skillsResp,
+                        approvalsResp,
+                        secResp,
+                    ] = await Promise.all([
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/code/runs?limit=25`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/code/sessions`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/skills?include_inactive=true`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/skills/approvals?status=pending`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/code/security-events?limit=50`,
+                        ),
+                    ]);
+                    if (runsResp.ok) {
+                        runs = await runsResp.json();
+                    }
+                    if (sessionsResp.ok) {
+                        sessions = await sessionsResp.json();
+                    }
+                    if (skillsResp.ok) {
+                        skills = await skillsResp.json();
+                    }
+                    if (approvalsResp.ok) {
+                        approvals = await approvalsResp.json();
+                    } else if (
+                        approvalsResp.status === 401 ||
+                        approvalsResp.status === 403
+                    ) {
+                        approvalsAccessDenied = true;
+                    }
+                    if (secResp.ok) {
+                        securityEvents = await secResp.json();
+                    }
+                } catch (err) {
+                    console.warn(
+                        "Unable to load code_execution details for server:",
+                        err,
+                    );
+                }
+
+                const summary = document.createElement("p");
+                summary.className =
+                    "text-sm mt-2 text-gray-600 dark:text-gray-400";
+                summary.textContent = `Runs: ${runs.length} | Active sessions: ${sessions.length} | Skills: ${skills.length} | Pending approvals: ${approvals.length} | Security events: ${securityEvents.length}`;
+                codeExecSection.appendChild(summary);
+
+                if (runs.length > 0) {
+                    const runsSection = document.createElement("div");
+                    runsSection.className = "mt-4";
+
+                    const runsTitle = document.createElement("h4");
+                    runsTitle.className =
+                        "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                    runsTitle.textContent = "Run History";
+                    runsSection.appendChild(runsTitle);
+
+                    const runsList = document.createElement("div");
+                    runsList.className = "mt-2 space-y-2";
+                    runs.slice(0, 10).forEach((run) => {
+                        const row = document.createElement("div");
+                        row.className =
+                            "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+
+                        const details = document.createElement("div");
+                        details.className =
+                            "text-xs text-gray-700 dark:text-gray-300";
+                        const runId = shortenCodeExecutionId(run.id);
+                        const toolCalls = Array.isArray(run.tool_calls_made)
+                            ? run.tool_calls_made.length
+                            : 0;
+                        const wallTime =
+                            run.metrics &&
+                            typeof run.metrics.wall_time_ms === "number"
+                                ? `${run.metrics.wall_time_ms}ms`
+                                : "n/a";
+                        details.textContent = `${runId} | ${run.status || "unknown"} | ${run.language || "n/a"} | ${formatCodeExecutionTimestamp(run.created_at)} | tools=${toolCalls} | wall=${wallTime}`;
+                        row.appendChild(details);
+
+                        const replayButton = document.createElement("button");
+                        replayButton.type = "button";
+                        replayButton.className =
+                            "text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700";
+                        replayButton.textContent = "Replay";
+                        replayButton.addEventListener("click", () => {
+                            replayCodeExecutionRun(server.id, run.id);
+                        });
+                        row.appendChild(replayButton);
+
+                        runsList.appendChild(row);
+                    });
+                    runsSection.appendChild(runsList);
+                    codeExecSection.appendChild(runsSection);
+                }
+
+                const sessionsSection = document.createElement("div");
+                sessionsSection.className = "mt-4";
+                const sessionsTitle = document.createElement("h4");
+                sessionsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                sessionsTitle.textContent = "Active Sessions";
+                sessionsSection.appendChild(sessionsTitle);
+                if (sessions.length === 0) {
+                    const emptySessions = document.createElement("p");
+                    emptySessions.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptySessions.textContent = "No active in-memory sessions.";
+                    sessionsSection.appendChild(emptySessions);
+                } else {
+                    const sessionsList = document.createElement("div");
+                    sessionsList.className = "mt-2 space-y-2";
+                    sessions.slice(0, 10).forEach((session) => {
+                        const item = document.createElement("div");
+                        item.className =
+                            "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        const sessionId = shortenCodeExecutionId(
+                            session.session_id,
+                            10,
+                        );
+                        item.textContent = `${sessionId} | ${session.user_email || "unknown"} | ${session.language || "n/a"} | tools=${session.tool_count || 0} | skills=${session.skill_count || 0} | last=${formatCodeExecutionTimestamp(session.last_used_at)}`;
+                        sessionsList.appendChild(item);
+                    });
+                    sessionsSection.appendChild(sessionsList);
+                }
+                codeExecSection.appendChild(sessionsSection);
+
+                const approvalsSection = document.createElement("div");
+                approvalsSection.className = "mt-4";
+                const approvalsTitle = document.createElement("h4");
+                approvalsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                approvalsTitle.textContent = "Pending Skill Approvals";
+                approvalsSection.appendChild(approvalsTitle);
+
+                if (approvalsAccessDenied) {
+                    const denied = document.createElement("p");
+                    denied.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    denied.textContent =
+                        "Approval actions require additional permissions (skills.approve).";
+                    approvalsSection.appendChild(denied);
+                } else if (approvals.length === 0) {
+                    const emptyApprovals = document.createElement("p");
+                    emptyApprovals.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptyApprovals.textContent = "No pending approvals.";
+                    approvalsSection.appendChild(emptyApprovals);
+                } else {
+                    const approvalsList = document.createElement("div");
+                    approvalsList.className = "mt-2 space-y-2";
+                    approvals.slice(0, 10).forEach((approval) => {
+                        const row = document.createElement("div");
+                        row.className =
+                            "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+
+                        const details = document.createElement("div");
+                        details.className =
+                            "text-xs text-gray-700 dark:text-gray-300";
+                        details.textContent = `${shortenCodeExecutionId(approval.id)} | skill=${shortenCodeExecutionId(approval.skill_id, 10)} | requested_by=${approval.requested_by || "unknown"} | requested_at=${formatCodeExecutionTimestamp(approval.requested_at)}`;
+                        row.appendChild(details);
+
+                        const actions = document.createElement("div");
+                        actions.className = "flex items-center gap-2";
+
+                        const approveButton = document.createElement("button");
+                        approveButton.type = "button";
+                        approveButton.className =
+                            "text-xs px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700";
+                        approveButton.textContent = "Approve";
+                        approveButton.addEventListener("click", () => {
+                            approveSkillApprovalRequest(server.id, approval.id);
+                        });
+                        actions.appendChild(approveButton);
+
+                        const rejectButton = document.createElement("button");
+                        rejectButton.type = "button";
+                        rejectButton.className =
+                            "text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700";
+                        rejectButton.textContent = "Reject";
+                        rejectButton.addEventListener("click", () => {
+                            rejectSkillApprovalRequest(server.id, approval.id);
+                        });
+                        actions.appendChild(rejectButton);
+
+                        row.appendChild(actions);
+                        approvalsList.appendChild(row);
+                    });
+                    approvalsSection.appendChild(approvalsList);
+                }
+                codeExecSection.appendChild(approvalsSection);
+
+                const skillsSection = document.createElement("div");
+                skillsSection.className = "mt-4";
+                const skillsTitle = document.createElement("h4");
+                skillsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                skillsTitle.textContent = "Skills";
+                skillsSection.appendChild(skillsTitle);
+
+                if (skills.length === 0) {
+                    const emptySkills = document.createElement("p");
+                    emptySkills.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptySkills.textContent = "No skills registered.";
+                    skillsSection.appendChild(emptySkills);
+                } else {
+                    const skillsList = document.createElement("div");
+                    skillsList.className = "mt-2 space-y-2";
+                    skills.slice(0, 15).forEach((skill) => {
+                        const row = document.createElement("div");
+                        row.className =
+                            "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        const details = document.createElement("div");
+                        details.className =
+                            "text-xs text-gray-700 dark:text-gray-300";
+                        details.textContent = `${skill.name || "unknown"} v${skill.version || 1} | ${skill.status || "unknown"} | owner=${skill.owner_email || "unknown"} | updated=${formatCodeExecutionTimestamp(skill.updated_at)}`;
+                        row.appendChild(details);
+
+                        if (
+                            skill.id &&
+                            skill.is_active &&
+                            skill.status !== "revoked"
+                        ) {
+                            const revokeButton =
+                                document.createElement("button");
+                            revokeButton.type = "button";
+                            revokeButton.className =
+                                "text-xs px-2 py-1 rounded bg-orange-600 text-white hover:bg-orange-700";
+                            revokeButton.textContent = "Revoke";
+                            revokeButton.addEventListener("click", () => {
+                                revokeCodeExecutionSkill(
+                                    server.id,
+                                    skill.id,
+                                    skill.name,
+                                );
+                            });
+                            row.appendChild(revokeButton);
+                        }
+
+                        skillsList.appendChild(row);
+                    });
+                    skillsSection.appendChild(skillsList);
+                }
+                codeExecSection.appendChild(skillsSection);
+
+                const eventsSection = document.createElement("div");
+                eventsSection.className = "mt-4";
+                const eventsTitle = document.createElement("h4");
+                eventsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                eventsTitle.textContent = "Security Events";
+                eventsSection.appendChild(eventsTitle);
+
+                if (securityEvents.length === 0) {
+                    const emptyEvents = document.createElement("p");
+                    emptyEvents.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptyEvents.textContent = "No recent security events.";
+                    eventsSection.appendChild(emptyEvents);
+                } else {
+                    const eventsList = document.createElement("div");
+                    eventsList.className = "mt-2 space-y-2";
+                    securityEvents.slice(0, 20).forEach((event) => {
+                        const item = document.createElement("div");
+                        item.className =
+                            "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        const eventName = event.event || event.type || "event";
+                        const runId = shortenCodeExecutionId(event.run_id, 8);
+                        const message =
+                            event.message ||
+                            event.error ||
+                            event.reason ||
+                            JSON.stringify(event);
+                        item.textContent = `${eventName} | run=${runId} | ${formatCodeExecutionTimestamp(event.created_at)} | ${message}`;
+                        eventsList.appendChild(item);
+                    });
+                    eventsSection.appendChild(eventsList);
+                }
+                codeExecSection.appendChild(eventsSection);
+
+                container.appendChild(codeExecSection);
+            }
+
             serverDetailsDiv.innerHTML = "";
             serverDetailsDiv.appendChild(container);
         }
@@ -6422,6 +7451,11 @@ async function viewServer(serverId) {
         showErrorMessage(errorMessage);
     }
 }
+
+window.replayCodeExecutionRun = replayCodeExecutionRun;
+window.approveSkillApprovalRequest = approveSkillApprovalRequest;
+window.rejectSkillApprovalRequest = rejectSkillApprovalRequest;
+window.revokeCodeExecutionSkill = revokeCodeExecutionSkill;
 
 /**
  * SECURE: Edit Server function
@@ -6529,6 +7563,103 @@ async function editServer(serverId) {
         if (iconField) {
             iconField.value = server.icon || "";
         }
+
+        const serverTypeField = safeGetElement("edit-server-type", true);
+        const stubLanguageField = safeGetElement(
+            "edit-server-stub-language",
+            true,
+        );
+        const skillsScopeField = safeGetElement(
+            "edit-server-skills-scope",
+            true,
+        );
+        const skillsRequireApprovalField = safeGetElement(
+            "edit-server-skills-require-approval",
+            true,
+        );
+        const mountRulesField = safeGetElement("edit-server-mount-rules", true);
+        const sandboxPolicyField = safeGetElement(
+            "edit-server-sandbox-policy",
+            true,
+        );
+        const tokenizationField = safeGetElement(
+            "edit-server-tokenization",
+            true,
+        );
+
+        const serverType = (
+            server.type ||
+            server.server_type ||
+            "standard"
+        ).toLowerCase();
+        if (serverTypeField) {
+            const targetValue =
+                serverType === "code_execution" ? "code_execution" : "standard";
+            // Enable the code_execution option if this server already uses it,
+            // even when CODE_EXECUTION_ENABLED is false (the option is disabled
+            // in the template). Without this, browsers silently ignore setting
+            // a disabled <option> as the selected value.
+            if (targetValue === "code_execution") {
+                const opt = serverTypeField.querySelector(
+                    'option[value="code_execution"]',
+                );
+                if (opt) opt.disabled = false;
+            }
+            serverTypeField.value = targetValue;
+        }
+        if (stubLanguageField) {
+            stubLanguageField.value =
+                server.stub_language || server.stubLanguage || "";
+        }
+        if (skillsScopeField) {
+            skillsScopeField.value =
+                server.skills_scope || server.skillsScope || "";
+        }
+        if (skillsRequireApprovalField) {
+            skillsRequireApprovalField.checked = Boolean(
+                server.skills_require_approval || server.skillsRequireApproval,
+            );
+        }
+
+        const formatJsonForTextarea = (value) => {
+            if (value === null || value === undefined || value === "") {
+                return "";
+            }
+            if (typeof value === "string") {
+                try {
+                    return JSON.stringify(JSON.parse(value), null, 2);
+                } catch {
+                    return value;
+                }
+            }
+            try {
+                return JSON.stringify(value, null, 2);
+            } catch {
+                return "";
+            }
+        };
+
+        if (mountRulesField) {
+            setTextareaOrEditorValue(
+                mountRulesField,
+                formatJsonForTextarea(server.mount_rules || server.mountRules),
+            );
+        }
+        if (sandboxPolicyField) {
+            setTextareaOrEditorValue(
+                sandboxPolicyField,
+                formatJsonForTextarea(
+                    server.sandbox_policy || server.sandboxPolicy,
+                ),
+            );
+        }
+        if (tokenizationField) {
+            setTextareaOrEditorValue(
+                tokenizationField,
+                formatJsonForTextarea(server.tokenization),
+            );
+        }
+        toggleServerCodeExecutionSection("edit");
 
         // Set OAuth 2.0 configuration fields (RFC 9728)
         const oauthEnabledCheckbox = safeGetElement(
@@ -8947,6 +10078,11 @@ function initToolSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Keep the server type conditional section stable during selector refreshes.
+            if (selectId === "associatedTools") {
+                toggleServerCodeExecutionSection("create");
+            }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
@@ -10667,6 +11803,7 @@ function reloadAssociatedItems() {
                         selectBtn,
                         clearBtn,
                     );
+                    syncServerCodeExecutionSections();
                 })
                 .catch((err) => {
                     console.error(
@@ -15256,11 +16393,12 @@ async function handleServerFormSubmit(e) {
     e.preventDefault();
 
     const form = e.target;
-    const formData = new FormData(form);
     const status = safeGetElement("serverFormError");
     const loading = safeGetElement("add-server-loading"); // Add a loading spinner if needed
 
     try {
+        saveServerCodeExecutionEditors("create");
+        const formData = new FormData(form);
         const name = formData.get("name");
 
         // Basic validation
@@ -15818,9 +16956,10 @@ async function handleEditA2AAgentFormSubmit(e) {
 async function handleEditServerFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
-    const formData = new FormData(form);
 
     try {
+        saveServerCodeExecutionEditors("edit");
+        const formData = new FormData(form);
         // Validate inputs
         const name = formData.get("name");
         const nameValidation = validateInputName(name, "server");
@@ -16182,29 +17321,29 @@ function setupFormValidation() {
 
 function refreshEditors() {
     setTimeout(() => {
-        if (
-            window.headersEditor &&
-            typeof window.headersEditor.refresh === "function"
-        ) {
-            try {
-                window.headersEditor.refresh();
-                console.log("✓ Refreshed headersEditor");
-            } catch (error) {
-                console.error("Failed to refresh headersEditor:", error);
-            }
-        }
+        const editorNames = [
+            "headersEditor",
+            "schemaEditor",
+            "serverMountRulesEditor",
+            "serverSandboxPolicyEditor",
+            "serverTokenizationEditor",
+            "editServerMountRulesEditor",
+            "editServerSandboxPolicyEditor",
+            "editServerTokenizationEditor",
+        ];
 
-        if (
-            window.schemaEditor &&
-            typeof window.schemaEditor.refresh === "function"
-        ) {
-            try {
-                window.schemaEditor.refresh();
-                console.log("✓ Refreshed schemaEditor");
-            } catch (error) {
-                console.error("Failed to refresh schemaEditor:", error);
+        editorNames.forEach((editorName) => {
+            const editor = window[editorName];
+            if (!editor || typeof editor.refresh !== "function") {
+                return;
             }
-        }
+            try {
+                editor.refresh();
+                console.log(`✓ Refreshed ${editorName}`);
+            } catch (error) {
+                console.error(`Failed to refresh ${editorName}:`, error);
+            }
+        });
     }, 100);
 }
 
@@ -16495,6 +17634,36 @@ function initializeCodeMirrorEditors() {
             id: "edit-prompt-arguments",
             mode: "application/json",
             varName: "editPromptArgumentsEditor",
+        },
+        {
+            id: "server-mount-rules",
+            mode: "application/json",
+            varName: "serverMountRulesEditor",
+        },
+        {
+            id: "server-sandbox-policy",
+            mode: "application/json",
+            varName: "serverSandboxPolicyEditor",
+        },
+        {
+            id: "server-tokenization",
+            mode: "application/json",
+            varName: "serverTokenizationEditor",
+        },
+        {
+            id: "edit-server-mount-rules",
+            mode: "application/json",
+            varName: "editServerMountRulesEditor",
+        },
+        {
+            id: "edit-server-sandbox-policy",
+            mode: "application/json",
+            varName: "editServerSandboxPolicyEditor",
+        },
+        {
+            id: "edit-server-tokenization",
+            mode: "application/json",
+            varName: "editServerTokenizationEditor",
         },
     ];
 
@@ -18583,6 +19752,7 @@ window.enrichTool = enrichTool;
 window.viewRoot = viewRoot;
 window.editRoot = editRoot;
 window.exportRoot = exportRoot;
+window.toggleServerCodeExecutionSection = toggleServerCodeExecutionSection;
 
 // ===============================================
 // CONFIG EXPORT FUNCTIONALITY

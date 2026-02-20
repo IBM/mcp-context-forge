@@ -286,6 +286,10 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "tokens.read",
                         "tokens.update",
                         "tokens.revoke",
+                        "skills.create",
+                        "skills.read",
+                        "skills.approve",
+                        "skills.revoke",
                     ],
                     "is_system_role": True,
                 },
@@ -323,6 +327,8 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "prompts.delete",
                         "a2a.delete",
                         "a2a.invoke",
+                        "skills.create",
+                        "skills.read",
                     ],
                     "is_system_role": True,
                 },
@@ -330,14 +336,14 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "name": "viewer",
                     "description": "Read-only access to resources and admin UI",
                     "scope": "team",
-                    "permissions": ["admin.dashboard", "gateways.read", "servers.read", "teams.join", "tools.read", "resources.read", "prompts.read", "a2a.read"],
+                    "permissions": ["admin.dashboard", "gateways.read", "servers.read", "teams.join", "tools.read", "resources.read", "prompts.read", "a2a.read", "skills.read"],
                     "is_system_role": True,
                 },
                 {
                     "name": "platform_viewer",
                     "description": "Read-only access to resources and admin UI",
                     "scope": "global",
-                    "permissions": ["admin.dashboard", "gateways.read", "servers.read", "teams.join", "tools.read", "resources.read", "prompts.read", "a2a.read"],
+                    "permissions": ["admin.dashboard", "gateways.read", "servers.read", "teams.join", "tools.read", "resources.read", "prompts.read", "a2a.read", "skills.read"],
                     "is_system_role": True,
                 },
             ]
@@ -391,7 +397,17 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     # Check if role already exists
                     existing_role = await role_service.get_role_by_name(str(role_def["name"]), str(role_def["scope"]))
                     if existing_role:
-                        logger.info(f"System role {role_def['name']} already exists - skipping")
+                        # Reconcile permissions: merge any new permissions into existing system roles
+                        expected_perms = set(cast(list[str], role_def["permissions"]))
+                        current_perms = set(existing_role.permissions or [])
+                        missing_perms = expected_perms - current_perms
+                        if missing_perms and existing_role.is_system_role:
+                            existing_role.permissions = list(current_perms | expected_perms)
+                            db.add(existing_role)
+                            db.flush()
+                            logger.info(f"Reconciled system role {role_def['name']}: added {missing_perms}")
+                        else:
+                            logger.info(f"System role {role_def['name']} already exists - skipping")
                         created_roles.append(existing_role)
                         continue
 

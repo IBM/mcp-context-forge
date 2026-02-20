@@ -67,6 +67,14 @@ TEAM_ADMIN_PERMISSIONS = sorted(
         "prompts.delete",
         "a2a.delete",
         "a2a.invoke",
+        "tokens.create",
+        "tokens.read",
+        "tokens.update",
+        "tokens.revoke",
+        "skills.create",
+        "skills.read",
+        "skills.approve",
+        "skills.revoke",
     ]
 )
 
@@ -101,6 +109,8 @@ DEVELOPER_PERMISSIONS = sorted(
         "prompts.delete",
         "a2a.delete",
         "a2a.invoke",
+        "skills.create",
+        "skills.read",
     ]
 )
 
@@ -114,6 +124,7 @@ VIEWER_PERMISSIONS = sorted(
         "resources.read",
         "prompts.read",
         "a2a.read",
+        "skills.read",
     ]
 )
 
@@ -127,6 +138,7 @@ PLATFORM_VIEWER_PERMISSIONS = sorted(
         "resources.read",
         "prompts.read",
         "a2a.read",
+        "skills.read",
     ]
 )
 

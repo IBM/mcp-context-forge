@@ -14,6 +14,7 @@ It also publishes event notifications for server changes.
 # Standard
 import asyncio
 import binascii
+import contextlib
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
@@ -301,6 +302,58 @@ class ServerService:
             "oauth_config": getattr(server, "oauth_config", None),
         }
 
+        # Code execution virtual server configuration.
+        #
+        # Note: Many unit tests build Server objects using MagicMock without setting
+        # these optional fields. MagicMock's default attribute values are truthy
+        # objects, which would fail strict Pydantic validation for Literal fields.
+        # Coerce to safe defaults when values are missing or not of the expected type.
+
+        def _coerce_optional_dict(value: Any) -> Optional[Dict[str, Any]]:
+            """Coerce model-like payloads into plain dicts when possible.
+
+            Args:
+                value: Candidate mapping or model object.
+
+            Returns:
+                A dictionary payload when conversion succeeds; otherwise ``None``.
+            """
+            if value is None:
+                return None
+            if isinstance(value, dict):
+                return value
+            dump_fn = getattr(value, "model_dump", None)
+            if callable(dump_fn):
+                with contextlib.suppress(Exception):
+                    dumped = dump_fn()
+                    if isinstance(dumped, dict):
+                        return dumped
+            return None
+
+        raw_type = getattr(server, "server_type", "standard")
+        server_type = raw_type if isinstance(raw_type, str) and raw_type in {"standard", "code_execution"} else "standard"
+
+        raw_stub_language = getattr(server, "stub_language", None)
+        stub_language = raw_stub_language if isinstance(raw_stub_language, str) and raw_stub_language in {"typescript", "python"} else None
+
+        raw_skills_scope = getattr(server, "skills_scope", None)
+        skills_scope = raw_skills_scope if isinstance(raw_skills_scope, str) else None
+
+        raw_skills_require_approval = getattr(server, "skills_require_approval", False)
+        skills_require_approval = raw_skills_require_approval if isinstance(raw_skills_require_approval, bool) else False
+
+        server_dict.update(
+            {
+                "type": server_type,
+                "stub_language": stub_language,
+                "mount_rules": _coerce_optional_dict(getattr(server, "mount_rules", None)),
+                "sandbox_policy": _coerce_optional_dict(getattr(server, "sandbox_policy", None)),
+                "tokenization": _coerce_optional_dict(getattr(server, "tokenization", None)),
+                "skills_scope": skills_scope,
+                "skills_require_approval": skills_require_approval,
+            }
+        )
+
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
             total = 0
@@ -476,6 +529,10 @@ class ServerService:
         """
         try:
             logger.info(f"Registering server: {server_in.name}")
+            server_type_value = getattr(server_in, "server_type", "standard") or "standard"
+            if server_type_value == "code_execution" and not settings.code_execution_enabled:
+                raise ValueError("code_execution servers are disabled (set CODE_EXECUTION_ENABLED=true to enable)")
+
             # # Create the new server record.
             db_server = DbServer(
                 name=server_in.name,
@@ -492,6 +549,26 @@ class ServerService:
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=getattr(server_in, "oauth_config", None),
+                # Code execution configuration
+                server_type=server_type_value,
+                stub_language=getattr(server_in, "stub_language", None),
+                mount_rules=(
+                    getattr(server_in, "mount_rules", None).model_dump()
+                    if getattr(server_in, "mount_rules", None) is not None and hasattr(getattr(server_in, "mount_rules"), "model_dump")
+                    else getattr(server_in, "mount_rules", None)
+                ),
+                sandbox_policy=(
+                    getattr(server_in, "sandbox_policy", None).model_dump()
+                    if getattr(server_in, "sandbox_policy", None) is not None and hasattr(getattr(server_in, "sandbox_policy"), "model_dump")
+                    else getattr(server_in, "sandbox_policy", None)
+                ),
+                tokenization=(
+                    getattr(server_in, "tokenization", None).model_dump()
+                    if getattr(server_in, "tokenization", None) is not None and hasattr(getattr(server_in, "tokenization"), "model_dump")
+                    else getattr(server_in, "tokenization", None)
+                ),
+                skills_scope=getattr(server_in, "skills_scope", None),
+                skills_require_approval=bool(getattr(server_in, "skills_require_approval", False)),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -1284,6 +1361,55 @@ class ServerService:
                     server.oauth_config = server_update.oauth_config
                 elif server_update.oauth_config is not None:
                     server.oauth_config = server_update.oauth_config
+
+            # Update code execution server settings
+            # Only block explicit transitions TO code_execution when the feature is disabled.
+            # Metadata-only edits (name/description/tags/OAuth) on existing code-exec servers
+            # must remain allowed even when the feature toggle is off.
+            if server_update.server_type == "code_execution" and not settings.code_execution_enabled:
+                raise ValueError("code_execution servers are disabled (set CODE_EXECUTION_ENABLED=true to enable)")
+            requested_server_type = server_update.server_type or getattr(server, "server_type", "standard") or "standard"
+
+            if server_update.server_type is not None:
+                server.server_type = server_update.server_type
+                if server.server_type != "code_execution":
+                    # Keep non-code servers clean from code-mode settings
+                    server.stub_language = None
+                    server.mount_rules = None
+                    server.sandbox_policy = None
+                    server.tokenization = None
+                    server.skills_scope = None
+                    server.skills_require_approval = False
+
+            # Only apply code-execution fields when the effective type is code_execution
+            if requested_server_type == "code_execution":
+                if server_update.stub_language is not None:
+                    server.stub_language = server_update.stub_language
+
+                if hasattr(server_update, "model_fields_set") and "mount_rules" in server_update.model_fields_set:
+                    server.mount_rules = server_update.mount_rules.model_dump() if hasattr(server_update.mount_rules, "model_dump") else server_update.mount_rules
+                elif server_update.mount_rules is not None:
+                    server.mount_rules = server_update.mount_rules.model_dump() if hasattr(server_update.mount_rules, "model_dump") else server_update.mount_rules
+
+                if hasattr(server_update, "model_fields_set") and "sandbox_policy" in server_update.model_fields_set:
+                    server.sandbox_policy = server_update.sandbox_policy.model_dump() if hasattr(server_update.sandbox_policy, "model_dump") else server_update.sandbox_policy
+                elif server_update.sandbox_policy is not None:
+                    server.sandbox_policy = server_update.sandbox_policy.model_dump() if hasattr(server_update.sandbox_policy, "model_dump") else server_update.sandbox_policy
+
+                if hasattr(server_update, "model_fields_set") and "tokenization" in server_update.model_fields_set:
+                    server.tokenization = server_update.tokenization.model_dump() if hasattr(server_update.tokenization, "model_dump") else server_update.tokenization
+                elif server_update.tokenization is not None:
+                    server.tokenization = server_update.tokenization.model_dump() if hasattr(server_update.tokenization, "model_dump") else server_update.tokenization
+
+                if hasattr(server_update, "model_fields_set") and "skills_scope" in server_update.model_fields_set:
+                    server.skills_scope = server_update.skills_scope
+                elif server_update.skills_scope is not None:
+                    server.skills_scope = server_update.skills_scope
+
+                if hasattr(server_update, "model_fields_set") and "skills_require_approval" in server_update.model_fields_set:
+                    server.skills_require_approval = bool(server_update.skills_require_approval)
+                elif server_update.skills_require_approval is not None:
+                    server.skills_require_approval = bool(server_update.skills_require_approval)
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)

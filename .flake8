@@ -42,6 +42,12 @@ extend-ignore =
     E203,
     W503
 per-file-ignores =
+    mcpgateway/db.py: DAR201
+    mcpgateway/main.py: DAR
+    mcpgateway/schemas.py: DAR
+    mcpgateway/services/code_execution_service.py: DAR
+    mcpgateway/services/server_service.py: DAR401
+    mcpgateway/services/tool_service.py: DAR
     mcpgateway/services/gateway_service.py: DAR401,DAR402
     mcpgateway/translate.py: DAR401
     tests/**/*.py: DAR

@@ -2305,16 +2305,18 @@ class TestRealtimeEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics collection, aggregation, and reset functionality."""
 
+    @patch("mcpgateway.main.a2a_service")
     @patch("mcpgateway.main.prompt_service.aggregate_metrics")
     @patch("mcpgateway.main.server_service.aggregate_metrics")
     @patch("mcpgateway.main.resource_service.aggregate_metrics")
     @patch("mcpgateway.main.tool_service.aggregate_metrics")
-    def test_get_metrics(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
+    def test_get_metrics(self, mock_tool, mock_resource, mock_server, mock_prompt, mock_a2a_service, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
         mock_tool.return_value = {"total": 5}
         mock_resource.return_value = {"total": 3}
         mock_server.return_value = {"total": 2}
         mock_prompt.return_value = {"total": 1}
+        mock_a2a_service.aggregate_metrics = AsyncMock(return_value={"total": 0})
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200

@@ -53,7 +53,9 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update, server_tool_association
+from mcpgateway.db import get_for_update
+from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
@@ -71,6 +73,7 @@ from mcpgateway.plugins.framework import (
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.code_execution_service import CODE_EXECUTION_META_TOOLS, code_execution_service, CodeExecutionError
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -1970,6 +1973,17 @@ class ToolService:
             True
         """
 
+        server = db.get(DbServer, server_id)
+        if code_execution_service.is_code_execution_server(server):
+            synthetic_tools = code_execution_service.build_meta_tools(server_id=server_id)
+            result: List[ToolRead] = []
+            for item in synthetic_tools:
+                try:
+                    result.append(ToolRead.model_validate(item))
+                except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as exc:
+                    logger.exception("Failed to materialize code_execution meta-tool for server %s: %s", server_id, exc)
+            return result
+
         if include_metrics:
             query = (
                 select(DbTool)
@@ -2644,6 +2658,145 @@ class ToolService:
             logger.exception(f"Direct proxy tool invocation failed for {name}: {e}")
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
 
+    async def _invoke_code_execution_meta_tool(  # pylint: disable=too-many-arguments,too-many-locals
+        self,
+        db: Session,
+        server: DbServer,
+        name: str,
+        arguments: Dict[str, Any],
+        request_headers: Optional[Dict[str, str]],
+        app_user_email: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        plugin_context_table: Optional[PluginContextTable],
+        plugin_global_context: Optional[GlobalContext],
+        meta_data: Optional[Dict[str, Any]],
+    ) -> ToolResult:
+        """Invoke shell_exec/fs_browse on code_execution virtual servers."""
+        headers = request_headers or {}
+
+        if plugin_global_context is not None:
+            global_context = plugin_global_context
+        else:
+            request_id = get_correlation_id() or uuid.uuid4().hex
+            global_context = GlobalContext(
+                request_id=request_id,
+                server_id=server.id if server else "unknown",
+                tenant_id=None,
+                user=app_user_email,
+            )
+        context_table = plugin_context_table
+
+        # Fire plugin pre-invoke for shell_exec/fs_browse meta-tools.
+        if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+            pre_result, context_table = await self._plugin_manager.invoke_hook(
+                ToolHookType.TOOL_PRE_INVOKE,
+                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                global_context=global_context,
+                local_contexts=context_table,
+                violations_as_exceptions=True,
+            )
+            if pre_result.modified_payload:
+                payload = pre_result.modified_payload
+                name = payload.name
+                arguments = payload.args
+                if payload.headers is not None:
+                    headers = payload.headers.model_dump()
+
+        async def _bridge_invoke(tool_name: str, tool_args: Dict[str, Any]) -> ToolResult:
+            """Invoke non-meta tools through the regular tool execution path."""
+            if tool_name in CODE_EXECUTION_META_TOOLS:
+                raise ToolInvocationError(f"Nested invocation of meta-tool '{tool_name}' is not allowed")
+            # Nested calls must use regular tool invocation path and still pass RBAC, rate limit, audit hooks.
+            with fresh_db_session() as nested_db:
+                return await self.invoke_tool(
+                    db=nested_db,
+                    name=tool_name,
+                    arguments=tool_args,
+                    request_headers=headers,
+                    app_user_email=app_user_email,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    server_id=None,
+                    plugin_context_table=context_table,
+                    plugin_global_context=global_context,
+                    meta_data=meta_data,
+                )
+
+        try:
+            if name == "shell_exec":
+                payload = await code_execution_service.shell_exec(
+                    db=db,
+                    server=server,
+                    code=str(arguments.get("code") or ""),
+                    language=arguments.get("language"),
+                    timeout_ms=arguments.get("timeout_ms"),
+                    stream=arguments.get("stream"),
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    request_headers=headers,
+                    invoke_tool=_bridge_invoke,
+                )
+            elif name == "fs_browse":
+                payload = await code_execution_service.fs_browse(
+                    db=db,
+                    server=server,
+                    path=str(arguments.get("path") or "/tools"),
+                    include_hidden=bool(arguments.get("include_hidden", False)),
+                    max_entries=arguments.get("max_entries"),
+                    user_email=user_email,
+                    token_teams=token_teams,
+                )
+            elif name == "fs_read":
+                payload = await code_execution_service.fs_read(
+                    db=db,
+                    server=server,
+                    path=str(arguments.get("path") or ""),
+                    user_email=user_email,
+                    token_teams=token_teams,
+                )
+            elif name == "fs_write":
+                payload = await code_execution_service.fs_write(
+                    db=db,
+                    server=server,
+                    path=str(arguments.get("path") or ""),
+                    content=str(arguments.get("content") or ""),
+                    user_email=user_email,
+                    token_teams=token_teams,
+                )
+            else:
+                raise ToolNotFoundError(f"Tool not found: {name}")
+        except CodeExecutionError as exc:
+            payload = {"output": "", "error": str(exc), "metrics": {}, "tool_calls_made": []}
+
+        text_payload = orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode("utf-8")
+        tool_result = ToolResult(
+            content=[TextContent(type="text", text=text_payload)],
+            structured_content=payload if isinstance(payload, dict) else {"value": payload},
+            is_error=bool(payload.get("error")) if isinstance(payload, dict) else False,
+        )
+
+        # Fire plugin post-invoke for shell_exec/fs_browse meta-tools.
+        if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+            post_result, _ = await self._plugin_manager.invoke_hook(
+                ToolHookType.TOOL_POST_INVOKE,
+                payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
+                global_context=global_context,
+                local_contexts=context_table,
+                violations_as_exceptions=True,
+            )
+            if post_result.modified_payload:
+                modified = post_result.modified_payload.result
+                if isinstance(modified, dict):
+                    content = modified.get("content") or []
+                    structured = modified.get("structuredContent", modified.get("structured_content"))
+                    is_error = modified.get("isError", modified.get("is_error", False))
+                    tool_result = ToolResult(content=content, structured_content=structured, is_error=is_error)
+                else:
+                    tool_result = ToolResult(content=[TextContent(type="text", text=str(modified))], is_error=False)
+
+        return tool_result
+
     async def invoke_tool(
         self,
         db: Session,
@@ -2697,6 +2850,23 @@ class ToolService:
         """
         # pylint: disable=comparison-with-callable
         logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
+
+        if server_id and name in CODE_EXECUTION_META_TOOLS:
+            server = db.get(DbServer, server_id)
+            if code_execution_service.is_code_execution_server(server):
+                return await self._invoke_code_execution_meta_tool(
+                    db=db,
+                    server=server,
+                    name=name,
+                    arguments=arguments,
+                    request_headers=request_headers,
+                    app_user_email=app_user_email,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                    meta_data=meta_data,
+                )
 
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)

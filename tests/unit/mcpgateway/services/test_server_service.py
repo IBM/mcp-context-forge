@@ -419,6 +419,15 @@ class TestServerService:
         assert "Server already exists with name" in msg or "Failed to register server" in msg
 
     @pytest.mark.asyncio
+    async def test_register_server_code_execution_disabled(self, server_service, test_db, monkeypatch):
+        """code_execution registration is blocked when CODE_EXECUTION_ENABLED=false."""
+        monkeypatch.setattr("mcpgateway.services.server_service.settings.code_execution_enabled", False, raising=False)
+        server_create = ServerCreate(name="codeexec-disabled", type="code_execution")
+
+        with pytest.raises(ServerError, match="code_execution servers are disabled"):
+            await server_service.register_server(test_db, server_create)
+
+    @pytest.mark.asyncio
     async def test_register_server_invalid_associated_tool(self, server_service, test_db):
         """
         Non-existent associated tool raises ServerError.

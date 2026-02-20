@@ -615,6 +615,188 @@ class TestAdminServerRoutes:
         assert server_create.oauth_enabled is False
         assert server_create.oauth_config is None
 
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_code_execution_fields(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """Ensure code_execution server fields are parsed and forwarded from admin form."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
+        form_data = FakeForm(
+            {
+                "name": "CodeExecServer",
+                "server_type": "code_execution",
+                "stub_language": "python",
+                "skills_scope": "team:team-1",
+                "skills_require_approval": "on",
+                "mount_rules": json.dumps({"include_tags": ["prod"], "exclude_servers": ["admin-tools"]}),
+                "sandbox_policy": json.dumps({"runtime": "python", "max_execution_time_ms": 45000}),
+                "tokenization": json.dumps({"enabled": True, "types": ["email", "name"], "strategy": "bidirectional"}),
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            },
+        )
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+
+        server_create = mock_register_server.call_args.args[1]
+        assert server_create.server_type == "code_execution"
+        assert server_create.stub_language == "python"
+        assert server_create.mount_rules.include_tags == ["prod"]
+        assert server_create.sandbox_policy.runtime == "python"
+        assert server_create.tokenization.enabled is True
+        assert server_create.skills_scope == "team:team-1"
+        assert server_create.skills_require_approval is True
+
+    async def test_admin_add_server_code_execution_disabled_returns_400(self, mock_request, mock_db, monkeypatch):
+        """Creating code_execution server should fail when feature flag is disabled."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", False, raising=False)
+        form_data = FakeForm(
+            {
+                "name": "CodeExecDisabled",
+                "server_type": "code_execution",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        assert b"code_execution servers are disabled" in result.body
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_standard_server_ignores_stale_code_execution_json(self, mock_register, mock_request, mock_db, monkeypatch):
+        """Standard server create must succeed even if hidden code_execution fields contain invalid JSON.
+
+        Regression test: previously, JSON fields were parsed before the server_type
+        guard, causing 400 errors from stale hidden form data.
+        """
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
+        mock_register.return_value = SimpleNamespace(id="srv-1", name="Standard")
+        form_data = FakeForm(
+            {
+                "name": "Standard Server",
+                "server_type": "standard",
+                "mount_rules": "{bad-json!!!}",
+                "sandbox_policy": "not-json-at-all",
+                "tokenization": "{{{{",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        # register_server(db, server, ...) — server is the second positional arg
+        server_create = mock_register.call_args[0][1]
+        assert server_create.mount_rules is None
+        assert server_create.sandbox_policy is None
+
+    async def test_admin_add_server_invalid_code_execution_json_returns_400(self, mock_request, mock_db, monkeypatch):
+        """Invalid JSON payload in code_execution fields should fail validation."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
+        form_data = FakeForm(
+            {
+                "name": "BadCodeExec",
+                "server_type": "code_execution",
+                "mount_rules": "{bad-json}",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_code_execution_fields(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """Ensure edit server parses and forwards code_execution form values."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
+        server_id = str(uuid4())
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "CodeExecEdit",
+                "server_type": "code_execution",
+                "stub_language": "typescript",
+                "skills_scope": "team:team-1",
+                "skills_require_approval": "on",
+                "mount_rules": json.dumps({"include_servers": ["github"]}),
+                "sandbox_policy": json.dumps({"runtime": "deno", "max_execution_time_ms": 60000}),
+                "tokenization": json.dumps({"enabled": True, "types": ["email"]}),
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "u@example.com",
+                "modified_from_ip": None,
+                "modified_via": "ui",
+                "modified_user_agent": None,
+            },
+        )
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+
+        server_update = mock_update_server.call_args.args[2]
+        assert server_update.server_type == "code_execution"
+        assert server_update.stub_language == "typescript"
+        assert server_update.mount_rules.include_servers == ["github"]
+        assert server_update.sandbox_policy.runtime == "deno"
+        assert server_update.tokenization.enabled is True
+        assert server_update.skills_scope == "team:team-1"
+        assert server_update.skills_require_approval is True
+
+    async def test_admin_edit_server_code_execution_disabled_returns_400(self, mock_request, mock_db, monkeypatch):
+        """Editing to code_execution should fail when feature flag is disabled."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", False, raising=False)
+
+        server_id = str(uuid4())
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "CodeExecDisabledEdit",
+                "server_type": "code_execution",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "u@example.com",
+                "modified_from_ip": None,
+                "modified_via": "ui",
+                "modified_user_agent": None,
+            },
+        )
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        assert b"code_execution servers are disabled" in result.body
+
     async def test_admin_add_server_missing_required_field_returns_422(self, mock_request, mock_db):
         """Cover the KeyError handler in admin_add_server."""
         mock_request.form = AsyncMock(return_value=FakeForm({"description": "no name"}))
@@ -15711,7 +15893,12 @@ class TestTemplateButtonGating:
         assert "/delete" not in html
 
     def test_servers_pagination_query_params_are_js_escaped(self, jinja_env):
-        """Malicious q/tags values must not break out of JS string context."""
+        """Malicious q/tags values must not break out of JS string context.
+
+        Query params are rendered inside a <script type="application/json">
+        tag using Jinja2's tojson filter, which escapes single quotes to
+        \\u0027 and angle brackets to \\u003c/\\u003e.
+        """
         server_data = {
             "id": "srv-1",
             "name": "Test Server",
@@ -15737,9 +15924,58 @@ class TestTemplateButtonGating:
             },
         )
 
+        # Raw payloads must NOT appear unescaped
         assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
-        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
-        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
+        assert "<script>alert(2)</script>" not in html.split('type="application/json"')[1].split("</script>")[0] if 'type="application/json"' in html else True
+
+        # tojson escapes live inside the <script type="application/json"> tag
+        assert 'class="pagination-qp"' in html
+        assert "\\u0027" in html  # Single quotes escaped
+        assert "\\u003c/script\\u003e" in html  # Script tags escaped
+        assert "\\u003cscript\\u003e" in html  # Opening script tags escaped
+
+    def test_servers_code_execution_visual_marker(self, jinja_env):
+        """Code execution servers should render highlighted badge/emoji in the list."""
+        server_data = {
+            "id": "srv-code-1",
+            "name": "Code Server",
+            "type": "code_execution",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A code execution server",
+            "icon": None,
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_servers_partial(jinja_env, server_data, current_user_email="owner@example.com")
+        assert "💻 Code Mode" in html
+        assert "⚡" in html
+
+    def test_servers_standard_has_no_code_execution_marker(self, jinja_env):
+        """Standard servers should not show code execution marker."""
+        server_data = {
+            "id": "srv-standard-1",
+            "name": "Standard Server",
+            "type": "standard",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A standard server",
+            "icon": None,
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_servers_partial(jinja_env, server_data, current_user_email="owner@example.com")
+        assert "💻 Code Mode" not in html
 
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""

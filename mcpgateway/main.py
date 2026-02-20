@@ -54,7 +54,7 @@ from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -72,7 +72,9 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import CodeExecutionSkill as DbCodeExecutionSkill
+from mcpgateway.db import fresh_db_session, refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import SkillApproval as DbSkillApproval
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -123,6 +125,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
+from mcpgateway.services.code_execution_service import code_execution_service, CodeExecutionError
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -3083,6 +3086,346 @@ async def server_get_prompts(
         token_teams = []  # Non-admin without teams = public-only (secure default)
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
+
+
+@server_router.get("/{server_id}/code/runs", response_model=List[Dict[str, Any]])
+@require_permission("servers.read")
+async def list_code_execution_runs(
+    server_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """List code execution runs for a code_execution server."""
+    _ = user
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+    runs = await code_execution_service.list_runs(db, server_id=server_id, limit=limit)
+    result: List[Dict[str, Any]] = []
+    for run in runs:
+        result.append(
+            {
+                "id": run.id,
+                "server_id": run.server_id,
+                "session_id": run.session_id,
+                "user_email": run.user_email,
+                "language": run.language,
+                "code_hash": run.code_hash,
+                "status": run.status,
+                "metrics": run.metrics or {},
+                "tool_calls_made": run.tool_calls_made or [],
+                "security_events": run.security_events or [],
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            }
+        )
+    return result
+
+
+@server_router.get("/{server_id}/code/sessions", response_model=List[Dict[str, Any]])
+@require_permission("servers.read")
+async def list_code_execution_sessions(
+    server_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """List active in-memory code execution sessions for a server."""
+    _ = user
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+    return await code_execution_service.list_active_sessions(server_id=server_id)
+
+
+@server_router.get("/{server_id}/code/security-events", response_model=List[Dict[str, Any]])
+@require_permission("servers.read")
+async def list_code_execution_security_events(
+    server_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """List structured security events captured during code execution runs."""
+    _ = user
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+
+    runs = await code_execution_service.list_runs(db, server_id=server_id, limit=limit)
+    events: List[Dict[str, Any]] = []
+    for run in runs:
+        for event in run.security_events or []:
+            if isinstance(event, dict):
+                row = dict(event)
+            else:
+                row = {"message": str(event)}
+            row.setdefault("run_id", run.id)
+            row.setdefault("server_id", run.server_id)
+            row.setdefault("run_status", run.status)
+            row.setdefault("created_at", run.created_at.isoformat() if run.created_at else None)
+            events.append(row)
+    return events
+
+
+@server_router.post("/{server_id}/code/runs/{run_id}/replay", response_model=Dict[str, Any])
+@require_permission("servers.use")
+async def replay_code_execution_run(
+    request: Request,
+    server_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Replay a previous run with debug metadata."""
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+
+    request_headers = {k.lower(): v for k, v in request.headers.items()}
+    oauth_user_email = get_user_email(user)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    if is_admin and token_teams is None:
+        user_email = None
+        token_teams = None
+    elif token_teams is None:
+        token_teams = []
+
+    async def _bridge(tool_name: str, tool_args: Dict[str, Any]):
+        """Invoke nested tool calls during replay with fresh DB session scope."""
+        with fresh_db_session() as nested_db:
+            return await tool_service.invoke_tool(
+                db=nested_db,
+                name=tool_name,
+                arguments=tool_args,
+                request_headers=request_headers,
+                app_user_email=oauth_user_email,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=None,
+                plugin_context_table=None,
+                plugin_global_context=None,
+                meta_data=None,
+            )
+
+    try:
+        return await code_execution_service.replay_run(
+            db=db,
+            server_id=server_id,
+            run_id=run_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            request_headers=request_headers,
+            invoke_tool=_bridge,
+        )
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@server_router.get("/{server_id}/skills", response_model=List[Dict[str, Any]])
+@require_permission("skills.read")
+async def list_code_execution_skills(
+    server_id: str,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """List skills configured for a code_execution server."""
+    _ = user
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+    skills = await code_execution_service.list_skills(db, server_id=server_id, include_inactive=include_inactive)
+    return [
+        {
+            "id": skill.id,
+            "server_id": skill.server_id,
+            "name": skill.name,
+            "description": skill.description,
+            "language": skill.language,
+            "version": skill.version,
+            "status": skill.status,
+            "is_active": skill.is_active,
+            "owner_email": skill.owner_email,
+            "team_id": skill.team_id,
+            "approved_by": skill.approved_by,
+            "approved_at": skill.approved_at.isoformat() if skill.approved_at else None,
+            "rejection_reason": skill.rejection_reason,
+            "created_at": skill.created_at.isoformat() if skill.created_at else None,
+            "updated_at": skill.updated_at.isoformat() if skill.updated_at else None,
+        }
+        for skill in skills
+    ]
+
+
+@server_router.post("/{server_id}/skills", response_model=Dict[str, Any], status_code=201)
+@require_permission("skills.create")
+async def create_code_execution_skill(
+    server_id: str,
+    request: Request,
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Create a reusable skill for a code_execution server."""
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+
+    name = str(payload.get("name") or "").strip()
+    source_code = str(payload.get("source_code") or "")
+    language = str(payload.get("language") or "python").lower()
+    description = str(payload.get("description")) if payload.get("description") is not None else None
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    if len(name) > 255:
+        raise HTTPException(status_code=422, detail="name must be 255 characters or fewer")
+    if not source_code.strip():
+        raise HTTPException(status_code=422, detail="source_code is required")
+    if len(source_code) > 1_048_576:
+        raise HTTPException(status_code=422, detail="source_code must be 1 MB or fewer")
+    if description and len(description) > 10_000:
+        raise HTTPException(status_code=422, detail="description must be 10,000 characters or fewer")
+
+    metadata = MetadataCapture.extract_creation_metadata(request, user)
+    owner_email = get_user_email(user)
+    try:
+        skill = await code_execution_service.create_skill(
+            db=db,
+            server=server,
+            name=name,
+            source_code=source_code,
+            language=language,
+            description=description,
+            owner_email=owner_email,
+            created_by=metadata["created_by"],
+        )
+        return {
+            "id": skill.id,
+            "server_id": skill.server_id,
+            "name": skill.name,
+            "language": skill.language,
+            "version": skill.version,
+            "status": skill.status,
+            "requires_approval": bool(getattr(server, "skills_require_approval", False)),
+        }
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _require_skill_moderation_access(server, user) -> None:
+    """Enforce that skill moderation on teamless servers requires platform_admin.
+
+    When a code_execution server has no team_id (public/global), the RBAC
+    decorator's check_any_team fallback would allow any team_admin to moderate
+    skills.  Restrict moderation of teamless servers to platform admins only.
+    """
+    if server.team_id is None and not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Skill moderation on public servers requires platform admin privileges")
+
+
+@server_router.get("/{server_id}/skills/approvals", response_model=List[Dict[str, Any]])
+@require_permission("skills.approve")
+async def list_skill_approvals(
+    server_id: str,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """List skill approval requests for a server."""
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
+    query = select(DbSkillApproval).join(DbCodeExecutionSkill).where(DbCodeExecutionSkill.server_id == server_id)
+    if status_filter:
+        query = query.where(DbSkillApproval.status == status_filter)
+    approvals = db.execute(query.order_by(DbSkillApproval.requested_at.desc())).scalars().all()
+    return [
+        {
+            "id": approval.id,
+            "skill_id": approval.skill_id,
+            "requested_by": approval.requested_by,
+            "requested_at": approval.requested_at.isoformat() if approval.requested_at else None,
+            "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+            "status": approval.status,
+            "reviewed_by": approval.reviewed_by,
+            "reviewed_at": approval.reviewed_at.isoformat() if approval.reviewed_at else None,
+            "rejection_reason": approval.rejection_reason,
+            "admin_notes": approval.admin_notes,
+        }
+        for approval in approvals
+    ]
+
+
+@server_router.post("/{server_id}/skills/approvals/{approval_id}/approve", response_model=Dict[str, Any])
+@require_permission("skills.approve")
+async def approve_skill_request(
+    server_id: str,
+    approval_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Approve a pending skill request."""
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
+    reviewer_email = get_user_email(user)
+    notes = payload.get("notes")
+    try:
+        approval = await code_execution_service.approve_skill(db=db, server_id=server_id, approval_id=approval_id, reviewer_email=reviewer_email, approve=True, reason=notes)
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": approval.id, "status": approval.status, "skill_id": approval.skill_id}
+
+
+@server_router.post("/{server_id}/skills/approvals/{approval_id}/reject", response_model=Dict[str, Any])
+@require_permission("skills.approve")
+async def reject_skill_request(
+    server_id: str,
+    approval_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Reject a pending skill request."""
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
+    reviewer_email = get_user_email(user)
+    reason = str(payload.get("reason") or "Rejected")
+    try:
+        approval = await code_execution_service.approve_skill(db=db, server_id=server_id, approval_id=approval_id, reviewer_email=reviewer_email, approve=False, reason=reason)
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": approval.id, "status": approval.status, "skill_id": approval.skill_id}
+
+
+@server_router.post("/{server_id}/skills/{skill_id}/revoke", response_model=Dict[str, Any])
+@require_permission("skills.revoke")
+async def revoke_skill(
+    server_id: str,
+    skill_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Revoke an existing skill."""
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
+    reviewer_email = get_user_email(user)
+    reason = payload.get("reason")
+    try:
+        skill = await code_execution_service.revoke_skill(db=db, server_id=server_id, skill_id=skill_id, reviewer_email=reviewer_email, reason=reason)
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": skill.id, "status": skill.status}
 
 
 ##################
