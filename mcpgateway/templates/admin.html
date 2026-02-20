@@ -14938,7 +14938,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       function editTeamSafe(button) {
         const teamId = button.getAttribute('data-team-id');
         // Load edit modal content via HTMX
-        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/edit?_t=' + Date.now(), {
+        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/edit', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {
@@ -14953,7 +14953,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function loadTeamMembersView(teamId) {
         // Load team members management modal
-        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members?_t=' + Date.now(), {
+        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {
@@ -14963,7 +14963,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function loadAddMembersView(teamId) {
         // Load add members interface
-        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add?_t=' + Date.now(), {
+        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {
