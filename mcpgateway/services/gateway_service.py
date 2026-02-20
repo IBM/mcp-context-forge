@@ -1131,7 +1131,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 context={
                     "created_via": created_via,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful gateway creation
@@ -2257,7 +2256,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     context={
                         "modified_via": modified_via,
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful gateway update
@@ -2713,7 +2711,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         "action": "activate" if activate else "deactivate",
                         "only_update_reachable": only_update_reachable,
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful gateway state change
@@ -2927,7 +2924,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     "name": gateway_name,
                     "url": gateway_info["url"],
                 },
-                db=db,
             )
 
             # Structured logging: Log successful gateway deletion
