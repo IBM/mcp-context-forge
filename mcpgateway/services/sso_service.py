@@ -231,7 +231,14 @@ class SSOService:
         client_secret = provider_data.pop("client_secret")
         provider_data["client_secret_encrypted"] = await self._encrypt_secret(client_secret)
 
-        provider = SSOProvider(**provider_data)
+        # Filter to valid SSOProvider columns to prevent TypeError on unknown keys
+        valid_columns = {c.key for c in SSOProvider.__table__.columns}
+        filtered_data = {k: v for k, v in provider_data.items() if k in valid_columns}
+        skipped = set(provider_data) - set(filtered_data)
+        if skipped:
+            logger.warning("Ignored unknown SSOProvider fields during creation: %s", skipped)
+
+        provider = SSOProvider(**filtered_data)
         self.db.add(provider)
         self.db.commit()
         self.db.refresh(provider)

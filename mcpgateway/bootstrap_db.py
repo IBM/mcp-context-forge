@@ -87,7 +87,12 @@ def _schema_looks_current(inspector) -> bool:
     Returns:
         True when expected columns exist for a recent schema version.
     """
-    return _column_exists(inspector, "tools", "display_name") and _column_exists(inspector, "gateways", "oauth_config") and _column_exists(inspector, "prompts", "custom_name")
+    return (
+        _column_exists(inspector, "tools", "display_name")
+        and _column_exists(inspector, "gateways", "oauth_config")
+        and _column_exists(inspector, "prompts", "custom_name")
+        and _column_exists(inspector, "sso_providers", "jwks_uri")
+    )
 
 
 @contextmanager
