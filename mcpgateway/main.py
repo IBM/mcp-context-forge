@@ -33,7 +33,6 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import html
-import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
@@ -177,14 +176,9 @@ else:
     loop.create_task(bootstrap_db())
 
 # Initialize plugin manager as a singleton (honor env overrides for tests)
-_env_flag = _os.getenv("PLUGINS_ENABLED")
-if _env_flag is not None:
-    _env_enabled = _env_flag.strip().lower() in {"1", "true", "yes", "on"}
-    _PLUGINS_ENABLED = _env_enabled
-else:
-    _PLUGINS_ENABLED = settings.plugins_enabled
-_config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
-plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
+_PLUGINS_ENABLED = settings.plugins.enabled
+_CONFIG_FILE = settings.plugins.config_file
+plugin_manager: PluginManager | None = PluginManager(_CONFIG_FILE) if _PLUGINS_ENABLED else None
 
 
 # First-Party

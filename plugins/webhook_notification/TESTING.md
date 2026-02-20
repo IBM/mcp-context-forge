@@ -182,7 +182,7 @@ ngrok http 3000
 3. **Start MCP Gateway**
    ```bash
    export PLUGINS_ENABLED=true
-   export PLUGIN_CONFIG_FILE=plugins/config.yaml
+   export PLUGINS_CONFIG_FILE=plugins/config.yaml
    make dev
    ```
 

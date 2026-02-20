@@ -55,7 +55,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TYPE_CHECKING, TypedDict
 from urllib.parse import urlparse
 
 # Third-Party
@@ -64,6 +64,10 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
 from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.plugins.framework.settings import PluginsSettings
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -1672,14 +1676,6 @@ class Settings(BaseSettings):
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
-    # Core plugin settings
-    plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
-    plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
-
-    # Plugin CLI settings
-    plugins_cli_completion: bool = Field(default=False, description="Enable auto-completion for plugins CLI")
-    plugins_cli_markup_mode: Literal["markdown", "rich", "disabled"] | None = Field(default=None, description="Set markup mode for plugins CLI")
-
     # Development
     dev_mode: bool = False
     reload: bool = False
@@ -2383,6 +2379,18 @@ def generate_settings_schema() -> dict[str, Any]:
 # Lazy "instance" of settings
 class LazySettingsWrapper:
     """Lazily initialize settings singleton on getattr"""
+
+    @property
+    def plugins(self) -> "PluginsSettings":
+        """Access plugin framework settings via ``settings.plugins``.
+
+        Returns:
+            PluginsSettings: The plugin framework settings instance.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.settings import get_settings as _get_plugin_settings  # pylint: disable=import-outside-toplevel
+
+        return _get_plugin_settings()
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it

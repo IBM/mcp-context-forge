@@ -569,7 +569,10 @@ mcpContextForge:
 
     # ─ Plugin Configuration ─
     PLUGINS_ENABLED: "false"         # enable the plugin framework
-    PLUGIN_CONFIG_FILE: "plugins/config.yaml" # path to main plugin configuration file
+    # PLUGINS_CONFIG_FILE: "plugins/config.yaml" # path to main plugins configuration file (PLUGIN_CONFIG_FILE also accepted)
+    # NOTE: intentionally not set here so that legacy PLUGIN_CONFIG_FILE overrides
+    # are not shadowed by the chart default.  The app falls back to
+    # "plugins/config.yaml" when neither env var is present.
     PLUGINS_CLIENT_MTLS_CA_BUNDLE: ""        # default CA bundle for external plugins (optional)
     PLUGINS_CLIENT_MTLS_CERTFILE: ""         # gateway client certificate for plugin mTLS
     PLUGINS_CLIENT_MTLS_KEYFILE: ""          # gateway client key for plugin mTLS (optional)
@@ -584,6 +587,16 @@ mcpContextForge:
     PLUGINS_SERVER_SSL_KEYFILE_PASSWORD: ""  # password for plugin server key (optional)
     PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
     PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
+    PLUGINS_PLUGIN_TIMEOUT: "30"               # plugin execution timeout (seconds)
+    PLUGINS_LOG_LEVEL: "INFO"                  # plugin framework log level
+    PLUGINS_SKIP_SSL_VERIFY: "false"           # skip TLS verification for plugin HTTP requests
+    PLUGINS_HTTPX_CONNECT_TIMEOUT: "5.0"       # plugin HTTP client TCP connect timeout (seconds)
+    PLUGINS_HTTPX_READ_TIMEOUT: "120.0"        # plugin HTTP client read timeout (seconds)
+    PLUGINS_HTTPX_WRITE_TIMEOUT: "30.0"        # plugin HTTP client write timeout (seconds)
+    PLUGINS_HTTPX_POOL_TIMEOUT: "10.0"         # plugin HTTP client pool timeout (seconds)
+    PLUGINS_HTTPX_MAX_CONNECTIONS: "200"        # plugin HTTP client max connections
+    PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS: "100" # plugin HTTP client max keepalive connections
+    PLUGINS_HTTPX_KEEPALIVE_EXPIRY: "30.0"     # plugin HTTP client keepalive expiry (seconds)
 
     # ─ OpenTelemetry Observability ─
     OTEL_ENABLE_OBSERVABILITY: "false" # master switch for observability

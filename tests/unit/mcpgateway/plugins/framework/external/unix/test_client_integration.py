@@ -74,7 +74,7 @@ def unix_server_proc():
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
     current_env["PYTHONPATH"] = "."
     current_env["PLUGINS_TRANSPORT"] = "unix"
-    current_env["UNIX_SOCKET_PATH"] = socket_path
+    current_env["PLUGINS_UNIX_SOCKET_PATH"] = socket_path
 
     try:
         with subprocess.Popen(
@@ -260,7 +260,7 @@ def unix_server_proc_for_manager():
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
     current_env["PYTHONPATH"] = "."
     current_env["PLUGINS_TRANSPORT"] = "unix"
-    current_env["UNIX_SOCKET_PATH"] = PLUGIN_MANAGER_SOCKET_PATH
+    current_env["PLUGINS_UNIX_SOCKET_PATH"] = PLUGIN_MANAGER_SOCKET_PATH
 
     # Clean up any existing socket
     if os.path.exists(PLUGIN_MANAGER_SOCKET_PATH):

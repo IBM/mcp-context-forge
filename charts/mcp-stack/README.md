@@ -317,7 +317,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.PLUGINS_SERVER_SSL_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.PLUGINS_SERVER_SSL_KEYFILE | string | `""` |  |
 | mcpContextForge.config.PLUGINS_SERVER_SSL_KEYFILE_PASSWORD | string | `""` |  |
-| mcpContextForge.config.PLUGIN_CONFIG_FILE | string | `"plugins/config.yaml"` |  |
+| mcpContextForge.config.PLUGINS_CONFIG_FILE | string | not set (app default: `plugins/config.yaml`) | Set to override plugin config path. `PLUGIN_CONFIG_FILE` also accepted for backwards compatibility |
 | mcpContextForge.config.POLL_INTERVAL | string | `"1.0"` |  |
 | mcpContextForge.config.PORT | string | `"4444"` |  |
 | mcpContextForge.config.PROMPT_CACHE_SIZE | string | `"100"` |  |

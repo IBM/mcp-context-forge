@@ -9,8 +9,6 @@ This module stores a collection of plugin constants used throughout the framewor
 """
 
 # Standard
-import os
-import sys
 
 # Model constants.
 # Specialized plugin types.
@@ -26,7 +24,6 @@ CWD = "cwd"
 UDS = "uds"
 
 NAME = "name"
-PYTHON = os.environ.get("MCP_PYTHON", sys.executable)
 PLUGIN_NAME = "plugin_name"
 PAYLOAD = "payload"
 CONTEXT = "context"

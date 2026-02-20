@@ -220,7 +220,7 @@ make build-grpc
 # 2. Configure .env for Unix socket
 cat >> .env << 'EOF'
 PLUGINS_TRANSPORT=unix
-UNIX_SOCKET_PATH=/var/run/mcp-plugin.sock
+PLUGINS_UNIX_SOCKET_PATH=/var/run/mcp-plugin.sock
 EOF
 
 # 3. Start with socket volume mount
