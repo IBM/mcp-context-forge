@@ -2323,6 +2323,22 @@ class TestMetricsEndpoints:
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
 
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics")
+    @patch("mcpgateway.main.server_service.aggregate_metrics")
+    @patch("mcpgateway.main.resource_service.aggregate_metrics")
+    @patch("mcpgateway.main.tool_service.aggregate_metrics")
+    def test_get_metrics_serializes_non_json_values(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
+        """Metrics endpoint should tolerate non-JSON-native service return values."""
+        mock_tool.return_value = MagicMock()
+        mock_resource.return_value = {"total": 3}
+        mock_server.return_value = {"total": 2}
+        mock_prompt.return_value = {"total": 1}
+
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tools"] == {}
+
     #    @patch("mcpgateway.main.a2a_service")
     #    @patch("mcpgateway.main.prompt_service.reset_metrics")
     #    @patch("mcpgateway.main.server_service.reset_metrics")

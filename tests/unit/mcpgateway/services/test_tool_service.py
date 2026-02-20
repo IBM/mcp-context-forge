@@ -953,7 +953,7 @@ class TestToolService:
         test_db.commit = Mock()
 
         mock_team = MagicMock(id="team-1", is_personal=True)
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             tool_service.convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
 
@@ -971,7 +971,7 @@ class TestToolService:
         test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))))
         mock_team = MagicMock(id="other-team", is_personal=True)
 
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             result, next_cursor = await tool_service.list_tools(test_db, user_email="user@example.com", team_id="team-1")
 
@@ -3641,7 +3641,7 @@ class TestToolServiceTokenTeamsFiltering:
         mock_team = MagicMock(id="team_a", is_personal=False)
 
         # When token_teams is None, TeamManagementService SHOULD be called
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=None)
 

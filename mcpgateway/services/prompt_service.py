@@ -43,6 +43,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -171,7 +172,7 @@ class PromptLockConflictError(PromptError):
     """
 
 
-class PromptService:
+class PromptService(BaseService):
     """Service for managing prompt templates.
 
     Handles:
@@ -181,6 +182,8 @@ class PromptService:
     - Resource embedding
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbPrompt
 
     def __init__(self) -> None:
         """
@@ -961,58 +964,6 @@ class PromptService:
 
         return stats
 
-    def _apply_visibility_filter(
-        self,
-        query,
-        user_email: Optional[str],
-        token_teams: List[str],
-        team_id: Optional[str] = None,
-    ) -> Any:
-        """Apply visibility-based access control to query.
-
-        Access rules (matching tools/resources/agents/gateways/servers):
-        - public: visible to all
-        - team: visible to team members (token_teams contains team_id)
-        - private: visible only to owner, BUT NOT for public-only tokens
-
-        Args:
-            query: SQLAlchemy query to filter
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. [] = public-only (no owner access)
-            team_id: Optional specific team filter
-
-        Returns:
-            Filtered query
-        """
-        # Check if this is a public-only token (empty teams array)
-        # Public-only tokens can ONLY see public resources - no owner access
-        is_public_only_token = len(token_teams) == 0
-
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbPrompt.visibility == "public"]
-
-        if team_id:
-            # User requesting specific team - verify access
-            if team_id not in token_teams:
-                # Return query that matches nothing (will return empty result)
-                return query.where(False)
-
-            access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])))
-
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email))
-            return query.where(or_(*access_conditions))
-
-        # Only include owner access for non-public-only tokens with user_email
-        if not is_public_only_token and user_email:
-            access_conditions.append(DbPrompt.owner_email == user_email)
-
-        if token_teams:
-            access_conditions.append(and_(DbPrompt.team_id.in_(token_teams), DbPrompt.visibility.in_(["team", "public"])))
-
-        return query.where(or_(*access_conditions))
-
     async def list_prompts(
         self,
         db: Session,
@@ -1090,24 +1041,10 @@ class PromptService:
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public prompts
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            # Default is public-only access (empty teams) when no teams are available.
-            effective_teams: List[str] = []
-            if token_teams is not None:
-                effective_teams = token_teams
-            elif user_email:
-                # Look up user's teams from DB (for admin UI / first-party access)
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                effective_teams = [team.id for team in user_teams]
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
-
-            if visibility:
-                query = query.where(DbPrompt.visibility == visibility)
+        if (user_email is not None or token_teams is not None) and visibility:
+            query = query.where(DbPrompt.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:

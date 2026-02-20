@@ -736,7 +736,7 @@ class TestGatewayService:
             async def get_user_teams(self, _email):
                 return [SimpleNamespace(id="team-1")]
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.TeamManagementService", DummyTeamService)
+        monkeypatch.setattr("mcpgateway.services.base_service.TeamManagementService", DummyTeamService)
 
         test_db.execute = Mock(return_value=_make_execute_result(scalars_list=[]))
         result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", team_id="team-2")
@@ -5092,6 +5092,29 @@ class TestListGatewaysTokenTeams:
             db, token_teams=["team-a"], visibility="team"
         )
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_scoped_token_owner_clause_is_private_only(self, gateway_service, monkeypatch):
+        """Scoped tokens must not use owner_email as a blanket bypass for non-private visibility."""
+        db = MagicMock()
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        mock_cache.hash_filters = MagicMock(return_value="h")
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: mock_cache)
+
+        mock_paginate = AsyncMock(return_value=([], None))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.unified_paginate", mock_paginate)
+
+        await gateway_service.list_gateways(
+            db,
+            token_teams=["team-a"],
+            user_email="user@test.com",
+        )
+
+        query_arg = mock_paginate.await_args.kwargs["query"]
+        compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+        assert "gateways.owner_email = 'user@test.com' AND gateways.visibility = 'private'" in compiled
 
     @pytest.mark.asyncio
     async def test_user_email_team_access_no_token_teams(self, gateway_service, monkeypatch):

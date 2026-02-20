@@ -93,6 +93,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -328,7 +329,7 @@ class OAuthToolValidationError(GatewayConnectionError):
     """Raised when tool validation fails during OAuth-driven fetch."""
 
 
-class GatewayService:  # pylint: disable=too-many-instance-attributes
+class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
     """Service for managing federated gateways.
 
     Handles:
@@ -337,6 +338,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
     - Federation events
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbGateway
 
     def __init__(self) -> None:
         """Initialize the gateway service.
@@ -1466,56 +1469,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    def _apply_visibility_filter(
-        self,
-        query,
-        user_email: Optional[str],
-        token_teams: List[str],
-        team_id: Optional[str] = None,
-    ) -> Any:
-        """Apply visibility-based access control to query.
-
-        Access rules (matching tools/resources/prompts/agents):
-        - public: visible to all
-        - team: visible to team members (token_teams contains team_id)
-        - private: visible only to owner, BUT NOT for public-only tokens
-
-        Args:
-            query: SQLAlchemy query to filter
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. [] = public-only (no owner access)
-            team_id: Optional specific team filter
-
-        Returns:
-            Filtered query
-        """
-        # Check if this is a public-only token (empty teams array)
-        # Public-only tokens can ONLY see public resources - no owner access
-        is_public_only_token = len(token_teams) == 0
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbGateway.visibility == "public"]
-
-        if team_id:
-            # User requesting specific team - verify access
-            if team_id not in token_teams:
-                # Return query that matches nothing (will return empty result)
-                return query.where(False)
-
-            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email))
-            return query.where(or_(*access_conditions))
-
-        # Only include owner access for non-public-only tokens with user_email
-        if not is_public_only_token and user_email:
-            access_conditions.append(DbGateway.owner_email == user_email)
-
-        if token_teams:
-            access_conditions.append(and_(DbGateway.team_id.in_(token_teams), DbGateway.visibility.in_(["team", "public"])))
-
-        return query.where(or_(*access_conditions))
-
     async def list_gateways(
         self,
         db: Session,
@@ -1607,24 +1560,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not include_inactive:
             query = query.where(DbGateway.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public gateways
-        if user_email or token_teams is not None:
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            # Default is public-only access (empty teams) when no teams are available.
-            effective_teams: List[str] = []
-            if token_teams is not None:
-                effective_teams = token_teams
-            elif user_email:
-                # Look up user's teams from DB (for admin UI / first-party access)
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                effective_teams = [team.id for team in user_teams]
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
-
-            if visibility:
-                query = query.where(DbGateway.visibility == visibility)
+        if (user_email is not None or token_teams is not None) and visibility:
+            query = query.where(DbGateway.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:

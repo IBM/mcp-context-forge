@@ -43,6 +43,7 @@ import warnings
 # Third-Party
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
+from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -6600,7 +6601,10 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         a2a_metrics = await a2a_service.aggregate_metrics(db)
         metrics_result["a2a_agents"] = a2a_metrics
 
-    return metrics_result
+    # Defensive normalization for test/mocked values and DB-native types.
+    # Keeps response_model serialization stable even when a service returns
+    # non-JSON-native objects.
+    return jsonable_encoder(metrics_result)
 
 
 @metrics_router.post("/reset", response_model=dict)
