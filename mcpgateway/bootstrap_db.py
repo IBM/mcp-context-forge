@@ -213,9 +213,7 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             )
 
             # Mark admin user as email verified and require password change on first login
-            # First-Party
-            from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
-
+            # Use module-level `utc_now` imported at top to avoid re-importing
             admin_user.email_verified_at = utc_now()
             # Respect configuration: only require password change on bootstrap when enabled
             if getattr(settings, "password_change_enforcement_enabled", True) and getattr(settings, "admin_require_password_change_on_bootstrap", True):

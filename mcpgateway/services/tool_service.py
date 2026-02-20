@@ -1778,15 +1778,7 @@ class ToolService:
         # - page-based pagination is used
         # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
-        filters_hash = None
-        # Only use the cache when using the real converter. In unit tests we often patch
-        # convert_tool_to_read() to exercise error handling, and a warm cache would bypass it.
-        try:
-            converter_is_default = self.convert_tool_to_read.__func__ is ToolService.convert_tool_to_read  # type: ignore[attr-defined]
-        except Exception:
-            converter_is_default = False
-
-        if cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
+        if cursor is None and user_email is None and token_teams is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
