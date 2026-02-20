@@ -25,7 +25,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
-import logging
 
 # Third-Party
 import pytest
