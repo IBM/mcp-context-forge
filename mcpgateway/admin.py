@@ -5064,7 +5064,7 @@ async def admin_view_team_members(
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}&_t={int(time.time() * 1000)}"
+                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5080,7 +5080,7 @@ async def admin_view_team_members(
                             id="team-non-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}&_t={int(time.time() * 1000)}"
+                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
                             hx-trigger="load delay:200ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5108,6 +5108,10 @@ async def admin_view_team_members(
         """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
         response = HTMLResponse(content=interface_html)
+        # Prevent nginx caching for real-time team member updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
 
     except Exception as e:
@@ -5325,7 +5329,12 @@ async def admin_get_team_edit(
             </form>
         </div>
         """
-        return HTMLResponse(content=edit_form)
+        response = HTMLResponse(content=edit_form)
+        # Prevent nginx caching for real-time team member updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
@@ -6671,7 +6680,7 @@ async def admin_team_members_partial_html(
         db.commit()
 
         root_path = request.scope.get("root_path", "")
-        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}&_t={int(time.time() * 1000)}"
+        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -6689,6 +6698,10 @@ async def admin_team_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
+        # Prevent nginx caching for real-time member list updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
 
     except Exception as e:
@@ -6752,7 +6765,7 @@ async def admin_team_non_members_partial_html(
         db.commit()
 
         root_path = request.scope.get("root_path", "")
-        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}&_t={int(time.time() * 1000)}"
+        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -6770,6 +6783,10 @@ async def admin_team_non_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
+        # Prevent nginx caching for real-time non-member list updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
 
     except Exception as e:

@@ -22023,7 +22023,7 @@ async function showUserEditModal(userEmail) {
     }
 
     const rootPath = window.ROOT_PATH || "";
-    const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit?_t=${Date.now()}`;
+    const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit`;
 
     try {
         if (window.htmx && typeof window.htmx.ajax === "function") {
@@ -22102,8 +22102,7 @@ async function showTeamEditModal(teamId) {
     }
 
     // Construct the full URL - ensure it starts with /
-    const url =
-        (rootPath || "") + "/admin/teams/" + teamId + "/edit?_t=" + Date.now();
+    const url = `${rootPath || ""}/admin/teams/${teamId}/edit`;
 
     // Load the team edit form via HTMX
     fetch(url, {
@@ -22764,7 +22763,7 @@ function handleAdminTeamAction(event) {
                 ) {
                     params.set("relationship", currentTeamRelationshipFilter);
                 }
-                // Cache-bust to bypass nginx proxy cache and browser cache
+                // Cache-bust to bypass nginx proxy cache after mutation
                 params.set("_t", Date.now());
                 const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
                 window.htmx.ajax("GET", url, {
@@ -22783,7 +22782,7 @@ function handleAdminTeamAction(event) {
                 if (modalContent) {
                     window.htmx.ajax(
                         "GET",
-                        `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members?_t=${Date.now()}`,
+                        `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
                         {
                             target: "#team-edit-modal-content",
                             swap: "innerHTML",
@@ -22823,8 +22822,7 @@ function handleAdminUserAction(event) {
         if (detail.refreshUsersList) {
             const usersList = document.getElementById("users-list-container");
             if (usersList && window.htmx) {
-                // Use htmx.ajax with cache-busting timestamp to bypass
-                // nginx proxy cache and browser cache
+                // Cache-bust with timestamp to bypass nginx proxy cache after mutation
                 const hxGet = usersList.getAttribute("hx-get") || "";
                 const sep = hxGet.includes("?") ? "&" : "?";
                 const url = `${hxGet}${sep}_t=${Date.now()}`;
@@ -32002,7 +32000,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
         try {
             // Reload members - use fetchWithAuth for bearer token support
             const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}&_t=${Date.now()}`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
             );
             if (membersResponse.ok) {
                 membersContainer.innerHTML = await membersResponse.text();
@@ -32014,7 +32012,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
 
             // Reload non-members
             const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}&_t=${Date.now()}`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
             );
             if (nonMembersResponse.ok) {
                 nonMembersContainer.innerHTML = await nonMembersResponse.text();
