@@ -113,7 +113,7 @@ class TestVaultPluginFunctionality:
 
     @pytest.mark.asyncio
     async def test_invalid_json_in_vault_header(self, plugin_config, plugin_context):
-        """Test that invalid JSON in vault header is handled gracefully."""
+        """Test that invalid JSON in vault header is handled gracefully and header is removed."""
         plugin = Vault(plugin_config)
 
         # Create payload with invalid JSON
@@ -121,12 +121,14 @@ class TestVaultPluginFunctionality:
 
         result = await plugin.tool_pre_invoke(payload, plugin_context)
 
-        assert result.modified_payload is None
+        # SECURITY: Vault header must be removed even on parse error
+        assert result.modified_payload is not None
+        assert "X-Vault-Tokens" not in result.modified_payload.headers.root
         assert result.continue_processing
 
     @pytest.mark.asyncio
-    async def test_no_system_tag_returns_empty_result(self, plugin_config):
-        """Test that missing system tag returns empty result."""
+    async def test_no_system_tag_strips_vault_header(self, plugin_config):
+        """Test that missing system tag strips vault header and returns modified payload."""
         plugin = Vault(plugin_config)
 
         # Create context without system tag
@@ -142,7 +144,43 @@ class TestVaultPluginFunctionality:
 
         result = await plugin.tool_pre_invoke(payload, context)
 
+        # SECURITY: Vault header must be removed even when system tag is missing
+        assert result.modified_payload is not None
+        assert "X-Vault-Tokens" not in result.modified_payload.headers.root
+        assert result.continue_processing
+
+    @pytest.mark.asyncio
+    async def test_no_system_tag_no_vault_header_returns_empty(self, plugin_config):
+        """Test that missing system tag without vault header returns empty result."""
+        plugin = Vault(plugin_config)
+
+        gateway_metadata = type("obj", (object,), {"tags": [{"id": "1", "label": "other:tag"}]})()
+        global_context = GlobalContext(request_id="test-3", metadata={"gateway": gateway_metadata})
+        context = PluginContext(global_context=global_context)
+
+        payload = ToolPreInvokePayload(name="test_tool", arguments={}, headers=HttpHeaderPayload(root={"Content-Type": "application/json"}))
+
+        result = await plugin.tool_pre_invoke(payload, context)
+
         assert result.modified_payload is None
+        assert result.continue_processing
+
+    @pytest.mark.asyncio
+    async def test_non_dict_json_vault_tokens_stripped(self, plugin_config, plugin_context):
+        """Test that non-dict JSON in vault header (e.g. array) strips header without injecting auth."""
+        plugin = Vault(plugin_config)
+
+        # JSON array is valid JSON but not a dict — must not be treated as tokens
+        payload = ToolPreInvokePayload(name="test_tool", arguments={}, headers=HttpHeaderPayload(root={"Content-Type": "application/json", "X-Vault-Tokens": '["not", "a", "dict"]'}))
+
+        result = await plugin.tool_pre_invoke(payload, plugin_context)
+
+        # SECURITY: Vault header must be removed
+        assert result.modified_payload is not None
+        assert "X-Vault-Tokens" not in result.modified_payload.headers.root
+        # No Authorization header should be injected
+        assert "Authorization" not in result.modified_payload.headers.root
+        assert result.continue_processing
 
     @pytest.mark.asyncio
     async def test_complex_token_key_parsing(self, plugin_config, plugin_context):
@@ -223,6 +261,26 @@ class TestVaultPluginFunctionality:
         assert result.modified_payload.headers.root["X-GitHub-Token"] == "ghp_new_pat_token"
         assert result.modified_payload.headers.root["X-GitHub-Token"] != "old_github_token"
         assert "X-Vault-Tokens" not in result.modified_payload.headers.root
+
+    @pytest.mark.asyncio
+    async def test_vault_header_removed_when_no_token_match(self, plugin_config, plugin_context):
+        """Test that vault header is removed even when no token matches the system."""
+        plugin = Vault(plugin_config)
+
+        # Create vault tokens for a different system
+        vault_tokens = {"gitlab.com": "glpat_different_system_token"}
+
+        # Create payload with vault header but no matching system
+        payload = ToolPreInvokePayload(name="test_tool", arguments={}, headers=HttpHeaderPayload(root={"Content-Type": "application/json", "X-Vault-Tokens": json.dumps(vault_tokens)}))
+
+        result = await plugin.tool_pre_invoke(payload, plugin_context)
+
+        # SECURITY: Vault header must be removed even when no token match is found
+        assert result.modified_payload is not None
+        assert "X-Vault-Tokens" not in result.modified_payload.headers.root
+        # No Authorization header should be added since there's no match
+        assert "Authorization" not in result.modified_payload.headers.root
+        assert result.continue_processing
 
 
 if __name__ == "__main__":
