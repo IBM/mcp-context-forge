@@ -4355,7 +4355,7 @@ async def test_complete_direct_proxy_result_is_none(monkeypatch):
     assert result.values == []
     assert result.total == 0
     assert result.hasMore is False
- 
+
 
 @pytest.mark.asyncio
 async def test_complete_direct_proxy_result_is_dict(monkeypatch):
