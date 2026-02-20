@@ -1748,7 +1748,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 context={
                     "created_via": created_via,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful gateway creation
@@ -2892,7 +2891,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     context={
                         "modified_via": modified_via,
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful gateway update
@@ -3378,7 +3376,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "action": "activate" if activate else "deactivate",
                         "only_update_reachable": only_update_reachable,
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful gateway state change
@@ -3581,7 +3578,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.commit()
 
             await self._finalize_gateway_deletion(
-                db=db,
                 gateway_id=str(gateway_id),
                 gateway_info=gateway_info,
                 gateway_name=gateway_name,
@@ -3657,7 +3653,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
     async def _finalize_gateway_deletion(
         self,
-        db: Session,
         gateway_id: str,
         gateway_info: Dict[str, Any],
         gateway_name: str,
@@ -3700,7 +3695,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 "name": gateway_name,
                 "url": gateway_info["url"],
             },
-            db=db,
         )
 
         structured_logger.log(
@@ -3995,7 +3989,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         db.commit()
 
         await self._finalize_gateway_deletion(
-            db=db,
             gateway_id=str(gateway.id),
             gateway_info=gateway_info,
             gateway_name=gateway_name,
