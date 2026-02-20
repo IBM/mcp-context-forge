@@ -2136,12 +2136,9 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_all_admins_blocks_demote(self, service, mock_db, monkeypatch):
-        """Test that protect_all_admins blocks demoting any admin (not just last)."""
+    async def test_update_user_protect_self_demotion(self, service, mock_db, monkeypatch):
+        """Test that blocks admin from self demoting."""
         # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", True)
 
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
@@ -2152,16 +2149,13 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = admin_user
         mock_db.execute.return_value = mock_result
 
-        with pytest.raises(ValueError, match="Admin protection is enabled"):
-            await service.update_user(email="admin@example.com", is_admin=False)
+        with pytest.raises(ValueError, match="Cannot demote or deactivate your own admin account"):
+            await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email="admin@example.com")
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_all_admins_blocks_deactivate(self, service, mock_db, monkeypatch):
+    async def test_update_user_protect_self_deactivation(self, service, mock_db, monkeypatch):
         """Test that protect_all_admins blocks deactivating any admin."""
         # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", True)
 
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
@@ -2172,8 +2166,8 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = admin_user
         mock_db.execute.return_value = mock_result
 
-        with pytest.raises(ValueError, match="Admin protection is enabled"):
-            await service.update_user(email="admin@example.com", is_active=False)
+        with pytest.raises(ValueError, match="Cannot demote or deactivate your own admin account"):
+            await service.update_user(email="admin@example.com", is_active=False, requesting_user_email="admin@example.com")
 
     @pytest.mark.asyncio
     async def test_update_user_protect_all_admins_allows_other_updates(self, service, mock_db, monkeypatch):
