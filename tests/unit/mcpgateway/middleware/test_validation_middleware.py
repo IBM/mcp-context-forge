@@ -981,43 +981,43 @@ class TestValidationMiddleware:
         """Test LRU cache TTL expiration."""
         from mcpgateway.middleware.validation_middleware import LRUCache
         import time
-        
+
         cache = LRUCache(max_size=10, ttl=1)
         cache.set("key1", True)
-        
+
         # Should exist initially
         assert cache.get("key1") is True
-        
+
         # Wait for expiration
         time.sleep(1.1)
-        
+
         # Should be expired and return None (lines 67-68)
         assert cache.get("key1") is None
 
     def test_lru_cache_update_existing(self):
         """Test updating existing cache entry."""
         from mcpgateway.middleware.validation_middleware import LRUCache
-        
+
         cache = LRUCache(max_size=10, ttl=300)
         cache.set("key1", True)
-        
+
         # Update existing entry (lines 83-84)
         cache.set("key1", False)
-        
+
         assert cache.get("key1") is False
 
     def test_lru_cache_eviction(self):
         """Test LRU cache eviction when full."""
         from mcpgateway.middleware.validation_middleware import LRUCache
-        
+
         cache = LRUCache(max_size=3, ttl=300)
         cache.set("key1", True)
         cache.set("key2", True)
         cache.set("key3", True)
-        
+
         # Cache is now full, adding key4 should evict key1 (line 87)
         cache.set("key4", True)
-        
+
         assert cache.get("key1") is None
         assert cache.get("key4") is True
 
@@ -1044,7 +1044,7 @@ class TestValidationMiddleware:
 
             # Should not crash, just skip invalid pattern
             middleware = ValidationMiddleware(app=None)
-            
+
             # Valid pattern should still work
             assert middleware._should_skip_endpoint("/health") is True
 
