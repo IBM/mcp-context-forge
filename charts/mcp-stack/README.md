@@ -439,6 +439,30 @@ retry the Helm upgrade.
 | mcpContextForge.config.TRANSPORT_TYPE | string | `"all"` |  |
 | mcpContextForge.config.MCPGATEWAY_WS_RELAY_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.MCPGATEWAY_REVERSE_PROXY_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.USE_STATEFUL_SESSIONS | string | `"false"` |  |
+| mcpContextForge.config.VALIDATION_ALLOWED_MIME_TYPES | string | `"[\"text/plain\", \"text/html\", \"text/css\", \"text/markdown\", \"text/javascript\", \"application/json\", \"application/xml\", \"application/pdf\", \"image/png\", \"image/jpeg\", \"image/gif\", \"image/svg+xml\", \"application/octet-stream\"]"` |  |
+| mcpContextForge.config.VALIDATION_ALLOWED_URL_SCHEMES | string | `"[\"http://\", \"https://\", \"ws://\", \"wss://\"]"` |  |
+| mcpContextForge.config.VALIDATION_DANGEROUS_HTML_PATTERN | string | `"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"` |  |
+| mcpContextForge.config.VALIDATION_DANGEROUS_JS_PATTERN | string | `"(?i)(?:^|\\s|[\\\"'`<>=])(javascript:|vbscript:|data:\\s*[^,]*[;\\s]*(javascript|vbscript)|\\bon[a-z]+\\s*=|<\\s*script\\b)"` |  |
+| mcpContextForge.config.VALIDATION_IDENTIFIER_PATTERN | string | `"^[a-zA-Z0-9_\\-\\.]+$"` |  |
+| mcpContextForge.config.VALIDATION_MAX_CONTENT_LENGTH | string | `"1048576"` |  |
+| mcpContextForge.config.VALIDATION_MAX_DESCRIPTION_LENGTH | string | `"8192"` |  |
+| mcpContextForge.config.VALIDATION_MAX_JSON_DEPTH | string | `"30"` |  |
+| mcpContextForge.config.VALIDATION_MAX_METHOD_LENGTH | string | `"128"` |  |
+| mcpContextForge.config.VALIDATION_MAX_NAME_LENGTH | string | `"255"` |  |
+| mcpContextForge.config.VALIDATION_MAX_REQUESTS_PER_MINUTE | string | `"60"` |  |
+| mcpContextForge.config.VALIDATION_MAX_RPC_PARAM_SIZE | string | `"262144"` |  |
+| mcpContextForge.config.VALIDATION_MAX_TEMPLATE_LENGTH | string | `"65536"` |  |
+| mcpContextForge.config.VALIDATION_MAX_URL_LENGTH | string | `"2048"` |  |
+| mcpContextForge.config.VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\- ]+$"` |  |
+| mcpContextForge.config.VALIDATION_SAFE_URI_PATTERN | string | `"^[a-zA-Z0-9_\\-.:/?=&%{}]+$"` |  |
+| mcpContextForge.config.VALIDATION_STRICT | string | `"true"` |  |
+| mcpContextForge.config.VALIDATION_TOOL_METHOD_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9_\\./-]*$"` |  |
+| mcpContextForge.config.VALIDATION_TOOL_NAME_PATTERN | string | `"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"` |  |
+| mcpContextForge.config.VALIDATION_UNSAFE_URI_PATTERN | string | `"[<>\"'\\\\]"` |  |
+| mcpContextForge.config.WEBHOOK_LOGGING_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.WEBHOOK_LOGGING_URLS | string | `"[]"` |  |
 | mcpContextForge.config.WEBSOCKET_PING_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.SSE_RETRY_TIMEOUT | string | `"5000"` |  |
 | mcpContextForge.config.SSE_KEEPALIVE_ENABLED | string | `"true"` |  |

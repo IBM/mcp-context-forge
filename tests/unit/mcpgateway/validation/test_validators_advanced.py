@@ -386,6 +386,20 @@ def test_validate_name_invalid():
             SecurityValidator.validate_name(name, "Name")
 
 
+def test_validate_name_rejects_control_characters():
+    """EDGE-03: Control characters (\\n, \\t, \\r) must be rejected, not treated as whitespace."""
+    control_char_names = [
+        "test\nname",   # newline
+        "test\tname",   # tab
+        "test\rname",   # carriage return
+        "test\x0bname", # vertical tab
+        "test\x0cname", # form feed
+    ]
+    for name in control_char_names:
+        with pytest.raises(ValueError, match="can only contain letters, numbers"):
+            SecurityValidator.validate_name(name, "Name")
+
+
 def test_validate_name_length():
     """Test name length validation."""
     # At limit (100 chars)
