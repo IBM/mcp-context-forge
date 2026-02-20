@@ -834,6 +834,137 @@ async def require_auth_override(
     return await require_auth(request=request, credentials=credentials, jwt_token=jwt_token)
 
 
+async def require_auth_header_first(
+    auth_header: str | None = None,
+    jwt_token: str | None = None,
+    request: Request | None = None,
+) -> str | dict:
+    """Like require_auth_override but Authorization header takes precedence over cookies.
+
+    Token resolution order (matches streamable_http_auth middleware):
+    1. Authorization Bearer header (highest priority)
+    2. Cookie ``jwt_token`` from ``request.cookies``
+    3. ``jwt_token`` keyword argument
+
+    Use this in the stateful-session fallback (``_get_request_context_or_default``)
+    so that identity is consistent with the ASGI middleware that already
+    authenticated the primary request.
+
+    Args:
+        auth_header: Raw Authorization header value (e.g. "Bearer eyJhbGciOi...").
+        jwt_token: JWT taken from a cookie. Used only when no header token and no
+            request cookie are present.
+        request: Optional Request object.  A bare empty request is created when
+            *None* is supplied (backward-compatible default).
+
+    Returns:
+        str | dict: The decoded JWT payload or the string "anonymous".
+
+    Raises:
+        HTTPException: If authentication fails or credentials are invalid.
+
+    Examples:
+        >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from mcpgateway.utils import jwt_config_helper as jch
+        >>> from pydantic import SecretStr
+        >>> class DummySettings:
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
+        ...     jwt_algorithm = 'HS256'
+        ...     jwt_audience = 'mcpgateway-api'
+        ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
+        ...     jwt_issuer_verification = True
+        ...     jwt_public_key_path = ''
+        ...     jwt_private_key_path = ''
+        ...     basic_auth_user = 'user'
+        ...     basic_auth_password = SecretStr('pass')
+        ...     auth_required = True
+        ...     mcp_client_auth_enabled = True
+        ...     trust_proxy_auth = False
+        ...     proxy_user_header = 'X-Authenticated-User'
+        ...     require_token_expiration = False
+        ...     require_jti = False
+        ...     validate_token_environment = False
+        ...     docs_allow_basic_auth = False
+        >>> vc.settings = DummySettings()
+        >>> jch.settings = DummySettings()
+        >>> import jwt
+        >>> import asyncio
+
+        Test header wins over cookie (the core fix):
+        >>> header_tok = jwt.encode({'sub': 'header-user', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
+        >>> result = asyncio.run(vc.require_auth_header_first(auth_header=f'Bearer {header_tok}'))
+        >>> result['sub'] == 'header-user'
+        True
+
+        Test cookie fallback when no header:
+        >>> cookie_tok = jwt.encode({'sub': 'cookie-user', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
+        >>> result = asyncio.run(vc.require_auth_header_first(jwt_token=cookie_tok))
+        >>> result['sub'] == 'cookie-user'
+        True
+
+        Test no auth when not required:
+        >>> vc.settings.auth_required = False
+        >>> result = asyncio.run(vc.require_auth_header_first())
+        >>> result
+        'anonymous'
+        >>> vc.settings.auth_required = True
+    """
+    if request is None:
+        request = Request(scope={"type": "http", "headers": []})
+
+    # Proxy auth path — identical to require_auth
+    if not settings.mcp_client_auth_enabled:
+        if settings.trust_proxy_auth:
+            proxy_user = request.headers.get(settings.proxy_user_header)
+            if proxy_user:
+                return {"sub": proxy_user, "source": "proxy", "token": None}  # nosec B105 - None is not a password
+            if settings.auth_required:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Proxy authentication header required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return "anonymous"
+        if settings.auth_required:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required but no auth method configured",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return "anonymous"
+
+    # Parse auth header once
+    scheme = param = ""
+    if auth_header:
+        scheme, param = get_authorization_scheme_param(auth_header)
+        if scheme.lower() == "basic" and param and settings.docs_allow_basic_auth:
+            return await require_docs_basic_auth(auth_header)
+
+    # Header-first JWT token resolution
+    token: str | None = None
+
+    # 1. Authorization Bearer header (highest priority — matches middleware)
+    if scheme.lower() == "bearer" and param:
+        token = param
+
+    # 2. Cookie from request.cookies
+    if not token and hasattr(request, "cookies") and request.cookies:
+        token = request.cookies.get("jwt_token") or None
+
+    # 3. jwt_token keyword argument
+    if not token and jwt_token:
+        token = jwt_token
+
+    if settings.auth_required and not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await verify_credentials_cached(token, request) if token else "anonymous"
+
+
 async def require_admin_auth(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
