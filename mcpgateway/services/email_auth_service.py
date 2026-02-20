@@ -1463,7 +1463,7 @@ class EmailAuthService:
         password_change_required: Optional[bool] = None,
         password: Optional[str] = None,
         admin_origin_source: Optional[str] = None,
-        disable_admin_protection: Optional[bool] = None,
+        requesting_user_email: Optional[str] = None,
     ) -> EmailUser:
         """Update user information.
 
@@ -1475,13 +1475,13 @@ class EmailAuthService:
             password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
             admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
-            disable_admin_protection: When removing admin priveledge, need to set it to "on". Callers should pass explicitly.
+            requesting_user_email: Email of the user making this change (for self-demotion check)
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist, if protect_all_admins blocks the change, or if it would remove the last active admin
+            ValueError: If user doesn't exist, if trying to self-demote, or if it would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
@@ -1500,8 +1500,14 @@ class EmailAuthService:
             if user.is_admin and user.is_active:
                 would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
                 if would_lose_admin:
-                    if settings.protect_all_admins and not bool(disable_admin_protection):
-                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+                    # Check if this is self-demotion
+                    is_self_demotion = requesting_user_email and requesting_user_email.lower().strip() == email.lower().strip()
+
+                    # Block self-demotion
+                    if is_self_demotion:
+                        raise ValueError("Cannot demote or deactivate your own admin account")
+
+                    # Always block removal of the last active admin
                     if await self.is_last_active_admin(email):
                         raise ValueError("Cannot demote or deactivate the last remaining active admin user")
 

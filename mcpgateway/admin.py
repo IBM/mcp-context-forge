@@ -7002,9 +7002,8 @@ async def admin_get_user_edit(
                 {"" if is_editing_self else f'''<div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="is_admin" id="admin-field" {"checked" if user_obj.is_admin else ""}
-                               class="mr-2" onchange="disableAdminProtection();"> Administrator
+                               class="mr-2"> Administrator
                     </label>
-                    <input type="hidden" name="disable_admin_protection" :value="!is_admin" id="disable-admin-protection-field">
                 </div>'''}
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
@@ -7084,7 +7083,6 @@ async def admin_update_user(
         is_admin = form.get("is_admin") == "on"
         password = form.get("password")
         confirm_password = form.get("confirm_password")
-        disable_admin_protection = form.get("disable_admin_protection")
 
         # Validate password confirmation if password is being changed
         if password and password != confirm_password:
@@ -7119,7 +7117,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui", disable_admin_protection=disable_admin_protection)
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui", requesting_user_email=current_user_email)
 
         # Return success message with auto-close and refresh
         success_html = """
