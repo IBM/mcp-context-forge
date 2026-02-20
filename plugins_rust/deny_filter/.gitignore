@@ -1,0 +1,13 @@
+/target
+.idea
+**/__pycache__
+deny_check_results.json
+scalene*
+.project
+
+/.mypy_cache/
+/.pytest_cache/
+/.venv/
+/tests/.benchmarks
+**/*.so
+
