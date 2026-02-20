@@ -5009,6 +5009,73 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 500
         assert "JSONPath modifier error" in str(excinfo.value.detail)
 
+    async def test_list_tools_apijsonpath_httpexception_reraise(self, monkeypatch):
+        """Test list_tools re-raises HTTPException from jsonpath_modifier (line 3695)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool = MagicMock()
+        tool.to_dict.return_value = {"id": "t1"}
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+
+        # Make jsonpath_modifier raise HTTPException (e.g., from invalid JSONPath)
+        monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(side_effect=HTTPException(status_code=400, detail="Invalid JSONPath")))
+
+        apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.list_tools.__wrapped__(
+                request,
+                cursor=None,
+                include_pagination=False,
+                limit=None,
+                include_inactive=False,
+                tags=None,
+                team_id=None,
+                visibility=None,
+                gateway_id=None,
+                db=MagicMock(),
+                apijsonpath=apijsonpath,
+                user={"email": "user@example.com"},
+            )
+        # Should preserve the original HTTPException status and detail
+        assert excinfo.value.status_code == 400
+        assert "Invalid JSONPath" in str(excinfo.value.detail)
+
+    async def test_get_tool_apijsonpath_httpexception_reraise(self, monkeypatch):
+        """Test get_tool re-raises HTTPException from jsonpath_modifier (line 3844)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        data = MagicMock()
+        data.to_dict.return_value = {"id": "t1"}
+
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
+        monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
+
+        # Make jsonpath_modifier raise HTTPException (e.g., from invalid JSONPath)
+        monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(side_effect=HTTPException(status_code=400, detail="Invalid JSONPath expression")))
+
+        apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_tool.__wrapped__(
+                "tool-1",
+                request=request,
+                db=MagicMock(),
+                user={"email": "u"},
+                apijsonpath=apijsonpath
+            )
+        # Should preserve the original HTTPException status and detail
+        assert excinfo.value.status_code == 400
+        assert "Invalid JSONPath expression" in str(excinfo.value.detail)
+
     async def test_list_tools_apijsonpath_jsonpathmodifier_becomes_none_with_pagination(self, monkeypatch):
         """Test list_tools when JsonPathModifier instance results in parsed_apijsonpath=None with pagination (lines 3676-3681)."""
         import mcpgateway.main as main_mod
