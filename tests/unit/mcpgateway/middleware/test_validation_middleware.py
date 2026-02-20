@@ -758,3 +758,221 @@ class TestValidationMiddleware:
             response = await middleware.dispatch(request, call_next)
 
             assert b"\x00" not in response.body
+
+    @pytest.mark.asyncio
+    async def test_large_body_rejected_with_413(self):
+        """Test that large request bodies are rejected with HTTP 413."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 1024  # 1KB limit
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create request with large body
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b'{"data": "' + b"x" * 2000 + b'"}'
+
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware._validate_request(DummyRequest())
+
+            assert exc_info.value.status_code == 413
+            assert "too large" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_for_validation(self):
+        """Test that validation cache works correctly."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = True
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            body = b'{"test": "data"}'
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return body
+
+            # First request - should validate and cache
+            await middleware._validate_request(DummyRequest())
+
+            # Second request - should hit cache
+            await middleware._validate_request(DummyRequest())
+
+            # Verify cache was used
+            assert middleware.cache is not None
+            cache_key = middleware._get_cache_key(body)
+            assert middleware.cache.get(cache_key) is True
+
+    @pytest.mark.asyncio
+    async def test_cache_validation_failure(self):
+        """Test that validation failures are cached."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"[;&|`]"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = True
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            body = b'{"cmd": "rm -rf /; echo bad"}'
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return body
+
+            # First request - should fail validation
+            with pytest.raises(HTTPException):
+                await middleware._validate_request(DummyRequest())
+
+            # Verify failure was cached
+            cache_key = middleware._get_cache_key(body)
+            assert middleware.cache.get(cache_key) is False
+
+            # Second request - should use cached failure
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware._validate_request(DummyRequest())
+            assert exc_info.value.status_code == 422
+
+    def test_skip_endpoint_patterns(self):
+        """Test endpoint skip pattern matching."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = [r"^/health$", r"^/metrics$", r"^/static/.*"]
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            assert middleware._should_skip_endpoint("/health") is True
+            assert middleware._should_skip_endpoint("/metrics") is True
+            assert middleware._should_skip_endpoint("/static/css/style.css") is True
+            assert middleware._should_skip_endpoint("/api/test") is False
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_with_sampling(self):
+        """Test response sanitization with sampling enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = True
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create large response with clean data
+            large_body = b"clean data " * 200  # ~2200 bytes
+            response = Response(content=large_body)
+            response.body = large_body
+
+            result = await middleware._sanitize_response(response)
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_skips_large(self):
+        """Test that very large responses skip sanitization."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 2048  # 2KB limit
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create response larger than max
+            large_body = b"x" * 3000
+            response = Response(content=large_body)
+            response.body = large_body
+
+            result = await middleware._sanitize_response(response)
+            # Should return unchanged
+            assert result.body == large_body
