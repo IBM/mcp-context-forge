@@ -11685,7 +11685,7 @@ document.addEventListener("DOMContentLoaded", loadTools);
 async function loadToolOpsModels() {
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/llm/models?enabled_only=false&page=1&page_size=50`,
+            `${window.ROOT_PATH}/llm/models?enabled_only=true&page=1&page_size=50`,
             { headers: { "Cache-Control": "no-cache" } },
         );
         if (!response.ok) return;
@@ -11700,7 +11700,7 @@ async function loadToolOpsModels() {
         defaultOpt.value = "";
         defaultOpt.textContent = "-- Select Model --";
         select.appendChild(defaultOpt);
-        (data.items || data || []).forEach((model) => {
+        (data.models || []).forEach((model) => {
             const option = document.createElement("option");
             option.value = model.model_id;
             option.textContent = model.model_id + ` (${model.provider_name})`;
