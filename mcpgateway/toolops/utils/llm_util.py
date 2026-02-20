@@ -66,7 +66,6 @@ def get_llm_instance(model_id, model_type=TOOLOPS_MODEL_TYPE):
     except Exception as e:
         logger.info("Error in configuring LLM instance for ToolOps -" + str(e))
         llm_model_instance, llm_config = None, None
-        pass  # pylint: disable=unnecessary-pass
     return llm_model_instance, llm_config
 
 
@@ -83,7 +82,7 @@ def execute_prompt(prompt, model_id, model_type):
         response: LLM output response for the given prompt
     """
     try:
-        logger.info("Inferencing OpenAI provider LLM with the given prompt")
+        logger.info("Inferencing gateway provider LLM with the given prompt")
         completion_llm_instance, _ = get_llm_instance(model_id, model_type)
         llm_response = completion_llm_instance.invoke(prompt, stop=["\n\n", "<|endoftext|>", "###STOP###"])
         response = llm_response.replace("<|eom_id|>", "").strip()

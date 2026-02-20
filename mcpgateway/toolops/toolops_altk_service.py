@@ -95,7 +95,7 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
         response = llm_response.content
         return response
     except Exception as e:
-        logger.error("Error in LLM Inference call usinf MCP-CF LLM provider - " + orjson.dumps({"Error": str(e)}).decode())
+        logger.error("Error in LLM Inference call using MCP-CF LLM provider - " + orjson.dumps({"Error": str(e)}).decode())
         return ""
 
 
