@@ -8183,6 +8183,10 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "runtime") {
+                    loadRuntimePanel();
+                }
+
                 if (tabName === "maintenance") {
                     const maintenancePanel =
                         safeGetElement("maintenance-panel");
@@ -8291,6 +8295,1315 @@ function showTab(tabName) {
 }
 
 window.showTab = showTab;
+
+const runtimeUiState = {
+    backends: [],
+    guardrails: [],
+    runtimes: [],
+    approvals: [],
+};
+
+function getRuntimeApiBase() {
+    const rootPath = window.ROOT_PATH || "";
+    return `${rootPath}/runtimes`;
+}
+
+function runtimeShortId(value, maxLength = 8) {
+    if (!value) {
+        return "-";
+    }
+    const raw = String(value);
+    if (raw.length <= maxLength) {
+        return raw;
+    }
+    return `${raw.slice(0, maxLength)}...`;
+}
+
+function runtimeSetDeployMessage(message, type = "info") {
+    const messageElement = safeGetElement("runtime-deploy-message", true);
+    if (!messageElement) {
+        return;
+    }
+    if (!message) {
+        messageElement.textContent = "";
+        messageElement.className = "text-sm text-gray-600 dark:text-gray-300";
+        return;
+    }
+
+    const classByType = {
+        error: "text-sm text-red-600 dark:text-red-400",
+        success: "text-sm text-green-600 dark:text-green-400",
+        info: "text-sm text-gray-600 dark:text-gray-300",
+    };
+    messageElement.textContent = message;
+    messageElement.className = classByType[type] || classByType.info;
+}
+
+function runtimeSetLogs(logLines, runtimeId = "") {
+    const logsElement = safeGetElement("runtime-logs-output", true);
+    if (!logsElement) {
+        return;
+    }
+    if (!Array.isArray(logLines) || logLines.length === 0) {
+        logsElement.textContent = runtimeId
+            ? `No logs returned for runtime ${runtimeId}.`
+            : "No logs loaded.";
+        return;
+    }
+    logsElement.textContent = logLines.join("\n");
+}
+
+function runtimeStatusBadge(status) {
+    const normalized = String(status || "unknown").toLowerCase();
+    const classMap = {
+        running:
+            "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+        connected:
+            "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
+        stopped:
+            "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200",
+        deploying:
+            "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+        pending:
+            "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+        pending_approval:
+            "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+        approved:
+            "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+        rejected: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+        expired:
+            "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+        error: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+        deleted:
+            "bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200",
+    };
+    const classes =
+        classMap[normalized] ||
+        "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200";
+    return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${classes}">${escapeHtml(normalized)}</span>`;
+}
+
+function runtimePopulateBackendOptions() {
+    const backendNames = runtimeUiState.backends.map(
+        (backend) => backend.backend,
+    );
+
+    const populate = (selectId, includeAllLabel = "") => {
+        const select = safeGetElement(selectId, true);
+        if (!select) {
+            return;
+        }
+        const previousValue = select.value;
+        let optionsHtml = "";
+        if (includeAllLabel) {
+            optionsHtml += `<option value="">${escapeHtml(includeAllLabel)}</option>`;
+        }
+        backendNames.forEach((backendName) => {
+            optionsHtml += `<option value="${escapeHtml(backendName)}">${escapeHtml(backendName)}</option>`;
+        });
+        safeSetInnerHTML(select, optionsHtml, true);
+
+        if (previousValue && backendNames.includes(previousValue)) {
+            select.value = previousValue;
+            return;
+        }
+        if (!includeAllLabel) {
+            const defaultBackend = window.RUNTIME_DEFAULT_BACKEND || "docker";
+            if (backendNames.includes(defaultBackend)) {
+                select.value = defaultBackend;
+            }
+        }
+    };
+
+    populate("runtime-deploy-backend");
+    populate("runtime-compat-backend");
+    populate("runtime-filter-backend", "All backends");
+}
+
+function runtimePopulateGuardrailOptions() {
+    const profileNames = runtimeUiState.guardrails.map((item) => item.name);
+    const selects = [
+        safeGetElement("runtime-deploy-guardrails-profile", true),
+        safeGetElement("runtime-compat-profile", true),
+    ];
+
+    selects.forEach((selectElement) => {
+        if (!selectElement) {
+            return;
+        }
+        const previousValue = selectElement.value;
+        let optionsHtml = "";
+        profileNames.forEach((profileName) => {
+            optionsHtml += `<option value="${escapeHtml(profileName)}">${escapeHtml(profileName)}</option>`;
+        });
+        safeSetInnerHTML(selectElement, optionsHtml, true);
+
+        if (previousValue && profileNames.includes(previousValue)) {
+            selectElement.value = previousValue;
+            return;
+        }
+        if (profileNames.includes("standard")) {
+            selectElement.value = "standard";
+        }
+    });
+}
+
+function runtimeRenderBackends() {
+    const tableBody = safeGetElement("runtime-backends-table-body", true);
+    if (!tableBody) {
+        return;
+    }
+
+    if (runtimeUiState.backends.length === 0) {
+        tableBody.innerHTML =
+            '<tr><td colspan="3" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">No runtime backends are enabled.</td></tr>';
+        return;
+    }
+
+    let html = "";
+    runtimeUiState.backends.forEach((backend) => {
+        html += `
+            <tr>
+                <td class="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">${escapeHtml(backend.backend || "-")}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">${backend.supports_compose ? "yes" : "no"}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">${backend.supports_github_build ? "yes" : "no"}</td>
+            </tr>
+        `;
+    });
+    safeSetInnerHTML(tableBody, html, true);
+}
+
+function runtimeRenderGuardrails() {
+    const tableBody = safeGetElement("runtime-guardrails-table-body", true);
+    if (!tableBody) {
+        return;
+    }
+
+    if (runtimeUiState.guardrails.length === 0) {
+        tableBody.innerHTML =
+            '<tr><td colspan="2" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">No guardrail profiles found.</td></tr>';
+        return;
+    }
+
+    let html = "";
+    runtimeUiState.guardrails.forEach((profile) => {
+        html += `
+            <tr>
+                <td class="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">${escapeHtml(profile.name || "-")}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">${profile.built_in ? "yes" : "no"}</td>
+            </tr>
+        `;
+    });
+    safeSetInnerHTML(tableBody, html, true);
+}
+
+function runtimeRenderRuntimes() {
+    const tableBody = safeGetElement("runtime-runtimes-table-body", true);
+    if (!tableBody) {
+        return;
+    }
+
+    if (runtimeUiState.runtimes.length === 0) {
+        tableBody.innerHTML =
+            '<tr><td colspan="6" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">No deployments found for current filters.</td></tr>';
+        return;
+    }
+
+    let html = "";
+    runtimeUiState.runtimes.forEach((runtime) => {
+        const status = String(runtime.status || "");
+        const canStart = ["stopped", "error"].includes(status);
+        const canStop = ["running", "connected", "deploying"].includes(status);
+        const canDelete = status !== "deleted";
+        html += `
+            <tr>
+                <td class="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">
+                    <div class="font-medium">${escapeHtml(runtime.name || "-")}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(runtimeShortId(runtime.id, 12))}</div>
+                </td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">${escapeHtml(runtime.backend || "-")}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">${escapeHtml(runtime.source_type || "-")}</td>
+                <td class="px-3 py-2 text-sm">${runtimeStatusBadge(runtime.status)}</td>
+                <td class="px-3 py-2 text-sm">${runtimeStatusBadge(runtime.approval_status)}</td>
+                <td class="px-3 py-2 text-sm">
+                    <div class="flex flex-wrap gap-1">
+                        <button data-runtime-action="refresh" data-runtime-id="${escapeHtml(runtime.id)}" class="px-2 py-1 rounded bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200">refresh</button>
+                        <button data-runtime-action="start" data-runtime-id="${escapeHtml(runtime.id)}" class="px-2 py-1 rounded bg-green-600 text-white disabled:opacity-50" ${canStart ? "" : "disabled"}>start</button>
+                        <button data-runtime-action="stop" data-runtime-id="${escapeHtml(runtime.id)}" class="px-2 py-1 rounded bg-amber-600 text-white disabled:opacity-50" ${canStop ? "" : "disabled"}>stop</button>
+                        <button data-runtime-action="delete" data-runtime-id="${escapeHtml(runtime.id)}" class="px-2 py-1 rounded bg-red-600 text-white disabled:opacity-50" ${canDelete ? "" : "disabled"}>delete</button>
+                        <button data-runtime-action="logs" data-runtime-id="${escapeHtml(runtime.id)}" class="px-2 py-1 rounded bg-blue-600 text-white">logs</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+    safeSetInnerHTML(tableBody, html, true);
+}
+
+function runtimeRenderApprovals() {
+    const tableBody = safeGetElement("runtime-approvals-table-body", true);
+    if (!tableBody) {
+        return;
+    }
+
+    if (runtimeUiState.approvals.length === 0) {
+        tableBody.innerHTML =
+            '<tr><td colspan="5" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">No approval requests found.</td></tr>';
+        return;
+    }
+
+    let html = "";
+    runtimeUiState.approvals.forEach((approval) => {
+        const pending = String(approval.status || "") === "pending";
+        html += `
+            <tr>
+                <td class="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">${escapeHtml(runtimeShortId(approval.id, 12))}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">${escapeHtml(runtimeShortId(approval.runtime_deployment_id, 12))}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">${escapeHtml(approval.requested_by || "-")}</td>
+                <td class="px-3 py-2 text-sm">${runtimeStatusBadge(approval.status)}</td>
+                <td class="px-3 py-2 text-sm">
+                    ${
+                        pending
+                            ? `<div class="flex gap-1">
+                                  <button data-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}" class="px-2 py-1 rounded bg-green-600 text-white">approve</button>
+                                  <button data-approval-action="reject" data-approval-id="${escapeHtml(approval.id)}" class="px-2 py-1 rounded bg-red-600 text-white">reject</button>
+                               </div>`
+                            : "<span class='text-gray-500 dark:text-gray-400'>n/a</span>"
+                    }
+                </td>
+            </tr>
+        `;
+    });
+    safeSetInnerHTML(tableBody, html, true);
+}
+
+async function runtimeApiRequest(path, options = {}) {
+    const url = `${getRuntimeApiBase()}${path}`;
+    const method = options.method || "GET";
+    const body = options.body || null;
+
+    const headers = {
+        Accept: "application/json",
+        ...(options.headers || {}),
+    };
+    if (body !== null && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+    }
+
+    const response = await fetchWithTimeout(url, {
+        method,
+        credentials: "same-origin",
+        headers,
+        body: body !== null ? JSON.stringify(body) : undefined,
+    });
+
+    if (response.status === 204) {
+        return null;
+    }
+    return safeParseJsonResponse(
+        response,
+        `Runtime request failed (${method} ${path})`,
+    );
+}
+
+async function runtimeLoadBackends() {
+    const payload = await runtimeApiRequest("/backends");
+    runtimeUiState.backends = Array.isArray(payload?.backends)
+        ? payload.backends
+        : [];
+    runtimePopulateBackendOptions();
+    runtimeRenderBackends();
+}
+
+async function runtimeLoadGuardrails() {
+    const payload = await runtimeApiRequest("/guardrails");
+    runtimeUiState.guardrails = Array.isArray(payload) ? payload : [];
+    runtimePopulateGuardrailOptions();
+    runtimeRenderGuardrails();
+}
+
+async function runtimeLoadRuntimes() {
+    const backendFilter = safeGetElement("runtime-filter-backend", true)?.value;
+    const statusFilter = safeGetElement("runtime-filter-status", true)?.value;
+    const query = new URLSearchParams();
+    if (backendFilter) {
+        query.set("backend", backendFilter);
+    }
+    if (statusFilter) {
+        query.set("status_filter", statusFilter);
+    }
+    query.set("limit", "200");
+
+    const payload = await runtimeApiRequest(`?${query.toString()}`);
+    const runtimes = Array.isArray(payload?.runtimes) ? payload.runtimes : [];
+    runtimeUiState.runtimes = [...runtimes].sort((left, right) => {
+        const leftDeleted = String(left?.status || "") === "deleted";
+        const rightDeleted = String(right?.status || "") === "deleted";
+        if (leftDeleted === rightDeleted) {
+            return 0;
+        }
+        return leftDeleted ? 1 : -1;
+    });
+    runtimeRenderRuntimes();
+}
+
+async function runtimeLoadApprovals() {
+    const statusFilter =
+        safeGetElement("runtime-approval-filter-status", true)?.value ||
+        "pending";
+    const query = new URLSearchParams();
+    if (statusFilter) {
+        query.set("status_filter", statusFilter);
+    }
+    query.set("limit", "100");
+
+    const payload = await runtimeApiRequest(`/approvals?${query.toString()}`);
+    const approvals = Array.isArray(payload?.approvals)
+        ? payload.approvals
+        : [];
+    runtimeUiState.approvals = [...approvals].sort((left, right) => {
+        const leftPending = String(left?.status || "") === "pending";
+        const rightPending = String(right?.status || "") === "pending";
+        if (leftPending === rightPending) {
+            return 0;
+        }
+        return leftPending ? -1 : 1;
+    });
+    runtimeRenderApprovals();
+}
+
+function runtimeHandleSourceTypeChange() {
+    const sourceTypeElement = safeGetElement(
+        "runtime-deploy-source-type",
+        true,
+    );
+    if (!sourceTypeElement) {
+        return;
+    }
+    const sourceType = sourceTypeElement.value;
+
+    const dockerFields = safeGetElement("runtime-source-docker-fields", true);
+    const githubFields = safeGetElement("runtime-source-github-fields", true);
+    const composeFields = safeGetElement("runtime-source-compose-fields", true);
+    const catalogFields = safeGetElement("runtime-source-catalog-fields", true);
+
+    [dockerFields, githubFields, composeFields, catalogFields].forEach(
+        (section) => {
+            if (section) {
+                section.classList.add("hidden");
+            }
+        },
+    );
+
+    if (sourceType === "docker" && dockerFields) {
+        dockerFields.classList.remove("hidden");
+    }
+    if (sourceType === "github" && githubFields) {
+        githubFields.classList.remove("hidden");
+    }
+    if (sourceType === "compose" && composeFields) {
+        composeFields.classList.remove("hidden");
+    }
+    if (sourceType === "catalog" && catalogFields) {
+        catalogFields.classList.remove("hidden");
+    }
+
+    const setRequired = (elementId, required) => {
+        const element = safeGetElement(elementId, true);
+        if (!element) {
+            return;
+        }
+        element.required = Boolean(required);
+    };
+
+    setRequired("runtime-source-image", sourceType === "docker");
+    setRequired("runtime-source-repo", sourceType === "github");
+    setRequired("runtime-source-compose-file", sourceType === "compose");
+    setRequired("runtime-source-main-service", sourceType === "compose");
+    setRequired("runtime-source-catalog-id", sourceType === "catalog");
+}
+
+function runtimeResetDeployForm(clearMessage = true) {
+    const deployForm = safeGetElement("runtime-deploy-form", true);
+    if (!deployForm) {
+        return;
+    }
+    deployForm.reset();
+
+    const sourceTypeElement = safeGetElement(
+        "runtime-deploy-source-type",
+        true,
+    );
+    if (sourceTypeElement && !sourceTypeElement.value) {
+        sourceTypeElement.value = "docker";
+    }
+
+    runtimeHandleSourceTypeChange();
+    if (clearMessage) {
+        runtimeSetDeployMessage("");
+    }
+}
+
+function runtimeParseJsonInput(value, label) {
+    const parsed = validateJson(value, label);
+    if (!parsed.valid) {
+        throw new Error(parsed.error);
+    }
+    return parsed.value || {};
+}
+
+function runtimeIsValidDockerImageReference(image) {
+    const imageRef = String(image || "").trim();
+    if (!imageRef || /\s/.test(imageRef)) {
+        return false;
+    }
+    if (imageRef.startsWith("http://") || imageRef.startsWith("https://")) {
+        return false;
+    }
+
+    const digestParts = imageRef.split("@");
+    if (digestParts.length > 2) {
+        return false;
+    }
+    const [nameAndTag, digest] = digestParts;
+    if (digest && !/^sha256:[a-f0-9]{64}$/.test(digest)) {
+        return false;
+    }
+
+    let name = nameAndTag;
+    const lastSlash = nameAndTag.lastIndexOf("/");
+    const lastColon = nameAndTag.lastIndexOf(":");
+    if (lastColon > lastSlash) {
+        const tag = nameAndTag.slice(lastColon + 1);
+        if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(tag)) {
+            return false;
+        }
+        name = nameAndTag.slice(0, lastColon);
+    }
+
+    if (!name) {
+        return false;
+    }
+
+    const segments = name.split("/");
+    if (segments.length === 0 || segments.some((segment) => !segment)) {
+        return false;
+    }
+
+    let repositorySegments = segments;
+    const firstSegment = segments[0];
+    const hasExplicitRegistry =
+        firstSegment.includes(".") ||
+        firstSegment.includes(":") ||
+        firstSegment === "localhost";
+    if (hasExplicitRegistry) {
+        if (
+            !/^(localhost|[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?)$/.test(
+                firstSegment,
+            )
+        ) {
+            return false;
+        }
+        repositorySegments = segments.slice(1);
+        if (repositorySegments.length === 0) {
+            return false;
+        }
+    }
+
+    const repositorySegmentPattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+    return repositorySegments.every((segment) =>
+        repositorySegmentPattern.test(segment),
+    );
+}
+
+function runtimeBuildDeployPayload() {
+    const nameElement = safeGetElement("runtime-deploy-name");
+    const backendElement = safeGetElement("runtime-deploy-backend");
+    const sourceTypeElement = safeGetElement("runtime-deploy-source-type");
+    const guardrailsElement = safeGetElement(
+        "runtime-deploy-guardrails-profile",
+    );
+    const registerGatewayElement = safeGetElement(
+        "runtime-deploy-register-gateway",
+    );
+    const visibilityElement = safeGetElement("runtime-deploy-visibility");
+    const teamIdElement = safeGetElement("runtime-deploy-team-id");
+    const gatewayNameElement = safeGetElement("runtime-deploy-gateway-name");
+    const gatewayTransportElement = safeGetElement(
+        "runtime-deploy-gateway-transport",
+    );
+    const endpointPortElement = safeGetElement("runtime-deploy-endpoint-port");
+    const endpointPathElement = safeGetElement("runtime-deploy-endpoint-path");
+    const tagsElement = safeGetElement("runtime-deploy-tags");
+    const environmentElement = safeGetElement(
+        "runtime-deploy-environment-json",
+    );
+    const metadataElement = safeGetElement("runtime-deploy-metadata-json");
+    const cpuElement = safeGetElement("runtime-deploy-cpu");
+    const memoryElement = safeGetElement("runtime-deploy-memory");
+    const timeoutElement = safeGetElement("runtime-deploy-timeout");
+
+    const name = nameElement?.value?.trim() || "";
+    if (!name) {
+        throw new Error("Runtime name is required");
+    }
+
+    const sourceType = sourceTypeElement?.value || "docker";
+    const payload = {
+        name,
+        backend:
+            backendElement?.value || window.RUNTIME_DEFAULT_BACKEND || "docker",
+        guardrails_profile: guardrailsElement?.value || "standard",
+        resources: {},
+        environment: runtimeParseJsonInput(
+            environmentElement?.value || "",
+            "environment JSON",
+        ),
+        metadata: runtimeParseJsonInput(
+            metadataElement?.value || "",
+            "metadata JSON",
+        ),
+        register_gateway: Boolean(registerGatewayElement?.checked),
+        visibility: visibilityElement?.value || "public",
+        tags: (tagsElement?.value || "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0),
+    };
+
+    const teamId = teamIdElement?.value?.trim();
+    if (teamId) {
+        payload.team_id = teamId;
+    }
+    if (payload.visibility === "team" && !teamId) {
+        throw new Error("Team ID is required when visibility is set to team");
+    }
+
+    const gatewayName = gatewayNameElement?.value?.trim();
+    if (gatewayName) {
+        payload.gateway_name = gatewayName;
+    }
+    const gatewayTransport = gatewayTransportElement?.value?.trim();
+    if (gatewayTransport) {
+        payload.gateway_transport = gatewayTransport;
+    }
+    const endpointPortRaw = endpointPortElement?.value?.trim();
+    if (endpointPortRaw) {
+        const endpointPort = Number.parseInt(endpointPortRaw, 10);
+        if (
+            Number.isNaN(endpointPort) ||
+            endpointPort < 1 ||
+            endpointPort > 65535
+        ) {
+            throw new Error("Endpoint port must be between 1 and 65535");
+        }
+        payload.endpoint_port = endpointPort;
+    }
+    const endpointPathRaw = endpointPathElement?.value?.trim() || "";
+    if (endpointPathRaw) {
+        if (
+            endpointPathRaw.includes("://") ||
+            endpointPathRaw.includes("?") ||
+            endpointPathRaw.includes("#")
+        ) {
+            throw new Error("Endpoint path must be a relative path like /http");
+        }
+        const endpointPath = endpointPathRaw.startsWith("/")
+            ? endpointPathRaw
+            : `/${endpointPathRaw}`;
+        payload.endpoint_path = endpointPath;
+    }
+
+    const cpu = cpuElement?.value?.trim();
+    if (cpu) {
+        payload.resources.cpu = cpu;
+    }
+    const memory = memoryElement?.value?.trim();
+    if (memory) {
+        payload.resources.memory = memory;
+    }
+    const timeoutRaw = timeoutElement?.value?.trim();
+    if (timeoutRaw) {
+        const timeoutSeconds = Number.parseInt(timeoutRaw, 10);
+        if (Number.isNaN(timeoutSeconds) || timeoutSeconds <= 0) {
+            throw new Error("Timeout must be a positive integer");
+        }
+        payload.resources.timeout_seconds = timeoutSeconds;
+    }
+
+    if (sourceType === "catalog") {
+        const catalogId =
+            safeGetElement("runtime-source-catalog-id")?.value?.trim() || "";
+        if (!catalogId) {
+            throw new Error(
+                "Catalog server ID is required when source type is catalog",
+            );
+        }
+        payload.catalog_server_id = catalogId;
+        return payload;
+    }
+
+    const source = {
+        type: sourceType,
+    };
+    if (sourceType === "docker") {
+        const image =
+            safeGetElement("runtime-source-image")?.value?.trim() || "";
+        if (!image) {
+            throw new Error(
+                "Docker image is required when source type is docker",
+            );
+        }
+        if (!runtimeIsValidDockerImageReference(image)) {
+            throw new Error(
+                "Docker image must be a valid container reference (for example ghcr.io/ibm/fast-time-server:0.8.0)",
+            );
+        }
+        source.image = image;
+    } else if (sourceType === "github") {
+        const repo = safeGetElement("runtime-source-repo")?.value?.trim() || "";
+        if (!repo) {
+            throw new Error(
+                "Repository URL is required when source type is github",
+            );
+        }
+        source.repo = repo;
+        source.branch =
+            safeGetElement("runtime-source-branch")?.value?.trim() || "main";
+        source.dockerfile =
+            safeGetElement("runtime-source-dockerfile")?.value?.trim() ||
+            "Dockerfile";
+        source.push_to_registry = Boolean(
+            safeGetElement("runtime-source-push-to-registry")?.checked,
+        );
+        const registry =
+            safeGetElement("runtime-source-registry")?.value?.trim() || "";
+        if (registry) {
+            source.registry = registry;
+        }
+    } else if (sourceType === "compose") {
+        const composeFile =
+            safeGetElement("runtime-source-compose-file")?.value?.trim() || "";
+        const mainService =
+            safeGetElement("runtime-source-main-service")?.value?.trim() || "";
+        if (!composeFile || !mainService) {
+            throw new Error(
+                "Compose file and main service are required for compose sources",
+            );
+        }
+        source.compose_file = composeFile;
+        source.main_service = mainService;
+    } else {
+        throw new Error(`Unsupported source type: ${sourceType}`);
+    }
+
+    payload.source = source;
+    return payload;
+}
+
+async function runtimeCheckCompatibility() {
+    const profile = safeGetElement("runtime-compat-profile")?.value;
+    const backend = safeGetElement("runtime-compat-backend")?.value;
+    if (!profile || !backend) {
+        throw new Error("Select both a guardrail profile and backend");
+    }
+    const payload = await runtimeApiRequest(
+        `/guardrails/${encodeURIComponent(profile)}/compatibility?backend=${encodeURIComponent(backend)}`,
+    );
+    const resultElement = safeGetElement("runtime-compat-result", true);
+    if (!resultElement) {
+        return;
+    }
+
+    if (payload.compatible) {
+        resultElement.innerHTML =
+            '<div class="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-green-700 dark:border-green-800 dark:bg-green-900/30 dark:text-green-300">Compatible with no warnings.</div>';
+        return;
+    }
+
+    const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+    const warningItems = warnings
+        .map(
+            (warning) =>
+                `<li>${escapeHtml(warning.field || "guardrail")}: ${escapeHtml(warning.message || "warning")}</li>`,
+        )
+        .join("");
+    resultElement.innerHTML = `
+        <div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+            <div class="font-medium mb-1">Compatibility warnings</div>
+            <ul class="list-disc ml-5 space-y-1">${warningItems}</ul>
+        </div>
+    `;
+}
+
+async function runtimeLoadLogs(runtimeId) {
+    if (!runtimeId) {
+        throw new Error("Runtime ID is required for logs");
+    }
+    const payload = await runtimeApiRequest(
+        `/${encodeURIComponent(runtimeId)}/logs?tail=200`,
+    );
+    runtimeSetLogs(payload?.logs || [], runtimeId);
+}
+
+async function runtimeExecuteRuntimeAction(runtimeId, action, buttonElement) {
+    if (!runtimeId || !action) {
+        return;
+    }
+
+    if (action === "logs") {
+        await runtimeLoadLogs(runtimeId);
+        return;
+    }
+    if (action === "refresh") {
+        await runtimeApiRequest(
+            `/${encodeURIComponent(runtimeId)}?refresh=true`,
+        );
+        await runtimeLoadRuntimes();
+        showNotification(
+            `Runtime ${runtimeShortId(runtimeId)} refreshed`,
+            "success",
+        );
+        return;
+    }
+
+    if (action === "delete") {
+        const confirmed = window.confirm(
+            `Delete runtime ${runtimeId}? This cannot be undone.`,
+        );
+        if (!confirmed) {
+            return;
+        }
+    }
+
+    const endpointByAction = {
+        start: `/${encodeURIComponent(runtimeId)}/start`,
+        stop: `/${encodeURIComponent(runtimeId)}/stop`,
+        delete: `/${encodeURIComponent(runtimeId)}`,
+    };
+    const endpoint = endpointByAction[action];
+    if (!endpoint) {
+        throw new Error(`Unsupported runtime action: ${action}`);
+    }
+
+    if (buttonElement) {
+        buttonElement.disabled = true;
+    }
+    try {
+        const method = action === "delete" ? "DELETE" : "POST";
+        const response = await runtimeApiRequest(endpoint, { method });
+        const message =
+            response?.message ||
+            `Runtime ${runtimeShortId(runtimeId)} ${action} request completed`;
+        showNotification(message, "success");
+        await runtimeLoadRuntimes();
+        if (action === "delete") {
+            runtimeSetLogs([], "");
+        }
+    } finally {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+        }
+    }
+}
+
+async function runtimeExecuteApprovalAction(approvalId, action, buttonElement) {
+    if (!approvalId || !action) {
+        return;
+    }
+    const promptLabel =
+        action === "approve"
+            ? "Optional approval reason:"
+            : "Reason for rejection:";
+    const reasonInput = window.prompt(promptLabel, "");
+    if (reasonInput === null && action === "reject") {
+        return;
+    }
+
+    const payload = {};
+    const reason = (reasonInput || "").trim();
+    if (reason) {
+        payload.reason = reason;
+    }
+
+    if (buttonElement) {
+        buttonElement.disabled = true;
+    }
+    try {
+        const response = await runtimeApiRequest(
+            `/approvals/${encodeURIComponent(approvalId)}/${encodeURIComponent(action)}`,
+            {
+                method: "POST",
+                body: payload,
+            },
+        );
+        showNotification(
+            response?.message ||
+                `Approval ${runtimeShortId(approvalId)} ${action}d`,
+            "success",
+        );
+        await runtimeLoadApprovals();
+        await runtimeLoadRuntimes();
+    } finally {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+        }
+    }
+}
+
+async function runtimeRefreshAll() {
+    await runtimeLoadBackends();
+    await runtimeLoadGuardrails();
+    await runtimeLoadRuntimes();
+    await runtimeLoadApprovals();
+}
+
+async function runtimeHandleDeploySubmit(event) {
+    event.preventDefault();
+    runtimeSetDeployMessage("");
+    const submitButton = safeGetElement("runtime-deploy-submit", true);
+    if (submitButton) {
+        submitButton.disabled = true;
+    }
+
+    try {
+        const payload = runtimeBuildDeployPayload();
+        const response = await runtimeApiRequest("/deploy", {
+            method: "POST",
+            body: payload,
+        });
+        const deployedRuntime = response?.runtime || {};
+        const deployedBackend = String(deployedRuntime.backend || "").trim();
+        const deployedStatus = String(deployedRuntime.status || "").trim();
+
+        let clearedRuntimeBackendFilter = false;
+        const runtimeBackendFilter = safeGetElement(
+            "runtime-filter-backend",
+            true,
+        );
+        if (
+            runtimeBackendFilter &&
+            runtimeBackendFilter.value &&
+            deployedBackend &&
+            runtimeBackendFilter.value !== deployedBackend
+        ) {
+            runtimeBackendFilter.value = "";
+            clearedRuntimeBackendFilter = true;
+        }
+
+        let clearedRuntimeStatusFilter = false;
+        const runtimeStatusFilter = safeGetElement(
+            "runtime-filter-status",
+            true,
+        );
+        if (
+            runtimeStatusFilter &&
+            runtimeStatusFilter.value &&
+            deployedStatus &&
+            runtimeStatusFilter.value !== deployedStatus
+        ) {
+            runtimeStatusFilter.value = "";
+            clearedRuntimeStatusFilter = true;
+        }
+
+        let switchedApprovalFilterToPending = false;
+        const approvalStatusFilter = safeGetElement(
+            "runtime-approval-filter-status",
+            true,
+        );
+        if (
+            approvalStatusFilter &&
+            String(deployedRuntime.approval_status || "") === "pending" &&
+            !["pending", "all"].includes(approvalStatusFilter.value)
+        ) {
+            approvalStatusFilter.value = "pending";
+            switchedApprovalFilterToPending = true;
+        }
+
+        const message = response?.message || "Deployment request submitted";
+        runtimeResetDeployForm(false);
+        runtimeSetDeployMessage(message, "success");
+        showNotification(message, "success");
+        await runtimeLoadRuntimes();
+        await runtimeLoadApprovals();
+        if (clearedRuntimeBackendFilter) {
+            showNotification(
+                "Cleared runtime backend filter so the new deployment is visible",
+                "info",
+            );
+        }
+        if (clearedRuntimeStatusFilter) {
+            showNotification(
+                "Cleared runtime status filter so the new deployment is visible",
+                "info",
+            );
+        }
+        if (switchedApprovalFilterToPending) {
+            showNotification(
+                "Switched approvals filter to pending for the new request",
+                "info",
+            );
+        }
+    } catch (error) {
+        runtimeSetDeployMessage(error.message, "error");
+        showNotification(`Runtime deploy failed: ${error.message}`, "error");
+    } finally {
+        if (submitButton) {
+            submitButton.disabled = false;
+        }
+    }
+}
+
+function runtimeBindEventOnce(element, eventName, bindingKey, handler) {
+    if (!element) {
+        return;
+    }
+    const datasetKey = `runtime${bindingKey}Bound`;
+    if (element.dataset[datasetKey] === "true") {
+        return;
+    }
+    element.addEventListener(eventName, handler);
+    element.dataset[datasetKey] = "true";
+}
+
+function bindRuntimePanelEventHandlers() {
+    const panel = safeGetElement("runtime-panel", true);
+    if (!panel) {
+        return;
+    }
+    panel.dataset.runtimeBound = "true";
+
+    const sourceTypeElement = safeGetElement(
+        "runtime-deploy-source-type",
+        true,
+    );
+    runtimeBindEventOnce(
+        sourceTypeElement,
+        "change",
+        "SourceTypeChange",
+        runtimeHandleSourceTypeChange,
+    );
+
+    const deployForm = safeGetElement("runtime-deploy-form", true);
+    if (deployForm) {
+        // Enforce runtimeBuildDeployPayload()-based validation and messages.
+        // This keeps behavior consistent even if templates are served from
+        // older images without a `novalidate` attribute on the form.
+        deployForm.noValidate = true;
+        runtimeBindEventOnce(
+            deployForm,
+            "submit",
+            "DeploySubmit",
+            runtimeHandleDeploySubmit,
+        );
+    }
+
+    const resetButton = safeGetElement("runtime-deploy-reset", true);
+    if (resetButton) {
+        runtimeBindEventOnce(resetButton, "click", "DeployReset", () => {
+            runtimeResetDeployForm();
+        });
+    }
+
+    const refreshAllButton = safeGetElement("runtime-refresh-all-btn", true);
+    if (refreshAllButton) {
+        runtimeBindEventOnce(
+            refreshAllButton,
+            "click",
+            "RefreshAll",
+            async () => {
+                try {
+                    await runtimeRefreshAll();
+                    showNotification("Runtime data refreshed", "success");
+                } catch (error) {
+                    showNotification(
+                        `Failed to refresh runtime data: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
+    }
+
+    const refreshRuntimesButton = safeGetElement(
+        "runtime-refresh-runtimes-btn",
+        true,
+    );
+    if (refreshRuntimesButton) {
+        runtimeBindEventOnce(
+            refreshRuntimesButton,
+            "click",
+            "RefreshRuntimes",
+            async () => {
+                try {
+                    await runtimeLoadRuntimes();
+                } catch (error) {
+                    showNotification(
+                        `Failed to refresh runtimes: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
+    }
+
+    const refreshApprovalsButton = safeGetElement(
+        "runtime-refresh-approvals-btn",
+        true,
+    );
+    if (refreshApprovalsButton) {
+        runtimeBindEventOnce(
+            refreshApprovalsButton,
+            "click",
+            "RefreshApprovals",
+            async () => {
+                try {
+                    await runtimeLoadApprovals();
+                } catch (error) {
+                    showNotification(
+                        `Failed to refresh approvals: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
+    }
+
+    const runtimesTableBody = safeGetElement(
+        "runtime-runtimes-table-body",
+        true,
+    );
+    if (runtimesTableBody) {
+        runtimeBindEventOnce(
+            runtimesTableBody,
+            "click",
+            "RuntimeActionsClick",
+            async (event) => {
+                if (!(event.target instanceof Element)) {
+                    return;
+                }
+                const button = event.target.closest(
+                    "button[data-runtime-action]",
+                );
+                if (!button) {
+                    return;
+                }
+                try {
+                    await runtimeExecuteRuntimeAction(
+                        button.dataset.runtimeId,
+                        button.dataset.runtimeAction,
+                        button,
+                    );
+                } catch (error) {
+                    showNotification(
+                        `Runtime action failed: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
+    }
+
+    const approvalsTableBody = safeGetElement(
+        "runtime-approvals-table-body",
+        true,
+    );
+    if (approvalsTableBody) {
+        runtimeBindEventOnce(
+            approvalsTableBody,
+            "click",
+            "ApprovalActionsClick",
+            async (event) => {
+                if (!(event.target instanceof Element)) {
+                    return;
+                }
+                const button = event.target.closest(
+                    "button[data-approval-action]",
+                );
+                if (!button) {
+                    return;
+                }
+                try {
+                    await runtimeExecuteApprovalAction(
+                        button.dataset.approvalId,
+                        button.dataset.approvalAction,
+                        button,
+                    );
+                } catch (error) {
+                    showNotification(
+                        `Approval action failed: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
+    }
+
+    const backendFilter = safeGetElement("runtime-filter-backend", true);
+    if (backendFilter) {
+        runtimeBindEventOnce(
+            backendFilter,
+            "change",
+            "BackendFilterChange",
+            () => {
+                runtimeLoadRuntimes().catch((error) => {
+                    showNotification(
+                        `Failed to apply backend filter: ${error.message}`,
+                        "error",
+                    );
+                });
+            },
+        );
+    }
+
+    const statusFilter = safeGetElement("runtime-filter-status", true);
+    if (statusFilter) {
+        runtimeBindEventOnce(
+            statusFilter,
+            "change",
+            "StatusFilterChange",
+            () => {
+                runtimeLoadRuntimes().catch((error) => {
+                    showNotification(
+                        `Failed to apply status filter: ${error.message}`,
+                        "error",
+                    );
+                });
+            },
+        );
+    }
+
+    const approvalFilter = safeGetElement(
+        "runtime-approval-filter-status",
+        true,
+    );
+    if (approvalFilter) {
+        runtimeBindEventOnce(
+            approvalFilter,
+            "change",
+            "ApprovalFilterChange",
+            () => {
+                runtimeLoadApprovals().catch((error) => {
+                    showNotification(
+                        `Failed to apply approval filter: ${error.message}`,
+                        "error",
+                    );
+                });
+            },
+        );
+    }
+
+    const compatibilityButton = safeGetElement(
+        "runtime-compat-check-btn",
+        true,
+    );
+    if (compatibilityButton) {
+        runtimeBindEventOnce(
+            compatibilityButton,
+            "click",
+            "CompatibilityCheckClick",
+            async () => {
+                try {
+                    await runtimeCheckCompatibility();
+                } catch (error) {
+                    showNotification(
+                        `Compatibility check failed: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
+    }
+
+    const clearLogsButton = safeGetElement("runtime-clear-logs-btn", true);
+    if (clearLogsButton) {
+        runtimeBindEventOnce(clearLogsButton, "click", "ClearLogsClick", () => {
+            runtimeSetLogs([], "");
+        });
+    }
+}
+
+async function initializeRuntimePanel() {
+    runtimeHandleSourceTypeChange();
+    bindRuntimePanelEventHandlers();
+    await runtimeRefreshAll();
+}
+
+async function loadRuntimePanel(force = false) {
+    const runtimePanel = safeGetElement("runtime-panel", true);
+    if (!runtimePanel) {
+        return;
+    }
+
+    if (
+        !force &&
+        runtimePanel.dataset.loaded === "true" &&
+        runtimePanel.innerHTML.trim() !== ""
+    ) {
+        try {
+            await initializeRuntimePanel();
+        } catch (error) {
+            console.error("Failed to refresh runtime panel:", error);
+            showNotification(
+                `Failed to refresh runtime data: ${error.message}`,
+                "error",
+            );
+        }
+        return;
+    }
+
+    runtimePanel.innerHTML = `
+        <div class="flex justify-center items-center py-8">
+            <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="ml-3 text-gray-600 dark:text-gray-400">Loading runtime dashboard...</span>
+        </div>
+    `;
+
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/runtime/partial`,
+            {
+                method: "GET",
+                credentials: "same-origin",
+                headers: {
+                    Accept: "text/html",
+                },
+            },
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+        );
+        if (!response.ok) {
+            if (response.status === 403) {
+                throw new Error(
+                    "Platform administrator access required for runtime UI",
+                );
+            }
+            if (response.status === 404) {
+                throw new Error(
+                    "Runtime feature is disabled (set MCPGATEWAY_RUNTIME_ENABLED=true)",
+                );
+            }
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const html = await response.text();
+        safeSetInnerHTML(runtimePanel, html, true);
+        runtimePanel.dataset.loaded = "true";
+        await initializeRuntimePanel();
+    } catch (error) {
+        console.error("Failed to load runtime panel:", error);
+        runtimePanel.innerHTML = `
+            <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+                <strong class="font-bold">Failed to load runtime panel:</strong>
+                <span class="block sm:inline">${escapeHtml(error.message || "Unknown error")}</span>
+            </div>
+        `;
+    }
+}
+
+window.loadRuntimePanel = loadRuntimePanel;
 // ===================================================================
 // AUTH HANDLING
 // ===================================================================
@@ -18473,6 +19786,13 @@ function initializeTabState() {
                         panel.appendChild(errorDiv);
                     });
             }
+        }, 100);
+    }
+
+    // Pre-load runtime panel if that's the initial tab
+    if (initialTab === "runtime") {
+        setTimeout(() => {
+            loadRuntimePanel();
         }, 100);
     }
 

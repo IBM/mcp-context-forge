@@ -2040,6 +2040,119 @@ class PendingUserApproval(Base):
         self.admin_notes = notes
 
 
+class RuntimeGuardrailProfile(Base):
+    """Stored runtime guardrail profile."""
+
+    __tablename__ = "runtime_guardrail_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    recommended_backends: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    built_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    def __repr__(self) -> str:
+        """Return developer-friendly representation.
+
+        Returns:
+            str: Runtime guardrail profile representation.
+        """
+        return f"<RuntimeGuardrailProfile(name='{self.name}', built_in={self.built_in})>"
+
+
+class RuntimeDeployment(Base):
+    """Runtime deployment state for remote MCP runtime backends."""
+
+    __tablename__ = "runtime_deployments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    backend: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    approval_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_required", index=True)
+
+    runtime_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    endpoint_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    image: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    catalog_server_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+
+    resource_limits: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    environment: Mapped[Dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    guardrails_profile: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    guardrails_config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    guardrails_warnings: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    backend_response: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    runtime_metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    gateway_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="SET NULL"), nullable=True, index=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status_check: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    gateway: Mapped[Optional["Gateway"]] = relationship("Gateway", foreign_keys=[gateway_id])
+    approvals: Mapped[List["RuntimeDeploymentApproval"]] = relationship("RuntimeDeploymentApproval", back_populates="runtime_deployment", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_runtime_backend_status", "backend", "status"),
+        Index("idx_runtime_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        """Return developer-friendly representation.
+
+        Returns:
+            str: Runtime deployment representation.
+        """
+        return f"<RuntimeDeployment(id='{self.id}', backend='{self.backend}', status='{self.status}')>"
+
+
+class RuntimeDeploymentApproval(Base):
+    """Approval records for runtime deployment requests."""
+
+    __tablename__ = "runtime_deployment_approvals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    runtime_deployment_id: Mapped[str] = mapped_column(String(36), ForeignKey("runtime_deployments.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)  # pending, approved, rejected, expired
+    requested_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    requested_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    decision_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    approvers: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    rule_snapshot: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    runtime_deployment: Mapped["RuntimeDeployment"] = relationship("RuntimeDeployment", back_populates="approvals")
+
+    __table_args__ = (
+        Index("idx_runtime_approval_status_created", "status", "created_at"),
+        Index("idx_runtime_approval_runtime_status", "runtime_deployment_id", "status"),
+    )
+
+    def __repr__(self) -> str:
+        """Return developer-friendly representation.
+
+        Returns:
+            str: Runtime deployment approval representation.
+        """
+        return f"<RuntimeDeploymentApproval(id='{self.id}', runtime_deployment_id='{self.runtime_deployment_id}', status='{self.status}')>"
+
+
 # Association table for servers and tools
 server_tool_association = Table(
     "server_tool_association",

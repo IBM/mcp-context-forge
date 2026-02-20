@@ -804,10 +804,10 @@ def test_parse_list_from_env_invalid_type():
 def test_ui_hide_sections_csv_aliases_and_invalid_values():
     """UI section hide list should normalize aliases and ignore invalid values."""
     s = Settings(
-        mcpgateway_ui_hide_sections="prompts,CATALOG,a2a,invalid,prompts",
+        mcpgateway_ui_hide_sections="prompts,CATALOG,a2a,runtimes,invalid,prompts",
         _env_file=None,
     )
-    assert s.mcpgateway_ui_hide_sections == ["prompts", "servers", "agents"]
+    assert s.mcpgateway_ui_hide_sections == ["prompts", "servers", "agents", "runtime"]
 
 
 def test_ui_hide_sections_json_array_input():
@@ -831,13 +831,14 @@ def test_ui_hide_sections_empty_tokens_stripped():
 def test_ui_hide_sections_accepts_extended_sections():
     """Extended admin tabs should be accepted as valid hideable sections."""
     s = Settings(
-        mcpgateway_ui_hide_sections="overview,roots,mcp-registry,metrics,plugins,export-import,logs,version-info,maintenance",
+        mcpgateway_ui_hide_sections="overview,roots,mcp-registry,runtime,metrics,plugins,export-import,logs,version-info,maintenance",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections == [
         "overview",
         "roots",
         "mcp-registry",
+        "runtime",
         "metrics",
         "plugins",
         "export-import",

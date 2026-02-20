@@ -90,6 +90,12 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
+        "RUNTIME_DOCKER_ALLOWED_REGISTRIES",
+        "RUNTIME_CATALOG_REMOTE_URLS",
+        "RUNTIME_APPROVAL_REQUIRED_SOURCE_TYPES",
+        "RUNTIME_APPROVAL_REGISTRY_ALLOWLIST",
+        "RUNTIME_APPROVAL_REQUIRED_GUARDRAILS_PROFILES",
+        "RUNTIME_APPROVERS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -128,6 +134,7 @@ UI_HIDABLE_SECTIONS = frozenset(
         "resources",
         "roots",
         "mcp-registry",
+        "runtime",
         "metrics",
         "plugins",
         "export-import",
@@ -150,6 +157,7 @@ UI_HIDE_SECTION_ALIASES = {
     "grpc-services": "agents",
     "api_tokens": "tokens",
     "llm-settings": "settings",
+    "runtimes": "runtime",
 }
 
 
@@ -564,7 +572,7 @@ class Settings(BaseSettings):
         description=(
             "CSV/JSON list of UI sections to hide. "
             "Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, "
-            "metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
+            "runtime, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
         ),
     )
     mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
@@ -617,6 +625,39 @@ class Settings(BaseSettings):
     mcpgateway_catalog_auto_health_check: bool = Field(default=True, description="Automatically health check catalog servers")
     mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
     mcpgateway_catalog_page_size: int = Field(default=100, description="Number of catalog servers per page")
+
+    # Secure MCP Runtime
+    mcpgateway_runtime_enabled: bool = Field(default=False, description="Enable secure runtime deployment APIs")
+    runtime_platform_admin_only: bool = Field(default=True, description="Restrict runtime APIs to platform administrators")
+    runtime_default_backend: str = Field(default="docker", description="Default runtime backend")
+
+    # Docker backend configuration
+    runtime_docker_enabled: bool = Field(default=True, description="Enable Docker runtime backend")
+    runtime_docker_binary: str = Field(default="docker", description="Docker CLI binary path")
+    runtime_docker_socket: str = Field(default="/var/run/docker.sock", description="Docker socket path")
+    runtime_docker_network: Optional[str] = Field(default=None, description="Default Docker network for runtime containers")
+    runtime_docker_allowed_registries: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["docker.io", "ghcr.io"], description="Allowlisted registries for runtime image deploys")
+
+    # IBM Code Engine backend configuration
+    runtime_ibm_code_engine_enabled: bool = Field(default=False, description="Enable IBM Code Engine runtime backend")
+    runtime_ibm_code_engine_binary: str = Field(default="ibmcloud", description="IBM Cloud CLI binary path")
+    runtime_ibm_code_engine_region: Optional[str] = Field(default=None, description="IBM Cloud region for Code Engine")
+    runtime_ibm_code_engine_project: Optional[str] = Field(default=None, description="Code Engine project name")
+    runtime_ibm_code_engine_registry_secret: Optional[str] = Field(default=None, description="Registry secret used for Code Engine app deploys")
+
+    # Remote catalog federation
+    runtime_catalog_remote_urls: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Remote catalog endpoints to merge into local catalog")
+    runtime_catalog_remote_timeout_seconds: int = Field(default=15, ge=1, le=120, description="Timeout in seconds for remote catalog fetches")
+
+    # Runtime approval workflow
+    runtime_approval_enabled: bool = Field(default=False, description="Enable approval workflow for runtime deployments")
+    runtime_approval_required_source_types: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["github"], description="Source types requiring approval")
+    runtime_approval_registry_allowlist: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["docker.io/library", "docker.io/mcp"], description="Registry prefixes that bypass approval checks"
+    )
+    runtime_approval_required_guardrails_profiles: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["unrestricted"], description="Guardrail profiles requiring approval")
+    runtime_approvers: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Users or groups allowed to approve runtime requests")
+    runtime_approval_timeout_hours: int = Field(default=48, ge=1, le=168, description="Approval request expiry in hours")
 
     # MCP Gateway Bootstrap Roles In DB Configuration
     mcpgateway_bootstrap_roles_in_db_enabled: bool = Field(default=False, description="Enable MCP Gateway add additional roles in db")
@@ -1810,6 +1851,12 @@ Disallow: /
         "insecure_queryparam_auth_allowed_hosts",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
+        "runtime_docker_allowed_registries",
+        "runtime_catalog_remote_urls",
+        "runtime_approval_required_source_types",
+        "runtime_approval_registry_allowlist",
+        "runtime_approval_required_guardrails_profiles",
+        "runtime_approvers",
         mode="before",
     )
     @classmethod

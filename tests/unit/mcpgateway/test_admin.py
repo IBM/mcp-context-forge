@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
@@ -220,6 +219,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_resources_errors,
     get_resources_partial,
     get_resources_section,
+    get_runtime_partial,
     get_servers_section,
     get_system_stats,
     get_timeseries_metrics,
@@ -231,6 +231,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_top_error_endpoints,
     get_top_slow_endpoints,
     get_top_volume_endpoints,
+    get_ui_asset_version,
     get_ui_visibility_config,
     get_user_agent,
     get_user_email,
@@ -3003,7 +3004,7 @@ class TestUIVisibilityConfig:
     ):
         """Extended hideable sections should map directly to their tab IDs."""
         request = MagicMock(spec=Request)
-        request.query_params = {"ui_hide": "overview,mcp-registry,logs,version-info"}
+        request.query_params = {"ui_hide": "overview,mcp-registry,runtime,logs,version-info"}
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
@@ -3018,15 +3019,33 @@ class TestUIVisibilityConfig:
             "logs",
             "mcp-registry",
             "overview",
+            "runtime",
             "version-info",
         ]
         assert config["hidden_tabs"] == [
             "logs",
             "mcp-registry",
             "overview",
+            "runtime",
             "version-info",
         ]
         assert config["cookie_action"] == "set"
+
+
+class TestUiAssetVersion:
+    """Test cache-busting token generation for admin UI assets."""
+
+    def test_get_ui_asset_version_for_existing_asset(self):
+        get_ui_asset_version.cache_clear()
+        token = get_ui_asset_version("admin.js")
+        assert token.isdigit()
+
+    def test_get_ui_asset_version_falls_back_to_version_when_asset_missing(self):
+        from mcpgateway import __version__ as package_version
+
+        get_ui_asset_version.cache_clear()
+        token = get_ui_asset_version("does-not-exist.js")
+        assert token == package_version
 
 
 class TestAdminUIRoute:
@@ -14517,6 +14536,67 @@ class TestMaintenanceMisc:
         request.app.state.templates.TemplateResponse.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_get_runtime_partial_admin_success(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_default_backend", "docker", raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Runtime</html>")
+
+        result = await get_runtime_partial(request, user={"email": "admin@test.com", "is_admin": True}, _db=mock_db)
+        assert isinstance(result, HTMLResponse)
+        request.app.state.templates.TemplateResponse.assert_called_once()
+        context = request.app.state.templates.TemplateResponse.call_args[0][2]
+        assert context["runtime_default_backend"] == "docker"
+        assert context["runtime_platform_admin_only"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_runtime_partial_feature_disabled(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", True, raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_runtime_partial(request, user={"email": "admin@test.com", "is_admin": True}, _db=mock_db)
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_runtime_partial_platform_admin_only_forbidden(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", True, raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_runtime_partial(request, user={"email": "user@test.com", "is_admin": False}, _db=mock_db)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_get_runtime_partial_non_admin_allowed_when_configured(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", False, raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Runtime</html>")
+
+        result = await get_runtime_partial(request, user={"email": "user@test.com", "is_admin": False}, _db=mock_db)
+        assert isinstance(result, HTMLResponse)
+
+    @pytest.mark.asyncio
     async def test_admin_import_preview_success(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr(
             "mcpgateway.admin._read_request_json",
@@ -15734,12 +15814,15 @@ class TestTemplateButtonGating:
             query_params={
                 "q": "x' );alert(1);//",
                 "tags": "</script><script>alert(2)</script>",
+                "entity_type": "tools",
             },
         )
 
         assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
-        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
+        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' not in html
+        assert "url.searchParams.set(&#34;q&#34;, &#34;x\\u0027 );alert(1);//&#34;);" in html
         assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
+        assert "url.searchParams.set(&#34;entity_type&#34;, &#34;tools&#34;);" in html
 
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""

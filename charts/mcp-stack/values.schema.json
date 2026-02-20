@@ -616,6 +616,117 @@
               "description": "MCP protocol version",
               "default": "2025-03-26"
             },
+            "MCPGATEWAY_RUNTIME_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable secure runtime deployment API",
+              "default": "false"
+            },
+            "RUNTIME_PLATFORM_ADMIN_ONLY": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Restrict runtime APIs to platform administrators",
+              "default": "true"
+            },
+            "RUNTIME_DEFAULT_BACKEND": {
+              "type": "string",
+              "enum": ["docker", "ibm_code_engine"],
+              "description": "Default runtime backend",
+              "default": "docker"
+            },
+            "RUNTIME_DOCKER_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable Docker runtime backend",
+              "default": "true"
+            },
+            "RUNTIME_DOCKER_BINARY": {
+              "type": "string",
+              "description": "Docker CLI binary path",
+              "default": "docker"
+            },
+            "RUNTIME_DOCKER_SOCKET": {
+              "type": "string",
+              "description": "Docker socket path",
+              "default": "/var/run/docker.sock"
+            },
+            "RUNTIME_DOCKER_NETWORK": {
+              "type": "string",
+              "description": "Default Docker network for runtime containers",
+              "default": "mcpnet"
+            },
+            "RUNTIME_DOCKER_ALLOWED_REGISTRIES": {
+              "type": "string",
+              "description": "JSON array of allowlisted image registries",
+              "default": "[\"docker.io\",\"ghcr.io\"]"
+            },
+            "RUNTIME_IBM_CODE_ENGINE_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable IBM Code Engine runtime backend",
+              "default": "false"
+            },
+            "RUNTIME_IBM_CODE_ENGINE_BINARY": {
+              "type": "string",
+              "description": "IBM Cloud CLI binary path",
+              "default": "ibmcloud"
+            },
+            "RUNTIME_IBM_CODE_ENGINE_REGION": {
+              "type": "string",
+              "description": "IBM Code Engine region",
+              "default": ""
+            },
+            "RUNTIME_IBM_CODE_ENGINE_PROJECT": {
+              "type": "string",
+              "description": "IBM Code Engine project name",
+              "default": ""
+            },
+            "RUNTIME_IBM_CODE_ENGINE_REGISTRY_SECRET": {
+              "type": "string",
+              "description": "IBM Code Engine registry secret name",
+              "default": ""
+            },
+            "RUNTIME_CATALOG_REMOTE_URLS": {
+              "type": "string",
+              "description": "JSON array of remote runtime catalog URLs",
+              "default": "[]"
+            },
+            "RUNTIME_CATALOG_REMOTE_TIMEOUT_SECONDS": {
+              "type": "string",
+              "description": "Remote catalog fetch timeout in seconds",
+              "default": "15"
+            },
+            "RUNTIME_APPROVAL_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable runtime deployment approval workflow",
+              "default": "false"
+            },
+            "RUNTIME_APPROVAL_REQUIRED_SOURCE_TYPES": {
+              "type": "string",
+              "description": "JSON array of source types that require approval",
+              "default": "[\"github\"]"
+            },
+            "RUNTIME_APPROVAL_REGISTRY_ALLOWLIST": {
+              "type": "string",
+              "description": "JSON array of registry prefixes that bypass approval",
+              "default": "[\"docker.io/library\",\"docker.io/mcp\"]"
+            },
+            "RUNTIME_APPROVAL_REQUIRED_GUARDRAILS_PROFILES": {
+              "type": "string",
+              "description": "JSON array of guardrail profiles that require approval",
+              "default": "[\"unrestricted\"]"
+            },
+            "RUNTIME_APPROVERS": {
+              "type": "string",
+              "description": "JSON array of approver users or groups",
+              "default": "[]"
+            },
+            "RUNTIME_APPROVAL_TIMEOUT_HOURS": {
+              "type": "string",
+              "description": "Approval request expiration in hours",
+              "default": "48"
+            },
             "MCPGATEWAY_UI_ENABLED": {
               "type": "string",
               "enum": ["true", "false"],

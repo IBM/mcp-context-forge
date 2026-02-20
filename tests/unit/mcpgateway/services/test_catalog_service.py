@@ -8,7 +8,6 @@ Unit Tests for Catalog Service .
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -66,6 +65,17 @@ async def test_load_catalog_exception(service):
 
 
 @pytest.mark.asyncio
+async def test_load_catalog_non_dict_payload_normalized(service):
+    with patch("mcpgateway.services.catalog_service.settings", MagicMock(mcpgateway_catalog_file="catalog.yml", mcpgateway_catalog_cache_ttl=0, runtime_catalog_remote_urls=[])):
+        with patch("mcpgateway.services.catalog_service.Path.exists", return_value=True):
+            with patch("mcpgateway.services.catalog_service.asyncio.to_thread", new_callable=AsyncMock, return_value="[]"), patch(
+                "mcpgateway.services.catalog_service.yaml.safe_load", return_value=["not-a-dict"]
+            ):
+                result = await service.load_catalog(force_reload=True)
+                assert result == {"catalog_servers": []}
+
+
+@pytest.mark.asyncio
 async def test_get_catalog_servers_filters(service):
     fake_catalog = {
         "catalog_servers": [
@@ -81,6 +91,144 @@ async def test_get_catalog_servers_filters(service):
         result = await service.get_catalog_servers(req, db)
         assert result.total >= 1
         assert all(s.category == "cat" for s in result.servers)
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_runtime_metadata_normalization(service):
+    fake_catalog = {
+        "catalog_servers": [
+            "invalid-entry",
+            {
+                "id": "compose-entry",
+                "name": "Compose",
+                "url": "http://compose",
+                "category": "cat",
+                "auth_type": "Open",
+                "provider": "prov",
+                "tags": [],
+                "description": "compose",
+                "source": {"type": "compose", "compose_file": "services: {}", "main_service": "app"},
+            },
+            {
+                "id": "docker-entry",
+                "name": "Docker",
+                "url": "http://docker",
+                "category": "cat",
+                "auth_type": "Open",
+                "provider": "prov",
+                "tags": [],
+                "description": "docker",
+                "source_type": "docker",
+            },
+            {
+                "id": "github-entry",
+                "name": "GitHub",
+                "url": "http://github",
+                "category": "cat",
+                "auth_type": "Open",
+                "provider": "prov",
+                "tags": [],
+                "description": "github",
+                "source_type": "github",
+            },
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.return_value = []
+        req = CatalogListRequest(show_available_only=False, limit=20, offset=0)
+        result = await service.get_catalog_servers(req, db)
+        assert result.total == 3
+        by_id = {server.id: server for server in result.servers}
+        assert by_id["compose-entry"].supported_backends == ["docker"]
+        assert by_id["docker-entry"].supported_backends == ["docker", "ibm_code_engine"]
+        assert by_id["github-entry"].supported_backends == ["docker", "ibm_code_engine"]
+
+
+@pytest.mark.asyncio
+async def test_merge_remote_catalogs_skips_invalid_and_duplicates(service):
+    local = {"catalog_servers": [{"id": "existing", "name": "local"}]}
+    remote = {"catalog_servers": [{"id": "existing", "name": "dup"}, {"id": "new", "name": "new"}, "bad-row"]}
+    with patch.object(service, "_fetch_remote_catalog", AsyncMock(return_value=remote)):
+        merged = await service._merge_remote_catalogs(local, ["https://catalog.example.com"])
+    ids = [item.get("id") for item in merged["catalog_servers"] if isinstance(item, dict)]
+    assert ids.count("existing") == 1
+    assert "new" in ids
+
+
+@pytest.mark.asyncio
+async def test_fetch_remote_catalog_json_list_payload(service):
+    mock_response = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.text = '[{"id":"srv"}]'
+    mock_response.json.return_value = [{"id": "srv"}]
+    mock_response.raise_for_status.return_value = None
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("mcpgateway.services.catalog_service.settings", MagicMock(runtime_catalog_remote_timeout_seconds=9)), patch(
+        "mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client
+    ):
+        result = await service._fetch_remote_catalog("https://catalog.example.com")
+
+    assert result == {"catalog_servers": [{"id": "srv"}]}
+    mock_client.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_remote_catalog_yaml_servers_key(service):
+    mock_response = MagicMock()
+    mock_response.headers = {"content-type": "text/yaml"}
+    mock_response.text = "servers: []"
+    mock_response.raise_for_status.return_value = None
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("mcpgateway.services.catalog_service.settings", MagicMock(runtime_catalog_remote_timeout_seconds=15)), patch(
+        "mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client
+    ), patch("mcpgateway.services.catalog_service.yaml.safe_load", return_value={"servers": [{"id": "srv2"}]}):
+        result = await service._fetch_remote_catalog("https://catalog.example.com/yaml")
+
+    assert result == {"catalog_servers": [{"id": "srv2"}]}
+
+
+@pytest.mark.asyncio
+async def test_fetch_remote_catalog_dict_catalog_servers_key(service):
+    mock_response = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.text = '{"catalog_servers":[{"id":"srv3"}]}'
+    mock_response.json.return_value = {"catalog_servers": [{"id": "srv3"}]}
+    mock_response.raise_for_status.return_value = None
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("mcpgateway.services.catalog_service.settings", MagicMock(runtime_catalog_remote_timeout_seconds=15)), patch(
+        "mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client
+    ):
+        result = await service._fetch_remote_catalog("https://catalog.example.com/json-dict")
+
+    assert result == {"catalog_servers": [{"id": "srv3"}]}
+
+
+@pytest.mark.asyncio
+async def test_fetch_remote_catalog_unsupported_payload_raises(service):
+    mock_response = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.text = '{"unexpected":"shape"}'
+    mock_response.json.return_value = {"unexpected": "shape"}
+    mock_response.raise_for_status.return_value = None
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("mcpgateway.services.catalog_service.settings", MagicMock(runtime_catalog_remote_timeout_seconds=15)), patch(
+        "mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client
+    ):
+        with pytest.raises(ValueError, match="Unsupported remote catalog payload"):
+            await service._fetch_remote_catalog("https://catalog.example.com/unsupported")
 
 
 @pytest.mark.asyncio
@@ -784,3 +932,67 @@ async def test_bulk_register_breaks_on_exception_when_not_skipping_errors(servic
         db = MagicMock()
         result = await service.bulk_register_servers(fake_request, db)
     assert result.failed and result.failed[0]["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_filter_by_source_and_backend(service):
+    """Catalog listing supports source_type and supported_backends filtering."""
+    fake_catalog = {
+        "catalog_servers": [
+            {
+                "id": "docker-entry",
+                "name": "Docker Entry",
+                "url": "http://docker.local/mcp",
+                "category": "cat",
+                "auth_type": "Open",
+                "provider": "prov",
+                "tags": ["runtime"],
+                "description": "docker runtime",
+                "source_type": "docker",
+                "supported_backends": ["docker", "ibm_code_engine"],
+            },
+            {
+                "id": "compose-entry",
+                "name": "Compose Entry",
+                "url": "http://compose.local/mcp",
+                "category": "cat",
+                "auth_type": "Open",
+                "provider": "prov",
+                "tags": ["runtime"],
+                "description": "compose runtime",
+                "source_type": "compose",
+                "supported_backends": ["docker"],
+            },
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.return_value = []
+        req = CatalogListRequest(source_type="compose", supported_backends=["docker"], show_available_only=False, offset=0, limit=10)
+        result = await service.get_catalog_servers(req, db)
+        assert result.total == 1
+        assert result.servers[0].id == "compose-entry"
+        assert "docker" in result.supported_backends
+        assert "compose" in result.source_types
+
+
+@pytest.mark.asyncio
+async def test_load_catalog_merges_remote_catalog(service):
+    """Remote catalog URLs should be merged with local catalog entries."""
+    local_catalog = {
+        "catalog_servers": [
+            {"id": "local", "name": "Local", "url": "http://local", "category": "cat", "auth_type": "Open", "provider": "prov", "description": "local"},
+        ]
+    }
+    remote_catalog = {
+        "catalog_servers": [
+            {"id": "remote", "name": "Remote", "url": "http://remote", "category": "cat", "auth_type": "Open", "provider": "prov", "description": "remote"},
+        ]
+    }
+    with patch("mcpgateway.services.catalog_service.settings", MagicMock(mcpgateway_catalog_file="catalog.yml", mcpgateway_catalog_cache_ttl=0, runtime_catalog_remote_urls=["https://example.com/catalog.yaml"])):
+        with patch("mcpgateway.services.catalog_service.Path.exists", return_value=True), patch(
+            "mcpgateway.services.catalog_service.asyncio.to_thread", AsyncMock(return_value="catalog")
+        ), patch("mcpgateway.services.catalog_service.yaml.safe_load", return_value=local_catalog), patch.object(service, "_fetch_remote_catalog", AsyncMock(return_value=remote_catalog)):
+            result = await service.load_catalog(force_reload=True)
+            ids = {s["id"] for s in result["catalog_servers"]}
+            assert ids == {"local", "remote"}

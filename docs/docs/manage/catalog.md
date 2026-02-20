@@ -35,9 +35,42 @@ MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK=true
 # Catalog cache TTL in seconds (default: 3600)
 MCPGATEWAY_CATALOG_CACHE_TTL=3600
 
-# Number of catalog servers to display per page (default: 12)
-MCPGATEWAY_CATALOG_PAGE_SIZE=12
+# Number of catalog servers to display per page (default: 100)
+MCPGATEWAY_CATALOG_PAGE_SIZE=100
 ```
+
+---
+
+### Runtime-Aware Catalog Metadata
+
+Catalog entries can include deployment metadata consumed by the Secure MCP Runtime:
+
+```yaml
+catalog_servers:
+  - id: "runtime-filesystem"
+    name: "Filesystem Server"
+    category: "Storage"
+    url: "http://localhost:8080/mcp"
+    auth_type: "Open"
+    provider: "ContextForge"
+    description: "Runtime deployable filesystem server"
+    source_type: "docker"
+    supported_backends: ["docker", "ibm_code_engine"]
+    requires_approval: false
+    source:
+      type: "docker"
+      image: "ghcr.io/ibm/mcp-context-forge/mcp-filesystem:latest"
+```
+
+Additional runtime metadata fields:
+
+- `source_type` and `source`
+- `supported_backends`
+- `requires_approval`
+- `featured`
+- `deprecated`
+
+When runtime deployment is enabled (`MCPGATEWAY_RUNTIME_ENABLED=true`), these fields drive runtime backend compatibility checks and approval behavior.
 
 ---
 
@@ -211,6 +244,12 @@ Based on the `CatalogServer` schema (schemas.py:5371-5387):
 | `transport` | string | No | Transport type: `SSE`, `STREAMABLEHTTP`, or `WEBSOCKET` (auto-detected if not specified) |
 | `logo_url` | string | No | URL to server logo/icon |
 | `documentation_url` | string | No | URL to server documentation |
+| `source_type` | string | No | Runtime source type: `docker`, `github`, `compose` |
+| `source` | object | No | Runtime source configuration (`image`, `repo`, `compose_file`, etc.) |
+| `supported_backends` | array[string] | No | Runtime backends allowed for this entry (for example `docker`, `ibm_code_engine`) |
+| `requires_approval` | boolean | No | Whether runtime deployment should require approval by default |
+| `featured` | boolean | No | Whether this entry is highlighted as featured |
+| `deprecated` | boolean | No | Whether this entry is deprecated and hidden by default filters |
 | `is_registered` | boolean | No | Whether server is already registered (set by system) |
 | `is_available` | boolean | No | Whether server is currently available (default: `true`) |
 

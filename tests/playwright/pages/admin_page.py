@@ -98,6 +98,11 @@ class AdminPage(BasePage):
         """Logs tab button (delegated to sidebar)."""
         return self.sidebar.logs_tab
 
+    @property
+    def runtime_tab(self) -> Locator:
+        """Runtime tab button (delegated to sidebar)."""
+        return self.sidebar.runtime_tab
+
     # ==================== Panel Elements ====================
 
     @property
@@ -218,6 +223,10 @@ class AdminPage(BasePage):
     def click_metrics_tab(self) -> None:
         """Click on metrics tab and wait for panel (delegated to sidebar)."""
         self.sidebar.click_metrics_tab()
+
+    def click_runtime_tab(self) -> None:
+        """Click on runtime tab and wait for panel (delegated to sidebar)."""
+        self.sidebar.click_runtime_tab()
 
     def click_tab_by_id(self, tab_id: str, panel_id: str = None) -> None:
         """Click on any tab by its ID and wait for corresponding panel (delegated to sidebar).

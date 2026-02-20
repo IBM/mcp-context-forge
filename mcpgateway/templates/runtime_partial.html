@@ -1,0 +1,367 @@
+<!-- htmlhint doctype-first:false -->
+<div class="space-y-6">
+  <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+    <div class="px-4 py-5 sm:p-6">
+      <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">🚀 Secure Runtime Deployment</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-300">
+            Deploy, approve, and operate runtime-backed MCP servers directly from the admin UI.
+          </p>
+        </div>
+        <div class="flex gap-2">
+          <button
+            id="runtime-refresh-all-btn"
+            type="button"
+            class="inline-flex items-center px-3 py-2 text-sm font-medium bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+          >
+            Refresh All
+          </button>
+        </div>
+      </div>
+      {% if runtime_platform_admin_only %}
+      <div class="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+        Runtime API access is currently restricted to platform administrators (`RUNTIME_PLATFORM_ADMIN_ONLY=true`).
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+    <div class="xl:col-span-2 bg-white dark:bg-gray-800 shadow rounded-lg">
+      <div class="px-4 py-5 sm:p-6">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Deploy Runtime</h3>
+        <form id="runtime-deploy-form" class="space-y-4" novalidate>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="runtime-deploy-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+              <input
+                id="runtime-deploy-name"
+                name="name"
+                required
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"
+                placeholder="fast-time-runtime"
+              />
+            </div>
+            <div>
+              <label for="runtime-deploy-backend" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Backend</label>
+              <select
+                id="runtime-deploy-backend"
+                name="backend"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"
+              ></select>
+            </div>
+            <div>
+              <label for="runtime-deploy-source-type" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Source Type</label>
+              <select
+                id="runtime-deploy-source-type"
+                name="source_type"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"
+              >
+                <option value="docker" selected>docker image</option>
+                <option value="github">github repository</option>
+                <option value="compose">docker compose</option>
+                <option value="catalog">catalog server id</option>
+              </select>
+            </div>
+            <div>
+              <label for="runtime-deploy-guardrails-profile" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Guardrails Profile</label>
+              <select
+                id="runtime-deploy-guardrails-profile"
+                name="guardrails_profile"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"
+              ></select>
+            </div>
+          </div>
+
+          <div id="runtime-source-docker-fields" class="grid grid-cols-1 gap-4">
+            <div>
+              <label for="runtime-source-image" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Docker Image</label>
+              <input
+                id="runtime-source-image"
+                name="image"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"
+                placeholder="ghcr.io/ibm/fast-time-server:0.8.0"
+              />
+            </div>
+          </div>
+
+          <div id="runtime-source-github-fields" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="runtime-source-repo" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Repository URL</label>
+              <input id="runtime-source-repo" name="repo" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="https://github.com/org/repo" />
+            </div>
+            <div>
+              <label for="runtime-source-branch" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Branch</label>
+              <input id="runtime-source-branch" name="branch" value="main" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" />
+            </div>
+            <div>
+              <label for="runtime-source-dockerfile" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Dockerfile Path</label>
+              <input id="runtime-source-dockerfile" name="dockerfile" value="Dockerfile" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" />
+            </div>
+            <div class="flex items-center gap-2 pt-6">
+              <input id="runtime-source-push-to-registry" name="push_to_registry" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+              <label for="runtime-source-push-to-registry" class="text-sm text-gray-700 dark:text-gray-300">Push built image to registry</label>
+            </div>
+            <div class="md:col-span-2">
+              <label for="runtime-source-registry" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Registry (optional)</label>
+              <input id="runtime-source-registry" name="registry" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="ghcr.io/your-org" />
+            </div>
+          </div>
+
+          <div id="runtime-source-compose-fields" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="runtime-source-compose-file" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Compose File</label>
+              <input id="runtime-source-compose-file" name="compose_file" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="docker-compose.yml" />
+            </div>
+            <div>
+              <label for="runtime-source-main-service" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Main Service</label>
+              <input id="runtime-source-main-service" name="main_service" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="mcp-server" />
+            </div>
+          </div>
+
+          <div id="runtime-source-catalog-fields" class="hidden grid grid-cols-1 gap-4">
+            <div>
+              <label for="runtime-source-catalog-id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Catalog Server ID</label>
+              <input id="runtime-source-catalog-id" name="catalog_server_id" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="fast-time-server" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label for="runtime-deploy-cpu" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CPU</label>
+              <input id="runtime-deploy-cpu" name="cpu" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="0.5" />
+            </div>
+            <div>
+              <label for="runtime-deploy-memory" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Memory</label>
+              <input id="runtime-deploy-memory" name="memory" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="512m" />
+            </div>
+            <div>
+              <label for="runtime-deploy-timeout" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Timeout (seconds)</label>
+              <input id="runtime-deploy-timeout" name="timeout_seconds" type="number" min="1" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="30" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="runtime-deploy-visibility" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Visibility</label>
+              <select id="runtime-deploy-visibility" name="visibility" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">
+                <option value="public" selected>public</option>
+                <option value="team">team</option>
+                <option value="private">private</option>
+              </select>
+            </div>
+            <div>
+              <label for="runtime-deploy-team-id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Team ID (optional)</label>
+              <input id="runtime-deploy-team-id" name="team_id" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="team UUID when visibility=team" />
+            </div>
+            <div>
+              <label for="runtime-deploy-gateway-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Gateway Name (optional)</label>
+              <input id="runtime-deploy-gateway-name" name="gateway_name" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="runtime-fast-time" />
+            </div>
+            <div>
+              <label for="runtime-deploy-gateway-transport" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Gateway Transport</label>
+              <select id="runtime-deploy-gateway-transport" name="gateway_transport" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">
+                <option value="" selected>Auto-detect</option>
+                <option value="STREAMABLEHTTP">STREAMABLEHTTP</option>
+                <option value="SSE">SSE</option>
+              </select>
+            </div>
+            <div>
+              <label for="runtime-deploy-endpoint-port" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint Port (optional)</label>
+              <input id="runtime-deploy-endpoint-port" name="endpoint_port" type="number" min="1" max="65535" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="8080" />
+            </div>
+            <div>
+              <label for="runtime-deploy-endpoint-path" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint Path (optional)</label>
+              <input id="runtime-deploy-endpoint-path" name="endpoint_path" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="/http" />
+            </div>
+            <div class="md:col-span-2 flex items-center gap-2 pt-2">
+              <input id="runtime-deploy-register-gateway" name="register_gateway" type="checkbox" checked class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+              <label for="runtime-deploy-register-gateway" class="text-sm text-gray-700 dark:text-gray-300">Automatically register runtime endpoint as gateway</label>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 gap-4">
+            <div>
+              <label for="runtime-deploy-tags" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tags (comma separated)</label>
+              <input id="runtime-deploy-tags" name="tags" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="runtime,fast-time,production" />
+            </div>
+            <div>
+              <label for="runtime-deploy-environment-json" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Environment (JSON object)</label>
+              <textarea id="runtime-deploy-environment-json" name="environment" rows="3" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="{&quot;TZ&quot;:&quot;UTC&quot;}"></textarea>
+            </div>
+            <div>
+              <label for="runtime-deploy-metadata-json" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Metadata (JSON object)</label>
+              <textarea id="runtime-deploy-metadata-json" name="metadata" rows="3" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="{&quot;owner&quot;:&quot;platform&quot;}"></textarea>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="runtime-deploy-submit" type="submit" class="inline-flex items-center px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-md hover:bg-indigo-700">
+              Deploy Runtime
+            </button>
+            <button id="runtime-deploy-reset" type="button" class="inline-flex items-center px-4 py-2 text-sm font-medium bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">
+              Reset Form
+            </button>
+            <span id="runtime-deploy-message" class="text-sm text-gray-600 dark:text-gray-300"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="space-y-6">
+      <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-3">Backends</h3>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead class="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Backend</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Compose</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">GitHub</th>
+                </tr>
+              </thead>
+              <tbody id="runtime-backends-table-body" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                <tr>
+                  <td colspan="3" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">Loading backends...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6 space-y-4">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-white">Guardrails</h3>
+          <div class="grid grid-cols-1 gap-3">
+            <label for="runtime-compat-profile" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Compatibility Check</label>
+            <select id="runtime-compat-profile" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"></select>
+            <select id="runtime-compat-backend" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"></select>
+            <button id="runtime-compat-check-btn" type="button" class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700">
+              Check Compatibility
+            </button>
+            <div id="runtime-compat-result" class="text-sm text-gray-600 dark:text-gray-300"></div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead class="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Profile</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Built-in</th>
+                </tr>
+              </thead>
+              <tbody id="runtime-guardrails-table-body" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                <tr>
+                  <td colspan="2" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">Loading guardrail profiles...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+    <div class="px-4 py-5 sm:p-6 space-y-4">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white">Deployments</h3>
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="runtime-filter-backend" class="rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">
+            <option value="">All backends</option>
+          </select>
+          <select id="runtime-filter-status" class="rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">
+            <option value="">All statuses</option>
+            <option value="pending">pending</option>
+            <option value="pending_approval">pending_approval</option>
+            <option value="deploying">deploying</option>
+            <option value="running">running</option>
+            <option value="connected">connected</option>
+            <option value="stopped">stopped</option>
+            <option value="error">error</option>
+            <option value="deleted">deleted</option>
+          </select>
+          <button id="runtime-refresh-runtimes-btn" type="button" class="inline-flex items-center px-3 py-2 text-sm font-medium bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700">
+            <tr>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Backend</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Source</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Approval</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="runtime-runtimes-table-body" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            <tr>
+              <td colspan="6" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">Loading runtimes...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+    <div class="px-4 py-5 sm:p-6 space-y-4">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white">Approvals</h3>
+        <div class="flex items-center gap-2">
+          <select id="runtime-approval-filter-status" class="rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">
+            <option value="pending" selected>pending</option>
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+            <option value="expired">expired</option>
+            <option value="all">all statuses</option>
+          </select>
+          <button id="runtime-refresh-approvals-btn" type="button" class="inline-flex items-center px-3 py-2 text-sm font-medium bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700">
+            <tr>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Approval ID</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Runtime ID</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Requested By</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="runtime-approvals-table-body" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            <tr>
+              <td colspan="5" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">Loading approvals...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+    <div class="px-4 py-5 sm:p-6 space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white">Runtime Logs</h3>
+        <button id="runtime-clear-logs-btn" type="button" class="inline-flex items-center px-3 py-2 text-sm font-medium bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">
+          Clear
+        </button>
+      </div>
+      <p class="text-sm text-gray-600 dark:text-gray-300">
+        Select a deployment row action <strong>logs</strong> to fetch backend logs.
+      </p>
+      <pre id="runtime-logs-output" class="w-full rounded-md border border-gray-300 bg-gray-50 dark:bg-gray-900 dark:border-gray-700 p-3 text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap min-h-40">No logs loaded.</pre>
+    </div>
+  </div>
+</div>

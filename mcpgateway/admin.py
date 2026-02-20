@@ -23,7 +23,7 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import lru_cache, wraps
 import html
 import io
 import logging
@@ -195,6 +195,7 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "resources": ("resources",),
     "roots": ("roots",),
     "mcp-registry": ("mcp-registry",),
+    "runtime": ("runtime",),
     "metrics": ("metrics",),
     "plugins": ("plugins",),
     "export-import": ("export-import",),
@@ -210,6 +211,25 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
 UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
 UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
+
+
+@lru_cache(maxsize=32)
+def get_ui_asset_version(asset_name: str) -> str:
+    """Return a cache-busting version token for a static UI asset.
+
+    Args:
+        asset_name: Static asset file name under ``mcpgateway/static``.
+
+    Returns:
+        str: Deterministic version token based on file modification time, or
+            app version fallback when the file cannot be stat'ed.
+    """
+    static_dir = Path(__file__).resolve().parent / "static"
+    asset_path = static_dir / asset_name
+    try:
+        return str(asset_path.stat().st_mtime_ns)
+    except OSError:
+        return __version__
 
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
@@ -1185,6 +1205,37 @@ def _normalize_int_query(value: Any, fallback: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _normalize_list_query(value: Any) -> List[str]:
+    """Normalize list-like query values, including FastAPI Query defaults.
+
+    Args:
+        value: Raw query value or FastAPI ``Query`` wrapper.
+
+    Returns:
+        List[str]: Cleaned list of non-empty string values.
+    """
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    default_value = getattr(value, "default", None)
+    if default_value is None:
+        return []
+
+    if isinstance(default_value, list):
+        return [str(item).strip() for item in default_value if str(item).strip()]
+
+    if isinstance(default_value, str):
+        return [item.strip() for item in default_value.split(",") if item.strip()]
+
+    return []
 
 
 _TAG_MAX_GROUPS = 20
@@ -3272,6 +3323,8 @@ async def admin_ui(
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    runtime_ui_access = bool(settings.mcpgateway_runtime_enabled and (is_admin_user or not settings.runtime_platform_admin_only))
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -3301,10 +3354,16 @@ async def admin_ui(
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "observability_enabled": getattr(settings, "observability_enabled", False),
             "performance_enabled": getattr(settings, "mcpgateway_performance_tracking", False),
+            "runtime_enabled": bool(settings.mcpgateway_runtime_enabled),
+            "runtime_ui_access": runtime_ui_access,
+            "runtime_platform_admin_only": bool(settings.runtime_platform_admin_only),
+            "runtime_default_backend": settings.runtime_default_backend,
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
-            "is_admin": bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)),
+            "is_admin": is_admin_user,
             "user_teams": user_teams,
+            "admin_js_asset_version": get_ui_asset_version("admin.js"),
+            "admin_css_asset_version": get_ui_asset_version("admin.css"),
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
@@ -15356,8 +15415,11 @@ async def list_catalog_servers(
     provider: Optional[str] = None,
     search: Optional[str] = None,
     tags: Optional[List[str]] = Query(None),
+    supported_backends: Optional[List[str]] = Query(None),
+    source_type: Optional[str] = None,
     show_registered_only: bool = False,
     show_available_only: bool = True,
+    show_deprecated: bool = False,
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -15372,8 +15434,11 @@ async def list_catalog_servers(
         provider: Filter by provider
         search: Search in name/description
         tags: Filter by tags
+        supported_backends: Filter by backend compatibility
+        source_type: Filter by source type
         show_registered_only: Show only already registered servers
         show_available_only: Show only available servers
+        show_deprecated: Include deprecated entries
         limit: Maximum results
         offset: Pagination offset
         db: Database session
@@ -15393,9 +15458,12 @@ async def list_catalog_servers(
         auth_type=auth_type,
         provider=provider,
         search=search,
-        tags=tags or [],
+        tags=_normalize_list_query(tags),
+        supported_backends=_normalize_list_query(supported_backends),
+        source_type=source_type,
         show_registered_only=show_registered_only,
         show_available_only=show_available_only,
+        show_deprecated=show_deprecated,
         limit=limit,
         offset=offset,
     )
@@ -15562,6 +15630,7 @@ async def catalog_partial(
     request: Request,
     category: Optional[str] = None,
     auth_type: Optional[str] = None,
+    source_type: Optional[str] = None,
     search: Optional[str] = None,
     page: int = 1,
     db: Session = Depends(get_db),
@@ -15573,6 +15642,7 @@ async def catalog_partial(
         request: FastAPI request object
         category: Filter by category
         auth_type: Filter by authentication type
+        source_type: Filter by source type
         search: Search term
         page: Page number (1-indexed)
         db: Database session
@@ -15593,7 +15663,7 @@ async def catalog_partial(
     page_size = settings.mcpgateway_catalog_page_size
     offset = (page - 1) * page_size
 
-    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=False, limit=page_size, offset=offset)
+    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, source_type=source_type, search=search, show_available_only=False, limit=page_size, offset=offset)
 
     response = await catalog_service.get_catalog_servers(catalog_request, db)
 
@@ -15605,6 +15675,7 @@ async def catalog_partial(
     filter_params = {
         "category": category,
         "auth_type": auth_type,
+        "source_type": source_type,
         "search": search,
     }
 
@@ -15799,6 +15870,53 @@ async def admin_generate_support_bundle(
     except Exception as e:
         LOGGER.error(f"Support bundle generation failed for user {user}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate support bundle: {str(e)}")
+
+
+# ============================================================================
+# Runtime Admin UI Routes
+# ============================================================================
+
+
+@admin_router.get("/runtime/partial", response_class=HTMLResponse)
+@require_permission("servers.read", allow_admin_bypass=False)
+async def get_runtime_partial(
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+    _db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Render the runtime deployment panel partial for the admin UI.
+
+    Args:
+        request: FastAPI request object.
+        user: Authenticated user context.
+        _db: Database session used for permission checks.
+
+    Returns:
+        HTMLResponse: Rendered runtime management partial template.
+
+    Raises:
+        HTTPException: 404 when runtime feature is disabled.
+        HTTPException: 403 when runtime access is platform-admin-only and user is not a platform admin.
+    """
+    if not settings.mcpgateway_runtime_enabled:
+        raise HTTPException(status_code=404, detail="Runtime feature is disabled")
+
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    if settings.runtime_platform_admin_only and not is_admin_user:
+        raise HTTPException(status_code=403, detail="Runtime UI is restricted to platform administrators")
+
+    LOGGER.debug("User %s requested runtime admin partial", get_user_email(user))
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "runtime_partial.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "runtime_default_backend": settings.runtime_default_backend,
+            "runtime_platform_admin_only": bool(settings.runtime_platform_admin_only),
+        },
+    )
 
 
 # ============================================================================
