@@ -1196,6 +1196,15 @@ class Settings(BaseSettings):
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
 
+    # Size of the background instrumentation queue used for deferred span writes.
+    # Controls how many span records can be buffered before they are dropped.
+    # Set via environment variable `INSTRUMENTATION_QUEUE_SIZE`.
+    instrumentation_queue_size: int = Field(
+        default=1000,
+        ge=1,
+        description="Maximum number of spans to buffer in the instrumentation queue (default: 1000)",
+    )
+
     # Correlation ID Settings
     correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
     correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")
