@@ -26,4 +26,3 @@ def _env_int(name: str, *, default: int) -> int:
 
 def _parse_csv(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
-

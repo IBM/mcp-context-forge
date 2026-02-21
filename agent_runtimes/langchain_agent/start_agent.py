@@ -116,8 +116,13 @@ def main():
         host = os.getenv("HOST", "127.0.0.1")
         port = _env_int("PORT", default=8000)
 
-        env_log_level = os.getenv("LOG_LEVEL")
-        log_level = (env_log_level or ("debug" if settings.debug_mode else "info")).lower()
+        _valid_log_levels = {"critical", "error", "warning", "info", "debug", "trace"}
+        _default_log_level = "debug" if settings.debug_mode else "info"
+        env_log_level = (os.getenv("LOG_LEVEL") or "").strip().lower()
+        if env_log_level and env_log_level not in _valid_log_levels:
+            logger.warning("Invalid LOG_LEVEL=%r; falling back to %r", env_log_level, _default_log_level)
+            env_log_level = ""
+        log_level = env_log_level or _default_log_level
 
         uvicorn.run(
             "agent_runtimes.langchain_agent.app:app",

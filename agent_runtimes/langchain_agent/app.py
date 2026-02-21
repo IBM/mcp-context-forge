@@ -63,15 +63,16 @@ cors_allow_credentials = _env_bool("CORS_CREDENTIALS", default=False)
 
 # NOTE: `CORS_ORIGINS=*` with `allow_credentials=True` effectively allows any web origin
 # to read credentialed responses (unsafe for network-exposed servers). We force credentials
-# off in that case to avoid a common footgun.
+# off in that case to avoid a common footgun.  Starlette treats *any* list containing "*"
+# as allow-all, so we check the parsed list — not just the raw string.
 if cors_origins_raw:
-    if cors_origins_raw == "*":
+    cors_allow_origins = _parse_csv(cors_origins_raw)
+
+    if "*" in cors_allow_origins:
         cors_allow_origins = ["*"]
         if cors_allow_credentials:
-            logger.warning("CORS_CREDENTIALS=true with CORS_ORIGINS=* is unsafe; disabling CORS credentials.")
+            logger.warning("CORS_CREDENTIALS=true with wildcard CORS_ORIGINS is unsafe; disabling CORS credentials.")
             cors_allow_credentials = False
-    else:
-        cors_allow_origins = _parse_csv(cors_origins_raw)
 
     if cors_allow_origins:
         app.add_middleware(
