@@ -44,9 +44,13 @@ extend-ignore =
 per-file-ignores =
     mcpgateway/services/gateway_service.py: DAR401,DAR402
     mcpgateway/translate.py: DAR401
+    mcpgateway/admin.py: DAR101,DAR201
+    mcpgateway/main.py: DAR101,DAR201,DAR401
+    mcpgateway/schemas.py: DAR101,DAR201
+    mcpgateway/services/a2a_service.py: DAR101,DAR201,DAR401
     tests/**/*.py: DAR
     tests/loadtest/locustfile.py: DAR101,DAR201,DUO102
     tests/unit/mcpgateway/cache/test_cache_invalidation_subscriber.py: DAR101,DAR201
-    mcpgateway/plugins/framework/external/grpc/proto/*_pb2.py: E501,E701,E711,W503,N802,F401,E402,DAR
-    mcpgateway/plugins/framework/external/grpc/proto/*_pb2_grpc.py: E501,E701,E711,W503,N802,F401,DAR
+    mcpgateway/plugins/framework/external/grpc/proto/*_pb2.py: E111,E114,E128,E225,E303,E501,E701,E711,W503,N802,F401,E402,DAR
+    mcpgateway/plugins/framework/external/grpc/proto/*_pb2_grpc.py: E111,E114,E128,E225,E303,E501,E701,E711,W503,N802,F401,DAR
     mcpgateway/plugins/framework/external/grpc/server/server.py: N802

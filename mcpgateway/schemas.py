@@ -4225,6 +4225,54 @@ class TopPerformer(BaseModelWithConfigDict):
 # --- A2A Agent Schemas ---
 
 
+CANONICAL_A2A_AGENT_TYPES: tuple[str, ...] = (
+    "a2a-jsonrpc",
+    "a2a-rest",
+    "a2a-grpc",
+    "rest-passthrough",
+    "custom",
+)
+
+A2A_AGENT_TYPE_ALIASES: Dict[str, str] = {
+    # Canonical variants
+    "a2a_jsonrpc": "a2a-jsonrpc",
+    "a2a_rest": "a2a-rest",
+    "a2a_grpc": "a2a-grpc",
+    "rest_passthrough": "rest-passthrough",
+    # Legacy values
+    "a2a": "a2a-jsonrpc",
+    "generic": "a2a-jsonrpc",
+    "jsonrpc": "a2a-jsonrpc",
+    "a2a-jsonrpc": "a2a-jsonrpc",
+    "rest": "a2a-rest",
+    "a2a-rest": "a2a-rest",
+    "grpc": "a2a-grpc",
+    "a2a-grpc": "a2a-grpc",
+    "passthrough": "rest-passthrough",
+    "openai": "rest-passthrough",
+    "anthropic": "rest-passthrough",
+    "rest-passthrough": "rest-passthrough",
+    "custom": "custom",
+}
+
+
+def normalize_a2a_agent_type(agent_type: Optional[str]) -> str:
+    """Normalize A2A transport type to canonical values.
+
+    Args:
+        agent_type: Raw user/database transport value.
+
+    Returns:
+        Canonical transport identifier.
+    """
+    normalized = (agent_type or "a2a-jsonrpc").strip().lower()
+    mapped = A2A_AGENT_TYPE_ALIASES.get(normalized)
+    if mapped:
+        return mapped
+    # Backward compatibility for legacy free-form values.
+    return "custom"
+
+
 class A2AAgentCreate(BaseModel):
     """
     Schema for creating a new A2A (Agent-to-Agent) compatible agent.
@@ -4234,7 +4282,7 @@ class A2AAgentCreate(BaseModel):
         name (str): Unique name for the agent.
         description (Optional[str]): Optional description of the agent.
         endpoint_url (str): URL endpoint for the agent.
-        agent_type (str): Type of agent (e.g., "openai", "anthropic", "custom").
+        agent_type (str): A2A transport type.
         protocol_version (str): A2A protocol version supported.
         capabilities (Dict[str, Any]): Agent capabilities and features.
         config (Dict[str, Any]): Agent-specific configuration parameters.
@@ -4257,7 +4305,10 @@ class A2AAgentCreate(BaseModel):
     slug: Optional[str] = Field(None, description="Optional slug for the agent (auto-generated if not provided)")
     description: Optional[str] = Field(None, description="Agent description")
     endpoint_url: str = Field(..., description="URL endpoint for the agent")
-    agent_type: str = Field(default="generic", description="Type of agent (e.g., 'openai', 'anthropic', 'custom')")
+    agent_type: str = Field(
+        default="a2a-jsonrpc",
+        description="A2A transport type: a2a-jsonrpc, a2a-rest, a2a-grpc, rest-passthrough, or custom",
+    )
     protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
@@ -4319,6 +4370,12 @@ class A2AAgentCreate(BaseModel):
             str: Value if validated as safe
         """
         return SecurityValidator.validate_name(v, "A2A Agent name")
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def normalize_agent_type(cls, v: Optional[str]) -> str:
+        """Normalize agent type aliases to canonical transport types."""
+        return normalize_a2a_agent_type(v)
 
     @field_validator("endpoint_url")
     @classmethod
@@ -4593,7 +4650,10 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the agent")
     description: Optional[str] = Field(None, description="Agent description")
     endpoint_url: Optional[str] = Field(None, description="URL endpoint for the agent")
-    agent_type: Optional[str] = Field(None, description="Type of agent")
+    agent_type: Optional[str] = Field(
+        None,
+        description="A2A transport type: a2a-jsonrpc, a2a-rest, a2a-grpc, rest-passthrough, or custom",
+    )
     protocol_version: Optional[str] = Field(None, description="A2A protocol version supported")
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
     config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
@@ -4656,6 +4716,14 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             str: Value if validated as safe
         """
         return SecurityValidator.validate_name(v, "A2A Agent name")
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def normalize_agent_type(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize agent type aliases to canonical transport types."""
+        if v is None:
+            return None
+        return normalize_a2a_agent_type(v)
 
     @field_validator("endpoint_url")
     @classmethod
@@ -5037,6 +5105,12 @@ class A2AAgentRead(BaseModelWithConfigDict):
                     data_dict["auth_query_param_value_masked"] = settings.masked_auth_value
                 return data_dict
         return data
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def normalize_agent_type(cls, v: Optional[str]) -> str:
+        """Normalize stored and legacy agent type values for API responses."""
+        return normalize_a2a_agent_type(v)
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")

@@ -1,5 +1,339 @@
 /* global marked, DOMPurify, safeReplaceState, _logRestrictedContext, getPaginationParams, buildTableUrl */
 const MASKED_AUTH_VALUE = "*****";
+const A2A_DEFAULT_TEST_QUERY = "Hello from MCP Gateway Admin UI test!";
+
+const A2A_AGENT_TYPE_DISPLAY_LABELS = Object.freeze({
+    "a2a-jsonrpc": "A2A Protocol (JSON-RPC 2.0)",
+    "a2a-rest": "A2A Protocol (REST)",
+    "a2a-grpc": "A2A Protocol (gRPC)",
+    "rest-passthrough": "Simple REST (Passthrough)",
+    custom: "ContextForge Custom Format",
+});
+
+const A2A_AGENT_TYPE_LEGACY_MAP = Object.freeze({
+    a2a_jsonrpc: "a2a-jsonrpc",
+    a2a_rest: "a2a-rest",
+    a2a_grpc: "a2a-grpc",
+    rest_passthrough: "rest-passthrough",
+    a2a: "a2a-jsonrpc",
+    generic: "a2a-jsonrpc",
+    jsonrpc: "a2a-jsonrpc",
+    rest: "a2a-rest",
+    grpc: "a2a-grpc",
+    passthrough: "rest-passthrough",
+    openai: "rest-passthrough",
+    anthropic: "rest-passthrough",
+});
+
+function getCanonicalA2AAgentType(agentType) {
+    if (typeof agentType !== "string") {
+        return null;
+    }
+    const normalized = agentType.trim().toLowerCase();
+    if (!normalized) {
+        return null;
+    }
+    if (A2A_AGENT_TYPE_DISPLAY_LABELS[normalized]) {
+        return normalized;
+    }
+    return A2A_AGENT_TYPE_LEGACY_MAP[normalized] || null;
+}
+
+function normalizeA2AAgentType(agentType, fallback = "custom") {
+    const canonical = getCanonicalA2AAgentType(agentType);
+    if (canonical) {
+        return canonical;
+    }
+    return A2A_AGENT_TYPE_DISPLAY_LABELS[fallback] ? fallback : "custom";
+}
+
+function formatA2AAgentTypeLabel(agentType) {
+    const canonical = getCanonicalA2AAgentType(agentType);
+    if (canonical) {
+        return A2A_AGENT_TYPE_DISPLAY_LABELS[canonical];
+    }
+    if (typeof agentType === "string" && agentType.trim()) {
+        return `${A2A_AGENT_TYPE_DISPLAY_LABELS.custom} (Legacy: ${agentType.trim()})`;
+    }
+    return A2A_AGENT_TYPE_DISPLAY_LABELS.custom;
+}
+
+function buildA2AAdminTestPayload(
+    agentType,
+    queryText = A2A_DEFAULT_TEST_QUERY,
+    timestampSec = null,
+) {
+    const normalizedType = normalizeA2AAgentType(agentType, "custom");
+    const normalizedQuery =
+        typeof queryText === "string" && queryText.trim()
+            ? queryText.trim()
+            : A2A_DEFAULT_TEST_QUERY;
+    const timestamp = Number.isFinite(timestampSec)
+        ? Math.floor(timestampSec)
+        : Math.floor(Date.now() / 1000);
+    const message = {
+        kind: "message",
+        messageId: `admin-test-${timestamp}`,
+        role: "user",
+        parts: [{ kind: "text", text: normalizedQuery }],
+    };
+
+    if (normalizedType === "a2a-jsonrpc") {
+        return {
+            jsonrpc: "2.0",
+            id: "<uuid>",
+            method: "message/send",
+            params: {
+                message,
+            },
+        };
+    }
+    if (normalizedType === "a2a-rest") {
+        return { message };
+    }
+    if (normalizedType === "a2a-grpc") {
+        return {
+            method: "message/send",
+            request: { message },
+        };
+    }
+    if (normalizedType === "rest-passthrough") {
+        return {
+            query: normalizedQuery,
+            test: true,
+            timestamp,
+        };
+    }
+
+    return {
+        interaction_type: "<interaction_type>",
+        parameters: {
+            query: normalizedQuery,
+            message: normalizedQuery,
+            test: true,
+            timestamp,
+        },
+        protocol_version: "<protocol_version>",
+    };
+}
+
+function deriveA2ARestBaseUrl(endpointUrl) {
+    const fallbackBase = "<endpoint_url>/v1";
+    if (typeof endpointUrl !== "string" || !endpointUrl.trim()) {
+        return fallbackBase;
+    }
+    const raw = endpointUrl.trim();
+
+    try {
+        const urlObj = new URL(raw);
+        const rootUrl = urlObj.origin;
+        const path = urlObj.pathname || "";
+        const v1Index = path.indexOf("/v1");
+        if (v1Index >= 0) {
+            return `${rootUrl}${path.slice(0, v1Index + 3)}`;
+        }
+        const basePath = path && path !== "/" ? path.replace(/\/+$/, "") : "";
+        return `${rootUrl}${basePath}/v1`;
+    } catch {
+        let restBase = raw.replace(/\/+$/, "");
+        if (!restBase.endsWith("/v1")) {
+            restBase = `${restBase}/v1`;
+        }
+        return restBase;
+    }
+}
+
+function deriveA2ARestMessageSendUrl(endpointUrl) {
+    return `${deriveA2ARestBaseUrl(endpointUrl)}/message:send`;
+}
+
+function updateA2AEndpointTrailingSlashWarning(inputId, warningId) {
+    const input = safeGetElement(inputId, true);
+    const warning = safeGetElement(warningId, true);
+    if (!input || !warning) {
+        return;
+    }
+    const value = typeof input.value === "string" ? input.value.trim() : "";
+    warning.classList.toggle("hidden", !(value && value.endsWith("/")));
+}
+
+function applyA2ATypeToSelect(selectElement, rawType, fallback = "a2a-jsonrpc") {
+    if (!selectElement) {
+        return normalizeA2AAgentType(rawType, fallback);
+    }
+
+    const legacyOption = selectElement.querySelector(
+        "option[data-legacy-a2a-type='true']",
+    );
+    if (legacyOption) {
+        legacyOption.remove();
+    }
+
+    const canonicalType = getCanonicalA2AAgentType(rawType);
+    const fallbackType = normalizeA2AAgentType(rawType, fallback);
+    const selectedType = canonicalType || fallbackType;
+    const optionExists = Array.from(selectElement.options).some(
+        (option) => option.value === selectedType,
+    );
+
+    if (optionExists) {
+        selectElement.value = selectedType;
+        return selectedType;
+    }
+
+    const rawTypeValue =
+        typeof rawType === "string" ? rawType.trim() : String(rawType || "");
+    if (rawTypeValue) {
+        const option = document.createElement("option");
+        option.value = rawTypeValue;
+        option.text = `Legacy Type (${rawTypeValue})`;
+        option.dataset.legacyA2aType = "true";
+        selectElement.appendChild(option);
+        selectElement.value = rawTypeValue;
+        return rawTypeValue;
+    }
+
+    selectElement.value = "custom";
+    return "custom";
+}
+
+function renderA2ARequestPayloadPreview({
+    typeFieldId,
+    endpointInputId,
+    previewContainerId,
+    previewJsonId,
+    previewMetaId,
+    queryFieldId = null,
+}) {
+    const typeField = safeGetElement(typeFieldId, true);
+    const endpointInput = endpointInputId
+        ? safeGetElement(endpointInputId, true)
+        : null;
+    const previewContainer = safeGetElement(previewContainerId, true);
+    const previewJson = safeGetElement(previewJsonId, true);
+    if (!typeField || !previewContainer || !previewJson) {
+        return;
+    }
+
+    const queryValue = queryFieldId
+        ? safeGetElement(queryFieldId, true)?.value || A2A_DEFAULT_TEST_QUERY
+        : A2A_DEFAULT_TEST_QUERY;
+    const endpointUrl =
+        endpointInput && typeof endpointInput.value === "string"
+            ? endpointInput.value.trim()
+            : "";
+    const normalizedType = normalizeA2AAgentType(typeField.value, "custom");
+    const payload = buildA2AAdminTestPayload(typeField.value, queryValue);
+    previewJson.textContent = JSON.stringify(payload, null, 2);
+
+    const previewMeta = previewMetaId
+        ? safeGetElement(previewMetaId, true)
+        : null;
+    if (previewMeta) {
+        const label = formatA2AAgentTypeLabel(typeField.value);
+        let transportLine = "";
+        if (normalizedType === "a2a-rest") {
+            transportLine = `POST ${deriveA2ARestMessageSendUrl(endpointUrl)}`;
+        } else if (normalizedType === "a2a-grpc") {
+            transportLine = `gRPC ${endpointUrl || "<endpoint_url>"}`;
+        } else {
+            transportLine = `POST ${endpointUrl || "<endpoint_url>"}`;
+        }
+        previewMeta.textContent = `${label} request payload (${transportLine})`;
+    }
+
+    previewContainer.classList.remove("hidden");
+}
+
+function initializeA2AProtocolUx() {
+    const forms = [
+        {
+            typeFieldId: "a2a-agent-type",
+            endpointInputId: "a2a-agent-endpoint-url",
+            warningId: "a2a-endpoint-slash-warning",
+            previewButtonId: "a2a-preview-request-btn",
+            previewContainerId: "a2a-request-preview",
+            previewJsonId: "a2a-request-preview-json",
+            previewMetaId: "a2a-request-preview-meta",
+        },
+        {
+            typeFieldId: "a2a-agent-type-edit",
+            endpointInputId: "a2a-agent-endpoint-url-edit",
+            warningId: "a2a-endpoint-slash-warning-edit",
+            previewButtonId: "a2a-preview-request-btn-edit",
+            previewContainerId: "a2a-request-preview-edit",
+            previewJsonId: "a2a-request-preview-json-edit",
+            previewMetaId: "a2a-request-preview-meta-edit",
+        },
+    ];
+
+    forms.forEach((formConfig) => {
+        const endpointInput = safeGetElement(formConfig.endpointInputId, true);
+        if (
+            endpointInput &&
+            endpointInput.dataset.a2aSlashWarningBound !== "true"
+        ) {
+            const slashHandler = () => {
+                updateA2AEndpointTrailingSlashWarning(
+                    formConfig.endpointInputId,
+                    formConfig.warningId,
+                );
+                const container = safeGetElement(
+                    formConfig.previewContainerId,
+                    true,
+                );
+                if (container && !container.classList.contains("hidden")) {
+                    renderA2ARequestPayloadPreview(formConfig);
+                }
+            };
+            endpointInput.addEventListener("input", slashHandler);
+            endpointInput.addEventListener("blur", slashHandler);
+            endpointInput.dataset.a2aSlashWarningBound = "true";
+        }
+
+        updateA2AEndpointTrailingSlashWarning(
+            formConfig.endpointInputId,
+            formConfig.warningId,
+        );
+
+        const typeField = safeGetElement(formConfig.typeFieldId, true);
+        const previewButton = safeGetElement(formConfig.previewButtonId, true);
+        const previewContainer = safeGetElement(
+            formConfig.previewContainerId,
+            true,
+        );
+
+        if (typeField && typeField.dataset.a2aPreviewRefreshBound !== "true") {
+            typeField.addEventListener("change", () => {
+                if (
+                    previewContainer &&
+                    !previewContainer.classList.contains("hidden")
+                ) {
+                    renderA2ARequestPayloadPreview(formConfig);
+                }
+            });
+            typeField.dataset.a2aPreviewRefreshBound = "true";
+        }
+
+        if (
+            previewButton &&
+            previewButton.dataset.a2aPreviewButtonBound !== "true"
+        ) {
+            previewButton.addEventListener("click", () => {
+                renderA2ARequestPayloadPreview(formConfig);
+            });
+            previewButton.dataset.a2aPreviewButtonBound = "true";
+        }
+    });
+}
+
+window.normalizeA2AAgentType = normalizeA2AAgentType;
+window.formatA2AAgentTypeLabel = formatA2AAgentTypeLabel;
+window.buildA2AAdminTestPayload = buildA2AAdminTestPayload;
+window.updateA2AEndpointTrailingSlashWarning =
+    updateA2AEndpointTrailingSlashWarning;
+window.initializeA2AProtocolUx = initializeA2AProtocolUx;
+window.applyA2ATypeToSelect = applyA2ATypeToSelect;
 
 // Runtime fallbacks when admin.js is loaded outside admin.html
 window._restrictedContextLogged = window._restrictedContextLogged || false;
@@ -3535,7 +3869,10 @@ async function viewAgent(agentId) {
                 { label: "Name", value: agent.name },
                 { label: "Slug", value: agent.slug },
                 { label: "Endpoint URL", value: agent.endpointUrl },
-                { label: "Agent Type", value: agent.agentType },
+                {
+                    label: "Agent Type",
+                    value: formatA2AAgentTypeLabel(agent.agentType),
+                },
                 { label: "Protocol Version", value: agent.protocolVersion },
                 {
                     label: "Description",
@@ -3791,10 +4128,12 @@ async function editA2AAgent(agentId) {
         const urlField = safeGetElement("a2a-agent-endpoint-url-edit");
         const descField = safeGetElement("a2a-agent-description-edit");
         const agentType = safeGetElement("a2a-agent-type-edit");
-
-        agentType.value = agent.agentType;
-
-        console.log("Agent Type: ", agent.agentType);
+        const selectedAgentType = applyA2ATypeToSelect(
+            agentType,
+            agent.agentType,
+            "a2a-jsonrpc",
+        );
+        console.log("Agent Type: ", agent.agentType, "->", selectedAgentType);
 
         if (nameField && nameValidation.valid) {
             nameField.value = nameValidation.value;
@@ -3802,6 +4141,10 @@ async function editA2AAgent(agentId) {
         if (urlField && urlValidation.valid) {
             urlField.value = urlValidation.value;
         }
+        updateA2AEndpointTrailingSlashWarning(
+            "a2a-agent-endpoint-url-edit",
+            "a2a-endpoint-slash-warning-edit",
+        );
         if (descField) {
             descField.value = decodeHtml(agent.description || "");
         }
@@ -4059,6 +4402,24 @@ async function editA2AAgent(agentId) {
             } else {
                 passthroughHeadersField.value = "";
             }
+        }
+
+        initializeA2AProtocolUx();
+        const editPreviewContainer = safeGetElement(
+            "a2a-request-preview-edit",
+            true,
+        );
+        if (
+            editPreviewContainer &&
+            !editPreviewContainer.classList.contains("hidden")
+        ) {
+            renderA2ARequestPayloadPreview({
+                typeFieldId: "a2a-agent-type-edit",
+                endpointInputId: "a2a-agent-endpoint-url-edit",
+                previewContainerId: "a2a-request-preview-edit",
+                previewJsonId: "a2a-request-preview-json-edit",
+                previewMetaId: "a2a-request-preview-meta-edit",
+            });
         }
 
         openModal("a2a-edit-modal");
@@ -15406,6 +15767,13 @@ async function handleA2AFormSubmit(e) {
             formData.set("oauth_grant_type", "");
         }
 
+        const rawAgentType = String(formData.get("agent_type") || "").trim();
+        const normalizedAgentType = normalizeA2AAgentType(
+            rawAgentType,
+            rawAgentType ? "custom" : "a2a-jsonrpc",
+        );
+        formData.set("agent_type", normalizedAgentType);
+
         // ✅ Ensure visibility is captured from checked radio button
         // formData.set("visibility", visibility);
         formData.append("visibility", formData.get("visibility"));
@@ -15415,8 +15783,7 @@ async function handleA2AFormSubmit(e) {
         teamId && formData.append("team_id", teamId);
 
         // Submit to backend
-        // specifically log agentType only
-        console.log("agentType:", formData.get("agentType"));
+        console.log("agent_type:", normalizedAgentType);
 
         const response = await fetch(`${window.ROOT_PATH}/admin/a2a`, {
             method: "POST",
@@ -15779,6 +16146,13 @@ async function handleEditA2AAgentFormSubmit(e) {
         if (authType !== "oauth") {
             formData.set("oauth_grant_type", "");
         }
+
+        const rawAgentType = String(formData.get("agent_type") || "").trim();
+        const normalizedAgentType = normalizeA2AAgentType(
+            rawAgentType,
+            rawAgentType ? "custom" : "a2a-jsonrpc",
+        );
+        formData.set("agent_type", normalizedAgentType);
 
         const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
@@ -16890,6 +17264,8 @@ function setupFormHandlers() {
             }
         });
     }
+
+    initializeA2AProtocolUx();
 
     const addGrpcServiceForm = safeGetElement("add-grpc-service-form");
     if (addGrpcServiceForm) {
@@ -20720,7 +21096,7 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
         }
         if (queryInput) {
             // Reset to default value
-            queryInput.value = "Hello from MCP Gateway Admin UI test!";
+            queryInput.value = A2A_DEFAULT_TEST_QUERY;
         }
         if (resultDiv) {
             resultDiv.classList.add("hidden");
@@ -20776,8 +21152,7 @@ async function handleA2ATestSubmit(e) {
 
         const agentId = safeGetElement("a2a-test-agent-id")?.value;
         const query =
-            safeGetElement("a2a-test-query")?.value ||
-            "Hello from MCP Gateway Admin UI test!";
+            safeGetElement("a2a-test-query")?.value || A2A_DEFAULT_TEST_QUERY;
 
         if (!agentId) {
             throw new Error("Agent ID is missing");

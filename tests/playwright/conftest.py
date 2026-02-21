@@ -441,7 +441,7 @@ def test_agent_data():
     return {
         "name": f"test-agent-{unique_id}",
         "endpoint_url": "https://api.example.com/agent",
-        "agent_type": "generic",
+        "agent_type": "a2a-jsonrpc",
         "description": "A test A2A agent created by automation",
         "tags": "test,automation,ai",
         "visibility": "public",
