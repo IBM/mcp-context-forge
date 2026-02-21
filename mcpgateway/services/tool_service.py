@@ -661,8 +661,8 @@ class ToolService(BaseService):
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own tools
-        if tool_owner_email and tool_owner_email == user_email:
+        # Owner can access their own private tools
+        if visibility == "private" and tool_owner_email and tool_owner_email == user_email:
             return True
 
         # Team tools: check team membership (matches list_tools behavior)
@@ -1805,7 +1805,7 @@ class ToolService(BaseService):
             query = query.where(DbTool.enabled)
         query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-        if (user_email is not None or token_teams is not None) and visibility:
+        if visibility:
             query = query.where(DbTool.visibility == visibility)
 
         # Add gateway_id filtering if provided

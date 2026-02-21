@@ -18,7 +18,13 @@ from mcpgateway.services.team_management_service import TeamManagementService
 class BaseService(ABC):
     """Abstract base class for services with visibility-filtered listing."""
 
-    _visibility_model_cls: type  # Subclasses MUST set this
+    _visibility_model_cls: type
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Ensure subclasses define _visibility_model_cls."""
+        super().__init_subclass__(**kwargs)
+        if not isinstance(cls.__dict__.get("_visibility_model_cls"), type):
+            raise TypeError(f"{cls.__name__} must set _visibility_model_cls to a model class")
 
     async def _apply_access_control(
         self,
@@ -102,7 +108,7 @@ class BaseService(ABC):
             # Scope results strictly to the requested team
             access_conditions = [and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"]))]
             if user_email:
-                access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email))
+                access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
             return query.where(or_(*access_conditions))
 
         # Global listing: public resources visible to everyone

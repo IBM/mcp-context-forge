@@ -1043,7 +1043,7 @@ class PromptService(BaseService):
 
         query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-        if (user_email is not None or token_teams is not None) and visibility:
+        if visibility:
             query = query.where(DbPrompt.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
@@ -1373,8 +1373,8 @@ class PromptService(BaseService):
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own prompts
-        if prompt_owner_email and prompt_owner_email == user_email:
+        # Owner can access their own private prompts
+        if visibility == "private" and prompt_owner_email and prompt_owner_email == user_email:
             return True
 
         # Team prompts: check team membership (matches list_prompts behavior)

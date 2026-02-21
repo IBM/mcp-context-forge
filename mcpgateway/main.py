@@ -6601,9 +6601,6 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         a2a_metrics = await a2a_service.aggregate_metrics(db)
         metrics_result["a2a_agents"] = a2a_metrics
 
-    # Defensive normalization for test/mocked values and DB-native types.
-    # Keeps response_model serialization stable even when a service returns
-    # non-JSON-native objects.
     return jsonable_encoder(metrics_result)
 
 

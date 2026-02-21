@@ -895,8 +895,8 @@ class ResourceService(BaseService):
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own resources
-        if resource_owner_email and resource_owner_email == user_email:
+        # Owner can access their own private resources
+        if visibility == "private" and resource_owner_email and resource_owner_email == user_email:
             return True
 
         # Team resources: check team membership (matches list_resources behavior)
@@ -1008,7 +1008,7 @@ class ResourceService(BaseService):
 
         query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-        if (user_email is not None or token_teams is not None) and visibility:
+        if visibility:
             query = query.where(DbResource.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)

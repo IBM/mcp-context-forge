@@ -1100,7 +1100,7 @@ class TestResourceEndpoints:
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
         resource_id = MOCK_RESOURCE_READ["id"]
-        response = test_client.post(f"/resources/subscribe", headers=auth_headers)
+        response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
@@ -2106,10 +2106,12 @@ class TestRealtimeEndpoints:
 
         # Track messages
         messages_received = []
-        websocket.receive_text = AsyncMock(side_effect=[
-            '{"jsonrpc":"2.0","method":"test","id":1}',
-            WebSocketDisconnect(),
-        ])
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                '{"jsonrpc":"2.0","method":"test","id":1}',
+                WebSocketDisconnect(),
+            ]
+        )
         websocket.send_text = AsyncMock(side_effect=lambda msg: messages_received.append(msg))
 
         await mcpgateway_main.websocket_endpoint(websocket)
@@ -2158,10 +2160,12 @@ class TestRealtimeEndpoints:
         websocket.headers = {"X-Forwarded-User": "proxy-user@example.com"}
 
         # Track messages
-        websocket.receive_text = AsyncMock(side_effect=[
-            '{"jsonrpc":"2.0","method":"test","id":1}',
-            WebSocketDisconnect(),
-        ])
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                '{"jsonrpc":"2.0","method":"test","id":1}',
+                WebSocketDisconnect(),
+            ]
+        )
         websocket.send_text = AsyncMock()
 
         await mcpgateway_main.websocket_endpoint(websocket)
@@ -2327,9 +2331,9 @@ class TestMetricsEndpoints:
     @patch("mcpgateway.main.server_service.aggregate_metrics")
     @patch("mcpgateway.main.resource_service.aggregate_metrics")
     @patch("mcpgateway.main.tool_service.aggregate_metrics")
-    def test_get_metrics_serializes_non_json_values(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
-        """Metrics endpoint should tolerate non-JSON-native service return values."""
-        mock_tool.return_value = MagicMock()
+    def test_get_metrics_returns_service_dicts(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
+        """Metrics endpoint should return service metric dicts faithfully."""
+        mock_tool.return_value = {"total": 4}
         mock_resource.return_value = {"total": 3}
         mock_server.return_value = {"total": 2}
         mock_prompt.return_value = {"total": 1}
@@ -2337,7 +2341,8 @@ class TestMetricsEndpoints:
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["tools"] == {}
+        assert data["tools"] == {"total": 4}
+        assert data["prompts"] == {"total": 1}
 
     #    @patch("mcpgateway.main.a2a_service")
     #    @patch("mcpgateway.main.prompt_service.reset_metrics")
