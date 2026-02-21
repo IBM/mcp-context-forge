@@ -3796,6 +3796,11 @@ class ServerCreate(BaseModel):
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
+    # Virtual Tool Filesystem (VFS) configuration
+    server_type: Literal["standard", "vfs"] = Field(default="standard", description="Server type: standard (normal proxy) or vfs (virtual tool filesystem)")
+    stub_format: Optional[Literal["python", "typescript", "json"]] = Field(None, description="Stub format for VFS tool metadata (python/typescript/json)")
+    mount_rules: Optional[Dict[str, Any]] = Field(None, description="VFS mount rules controlling which tools to expose")
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -3929,6 +3934,11 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Virtual Tool Filesystem (VFS) configuration
+    server_type: Optional[Literal["standard", "vfs"]] = Field(None, description="Server type: standard (normal proxy) or vfs (virtual tool filesystem)")
+    stub_format: Optional[Literal["python", "typescript", "json"]] = Field(None, description="Stub format for VFS tool metadata")
+    mount_rules: Optional[Dict[str, Any]] = Field(None, description="VFS mount rules controlling which tools to expose")
 
     @field_validator("tags")
     @classmethod
@@ -4105,6 +4115,11 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Virtual Tool Filesystem (VFS)
+    server_type: str = Field(default="standard", description="Server type: standard or vfs")
+    stub_format: Optional[str] = Field(None, description="Stub format for VFS tool metadata")
+    mount_rules: Optional[Dict[str, Any]] = Field(None, description="VFS mount rules")
 
     @model_validator(mode="before")
     @classmethod

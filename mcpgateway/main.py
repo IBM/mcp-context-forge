@@ -54,7 +54,7 @@ from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -5621,6 +5621,99 @@ async def remove_root(
 
 
 ##################
+# VFS Helpers    #
+##################
+_vfs_service_singleton: Optional[Any] = None
+
+
+def _get_vfs_service():
+    """Lazily initialise the VFS service singleton.
+
+    Returns:
+        VfsService: The shared VFS service instance.
+    """
+    global _vfs_service_singleton  # noqa: PLW0603  # pylint: disable=global-statement
+    if _vfs_service_singleton is None:
+        # First-Party
+        from mcpgateway.services.vfs_service import VfsService  # pylint: disable=import-outside-toplevel
+
+        _vfs_service_singleton = VfsService()
+    return _vfs_service_singleton
+
+
+def _lookup_vfs_server(db: Session, server_id: str):
+    """Return the DbServer if *server_id* refers to a VFS server, else None.
+
+    Args:
+        db: Active database session.
+        server_id: Unique identifier of the server to look up.
+
+    Returns:
+        Optional[DbServer]: The matching VFS server record, or None.
+    """
+    # First-Party
+    from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+    server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+    if server and getattr(server, "server_type", "standard") == "vfs":
+        return server
+    return None
+
+
+async def _invoke_vfs_meta_tool(db: Session, server, name: str, arguments: Dict[str, Any], user_email: Optional[str], token_teams: Optional[List[str]]) -> Dict[str, Any]:
+    """Dispatch a VFS meta-tool call and return an MCP-compliant ToolResult dict.
+
+    Args:
+        db: Active database session.
+        server: The VFS server record to operate against.
+        name: Name of the meta-tool to invoke (e.g. fs_browse, fs_read, fs_write).
+        arguments: Tool-specific arguments forwarded to the VFS service.
+        user_email: Email of the calling user, used for access control.
+        token_teams: Team scopes from the caller's JWT token.
+
+    Returns:
+        Dict[str, Any]: MCP-compliant ToolResult with ``content`` and ``isError`` keys.
+    """
+    # First-Party
+    from mcpgateway.services.vfs_service import META_TOOL_FS_BROWSE, META_TOOL_FS_READ, META_TOOL_FS_WRITE, VfsError, VfsSecurityError  # pylint: disable=import-outside-toplevel
+
+    vfs = _get_vfs_service()
+    try:
+        if name == META_TOOL_FS_BROWSE:
+            data = await vfs.fs_browse(
+                db=db,
+                server=server,
+                path=arguments.get("path", "/"),
+                include_hidden=arguments.get("include_hidden", False),
+                max_entries=arguments.get("max_entries"),
+                user_email=user_email,
+                token_teams=token_teams,
+            )
+        elif name == META_TOOL_FS_READ:
+            data = await vfs.fs_read(db=db, server=server, path=arguments.get("path", ""), user_email=user_email, token_teams=token_teams)
+        elif name == META_TOOL_FS_WRITE:
+            data = await vfs.fs_write(
+                db=db,
+                server=server,
+                path=arguments.get("path", ""),
+                content=arguments.get("content", ""),
+                user_email=user_email,
+                token_teams=token_teams,
+            )
+        else:
+            return {"content": [{"type": "text", "text": f"Unknown VFS meta-tool: {name}"}], "isError": True}
+        # Success — return structured text content
+        # Standard
+        import json as _json  # pylint: disable=import-outside-toplevel
+
+        return {"content": [{"type": "text", "text": _json.dumps(data, indent=2, default=str)}], "isError": False}
+    except VfsSecurityError as exc:
+        return {"content": [{"type": "text", "text": f"VFS security error: {exc}"}], "isError": True}
+    except VfsError as exc:
+        return {"content": [{"type": "text", "text": f"VFS error: {exc}"}], "isError": True}
+
+
+##################
 # Utility Routes #
 ##################
 @utility_router.post("/rpc/")
@@ -5753,20 +5846,27 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                # VFS servers expose only meta-tools (fs_browse, fs_read, fs_write)
+                _vfs_srv = _lookup_vfs_server(db, server_id) if settings.vfs_enabled else None
+                if _vfs_srv is not None:
+                    result = {"tools": _get_vfs_service().get_meta_tools(_vfs_srv)}
+                    db.commit()
+                    db.close()
+                else:
+                    tools = await tool_service.list_server_tools(
+                        db,
+                        server_id,
+                        cursor=cursor,
+                        user_email=user_email,
+                        token_teams=token_teams,
+                        requesting_user_email=_req_email,
+                        requesting_user_is_admin=_req_is_admin,
+                        requesting_user_team_roles=_req_team_roles,
+                    )
+                    # Release DB connection early to prevent idle-in-transaction under load
+                    db.commit()
+                    db.close()
+                    result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
                 tools, next_cursor = await tool_service.list_tools(
                     db,
@@ -5796,19 +5896,26 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                # VFS servers expose only meta-tools (fs_browse, fs_read, fs_write)
+                _vfs_srv = _lookup_vfs_server(db, server_id) if settings.vfs_enabled else None
+                if _vfs_srv is not None:
+                    result = {"tools": _get_vfs_service().get_meta_tools(_vfs_srv)}
+                    db.commit()
+                    db.close()
+                else:
+                    tools = await tool_service.list_server_tools(
+                        db,
+                        server_id,
+                        cursor=cursor,
+                        user_email=user_email,
+                        token_teams=token_teams,
+                        requesting_user_email=_req_email,
+                        requesting_user_is_admin=_req_is_admin,
+                        requesting_user_team_roles=_req_team_roles,
+                    )
+                    db.commit()
+                    db.close()
+                    result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
                 tools, next_cursor = await tool_service.list_tools(
                     db,
@@ -6002,6 +6109,21 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 # auth_token_teams stays None (unrestricted)
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
+
+            # VFS meta-tool routing — bypass normal tool dispatch for VFS servers
+            if settings.vfs_enabled and server_id:
+                # First-Party
+                from mcpgateway.services.vfs_service import VFS_META_TOOLS as _VFS_META_TOOLS  # pylint: disable=import-outside-toplevel
+
+                if name in _VFS_META_TOOLS:
+                    _vfs_srv = _lookup_vfs_server(db, server_id)
+                    if _vfs_srv is not None:
+                        vfs_user = get_user_email(user)
+                        result = await _invoke_vfs_meta_tool(db, _vfs_srv, name, arguments, user_email=vfs_user, token_teams=auth_token_teams)
+                        db.commit()
+                        db.close()
+                        # Skip normal tool dispatch — jump to return
+                        return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
             # Get user email for OAuth token selection
             oauth_user_email = get_user_email(user)
