@@ -423,13 +423,21 @@ repos:
         description: The uncompromising Python code formatter.
         language_version: python3
 
-  # - repo: https://github.com/pycqa/isort
-  #   rev: 6.0.1
-  #   hooks:
-  #     - id: isort
-  #       name: 🐍 isort - Import Sorter
-  #       description: A Python utility / library to sort imports.
-  #       args: [--profile=black]
+  - repo: https://github.com/pycqa/autoflake
+    rev: v2.3.1
+    hooks:
+      - id: autoflake
+        name: 🐍 Autoflake - Remove Unused Imports
+        description: Removes unused imports and unused variables.
+        args: [--in-place, --remove-all-unused-imports, --remove-unused-variables]
+
+  - repo: https://github.com/pycqa/isort
+    rev: 6.0.1
+    hooks:
+      - id: isort
+        name: 🐍 isort - Import Sorter
+        description: A Python utility / library to sort imports.
+        args: [--profile=black]
 
   # - repo: https://github.com/asottile/pyupgrade
   #   rev: v3.20.0

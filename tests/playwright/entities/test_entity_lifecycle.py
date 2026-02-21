@@ -28,12 +28,20 @@ logger = logging.getLogger(__name__)
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 
 
-def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-    )
+_UNSET = object()
+
+
+def _make_jwt(email: str, is_admin: bool = False, teams=_UNSET) -> str:
+    """Create a JWT token for testing.
+
+    Admin bypass requires ``teams: null`` in the JWT (not missing).
+    """
+    data: dict = {"sub": email}
+    if teams is not _UNSET:
+        return _create_jwt_token(data, user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"}, teams=teams)
+    if is_admin:
+        data["teams"] = None
+    return _create_jwt_token(data, user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"})
 
 
 @pytest.fixture(scope="module")

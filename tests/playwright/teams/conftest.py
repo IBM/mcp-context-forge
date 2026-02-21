@@ -26,13 +26,25 @@ BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 TEST_PASSWORD = "SecureTestPass123!"
 
 
-def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
-    """Create a JWT token for testing."""
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-    )
+_UNSET = object()
+
+
+def _make_jwt(email: str, is_admin: bool = False, teams=_UNSET) -> str:
+    """Create a JWT token for testing.
+
+    For admin users, ``teams`` must be explicitly ``null`` in the JWT payload
+    (not missing) for the admin bypass in ``normalize_token_teams`` to work.
+    When ``teams`` is not provided (sentinel), admin users get ``null`` and
+    non-admin users get the key omitted entirely (public-only default).
+    """
+    data: dict = {"sub": email}
+    if teams is not _UNSET:
+        # Explicit value provided — pass through to _create_jwt_token
+        return _create_jwt_token(data, user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"}, teams=teams)
+    if is_admin:
+        # Admin bypass requires "teams": null in payload (present but null)
+        data["teams"] = None
+    return _create_jwt_token(data, user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"})
 
 
 def create_test_user(admin_api: APIRequestContext, email: str) -> bool:
