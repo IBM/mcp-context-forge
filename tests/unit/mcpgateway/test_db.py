@@ -929,6 +929,11 @@ def test_init_db_failure(monkeypatch):
         db.init_db()
 
 
+def test_policy_decisions_table_registered_in_metadata():
+    """PolicyDecision model is registered for Base.metadata bootstrap/create_all paths."""
+    assert "policy_decisions" in db.Base.metadata.tables
+
+
 # --- Gateway event listener ---
 def test_update_tool_names_on_gateway_update(monkeypatch):
     class DummyGateway:
