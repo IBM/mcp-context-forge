@@ -1,10 +1,10 @@
-# How ContextForge Fits the Criteria for Selecting an Enterprise ContextForge
+# How ContextForge Fits the Criteria for Selecting an Enterprise AI, Agent and MCP Gateway
 
 A practical framework for evaluating MCP gateways, and how ContextForge addresses each criterion.
 
 ---
 
-## Why an ContextForge?
+## Why ContextForge?
 
 Organizations deploying AI agents face fragmented tool ecosystems, inconsistent security controls, and no centralized governance across agent interactions. An MCP gateway provides the unified control plane: federating tools, enforcing policy, and delivering visibility across your AI infrastructure.
 
@@ -12,22 +12,22 @@ This framework outlines what to evaluate and why each criterion matters.
 
 ---
 
-## ContextForge Landscape
+## MCP Gateway Landscape
 
-The MCP gateway market has matured rapidly. Options range from managed SaaS platforms (Composio, MintMCP, Apigee ContextForge) to cloud-native solutions (Azure ContextForge, Docker ContextForge) to self-hosted open source (ContextForge, Lasso Security, Bifrost).
+The MCP gateway market has matured rapidly. Options range from managed SaaS platforms (Composio, MintMCP, Apigee MCP Hub) to cloud-native solutions (Azure API Management, Docker MCP Toolkit) to self-hosted open source (ContextForge, Lasso Security, Bifrost).
 
 ```mermaid
 flowchart TB
-    subgraph "ContextForge Options"
+    subgraph "MCP Gateway Options"
         direction TB
         subgraph managed["Managed SaaS"]
             composio["Composio"]
             mintmcp["MintMCP"]
-            apigee["Apigee ContextForge"]
+            apigee["Apigee MCP Hub"]
         end
         subgraph cloud["Cloud-Native"]
-            azure["Azure ContextForge"]
-            docker["Docker ContextForge"]
+            azure["Azure API Management"]
+            docker["Docker MCP Toolkit"]
         end
         subgraph selfhosted["Self-Hosted Open Source"]
             contextforge["ContextForge"]
