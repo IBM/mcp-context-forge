@@ -3,8 +3,8 @@
 //
 // Criterion benchmarks for secrets detection performance
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use secret_detection::{SecretsDetectionConfig, detect_and_redact};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use secrets_detection_rust::{detect_and_redact, SecretsDetectionConfig};
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::time::Duration;

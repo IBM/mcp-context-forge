@@ -25,6 +25,10 @@ permissions:
   checks: write
   actions: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: pytest (py${{ matrix.python }})
@@ -67,6 +71,26 @@ jobs:
           python-version: ${{ matrix.python }}
 
       # -----------------------------------------------------------
+      # 2.5  Setup Rust toolchain for Rust plugins
+      # -----------------------------------------------------------
+      - name: 🦀  Install Rust stable
+        run: rustup default stable
+
+      - name: 📦  Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            plugins_rust/*/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: 🔨  Build Rust plugins (clean, install, verify stubs)
+        run: make rust-clean-stubs && make rust-install && make rust-verify-stubs
+
+      # -----------------------------------------------------------
       # 3️⃣  Run the tests with coverage (fail under 95% coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
@@ -79,6 +103,8 @@ jobs:
             --cov-report=term \
             --cov-branch \
             --cov-fail-under=95
+        env:
+          REQUIRE_RUST_PLUGINS: "1"
 
       # -----------------------------------------------------------
       # 3.5  Diff-cover: enforce 95% coverage on changed lines (PRs only)

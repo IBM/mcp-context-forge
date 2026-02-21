@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Location: ./plugins/pii_filter/pii_filter_rust.py
+"""Rust PII Filter Wrapper
+
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Rust PII Filter Wrapper
-
-Thin Python wrapper around the Rust implementation for seamless integration.
+Thin Python wrapper around the Rust pii_filter implementation for seamless integration.
 """
 
 # Standard
@@ -38,7 +37,7 @@ try:
 
     try:
         # First-Party
-        from plugins_rust import PIIDetectorRust as _RustDetector
+        from pii_filter_rust.pii_filter_rust import PIIDetectorRust as _RustDetector
 
         RUST_AVAILABLE = True
         logger.info("🦀 Rust PII filter module imported successfully")

@@ -1,15 +1,15 @@
 # Rust Plugins - High-Performance Native Extensions
 
 !!! success "Production Ready"
-    The Rust plugin system provides **5-10x performance improvements** for computationally intensive plugins while maintaining 100% API compatibility with Python plugins.
+    Rust plugins provide **5-10x performance improvements** for computationally intensive operations while maintaining 100% API compatibility with Python plugins.
 
 ## Overview
 
-The MCP Context Forge supports high-performance Rust implementations of plugins through PyO3 bindings. Rust plugins provide significant performance benefits for computationally expensive operations like PII detection, pattern matching, and data transformation, while maintaining a transparent Python interface.
+MCP Gateway supports high-performance Rust implementations of plugins through PyO3 bindings. Each Rust plugin is fully independent with its own build configuration, providing significant performance benefits for computationally expensive operations while maintaining transparent Python integration.
 
 ### Key Benefits
 
-- **🚀 5-10x Performance**: Parallel regex matching, zero-copy operations, and native compilation
+- **🚀 5-10x Performance**: Native compilation, zero-copy operations, parallel processing
 - **🔄 Seamless Integration**: Automatic fallback to Python when Rust unavailable
 - **📦 Zero Breaking Changes**: Identical API to Python plugins
 - **⚙️ Auto-Detection**: Automatically uses Rust when available
@@ -18,90 +18,66 @@ The MCP Context Forge supports high-performance Rust implementations of plugins 
 
 ## Architecture
 
+### Independent Plugin Structure
+
+```
+plugins_rust/
+├── [plugin_name]/        # Each plugin is fully independent
+│   ├── Cargo.toml        # Rust dependencies
+│   ├── pyproject.toml    # Python packaging
+│   ├── Makefile          # Build commands
+│   └── src/              # Rust source code
+└── [another_plugin]/     # Another independent plugin
+```
+
 ### Hybrid Python + Rust Design
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ Python Plugin Layer (plugins/pii_filter/pii_filter.py) │
+│ Python Plugin Layer (plugins/[name]/plugin.py)         │
 │                                                         │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │ Auto-Detection Logic                             │  │
-│  │ - Check MCPGATEWAY_FORCE_PYTHON_PLUGINS          │  │
 │  │ - Check Rust availability                        │  │
 │  │ - Select implementation                          │  │
 │  └──────────────────────────────────────────────────┘  │
 │              │                        │                 │
 │      ┌───────┴──────┐        ┌───────┴────────┐       │
 │      │ Rust Wrapper │        │ Python Fallback│       │
-│      │ (5-10x fast) │        │ (Pure Python)  │       │
+│      │ (5-10x fast)│        │ (Pure Python)  │       │
 │      └───────┬──────┘        └────────────────┘       │
 └──────────────┼────────────────────────────────────────┘
                │
                │ PyO3 Bindings
                ▼
 ┌──────────────────────────────────────┐
-│ Rust Implementation (plugins_rust/)  │
+│ Rust Implementation (plugins_rust/) │
 │                                      │
 │  ┌────────────────────────────────┐  │
-│  │ PII Detection Engine           │  │
-│  │ - RegexSet parallel matching   │  │
-│  │ - Zero-copy string ops (Cow)   │  │
-│  │ - Efficient nested traversal   │  │
+│  │ Plugin Engine                  │  │
+│  │ - Parallel processing          │  │
+│  │ - Zero-copy operations         │  │
+│  │ - Efficient algorithms         │  │
 │  └────────────────────────────────┘  │
 │                                      │
-│  Compiled to: mcpgateway_rust.so    │
+│  Compiled to: plugin_rust.so        │
 └──────────────────────────────────────┘
 ```
 
-## Available Rust Plugins
-
-### PII Filter Plugin (Rust-Accelerated)
-
-The PII Filter plugin is available in both Python and Rust implementations with automatic selection:
-
-| Feature | Python | Rust | Speedup |
-|---------|--------|------|---------|
-| Single SSN Detection | 0.150ms | 0.020ms | **7.5x** |
-| Email Detection | 0.120ms | 0.018ms | **6.7x** |
-| Large Text (1000 instances) | 150ms | 18ms | **8.3x** |
-| Nested Structures | 200ms | 30ms | **6.7x** |
-| Realistic Payload | 0.400ms | 0.055ms | **7.3x** |
-
-**Supported PII Types**:
-
-- Social Security Numbers (SSN)
-- Credit Cards (Visa, Mastercard, Amex, Discover)
-- Email Addresses
-- Phone Numbers (US/International)
-- IP Addresses (IPv4/IPv6)
-- Dates of Birth
-- Passport Numbers
-- Driver's License Numbers
-- Bank Account Numbers (including IBAN)
-- Medical Record Numbers
-- AWS Keys (Access/Secret)
-- API Keys
-
-**Masking Strategies**:
-
-- `partial` - Show last 4 digits (e.g., `***-**-6789`)
-- `redact` - Replace with `[REDACTED]`
-- `hash` - SHA256 hash prefix (e.g., `[HASH:abc123]`)
-- `tokenize` - UUID-based tokens (e.g., `[TOKEN:xyz789]`)
-- `remove` - Complete removal
-
 ## Installation
 
-### Option 1: Install with Rust Support (Recommended)
+### Option 1: Build from Source (Recommended)
 
 ```bash
-# Install with Rust extensions (includes pre-built wheels)
-pip install mcpgateway[rust]
+# Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Or install from source with maturin
-pip install maturin
-cd plugins_rust
-maturin develop --release
+# Build specific plugin
+cd plugins_rust/[plugin_name]
+make install
+
+# Or build all plugins from project root
+make rust-dev
 ```
 
 ### Option 2: Use Python Fallback
@@ -115,21 +91,6 @@ pip install mcpgateway
 
 ## Configuration
 
-### Environment Variables
-
-Control which implementation is used:
-
-```bash
-# Auto-detect (default) - Use Rust if available, Python otherwise
-# No configuration needed
-
-# Force Python implementation (for debugging/comparison)
-export MCPGATEWAY_FORCE_PYTHON_PLUGINS=true
-
-# Disable Rust preference (will use Python even if Rust available)
-export MCPGATEWAY_PREFER_RUST_PLUGINS=false
-```
-
 ### Plugin Configuration
 
 No changes needed! Rust plugins use the same configuration as Python:
@@ -137,21 +98,17 @@ No changes needed! Rust plugins use the same configuration as Python:
 ```yaml
 # plugins/config.yaml
 plugins:
-  - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+  - name: "MyPlugin"
+    kind: "plugins.my_plugin.my_plugin.MyPlugin"
     hooks:
       - "prompt_pre_fetch"
       - "tool_pre_invoke"
-      - "tool_post_invoke"
     mode: "enforce"
     priority: 50
     config:
-      detect_ssn: true
-      detect_credit_card: true
-      detect_email: true
-      detect_phone: true
-      default_mask_strategy: "partial"
-      redaction_text: "[REDACTED]"
+      # Plugin-specific configuration
+      option1: true
+      option2: "value"
 ```
 
 ## Usage
@@ -161,16 +118,16 @@ plugins:
 The plugin system automatically detects and uses the Rust implementation:
 
 ```python
-from plugins.pii_filter.pii_filter import PIIFilterPlugin
+from plugins.my_plugin.my_plugin import MyPlugin
 from plugins.framework import PluginConfig
 
 # Create plugin (automatically uses Rust if available)
 config = PluginConfig(
-    name="pii_filter",
-    kind="plugins.pii_filter.pii_filter.PIIFilterPlugin",
+    name="my_plugin",
+    kind="plugins.my_plugin.my_plugin.MyPlugin",
     config={}
 )
-plugin = PIIFilterPlugin(config)
+plugin = MyPlugin(config)
 
 # Check which implementation is being used
 print(f"Implementation: {plugin.implementation}")
@@ -183,34 +140,13 @@ You can also use the implementations directly:
 
 ```python
 # Use Rust implementation explicitly
-from plugins.pii_filter.pii_filter_rust import RustPIIDetector
-from plugins.pii_filter.pii_filter_python import PIIFilterConfig
+from plugin_rust.plugin_rust import PluginRust
 
-config = PIIFilterConfig(
-    detect_ssn=True,
-    detect_email=True,
-    default_mask_strategy="partial"
-)
+config = {"option1": True, "option2": "value"}
+plugin = PluginRust(config)
 
-detector = RustPIIDetector(config)
-
-# Detect PII
-text = "My SSN is 123-45-6789 and email is john@example.com"
-detections = detector.detect(text)
-
-# Mask PII
-masked = detector.mask(text, detections)
-print(masked)
-# Output: "My SSN is ***-**-6789 and email is j***n@example.com"
-
-# Process nested structures
-data = {
-    "user": {
-        "ssn": "123-45-6789",
-        "email": "alice@example.com"
-    }
-}
-modified, new_data, detections = detector.process_nested(data)
+# Use plugin methods
+result = plugin.process(data)
 ```
 
 ## Verification
@@ -219,14 +155,14 @@ modified, new_data, detections = detector.process_nested(data)
 
 ```bash
 # Verify Rust plugin is available
-python -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter available')"
+python -c "from plugin_rust.plugin_rust import PluginRust; print('✓ Rust plugin available')"
 
 # Check implementation being used
 python -c "
-from plugins.pii_filter.pii_filter import PIIFilterPlugin
+from plugins.my_plugin.my_plugin import MyPlugin
 from plugins.framework import PluginConfig
 config = PluginConfig(name='test', kind='test', config={})
-plugin = PIIFilterPlugin(config)
+plugin = MyPlugin(config)
 print(f'Implementation: {plugin.implementation}')
 "
 ```
@@ -237,14 +173,11 @@ The gateway logs which implementation is being used:
 
 ```
 # With Rust available
-INFO - ✓ PII Filter: Using Rust implementation (5-10x faster)
+INFO - ✓ Plugin: Using Rust implementation (5-10x faster)
 
 # Without Rust
-WARNING - PII Filter: Using Python implementation
-WARNING - 💡 Install mcpgateway[rust] for 5-10x better performance
-
-# Forced Python
-INFO - PII Filter: Using Python implementation (forced via MCPGATEWAY_FORCE_PYTHON_PLUGINS)
+WARNING - Plugin: Using Python implementation
+WARNING - 💡 Build Rust plugins for better performance
 ```
 
 ## Building from Source
@@ -258,8 +191,8 @@ INFO - PII Filter: Using Python implementation (forced via MCPGATEWAY_FORCE_PYTH
 ### Build Steps
 
 ```bash
-# Navigate to Rust plugins directory
-cd plugins_rust
+# Navigate to a specific Rust plugin directory
+cd plugins_rust/pii_filter
 
 # Build in development mode (with debug symbols)
 maturin develop
@@ -269,22 +202,20 @@ maturin develop --release
 
 # Build wheel package
 maturin build --release
-
-# The wheel will be in plugins_rust/dist/
-# Install it: pip install dist/mcpgateway_rust-*.whl
 ```
 
 ### Using Make
 
 ```bash
-# From project root
+# From project root (builds all plugins)
 make rust-dev              # Build and install (development mode)
 make rust-build            # Build release wheel
 make rust-test             # Run Rust unit tests
 make rust-verify           # Verify installation
 
-# From plugins_rust/
-make dev                   # Build and install
+# From individual plugin directory
+cd plugins_rust/pii_filter
+make develop               # Build and install
 make test                  # Run tests
 make bench                 # Run benchmarks
 make bench-compare         # Compare Rust vs Python performance
@@ -295,15 +226,15 @@ make bench-compare         # Compare Rust vs Python performance
 ### Built-in Benchmarks
 
 ```bash
-# Run Rust benchmarks (Criterion)
-cd plugins_rust
+# Run Rust benchmarks (Criterion) for a specific plugin
+cd plugins_rust/pii_filter
 make bench
 
 # Run Python vs Rust comparison
 make bench-compare
 
-# Or from project root
-make rust-bench-compare
+# Or from project root (runs all plugin benchmarks)
+make rust-bench
 ```
 
 ### Sample Benchmark Output
@@ -343,12 +274,12 @@ Average Speedup: 7.8x
 ### Running Tests
 
 ```bash
-# Rust unit tests
-cd plugins_rust
+# Rust unit tests (from a specific plugin directory)
+cd plugins_rust/pii_filter
 cargo test
 
 # Python integration tests
-pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py
+pytest tests/unit/mcpgateway/plugins/test_pii_filter.py
 
 # Differential tests (Rust vs Python compatibility)
 pytest tests/differential/test_pii_filter_differential.py
@@ -375,13 +306,10 @@ The Rust plugin system includes comprehensive testing:
 **Solutions**:
 ```bash
 # 1. Check if Rust extension is installed
-python -c "from plugins_rust import PIIDetectorRust; print('OK')"
+python -c "from pii_filter import PIIDetectorRust; print('OK')"
 
-# 2. Install with Rust support
-pip install mcpgateway[rust]
-
-# 3. Or build from source
-cd plugins_rust
+# 2. Build from source
+cd plugins_rust/pii_filter
 maturin develop --release
 ```
 
@@ -392,10 +320,10 @@ maturin develop --release
 **Solutions**:
 ```bash
 # 1. Verify installation
-pip list | grep mcpgateway-rust
+pip list | grep mcpgateway-pii-filter
 
 # 2. Rebuild
-cd plugins_rust
+cd plugins_rust/pii_filter
 maturin develop --release
 
 # 3. Check Python version (requires 3.11+)
@@ -409,13 +337,9 @@ python --version
 **Checks**:
 ```python
 # Verify Rust implementation is being used
-from plugins.pii_filter.pii_filter import PIIFilterPlugin
-plugin = PIIFilterPlugin(config)
+from plugins.my_plugin.my_plugin import MyPlugin
+plugin = MyPlugin(config)
 assert plugin.implementation == "rust", "Not using Rust!"
-
-# Check environment variables
-import os
-assert os.getenv("MCPGATEWAY_FORCE_PYTHON_PLUGINS") != "true"
 ```
 
 ### Build Failures
@@ -433,16 +357,21 @@ assert os.getenv("MCPGATEWAY_FORCE_PYTHON_PLUGINS") != "true"
 
 ### Creating New Rust Plugins
 
-1. **Add Rust Implementation**:
+1. **Create Plugin Directory**:
 ```bash
-# Create new module in plugins_rust/src/
-mkdir plugins_rust/src/my_plugin
-touch plugins_rust/src/my_plugin/mod.rs
+mkdir plugins_rust/my_plugin
+cd plugins_rust/my_plugin
 ```
 
-2. **Implement PyO3 Bindings**:
+2. **Initialize Rust Project**:
+```bash
+# Create Cargo.toml, pyproject.toml, Makefile
+# See existing plugins for templates
+```
+
+3. **Implement PyO3 Bindings**:
 ```rust
-// plugins_rust/src/my_plugin/mod.rs
+// src/lib.rs
 use pyo3::prelude::*;
 
 #[pyclass]
@@ -454,25 +383,17 @@ pub struct MyPluginRust {
 impl MyPluginRust {
     #[new]
     pub fn new(config: &PyDict) -> PyResult<Self> {
-        // Initialize from Python config
         Ok(Self { /* ... */ })
     }
 
     pub fn process(&self, text: &str) -> PyResult<String> {
-        // Plugin logic
         Ok(text.to_uppercase())
     }
 }
-```
-
-3. **Export in lib.rs**:
-```rust
-// plugins_rust/src/lib.rs
-mod my_plugin;
 
 #[pymodule]
-fn plugins_rust(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<my_plugin::MyPluginRust>()?;
+fn my_plugin_rust(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<MyPluginRust>()?;
     Ok(())
 }
 ```
@@ -480,7 +401,7 @@ fn plugins_rust(_py: Python, m: &PyModule) -> PyResult<()> {
 4. **Create Python Wrapper**:
 ```python
 # plugins/my_plugin/my_plugin_rust.py
-from plugins_rust import MyPluginRust
+from my_plugin_rust.my_plugin_rust import MyPluginRust
 
 class RustMyPlugin:
     def __init__(self, config):
@@ -489,6 +410,10 @@ class RustMyPlugin:
     def process(self, text: str) -> str:
         return self._rust.process(text)
 ```
+
+**Note**: The double-nested import (`my_plugin_rust.my_plugin_rust`) is required because:
+- First `my_plugin_rust` = package name (from `Cargo.toml` `[lib] name`)
+- Second `my_plugin_rust` = module name (from `#[pymodule]` in `lib.rs`)
 
 5. **Add Auto-Detection**:
 ```python
@@ -576,12 +501,9 @@ strip = true               # Strip symbols for smaller binary
 ### Audit and Compliance
 
 ```bash
-# Run security audit
-cd plugins_rust
+# Run security audit (from a specific plugin directory)
+cd plugins_rust/pii_filter
 cargo audit
-
-# Check dependencies for vulnerabilities
-cargo deny check
 ```
 
 ## Future Rust Plugins

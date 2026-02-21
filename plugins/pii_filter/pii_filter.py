@@ -45,14 +45,11 @@ _RUST_AVAILABLE = False
 _RustPIIDetector = None
 
 try:
-    # Local
-    from .pii_filter_rust import RUST_AVAILABLE as _RUST_AVAILABLE
-    from .pii_filter_rust import RustPIIDetector as _RustPIIDetector
+    # Import from installed Rust package (two-level deep call)
+    from pii_filter_rust.pii_filter_rust import PIIDetectorRust as _RustPIIDetector
 
-    if _RUST_AVAILABLE:
-        logger.info("🦀 Rust PII filter available - using high-performance implementation (5-100x speedup)")
-    else:
-        logger.info("Rust module found but RUST_AVAILABLE=False - using Python implementation")
+    _RUST_AVAILABLE = True
+    logger.info("🦀 Rust PII filter available - using high-performance implementation (5-100x speedup)")
 except ImportError as e:
     logger.debug(f"Rust PII filter not available (will use Python): {e}")
     _RUST_AVAILABLE = False
@@ -158,8 +155,35 @@ class PIIDetector:
 
         # Dutch BSN (Burgerservicenummer) patterns - 9-digit Dutch citizen service number
         if self.config.detect_bsn:
-            # Match 9-digit numbers (BSN format) - standalone or with explicit BSN context
-            patterns.append(PIIPattern(type=PIIType.BSN, pattern=r"\b\d{9}\b", description="Dutch BSN (Burgerservicenummer)", mask_strategy=MaskingStrategy.PARTIAL))
+            # Match 9-digit numbers with BSN context keywords to avoid false positives
+            # Positive context: BSN, Citizen ID, Burgerservicenummer, ID, Order, Invoice, Tracking, Numbers, etc.
+            # This pattern requires context words before the 9-digit number
+            patterns.extend(
+                [
+                    # Explicit BSN context
+                    PIIPattern(
+                        type=PIIType.BSN,
+                        pattern=r"\b(?:BSN|Citizen\s+ID|Burgerservicenummer)[:\s#]*\d{9}\b",
+                        description="Dutch BSN with explicit context",
+                        mask_strategy=MaskingStrategy.PARTIAL,
+                    ),
+                    # Generic ID context
+                    # Note: This runs before phone detector, so may match phone numbers with ID context
+                    PIIPattern(
+                        type=PIIType.BSN,
+                        pattern=r"\b(?:ID|Order|Invoice|Tracking|Numbers?)[:\s#]*\d{9}\b",
+                        description="9-digit ID with generic context",
+                        mask_strategy=MaskingStrategy.PARTIAL,
+                    ),
+                    # "My BSN is" pattern
+                    PIIPattern(
+                        type=PIIType.BSN,
+                        pattern=r"\b(?:My\s+)?BSN\s+(?:is\s+)?\d{9}\b",
+                        description="BSN with 'is' context",
+                        mask_strategy=MaskingStrategy.PARTIAL,
+                    ),
+                ]
+            )
 
         # Credit Card patterns (basic validation for common formats)
         if self.config.detect_credit_card:
@@ -439,9 +463,17 @@ class PIIFilterPlugin(Plugin):
 
         # Auto-detect and use Rust implementation if available
         if _RUST_AVAILABLE and _RustPIIDetector is not None:
-            self.detector = _RustPIIDetector(self.pii_config)
-            self.implementation = "Rust"
-            logger.info("🦀 PIIFilterPlugin initialized with Rust acceleration (5-100x speedup)")
+            try:
+                # Validate that Rust detector can be instantiated
+                self.detector = _RustPIIDetector(self.pii_config)
+                self.implementation = "Rust"
+                logger.info("🦀 PIIFilterPlugin initialized with Rust acceleration (5-100x speedup)")
+            except Exception as e:
+                # Fall back to Python if Rust initialization fails
+                logger.warning(f"⚠️  Rust PII detector initialization failed, falling back to Python: {e}")
+                self.detector = PIIDetector(self.pii_config)
+                self.implementation = "Python"
+                logger.info("🐍 PIIFilterPlugin initialized with Python implementation (Rust unavailable)")
         else:
             self.detector = PIIDetector(self.pii_config)
             self.implementation = "Python"
@@ -875,3 +907,8 @@ class PIIFilterPlugin(Plugin):
     async def shutdown(self) -> None:
         """Cleanup when plugin shuts down."""
         logger.info(f"PII Filter plugin ({self.implementation}) shutting down. Total masked: {self.masked_count} items")
+
+
+# Export Rust implementation for tests
+RUST_AVAILABLE = _RUST_AVAILABLE
+RustPIIDetector = _RustPIIDetector

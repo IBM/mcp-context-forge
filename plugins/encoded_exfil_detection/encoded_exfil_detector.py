@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./plugins/encoded_exfil_detector/encoded_exfil_detector.py
+"""Location: ./plugins/encoded_exfil_detection/encoded_exfil_detector.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import Rust-accelerated implementation
 try:
-    import encoded_exfil_detection
+    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container as encoded_exfil_detection
 
     _RUST_AVAILABLE = True
     logger.info("🦀 Rust encoded exfil detector available - using high-performance implementation")
@@ -311,7 +311,11 @@ def _scan_container(container: Any, cfg: EncodedExfilDetectorConfig, path: str =
     """Recursively scan container for encoded exfiltration patterns."""
     if use_rust and _RUST_AVAILABLE and encoded_exfil_detection is not None:
         try:
-            count, redacted, findings = encoded_exfil_detection.py_scan_container(container, cfg)
+            # Validate that encoded_exfil_detection is callable (should be py_scan_container function)
+            if not callable(encoded_exfil_detection):
+                raise TypeError(f"encoded_exfil_detection is not callable: {type(encoded_exfil_detection)}")
+            # Function signature: py_scan_container(container, config) -> (count, redacted, findings)
+            count, redacted, findings = encoded_exfil_detection(container, cfg)
             normalized_findings = []
             for finding in findings:
                 if isinstance(finding, dict):

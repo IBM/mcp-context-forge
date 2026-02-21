@@ -3,7 +3,7 @@
 //
 // Criterion benchmarks for PII filter performance
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 // Import the PII filter modules
 use pii_filter_rust::{
@@ -16,6 +16,7 @@ use pii_filter_rust::{
 fn create_test_config() -> PIIConfig {
     PIIConfig {
         detect_ssn: true,
+        detect_bsn: true,
         detect_credit_card: true,
         detect_email: true,
         detect_phone: true,

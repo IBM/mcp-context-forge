@@ -4,7 +4,7 @@
 // Configuration types for PII Filter
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyAny, PyDict};
 use serde::{Deserialize, Serialize};
 
 /// PII types that can be detected
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum PIIType {
     Ssn,
+    Bsn,
     CreditCard,
     Email,
     Phone,
@@ -31,6 +32,7 @@ impl PIIType {
     pub fn as_str(&self) -> &'static str {
         match self {
             PIIType::Ssn => "ssn",
+            PIIType::Bsn => "bsn",
             PIIType::CreditCard => "credit_card",
             PIIType::Email => "email",
             PIIType::Phone => "phone",
@@ -78,6 +80,7 @@ fn default_enabled() -> bool {
 pub struct PIIConfig {
     // Detection flags
     pub detect_ssn: bool,
+    pub detect_bsn: bool,
     pub detect_credit_card: bool,
     pub detect_email: bool,
     pub detect_phone: bool,
@@ -112,6 +115,7 @@ impl Default for PIIConfig {
         Self {
             // Enable all detections by default
             detect_ssn: true,
+            detect_bsn: true,
             detect_credit_card: true,
             detect_email: true,
             detect_phone: true,
@@ -142,6 +146,21 @@ impl Default for PIIConfig {
 }
 
 impl PIIConfig {
+    /// Extract configuration from Python object (dict or Pydantic model)
+    pub fn from_py_object(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
+        // Try to convert to dict first (handles both dict and Pydantic models)
+        let dict = if obj.is_instance_of::<PyDict>() {
+            obj.cast::<PyDict>()?.clone()
+        } else {
+            // For Pydantic models, call model_dump() to get a dict
+            let model_dump = obj.getattr("model_dump")?;
+            let dict_obj = model_dump.call0()?;
+            dict_obj.cast::<PyDict>()?.clone()
+        };
+
+        Self::from_py_dict(&dict)
+    }
+
     /// Extract configuration from Python dict
     pub fn from_py_dict(dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let mut config = Self::default();
@@ -157,6 +176,7 @@ impl PIIConfig {
 
         // Extract all boolean flags
         extract_bool!(detect_ssn);
+        extract_bool!(detect_bsn);
         extract_bool!(detect_credit_card);
         extract_bool!(detect_email);
         extract_bool!(detect_phone);

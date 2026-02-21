@@ -4,7 +4,8 @@
 // Core PII detection logic with PyO3 bindings
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyAny, PyDict, PyList};
+use pyo3_stub_gen::derive::*;
 use std::collections::HashMap;
 
 use super::config::{MaskingStrategy, PIIConfig, PIIType};
@@ -59,7 +60,7 @@ pub struct Detection {
 ///
 /// # Example (Python)
 /// ```python
-/// from plugins_rust import PIIDetectorRust
+/// from pii_filter import PIIDetectorRust
 ///
 /// config = {"detect_ssn": True, "detect_email": True}
 /// detector = PIIDetectorRust(config)
@@ -71,18 +72,20 @@ pub struct Detection {
 /// masked = detector.mask(text, detections)
 /// print(masked)  # "My SSN is [REDACTED] and email is [REDACTED]"
 /// ```
+#[gen_stub_pyclass]
 #[pyclass]
 pub struct PIIDetectorRust {
     patterns: CompiledPatterns,
     config: PIIConfig,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PIIDetectorRust {
     /// Create a new PII detector
     ///
     /// # Arguments
-    /// * `config_dict` - Python dictionary with configuration
+    /// * `config` - Python dictionary or Pydantic model with configuration
     ///
     /// # Configuration Keys
     /// * `detect_ssn` (bool): Detect Social Security Numbers
@@ -98,13 +101,13 @@ impl PIIDetectorRust {
     /// * `detect_aws_keys` (bool): Detect AWS access keys
     /// * `detect_api_keys` (bool): Detect API keys
     /// * `default_mask_strategy` (str): "redact", "partial", "hash", "tokenize", "remove"
-    /// * `redaction_text` (str): Text to use for redaction (default: "[REDACTED]")
+    /// * `redaction_text` (str): Text to use for redaction (default: "\[REDACTED\]")
     /// * `block_on_detection` (bool): Whether to block on detection
     /// * `whitelist_patterns` (list[str]): Regex patterns to exclude from detection
     #[new]
-    pub fn new(config_dict: &Bound<'_, PyDict>) -> PyResult<Self> {
-        // Extract configuration from Python dict
-        let config = PIIConfig::from_py_dict(config_dict).map_err(|e| {
+    pub fn new(config: &Bound<'_, PyAny>) -> PyResult<Self> {
+        // Extract configuration from Python object (dict or Pydantic model)
+        let config = PIIConfig::from_py_object(config).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid config: {}", e))
         })?;
 
@@ -408,7 +411,7 @@ impl PIIDetectorRust {
         Ok(rust_detections)
     }
 
-    /// Convert Python list to Vec<Detection>
+    /// Convert Python list to `Vec<Detection>`
     fn py_list_to_detections(&self, py_list: &Bound<'_, PyAny>) -> PyResult<Vec<Detection>> {
         let mut detections = Vec::new();
 
@@ -476,6 +479,7 @@ impl PIIDetectorRust {
     fn str_to_pii_type(&self, s: &str) -> Result<PIIType, ()> {
         match s {
             "ssn" => Ok(PIIType::Ssn),
+            "bsn" => Ok(PIIType::Bsn),
             "credit_card" => Ok(PIIType::CreditCard),
             "email" => Ok(PIIType::Email),
             "phone" => Ok(PIIType::Phone),

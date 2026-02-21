@@ -41,17 +41,17 @@ logger = logging.getLogger(__name__)
 
 # Try to import Rust-accelerated implementation
 try:
-    import secret_detection
+    from secrets_detection_rust.secrets_detection_rust import py_scan_container as secrets_detection
 
     _RUST_AVAILABLE = True
     logger.info("🦀 Rust secrets detection available - using high-performance implementation (2-8x speedup)")
 except ImportError as e:
     _RUST_AVAILABLE = False
-    secret_detection = None  # type: ignore
+    secrets_detection = None  # type: ignore
     logger.debug(f"Rust secrets detection not available (will use Python): {e}")
 except Exception as e:
     _RUST_AVAILABLE = False
-    secret_detection = None  # type: ignore
+    secrets_detection = None  # type: ignore
     logger.warning(f"⚠️  Unexpected error loading Rust module: {e}", exc_info=True)
 
 PATTERNS = {
@@ -115,11 +115,15 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
         Tuple of (count, redacted_container, all_findings).
     """
     # Use Rust implementation if available and requested
-    if use_rust and _RUST_AVAILABLE and secret_detection is not None:
+    if use_rust and _RUST_AVAILABLE and secrets_detection is not None:
         try:
+            # Validate that secrets_detection is callable (should be py_scan_container function)
+            if not callable(secrets_detection):
+                raise TypeError(f"secrets_detection is not callable: {type(secrets_detection)}")
             logger.debug("Using Rust implementation")
             # Pass Pydantic model directly - Rust extracts attributes
-            return secret_detection.py_scan_container(container, cfg)
+            # Function signature: py_scan_container(container, config) -> (count, redacted, findings)
+            return secrets_detection(container, cfg)
         except Exception as e:
             logger.warning(f"Rust scan failed, falling back to Python: {e}")
             # Fall through to Python implementation

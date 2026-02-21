@@ -1,18 +1,23 @@
 [package]
 name = "pii_filter"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "1.0.0-RC-1"
+edition = "2024"
+authors = ["MCP Gateway Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
 description = "High-performance PII detection and masking library"
 
 [lib]
 name = "pii_filter_rust"
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "stub_gen"
+path = "src/bin/stub_gen.rs"
 
 [dependencies]
-pyo3.workspace = true
+pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
+pyo3-stub-gen = "0.19"
 regex = "1.12"
 once_cell = "1.21"
 serde = { version = "1.0", features = ["derive"] }
@@ -27,3 +32,13 @@ criterion = { version = "0.8", features = ["html_reports"] }
 [[bench]]
 name = "pii_filter"
 harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.bench]
+inherits = "release"
+debug = true

@@ -38,6 +38,31 @@ static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     )]
 });
 
+// BSN patterns (Dutch Burgerservicenummer)
+// Match 9-digit numbers with BSN context keywords to avoid false positives
+// Positive context: BSN, Citizen ID, Burgerservicenummer, ID, Order, Invoice, Tracking, Numbers, etc.
+// Note: Removed negative lookbehind (not supported by standard regex crate)
+// BSN detection takes precedence over phone detection (BSN patterns are added first in compile_patterns)
+static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
+    vec![
+        (
+            r"\b(?:BSN|Citizen\s+ID|Burgerservicenummer)[:\s#]*\d{9}\b",
+            "Dutch BSN with explicit context",
+            MaskingStrategy::Partial,
+        ),
+        (
+            r"\b(?:ID|Order|Invoice|Tracking|Numbers?)[:\s#]*\d{9}\b",
+            "9-digit ID with generic context",
+            MaskingStrategy::Partial,
+        ),
+        (
+            r"\b(?:My\s+)?BSN\s+(?:is\s+)?\d{9}\b",
+            "BSN with 'is' context",
+            MaskingStrategy::Partial,
+        ),
+    ]
+});
+
 // Credit card patterns
 static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
@@ -201,6 +226,7 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
 
     // Add patterns based on config
     add_patterns!(config.detect_ssn, PIIType::Ssn, &*SSN_PATTERNS);
+    add_patterns!(config.detect_bsn, PIIType::Bsn, &*BSN_PATTERNS);
     add_patterns!(
         config.detect_credit_card,
         PIIType::CreditCard,
