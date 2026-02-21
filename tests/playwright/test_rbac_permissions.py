@@ -68,16 +68,19 @@ def _make_user_jwt(email: str, is_admin: bool = False, teams: Optional[list] = N
 
 
 def _inject_jwt_cookie(page: Page, email: str, is_admin: bool = False, teams: Optional[list] = None, token_use: Optional[str] = None) -> None:
-    """Inject a JWT cookie and Authorization header into the page context.
+    """Inject a JWT cookie into the page context for authentication.
 
-    Matches conftest._set_admin_jwt_cookie pattern: sets both cookie (for page navigation)
-    and Authorization header (for HTMX form POSTs).
+    Uses cookie-only auth (no Authorization header) because setting
+    set_extra_http_headers sends the header on ALL requests including
+    cross-origin CDN fetches.  Combined with crossorigin="anonymous"
+    (required by SRI), this triggers CORS preflight failures on CDNs
+    that don't whitelist the Authorization header, blocking Alpine.js
+    and other scripts from loading.
     """
     token = _make_user_jwt(email, is_admin=is_admin, teams=teams, token_use=token_use)
     cookie_url = f"{BASE_URL.rstrip('/')}/"
     # Clear any stale cookies before injecting new ones
     page.context.clear_cookies()
-    page.context.set_extra_http_headers({"Authorization": f"Bearer {token}"})
     page.context.add_cookies(
         [
             {
