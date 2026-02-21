@@ -471,7 +471,7 @@
             "APP_NAME": {
               "type": "string",
               "description": "Application name",
-              "default": "MCP_Gateway"
+              "default": "ContextForge"
             },
             "HOST": {
               "type": "string",
@@ -1038,7 +1038,7 @@
             "SMTP_FROM_NAME": {
               "type": "string",
               "description": "Sender display name for auth notifications",
-              "default": "MCP Gateway"
+              "default": "ContextForge"
             },
             "SMTP_USE_TLS": {
               "type": "string",

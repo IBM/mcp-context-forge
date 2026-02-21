@@ -1,5 +1,5 @@
 # ===============================================================
-# ☁️  MCP Gateway ▸ Deploy to Google Cloud Run (After All Checks)
+# ☁️  ContextForge ▸ Deploy to Google Cloud Run (After All Checks)
 # ===============================================================
 # Maintainer: Mihai Criveti
 # Status: Active
@@ -28,7 +28,7 @@
 #
 # 3. Create the service account:
 #    gcloud iam service-accounts create github-mcpgateway \
-#      --display-name="GitHub Actions - MCP Gateway Deploy"
+#      --display-name="GitHub Actions - ContextForge Deploy"
 #
 # 4. Create a minimal Cloud Run service (required before granting IAM):
 #    gcloud run deploy mcpgateway \
@@ -115,7 +115,7 @@
 #  │ CLOUD_RUN_PORT             │ Port number the container listens on (numeric, no quotes)       │
 #  │                            │ Example: 4444                                                   │
 #  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
-#  │ CACHE_TYPE                 │ Cache backend type for MCP Gateway                              │
+#  │ CACHE_TYPE                 │ Cache backend type for ContextForge                              │
 #  │                            │ Example: "redis" (or "memory" for development)                  │
 #  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
 #  │ HOST                       │ IP address to bind the service to (required for containers)     │

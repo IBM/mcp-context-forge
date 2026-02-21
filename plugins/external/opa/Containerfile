@@ -46,11 +46,11 @@ RUN pip install --no-cache-dir uv && python -m uv pip install .
 RUN mkdir -p -m 0776 ${HOME}/.cache
 
 # Update labels
-LABEL maintainer="ContextForge MCP Gateway Team" \
+LABEL maintainer="ContextForge Team" \
       name="mcp/mcppluginserver" \
       version="${VERSION}" \
       url="https://github.com/IBM/mcp-context-forge" \
-      description="MCP Plugin Server for the ContextForge MCP Gateway"
+      description="MCP Plugin Server for the ContextForge"
 
 # App entrypoint
 ENTRYPOINT ["sh", "-c", "${HOME}/run-server.sh"]

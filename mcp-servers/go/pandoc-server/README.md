@@ -75,10 +75,10 @@ docker run -i pandoc-server
 ./dist/pandoc-server
 ```
 
-### With MCP Gateway
+### With ContextForge
 
 ```bash
-# Use MCP Gateway's translate module to expose via HTTP/SSE
+# Use ContextForge's translate module to expose via HTTP/SSE
 python3 -m mcpgateway.translate --stdio "./dist/pandoc-server" --port 9000
 ```
 

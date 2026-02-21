@@ -1,23 +1,23 @@
 # Overview
 
-Welcome to the MCP Gateway documentation.
+Welcome to the ContextForge documentation.
 
-This section introduces what the Gateway is, how it fits into the MCP ecosystem, and what core features and capabilities it offers out of the box.
+This section introduces what ContextForge is, the gateway patterns it supports, and what core features and capabilities it offers out of the box.
 
 ---
 
-## What is MCP Gateway?
+## What is ContextForge?
 
-**MCP Gateway** is an orchestration and federation layer for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). It provides:
+**ContextForge** is a production-grade AI gateway that unifies tools, agents, models, and APIs behind a single endpoint. It supports multiple gateway patterns:
 
-- A unified entrypoint for tools, resources, prompts, and agents
-- Federation of multiple MCP servers into one composable catalog
-- Protocol enforcement, health monitoring, and registry centralization
-- A visual Admin UI to manage everything in real time
-- **Audit metadata capture** (creator, modifier, source) for core registry entities
-- **Doctest coverage for key modules** (see `development/doctest-coverage.md`)
+- **Tools Gateway** — Federate MCP servers, REST APIs, and gRPC services into one composable tool catalog
+- **Agent Gateway** — Route to A2A agents, OpenAI-compatible agents, and Anthropic agents
+- **Model Gateway** — LLM proxy with OpenAI API spec, supporting watsonx, OpenAI, Anthropic, Ollama, vLLM, and more
+- **API Gateway** — Rate limiting, auth, retries, and reverse proxy for REST services
+- **Plugin Extensibility** — 40+ plugins for additional transports, protocols, and integrations
+- **Observability** — OpenTelemetry tracing with Phoenix, Jaeger, Zipkin, and other OTLP backends
 
-Whether you're integrating REST APIs, local functions, or full LLM agents, MCP Gateway standardizes access and transport - over HTTP, WebSockets, SSE, StreamableHttp or stdio.
+It also provides protocol enforcement, health monitoring, registry centralization, a visual Admin UI, and audit metadata capture — over HTTP, WebSockets, SSE, StreamableHttp, or stdio.
 
 ---
 

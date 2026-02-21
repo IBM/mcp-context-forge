@@ -1,4 +1,4 @@
-# OpenWebUI Integration with MCP Gateway
+# OpenWebUI Integration with ContextForge
 
 OpenWebUI is a self-hosted, extensible interface for interacting with large language models (LLMs). Integrating OpenWebUI with the Model Context Protocol (MCP) allows you to enhance your AI workflows by leveraging tools and resources provided by MCP servers.
 
@@ -6,14 +6,14 @@ OpenWebUI is a self-hosted, extensible interface for interacting with large lang
 
 ## 🔌 Integration Overview
 
-OpenWebUI supports integration with external tools via OpenAPI specifications. MCP Gateway exposes its tools through OpenAPI-compatible endpoints, enabling seamless integration with OpenWebUI.
+OpenWebUI supports integration with external tools via OpenAPI specifications. ContextForge exposes its tools through OpenAPI-compatible endpoints, enabling seamless integration with OpenWebUI.
 
 ---
 
 ## 🛠️ Prerequisites
 
 - **OpenWebUI**: Ensure you have OpenWebUI installed and running. Refer to the [OpenWebUI documentation](https://docs.openwebui.com/) for installation instructions.
-- **MCP Gateway**: Set up and run the MCP Gateway. Detailed setup instructions can be found in the [MCP Gateway documentation](https://ibm.github.io/mcp-context-forge/).
+- **ContextForge**: Set up and run the ContextForge. Detailed setup instructions can be found in the [ContextForge documentation](https://ibm.github.io/mcp-context-forge/).
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -23,19 +23,19 @@ OpenWebUI supports integration with external tools via OpenAPI specifications. M
 
 ## 🔗 Connecting MCP Tools to OpenWebUI
 
-### 1. Launch MCP Gateway
+### 1. Launch ContextForge
 
-Start the MCP Gateway to expose its tools via OpenAPI endpoints. For example:
+Start the ContextForge to expose its tools via OpenAPI endpoints. For example:
 
 ```bash
 uv run mcpgateway
 ```
 
-Ensure that the MCP Gateway is accessible at a known URL, such as `http://localhost:4444` (or `http://localhost:8080` with Compose).
+Ensure that the ContextForge is accessible at a known URL, such as `http://localhost:4444` (or `http://localhost:8080` with Compose).
 
 ### 2. Identify MCP Tool Endpoints
 
-Determine the specific tool endpoints provided by the MCP Gateway. These endpoints follow the OpenAPI specification and are typically accessible at URLs like:
+Determine the specific tool endpoints provided by the ContextForge. These endpoints follow the OpenAPI specification and are typically accessible at URLs like:
 
 ```
 http://localhost:4444/tools/<tool-name>
@@ -93,9 +93,9 @@ OpenWebUI supports native function calling for tools:
 ## 🧰 Additional Resources
 
 * [OpenWebUI Documentation](https://docs.openwebui.com/)
-* [MCP Gateway Documentation](https://modelcontextprotocol.io/)
+* [ContextForge Documentation](https://modelcontextprotocol.io/)
 * [OpenWebUI GitHub Repository](https://github.com/open-webui/open-webui)
-* [MCP Gateway GitHub Repository](https://github.com/mcp-ecosystem/mcp-gateway)
+* [ContextForge GitHub Repository](https://github.com/mcp-ecosystem/mcp-gateway)
 
 ---
 

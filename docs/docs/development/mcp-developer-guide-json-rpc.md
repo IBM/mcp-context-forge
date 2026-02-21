@@ -4,20 +4,20 @@ This comprehensive guide demonstrates how to interact with MCP (Model Context Pr
 
 ## Overview
 
-The Model Context Protocol (MCP) is a standardized protocol for connecting language models to various data sources and tools. MCP Gateway acts as a federation layer that aggregates multiple MCP servers and provides unified access through various transport mechanisms.
+The Model Context Protocol (MCP) is a standardized protocol for connecting language models to various data sources and tools. ContextForge acts as a federation layer that aggregates multiple MCP servers and provides unified access through various transport mechanisms.
 
 ## Prerequisites
 
 Before starting, ensure you have:
 
-- MCP Gateway server running (typically on `http://localhost:4444`)
+- ContextForge server running (typically on `http://localhost:4444`)
 - `curl` command-line tool installed
 - `jq` for JSON formatting (optional but recommended)
 - Basic understanding of JSON-RPC 2.0 protocol
 
 ## Authentication Setup
 
-MCP Gateway uses JWT Bearer tokens for authentication. Generate a token before making any requests:
+ContextForge uses JWT Bearer tokens for authentication. Generate a token before making any requests:
 
 ```bash
 # Generate authentication token
@@ -49,7 +49,7 @@ MCP follows a specific initialization sequence that must be followed for proper 
 
 ### Transport Methods
 
-MCP Gateway supports multiple transport methods:
+ContextForge supports multiple transport methods:
 
 - **HTTP JSON-RPC** (`/rpc`) - Standard JSON-RPC 2.0 over HTTP
 - **Server-Sent Events** (`/sse`) - Real-time streaming communication
@@ -122,10 +122,10 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
       "logging": {}
     },
     "serverInfo": {
-      "name": "MCP_Gateway",
+      "name": "ContextForge",
       "version": "1.0.0-RC-1"
     },
-    "instructions": "MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."
+    "instructions": "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."
   }
 }
 ```
@@ -508,7 +508,7 @@ Run it interactively (without the here-doc) if you prefer to type requests by ha
 
 ```bash
 #!/bin/bash
-# Complete MCP Gateway session via HTTP JSON-RPC
+# Complete ContextForge session via HTTP JSON-RPC
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
@@ -530,7 +530,7 @@ make_protocol_call() {
          http://localhost:4444/protocol/initialize | jq
 }
 
-echo "=== MCP Gateway Complete Session ==="
+echo "=== ContextForge Complete Session ==="
 
 # 1. Test connectivity
 echo "=== Testing Connectivity ==="
@@ -627,7 +627,7 @@ echo "=== Session Complete ==="
 
 ```bash
 #!/bin/bash
-# Complete MCP Gateway session via Server-Sent Events
+# Complete ContextForge session via Server-Sent Events
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
@@ -802,7 +802,7 @@ echo $MCPGATEWAY_BEARER_TOKEN | cut -d'.' -f2 | base64 -d | jq .exp
 
 **Solutions:**
 ```bash
-# Check if MCP Gateway is running
+# Check if ContextForge is running
 curl -f http://localhost:4444/health || echo "Gateway not running"
 
 # Check port availability
@@ -1183,6 +1183,6 @@ module.exports = MCPGatewayClient;
 
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
-- [MCP Gateway Documentation](https://ibm.github.io/mcp-context-forge/)
-- [MCP Gateway Admin UI Guide](../manage/index.md)
-- [MCP Gateway Wrapper Documentation](../using/mcpgateway-wrapper.md)
+- [ContextForge Documentation](https://ibm.github.io/mcp-context-forge/)
+- [ContextForge Admin UI Guide](../manage/index.md)
+- [ContextForge Wrapper Documentation](../using/mcpgateway-wrapper.md)

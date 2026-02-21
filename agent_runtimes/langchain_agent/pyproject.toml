@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mcp-langchain-agent"
 version = "1.0.0"
-description = "A LangChain agent with OpenAI-compatible API that integrates with MCP Gateway"
+description = "A LangChain agent with OpenAI-compatible API that integrates with ContextForge"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "MCP Context Forge Contributors", email = "noreply@example.com"}
+    {name = "ContextForge Contributors", email = "noreply@example.com"}
 ]
 keywords = ["mcp", "langchain", "ai", "agent", "openai", "a2a"]
 classifiers = [

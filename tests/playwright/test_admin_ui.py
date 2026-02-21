@@ -27,7 +27,7 @@ class TestAdminUI:
         """Test that admin panel loads successfully."""
         # admin_page fixture already navigated and authenticated
         # Verify admin panel loaded (no need to navigate again)
-        expect(admin_page.page).to_have_title(re.compile(r"(MCP Gateway Admin|ContextForge - Gateway Administration)"))
+        expect(admin_page.page).to_have_title(re.compile(r"(ContextForge Admin|ContextForge - Gateway Administration)"))
         expect(admin_page.servers_tab).to_be_visible()
         expect(admin_page.tools_tab).to_be_visible()
         expect(admin_page.gateways_tab).to_be_visible()

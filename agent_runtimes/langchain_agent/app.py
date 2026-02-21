@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="MCP Langchain Agent",
-    description="A Langchain agent with OpenAI-compatible API that integrates with MCP Gateway",
+    description="A Langchain agent with OpenAI-compatible API that integrates with ContextForge",
     version="1.0.0",
 )
 

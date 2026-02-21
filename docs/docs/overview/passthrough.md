@@ -2,11 +2,11 @@
 
 ⚠️ **Security Notice**: HTTP Header Passthrough is **disabled by default** for security reasons. Only enable this feature if you understand the security implications and have reviewed which headers should be passed through to backing MCP servers.
 
-The MCP Gateway supports **HTTP Header Passthrough**, allowing specific headers from incoming client requests to be forwarded to backing MCP servers. This feature is essential for maintaining authentication context and request tracing across the gateway infrastructure.
+The ContextForge supports **HTTP Header Passthrough**, allowing specific headers from incoming client requests to be forwarded to backing MCP servers. This feature is essential for maintaining authentication context and request tracing across the gateway infrastructure.
 
 ## Overview
 
-When clients make requests through the MCP Gateway, certain headers (like authentication tokens or trace IDs) need to be preserved and passed to the underlying MCP servers. The header passthrough feature provides a configurable, secure way to forward these headers while preventing conflicts with existing authentication mechanisms.
+When clients make requests through the ContextForge, certain headers (like authentication tokens or trace IDs) need to be preserved and passed to the underlying MCP servers. The header passthrough feature provides a configurable, secure way to forward these headers while preventing conflicts with existing authentication mechanisms.
 
 ## Key Features
 
@@ -126,7 +126,7 @@ ENABLE_OVERWRITE_BASE_HEADERS=true
 **Prerequisites**:
 
 1. Set `ENABLE_HEADER_PASSTHROUGH=true` in your environment
-2. Restart the MCP Gateway service
+2. Restart the ContextForge service
 
 #### Global Configuration
 Access the admin interface to set global passthrough headers that apply to all gateways by default.
@@ -207,7 +207,7 @@ The system follows this priority order:
 
 ```mermaid
 graph LR
-    A[Client Request] --> B[MCP Gateway]
+    A[Client Request] --> B[ContextForge]
     B --> C{Check Passthrough Config}
     C --> D[Extract Configured Headers]
     D --> E[Conflict Prevention Check]
@@ -423,7 +423,7 @@ The API returns the virtual server details including its unique ID (e.g., `aa998
 
 Connect any MCP-compatible client to the virtual server, providing authentication via passthrough headers. The client must supply:
 
-1. **Gateway Authentication** - Token to authenticate with Context Forge Gateway (`Authorization` header)
+1. **Gateway Authentication** - Token to authenticate with ContextForge Gateway (`Authorization` header)
 2. **MCP Server Authentication** - Token forwarded to the upstream MCP server (`X-Upstream-Authorization` header)
 
 #### Example: Claude Desktop Configuration
@@ -459,7 +459,7 @@ Add the following configuration to Claude Desktop's MCP settings:
 |-----------|---------|
 | `mcp-remote` | NPM package for remote MCP connections |
 | `http://localhost:4444/servers/...` | Virtual server endpoint URL |
-| `Authorization` header | Authenticates with Context Forge Gateway |
+| `Authorization` header | Authenticates with ContextForge Gateway |
 | `X-Upstream-Authorization` header | Forwarded to the upstream MCP server |
 | `GATEWAY_AUTH_TOKEN` | JWT or Bearer token for gateway access |
 | `MCP_SERVER_AUTH_TOKEN` | Bearer token for the authenticated MCP server |
@@ -469,7 +469,7 @@ Add the following configuration to Claude Desktop's MCP settings:
 Replace the placeholder tokens with actual values:
 
 ```bash
-# Gateway authentication token (obtained from Context Forge)
+# Gateway authentication token (obtained from ContextForge)
 GATEWAY_AUTH_TOKEN="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 
 # MCP server authentication token (your server's auth token)
@@ -481,7 +481,7 @@ MCP_SERVER_AUTH_TOKEN="Bearer super-secret-123"
 ```mermaid
 sequenceDiagram
     participant Client as MCP Client
-    participant Gateway as Context Forge Gateway
+    participant Gateway as ContextForge Gateway
     participant MCP as MCP Server
 
     Note over Gateway,MCP: Step 1: One-Time Registration
@@ -613,7 +613,7 @@ When upgrading to a version with header passthrough:
 
 ## Testing with the Built-in Test Tool
 
-The MCP Gateway admin interface includes a built-in test tool with passthrough header support:
+The ContextForge admin interface includes a built-in test tool with passthrough header support:
 
 ### Using the Test Tool
 

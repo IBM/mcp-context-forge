@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-End-to-end tests for MCP Gateway main APIs.
+End-to-end tests for ContextForge main APIs.
 This module contains comprehensive end-to-end tests for all main API endpoints in main.py.
 These tests are designed to exercise the entire application stack with minimal mocking,
 using only a temporary SQLite database and bypassing authentication.
@@ -963,7 +963,7 @@ class TestResourceAPIs:
     async def test_create_markdown_resource(self, client: AsyncClient, mock_auth):
         """Test POST /resources - create markdown resource."""
         resource_data = {
-            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# MCP Gateway\n\nWelcome to the MCP Gateway!"},
+            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to the ContextForge!"},
             "team_id": None,
             "visibility": "private",
         }
@@ -1225,7 +1225,7 @@ class TestPromptAPIs:
     async def test_create_prompt_no_arguments(self, client: AsyncClient, mock_auth):
         """Test POST /prompts - create prompt without arguments."""
         prompt_data = {
-            "prompt": {"name": "system_summary", "description": "System status summary", "template": "MCP Gateway is running and ready to process requests.", "arguments": []},
+            "prompt": {"name": "system_summary", "description": "System status summary", "template": "ContextForge is running and ready to process requests.", "arguments": []},
             "team_id": None,
             "visibility": "private",
         }
@@ -1656,7 +1656,7 @@ class TestVersionAndDocs:
     #     response = await client.get("/openapi.json", headers=TEST_AUTH_HEADER)
     #     assert response.status_code == 200
     #     result = response.json()
-    #     assert result["info"]["title"] == "MCP Gateway"
+    #     assert result["info"]["title"] == "ContextForge"
 
     async def test_docs_requires_auth(self, client: AsyncClient):
         """Test GET /docs requires authentication."""

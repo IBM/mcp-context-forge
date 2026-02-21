@@ -7,11 +7,11 @@ This guide explains how to upload and manage custom CA certificate bundles for r
 
 ## Overview
 
-MCP Gateway supports connecting to servers with self-signed certificates by allowing administrators to upload custom CA certificate bundles. These certificates are stored securely in the database and used automatically when establishing HTTPS connections to the associated MCP server.
+ContextForge supports connecting to servers with self-signed certificates by allowing administrators to upload custom CA certificate bundles. These certificates are stored securely in the database and used automatically when establishing HTTPS connections to the associated MCP server.
 
 ## Prerequisites
 
--   You must have administrator access to the MCP Gateway.
+-   You must have administrator access to the ContextForge.
 -   You need the root CA certificate file (or the full certificate chain) in PEM format. Supported file extensions are `.pem`, `.crt`, `.cer`, and `.cert`.
 -   Maximum file size: **10 MB per certificate file**.
 -   The certificates must be valid PEM-encoded X.509 certificates.
@@ -20,7 +20,7 @@ MCP Gateway supports connecting to servers with self-signed certificates by allo
 
 ### 1. Navigate to the Admin Panel
 
-Log in to the MCP Gateway and go to the **Admin** section.
+Log in to the ContextForge and go to the **Admin** section.
 
 ### 2. Go to Gateways Tab
 
@@ -198,7 +198,7 @@ Handle complex scenarios:
 
 ## Example: Creating and Using a Self-Signed Certificate
 
-For testing purposes, here's how to create a self-signed certificate and use it with MCP Gateway:
+For testing purposes, here's how to create a self-signed certificate and use it with ContextForge:
 
 ### 1. Generate a Self-Signed Certificate
 
@@ -218,9 +218,9 @@ cp server-cert.pem ca-cert.pem
 ./mcp-server --cert server-cert.pem --key server-key.pem --port 8443
 ```
 
-### 3. Upload to MCP Gateway
+### 3. Upload to ContextForge
 
-1. In the MCP Gateway admin panel, go to **Gateways** → **Add Gateway**
+1. In the ContextForge admin panel, go to **Gateways** → **Add Gateway**
 2. Enter the server URL: `https://mcp-server.local:8443`
 3. Upload the `ca-cert.pem` file in the CA Certificate section
 4. Save the gateway configuration

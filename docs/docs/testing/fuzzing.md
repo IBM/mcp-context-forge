@@ -1,6 +1,6 @@
 # Fuzz Testing
 
-MCP Gateway includes comprehensive fuzz testing to automatically discover edge cases, security vulnerabilities, and crashes through property-based testing, coverage-guided fuzzing, and security-focused validation.
+ContextForge includes comprehensive fuzz testing to automatically discover edge cases, security vulnerabilities, and crashes through property-based testing, coverage-guided fuzzing, and security-focused validation.
 
 ## Overview
 

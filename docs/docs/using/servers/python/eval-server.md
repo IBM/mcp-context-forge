@@ -659,4 +659,4 @@ evaluation:
 **Mihai Criveti**
 
 - GitHub: [cmihai](https://github.com/cmihai)
-- Project: IBM MCP Context Forge
+- Project: IBM ContextForge

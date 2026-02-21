@@ -1,6 +1,6 @@
 API: Quick Usage & Testing Guide
 
-- Purpose: Help LLMs and scripts call the MCP Gateway API reliably with correct auth, payloads, and common flows.
+- Purpose: Help LLMs and scripts call the ContextForge API reliably with correct auth, payloads, and common flows.
 - Base URL: `http://localhost:4444` (production via `make serve`), or `http://127.0.0.1:8000` (dev via `make dev`).
 - OpenAPI spec: Available at `/openapi.json` when server is running
 - Swagger UI: Available at `/docs` when server is running (requires auth)

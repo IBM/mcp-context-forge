@@ -2,7 +2,7 @@
 
 ## Overview
 
-MCP Gateway now supports multiple custom authentication headers for gateway connections. This feature allows you to configure multiple header key-value pairs that will be sent with every request to your MCP servers.
+ContextForge now supports multiple custom authentication headers for gateway connections. This feature allows you to configure multiple header key-value pairs that will be sent with every request to your MCP servers.
 
 !!! tip "Admin UI URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444/admin/`

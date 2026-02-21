@@ -1,10 +1,10 @@
-# 🚀 LLM Chat - Integrated MCP Client within Context Forge Gateway
+# 🚀 LLM Chat - Integrated MCP Client within ContextForge Gateway
 
 The LLM Chat feature enables interactive conversations with AI language models while leveraging tools from Virtual MCP servers. Once a virtual server is created, the user can use the integrated mcp client with agentic capabilities to test the tools.
 
 ## 📖 Overview
 
-LLM Chat connects virtual servers created in MCP Context Forge Gateway with AI models/LLMs, allowing them to use tools exposed by those servers. The system supports multiple LLM providers and provides both streaming and non-streaming response modes for flexible user experiences.
+LLM Chat connects virtual servers created in ContextForge Gateway with AI models/LLMs, allowing them to use tools exposed by those servers. The system supports multiple LLM providers and provides both streaming and non-streaming response modes for flexible user experiences.
 
 ## 📋 Prerequisites
 
@@ -83,7 +83,7 @@ Navigate to the **LLM Chat** tab in the admin interface. The interface features 
 
 ### Step 1: 🌐 Select a Virtual Server
 
-All the Virtual servers created in the Context Forge Gateway will be displayed in the left card.
+All the Virtual servers created in the ContextForge Gateway will be displayed in the left card.
 Click the **Refresh Servers** button to reload available virtual servers, if needed. Each server card displays:
 
 - 📛 Server name and description

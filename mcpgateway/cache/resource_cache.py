@@ -6,7 +6,7 @@ Authors: Mihai Criveti
 
 Resource Cache Implementation.
 This module implements a simple in-memory cache with TTL expiration for caching
-resource content in the MCP Gateway. Features:
+resource content in the ContextForge. Features:
 - TTL-based expiration
 - Maximum size limit with LRU eviction
 - Thread-safe operations

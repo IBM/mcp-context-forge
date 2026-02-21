@@ -1,6 +1,6 @@
-# MCP Gateway
+# ContextForge AI Gateway
 
-> Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
+> A unified gateway for Tools, Agents, Models, and APIs — with federation, virtual servers, retries, security, and an optional admin UI.
 
 ![](docs/docs/images/contextforge-banner.png)
 
@@ -23,9 +23,18 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
 
 
-ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+**ContextForge** is a production-grade AI gateway that federates tools, agents, models, and APIs into one clean endpoint for your AI clients:
 
-![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
+- **Tools Gateway** — MCP, REST, gRPC-to-MCP translation, and TOON compression
+- **Agent Gateway** — A2A protocol, OpenAI-compatible and Anthropic agent routing
+- **Model Gateway** — LLM proxy with OpenAI API spec supporting 8+ providers (watsonx, OpenAI, Anthropic, Ollama, vLLM, and more)
+- **API Gateway** — Rate limiting, auth, retries, and reverse proxy for REST services
+- **Plugin Extensibility** — 40+ plugins for additional transports, protocols, and integrations
+- **Observability** — OpenTelemetry tracing with Phoenix, Jaeger, Zipkin, and other OTLP backends
+
+It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+
+![ContextForge](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
 
 <!-- vscode-markdown-toc -->
@@ -76,7 +85,7 @@ It currently supports:
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
 
-![MCP Gateway Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
+![ContextForge Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
 
 For a list of upcoming features, check out the [ContextForge Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
 
@@ -421,7 +430,7 @@ docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
 
 **What you get:**
 - 🗄️ **MariaDB 10.6** - Production-ready database with 36+ tables
-- 🚀 **MCP Gateway** - Full-featured gateway with Admin UI
+- 🚀 **ContextForge** - Full-featured gateway with Admin UI
 - 📊 **Redis** - High-performance caching and session storage
 - 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
 - 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
@@ -621,7 +630,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ---
 
 <details>
-<summary><strong>🖧 Running the MCP Gateway stdio wrapper</strong></summary>
+<summary><strong>🖧 Running the ContextForge stdio wrapper</strong></summary>
 
 The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
 
@@ -825,7 +834,7 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ## Cloud Deployment
 
-MCP Gateway can be deployed to any major cloud platform:
+ContextForge can be deployed to any major cloud platform:
 
 | Platform | Guide |
 |----------|-------|

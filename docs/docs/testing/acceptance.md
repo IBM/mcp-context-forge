@@ -1,6 +1,6 @@
-# MCP Gateway Manual Acceptance Testing
+# ContextForge Manual Acceptance Testing
 
-Acceptance testing for MCP Gateway. Use these example steps to ensure a deploy MCP Gateway is working correctly in your environment.
+Acceptance testing for ContextForge. Use these example steps to ensure a deploy ContextForge is working correctly in your environment.
 
 ```mermaid
 graph TB
@@ -21,7 +21,7 @@ graph TB
 
     subgraph "MCP GATEWAY"
         GATEWAY_ENTRY[ ]
-        GW[MCP Gateway<br/>Remote: $GW_URL]
+        GW[ContextForge<br/>Remote: $GW_URL]
         GW_AUTH[Authentication<br/>Bearer Token]
         GW_FEDERATION[Federation Layer]
         GW_VIRTUAL[Virtual Servers]
@@ -85,7 +85,7 @@ graph TB
 | Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"healthy"}` | ☐ | Basic connectivity check |
 | Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"status":"ready"}` | ☐ | Returns 503 with `{"status":"not ready","error":"..."}` when not ready |
 | Test Auth Required | `curl -s $GW_URL/version` | GET without auth | `{"detail":"Not authenticated"}` | ☐ | Confirms auth is enforced |
-| Test Auth Works | `curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/version \| jq '.app.name'` | GET with auth | `"MCP_Gateway"` | ☐ | JWT authentication working |
+| Test Auth Works | `curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/version \| jq '.app.name'` | GET with auth | `"ContextForge"` | ☐ | JWT authentication working |
 
 ## Setting up MCP Servers for Testing
 
@@ -140,7 +140,7 @@ graph TB
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
-| Create Markdown Resource | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# MCP Gateway\n\nWelcome to the MCP Gateway!"}' $GW_URL/resources \| jq` | Create README | Success (201) | ☐ | Markdown content |
+| Create Markdown Resource | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to the ContextForge!"}' $GW_URL/resources \| jq` | Create README | Success (201) | ☐ | Markdown content |
 | Create JSON Resource | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"uri": "config/app", "name": "app_config", "mimeType": "application/json", "content": "{\"version\": \"1.0.0\", \"debug\": false}"}' $GW_URL/resources \| jq` | Create config | Success (201) | ☐ | JSON content |
 | List Resources | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/resources \| jq` | List all resources | Shows created resources | ☐ | Verify creation |
 | Get Resource Content | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/resources/{resource-id}/content` | Read resource | Returns actual content | ☐ | May use caching |
@@ -150,7 +150,7 @@ graph TB
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
 | Create Analysis Prompt | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "code_analysis", "description": "Analyze code quality", "template": "Analyze the following {{ language }} code:\n\n{{ code }}\n\nFocus on: {{ focus_areas }}", "arguments": [{"name": "language", "description": "Programming language", "required": true}, {"name": "code", "description": "Code to analyze", "required": true}, {"name": "focus_areas", "description": "Specific areas to focus on", "required": false}]}' $GW_URL/prompts \| jq` | Create with args | Success (201) | ☐ | Template with variables |
-| Create Simple Prompt | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "system_summary", "description": "System status summary", "template": "MCP Gateway is running and ready to process requests.", "arguments": []}' $GW_URL/prompts \| jq` | No arguments | Success (201) | ☐ | Static prompt |
+| Create Simple Prompt | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "system_summary", "description": "System status summary", "template": "ContextForge is running and ready to process requests.", "arguments": []}' $GW_URL/prompts \| jq` | No arguments | Success (201) | ☐ | Static prompt |
 | Execute Prompt | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "Alice", "company": "Acme Corp"}' $GW_URL/prompts/greeting_prompt \| jq` | Fill template | `{"messages":[{"role":"user","content":{"type":"text","text":"Hello Alice, welcome to Acme Corp!"}}]}` | ☐ | Dynamic generation |
 | List Prompts | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/prompts \| jq` | List all prompts | Shows created prompts | ☐ | Verify creation |
 
@@ -321,8 +321,8 @@ result = crew.kickoff()
 |---------|-----|----------|-----------------|--------|-------|
 | Version Info (JSON) | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/version \| jq` | Get diagnostics | Detailed system info including uptime, platform, database status | ☐ | **Key diagnostic endpoint** |
 | Version Info (HTML) | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" "$GW_URL/version?fmt=html"` | Human-readable | HTML diagnostics page | ☐ | Browser-friendly |
-| OpenAPI Schema | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/openapi.json \| jq '.info.title'` | Get API schema | `"MCP_Gateway"` | ☐ | API documentation |
-| Swagger UI | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/docs \| grep -q "MCP Gateway" && echo "✓ Swagger UI loads"` | Interactive docs | ✓ Swagger UI loads | ☐ | API explorer |
+| OpenAPI Schema | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/openapi.json \| jq '.info.title'` | Get API schema | `"ContextForge"` | ☐ | API documentation |
+| Swagger UI | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/docs \| grep -q "ContextForge" && echo "✓ Swagger UI loads"` | Interactive docs | ✓ Swagger UI loads | ☐ | API explorer |
 | ReDoc | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/redoc \| grep -q "ReDoc" && echo "✓ ReDoc loads"` | Alternative docs | ✓ ReDoc loads | ☐ | Clean API docs |
 
 ## 13. Admin Interface Testing
@@ -393,9 +393,9 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 - **AI Agents**: Ensure you have API keys configured for LLM providers when testing agents
 
 
-## MCP Gateway Test Report Template
+## ContextForge Test Report Template
 
-**Test Environment**: MCP Gateway v___
+**Test Environment**: ContextForge v___
 **Test Date**: ___________
 **Tester**: ___________
 **Gateway URL**: ___________

@@ -1,4 +1,4 @@
-Plugins: How They Work in MCP Context Forge
+Plugins: How They Work in ContextForge
 
 - Purpose: Concise, code-grounded guidance for LLMs to reason about, write, and configure plugins in this gateway.
 - Scope: In‑process (native) Python plugins and external plugins over MCP (STDIO or Streamable HTTP), unified by a single interface and common hook lifecycle.

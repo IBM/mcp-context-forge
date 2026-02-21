@@ -11,11 +11,11 @@ The OAuth state parameter serves two critical purposes:
 - **CSRF Protection**: Prevents cross-site request forgery attacks via HMAC signature
 - **Session Binding**: Links the authorization request to the callback with embedded gateway ID and user context
 
-### How State Works in MCP Gateway
+### How State Works in ContextForge
 
 ```text
 ┌─────────┐     1. GET /oauth/authorize/{gateway_id}     ┌─────────────┐
-│  User   │ ────────────────────────────────────────────>│ MCP Gateway │
+│  User   │ ────────────────────────────────────────────>│ ContextForge │
 └─────────┘                                              └──────┬──────┘
                                                                 │
                                                                 │ 2. Generate:
@@ -24,7 +24,7 @@ The OAuth state parameter serves two critical purposes:
                                                                 │    - Store in Redis/DB/Memory
                                                                 v
 ┌─────────┐     3. Redirect to provider with             ┌─────────────┐
-│  User   │ <────────────────────────────────────────────│ MCP Gateway │
+│  User   │ <────────────────────────────────────────────│ ContextForge │
 └────┬────┘        state + code_challenge                └─────────────┘
      │
      │ 4. User authenticates at OAuth provider
@@ -37,7 +37,7 @@ The OAuth state parameter serves two critical purposes:
        │ 5. Redirect to /oauth/callback?code=xxx&state=xxx
        v
 ┌─────────────┐     6. Validate state:                   ┌─────────────┐
-│ MCP Gateway │ ────────────────────────────────────────>│ State Store │
+│ ContextForge │ ────────────────────────────────────────>│ State Store │
 │             │     - Check signature (HMAC-SHA256)      │             │
 │             │     - Check expiration (5 min TTL)       │             │
 │             │     - Check not already used             │             │
@@ -528,7 +528,7 @@ grep CACHE_TYPE .env
 # Run migrations to ensure oauth_states table exists
 alembic upgrade head
 
-# Restart MCP Gateway
+# Restart ContextForge
 make dev
 ```
 
@@ -550,7 +550,7 @@ sed -i 's/CACHE_TYPE=.*/CACHE_TYPE=redis/' .env
 echo "CACHE_TYPE=redis" >> .env
 echo "REDIS_URL=redis://localhost:6379" >> .env
 
-# Restart MCP Gateway
+# Restart ContextForge
 make dev
 ```
 
@@ -641,4 +641,4 @@ curl -s http://localhost:4444/oauth/registered-clients | jq
 - [OAuth Integration](oauth.md) - Main OAuth setup guide
 - [Configuration Reference](configuration.md) - All environment variables
 - [Scaling Guide](scale.md) - Multi-worker and Redis setup
-- [Securing MCP Gateway](securing.md) - Security best practices
+- [Securing ContextForge](securing.md) - Security best practices

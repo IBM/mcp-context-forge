@@ -2,7 +2,7 @@
 
 To make it easier for users to install an MCP server, you can set up OAuth2 authentication to avoid manual API token configuration.
 However, since the MCP specification requires OAuth2 dynamic client registration, which most SSO providers do not support, some additional setup is required.
-The [HyprMCP Gateway](https://github.com/hyprmcp/mcp-gateway) is an open-source reverse proxy for MCP servers that allows you to add this capability.
+The [HyprContextForge](https://github.com/hyprmcp/mcp-gateway) is an open-source reverse proxy for MCP servers that allows you to add this capability.
 
 This tutorial will guide you through the process of setting up ContextForge with HyprMCP to enable OAuth2 support for your virtual MCP servers.
 
@@ -12,7 +12,7 @@ This tutorial will guide you through the process of setting up ContextForge with
 
 | Component       | Description                                            |
 | --------------- | ------------------------------------------------------ |
-| HyprMCP Gateway | Reverse proxy for MCP servers that adds OAuth2 support |
+| HyprContextForge | Reverse proxy for MCP servers that adds OAuth2 support |
 | Dex             | OpenID Connect server provider                         |
 | IdP             | (optional) Upstream identity provider                  |
 | ContextForge    | MCP gateway                                            |
@@ -237,9 +237,9 @@ To do so, go to "MCP Servers" and at the bottom of the page:
   Then, go to "Virtual Servers" and add a new server with the Context7 tools associated.
   Copy the UUID of this virtual MCP server and save it for the next step.
 
-### Step 6: HyprMCP Gateway
+### Step 6: HyprContextForge
 
-Add the [HyprMCP Gateway](https://github.com/hyprmcp/mcp-gateway) service to your compose file:
+Add the [HyprContextForge](https://github.com/hyprmcp/mcp-gateway) service to your compose file:
 
 ```yaml
 hyprmcp-gateway:
@@ -294,7 +294,7 @@ To test the virtual MCP server with OAuth2, you can use the MCP inspector tool:
 npx @modelcontextprotocol/inspector@latest
 ```
 
-It should open a browser window with the MCP inspector tool. On the left side, enter the URL of the HyprMCP Gateway `http://localhost:9000/context-forge/mcp` and press "Connect".
+It should open a browser window with the MCP inspector tool. On the left side, enter the URL of the HyprContextForge `http://localhost:9000/context-forge/mcp` and press "Connect".
 You should get redirected to the login page of the Dex IdP service for authentication.
 When authentication is successful, you should be redirected back to the MCP inspector tool where it should now display "connected".
 In the top navigation bar, click on "Tools", then click "List Tools".

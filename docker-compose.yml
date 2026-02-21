@@ -56,7 +56,7 @@ volumes:                # Named volumes survive podman-compose down/up
   keycloakdata:
 
 ###############################################################################
-#  CORE SERVICE - MCP Gateway
+#  CORE SERVICE - ContextForge
 ###############################################################################
 services:
 
@@ -106,11 +106,11 @@ services:
           memory: 512M
 
   # ──────────────────────────────────────────────────────────────────────
-  # MCP Gateway - the main API server for the MCP stack
+  # ContextForge - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
-    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 # Use the release ContextForge image
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
@@ -248,7 +248,7 @@ services:
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
-      - "SMTP_FROM_NAME=${SMTP_FROM_NAME:-MCP Gateway}"
+      - "SMTP_FROM_NAME=${SMTP_FROM_NAME:-ContextForge}"
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - SMTP_USE_SSL=${SMTP_USE_SSL:-false}
       - SMTP_TIMEOUT_SECONDS=${SMTP_TIMEOUT_SECONDS:-15}

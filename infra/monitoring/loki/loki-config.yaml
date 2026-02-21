@@ -1,4 +1,4 @@
-# Loki configuration for MCP Gateway stack
+# Loki configuration for ContextForge stack
 # See: https://grafana.com/docs/loki/latest/configuration/
 #
 # Usage: docker compose --profile monitoring up -d

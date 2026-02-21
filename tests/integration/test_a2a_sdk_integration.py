@@ -234,7 +234,7 @@ class TestA2AUserQueryExtraction:
     async def test_default_query_when_body_empty(self):
         """Test that default query is used when body is empty."""
         body = {}
-        default_message = "Hello from MCP Gateway Admin UI test!"
+        default_message = "Hello from ContextForge Admin UI test!"
         user_query = body.get("query", default_message) if body else default_message
         assert user_query == default_message
 
@@ -242,7 +242,7 @@ class TestA2AUserQueryExtraction:
     async def test_default_query_when_body_none(self):
         """Test that default query is used when body is None."""
         body = None
-        default_message = "Hello from MCP Gateway Admin UI test!"
+        default_message = "Hello from ContextForge Admin UI test!"
         user_query = body.get("query", default_message) if body else default_message
         assert user_query == default_message
 
@@ -528,7 +528,7 @@ class TestContextForgeA2ATestEndpoint:
         """Test that admin test endpoint sends user-provided query to agent."""
         # Mock the admin endpoint behavior
         user_query = "calc: 15*3"
-        default_message = "Hello from MCP Gateway Admin UI test!"
+        default_message = "Hello from ContextForge Admin UI test!"
 
         # Simulate request body parsing (as done in admin.py)
         body = {"query": user_query}
@@ -540,7 +540,7 @@ class TestContextForgeA2ATestEndpoint:
     @pytest.mark.asyncio
     async def test_admin_test_endpoint_uses_default_when_no_query(self):
         """Test that admin test endpoint uses default message when no query provided."""
-        default_message = "Hello from MCP Gateway Admin UI test!"
+        default_message = "Hello from ContextForge Admin UI test!"
 
         # Empty body
         body = {}

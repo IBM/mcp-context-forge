@@ -1,6 +1,6 @@
 # Admin UI
 
-MCP Gateway includes a built-in Admin UI for managing all entities in real time via a web browser.
+ContextForge includes a built-in Admin UI for managing all entities in real time via a web browser.
 
 ---
 

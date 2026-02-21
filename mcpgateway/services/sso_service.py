@@ -1204,7 +1204,7 @@ class SSOService:
         return False
 
     async def _map_groups_to_roles(self, user_email: str, user_groups: List[str], provider: SSOProviderContext) -> List[Dict[str, Any]]:
-        """Map SSO groups to Context Forge RBAC roles.
+        """Map SSO groups to ContextForge RBAC roles.
 
         Args:
             user_email: User's email address

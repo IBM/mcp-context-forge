@@ -1,9 +1,9 @@
-# PII Filter Plugin for MCP Gateway
+# PII Filter Plugin for ContextForge
 
 > Author: Mihai Criveti
 > Version: 0.1.0
 
-A plugin for detecting and masking Personally Identifiable Information (PII) in MCP Gateway prompts and responses.
+A plugin for detecting and masking Personally Identifiable Information (PII) in ContextForge prompts and responses.
 
 ## Features
 
@@ -350,4 +350,4 @@ Apache-2.0
 
 ## Support
 
-For issues or questions, please open an issue in the MCP Gateway repository.
+For issues or questions, please open an issue in the ContextForge repository.

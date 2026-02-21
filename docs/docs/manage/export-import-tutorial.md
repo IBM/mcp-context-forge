@@ -1,12 +1,12 @@
 # Export/Import Tutorial
 
-Step-by-step tutorial for using MCP Gateway's configuration export and import capabilities.
+Step-by-step tutorial for using ContextForge's configuration export and import capabilities.
 
 ---
 
 ## 🎯 Prerequisites
 
-1. **Running MCP Gateway**: Ensure your gateway is running and accessible
+1. **Running ContextForge**: Ensure your gateway is running and accessible
 2. **Authentication**: Configure either JWT token or basic auth credentials
 3. **Some Configuration**: Have at least a few tools, gateways, or servers configured
 

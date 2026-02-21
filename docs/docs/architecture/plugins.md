@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Status**: Stable
 
-The MCP Context Forge Plugin Framework provides a comprehensive, production-ready system for extending MCP Gateway functionality through pluggable middleware components. These plugins interpose calls to MCP and agentic components to apply security, AI, business logic, and monitoring capabilities to existing flows. This specification defines the architecture, interfaces, and protocols for developing, deploying, and managing plugins within the MCP ecosystem.
+The ContextForge Plugin Framework provides a comprehensive, production-ready system for extending ContextForge functionality through pluggable middleware components. These plugins interpose calls to MCP and agentic components to apply security, AI, business logic, and monitoring capabilities to existing flows. This specification defines the architecture, interfaces, and protocols for developing, deploying, and managing plugins within the MCP ecosystem.
 
 ## Table of Contents
 
@@ -90,7 +90,7 @@ flowchart TB
         Client["MCP Client Application"]
     end
 
-    subgraph GW["MCP Gateway"]
+    subgraph GW["ContextForge"]
         Gateway["Gateway Core"]
         PM["Plugin Manager"]
         Executor["Plugin Executor"]
@@ -1055,7 +1055,7 @@ graph LR
     B --> N
     B --> C
 
-    subgraph CF["Context Forge Gateway"]
+    subgraph CF["ContextForge Gateway"]
         E["Gateway"]
         N --> E
         D o--"MCP<br>&nbsp;&nbsp;<small>tools/hooks</small>&nbsp;&nbsp;"--o E
@@ -1070,7 +1070,7 @@ graph LR
 2. **Native Track**: Configure the plugin in `plugins/config.yaml` and load it in-process
 3. **Build Phase (external)**: Compile, package, and validate plugin code with dependencies
 4. **Serve Phase (external)**: Launch the MCP server for testing and integration validation
-5. **Integration Phase (external)**: Connect to Context Forge gateway via MCP protocol for end-to-end testing
+5. **Integration Phase (external)**: Connect to ContextForge gateway via MCP protocol for end-to-end testing
 
 #### Plugin Types and Templates
 
@@ -1181,7 +1181,7 @@ config:
   mirrorActors: false
 ---
 sequenceDiagram
-    participant Gateway as MCP Gateway
+    participant Gateway as ContextForge
     participant Client as External Plugin Client
     participant Server as Remote MCP Server
     participant Service as External AI Service
@@ -1615,7 +1615,7 @@ flowchart TD
     end
 
     subgraph "Host Applications"
-        MCPGateway["MCP Gateway\\n(Primary Use Case)"]
+        MCPGateway["ContextForge\\n(Primary Use Case)"]
         WebFramework["FastAPI/Flask App"]
         CLITool["CLI Application"]
         Microservice["Microservice"]

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ###############################################################################
-# MCP Gateway (lite) - OCI-compliant container build
+# ContextForge (lite) - OCI-compliant container build
 #
 # This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
 # image that automatically tracks the latest Python 3.12.x patch release
@@ -300,7 +300,7 @@ ARG ROOTFS_PATH
 # ----------------------------------------------------------------------------
 LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.title="mcp/mcpgateway" \
-      org.opencontainers.image.description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
+      org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="1.0.0-RC-1"
 

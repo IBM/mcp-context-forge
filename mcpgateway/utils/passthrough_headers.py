@@ -6,7 +6,7 @@ Authors: Mihai Criveti
 
 HTTP Header Passthrough Utilities.
 This module provides utilities for handling HTTP header passthrough functionality
-in the MCP Gateway. It enables forwarding of specific headers from incoming
+in the ContextForge. It enables forwarding of specific headers from incoming
 client requests to backing MCP servers while preventing conflicts with
 existing authentication mechanisms.
 
@@ -125,7 +125,7 @@ def validate_header_name(name: str) -> bool:
 def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[str, str], db: Session, gateway: Optional[DbGateway] = None) -> Dict[str, str]:
     """Get headers that should be passed through to the target gateway.
 
-    This function implements the core logic for HTTP header passthrough in the MCP Gateway.
+    This function implements the core logic for HTTP header passthrough in the ContextForge.
     It determines which headers from incoming client requests should be forwarded to
     backing MCP servers based on configuration settings and security policies.
 

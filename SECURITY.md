@@ -4,7 +4,7 @@
 
 **Current Version: 1.0.0-RC-1**
 
-MCP Gateway is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
+ContextForge is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
 ### Admin UI is Development-Only
 
@@ -32,7 +32,7 @@ For production deployments:
 * **Always deploy the latest version** – there are **no backported security patches or long-term support branches**
 * **Perform a security audit of the codebase yourself**, especially if deploying in regulated, multi-tenant, or production environments
 * **Integrate as part of a comprehensive solution**:
-  MCP Gateway is **not a standalone product**. It is designed to be one layer in a larger, secure system architecture. You should integrate it with complementary components such as:
+  ContextForge is **not a standalone product**. It is designed to be one layer in a larger, secure system architecture. You should integrate it with complementary components such as:
 
   * API gateways or reverse proxies (for auth, rate-limiting, and routing)
   * Secrets and configuration management systems (e.g., Vault, SOPS)
@@ -41,7 +41,7 @@ For production deployments:
   * Runtime security, anomaly detection, and SIEM platforms
   * Additional UI or orchestration layers that provide tenant or team-level access controls
 
-  Always consider your full deployment context and threat model when using MCP Gateway as part of a broader system.
+  Always consider your full deployment context and threat model when using ContextForge as part of a broader system.
 
 #### 🔐 Environment Variable Security
 
@@ -68,7 +68,7 @@ Please review https://ibm.github.io/mcp-context-forge/architecture/multitenancy/
 
 ## Multi-layered Defense Strategy
 
-The MCP Gateway project implements a comprehensive, multi-layered security approach designed to protect against vulnerabilities at every stage of the development lifecycle. Our security strategy is built on the principle of "defense in depth," and "secure by design", incorporating Static Application Security Testing (SAST), Dynamic Application Security Testing (DAST), Software Composition Analysis (SCA), Interactive Application Security Testing (IAST), fuzz testing, mutation testing, chaos engineering, mandatory code reviews and continuous monitoring to ensure the highest security standards.
+The ContextForge project implements a comprehensive, multi-layered security approach designed to protect against vulnerabilities at every stage of the development lifecycle. Our security strategy is built on the principle of "defense in depth," and "secure by design", incorporating Static Application Security Testing (SAST), Dynamic Application Security Testing (DAST), Software Composition Analysis (SCA), Interactive Application Security Testing (IAST), fuzz testing, mutation testing, chaos engineering, mandatory code reviews and continuous monitoring to ensure the highest security standards.
 
 ### Security Philosophy
 
@@ -85,7 +85,7 @@ Here's an expanded section for that part:
 - **Penetration Testing**: Regular security assessments
 - **Security Architecture Review**: All major design decisions undergo security architecture review to ensure security considerations are embedded from the earliest stages.
 
-This human-centered approach ensures that security is not just a technical implementation detail, but a fundamental aspect of how we design, build, and maintain the MCP Gateway service.
+This human-centered approach ensures that security is not just a technical implementation detail, but a fundamental aspect of how we design, build, and maintain the ContextForge service.
 
 ### Comprehensive Security Pipeline
 
@@ -174,7 +174,7 @@ This approach ensures that security is integrated into daily development workflo
 
 ### Continuous Improvement
 
-Our security posture is continuously evolving. We regularly update our toolchain, review new security practices, and incorporate feedback from the security community. The comprehensive nature of our pipeline means that security vulnerabilities are caught early and addressed promptly, maintaining the integrity of the MCP Gateway service.
+Our security posture is continuously evolving. We regularly update our toolchain, review new security practices, and incorporate feedback from the security community. The comprehensive nature of our pipeline means that security vulnerabilities are caught early and addressed promptly, maintaining the integrity of the ContextForge service.
 
 ---
 
@@ -182,7 +182,7 @@ Our security posture is continuously evolving. We regularly update our toolchain
 
 ### Input Validation Framework
 
-As of version 0.3.1, MCP Gateway implements comprehensive input validation across all API endpoints using Pydantic data models with strict validation rules:
+As of version 0.3.1, ContextForge implements comprehensive input validation across all API endpoints using Pydantic data models with strict validation rules:
 
 - **Character restrictions** for names and identifiers to prevent injection attacks
 - **URL scheme validation** blocking potentially dangerous protocols (`javascript:`, `data:`, `vbscript:`)
@@ -194,7 +194,7 @@ These validation rules help prevent XSS injection when data from untrusted MCP s
 
 ### Secure by Default Configuration
 
-Starting with v0.3.1, MCP Gateway follows the principle of "secure by default":
+Starting with v0.3.1, ContextForge follows the principle of "secure by default":
 
 - **Admin UI and API are disabled by default** - must be explicitly enabled via environment variables
 
@@ -219,7 +219,7 @@ Starting with 0.1.0:
 
 ### Gateway as One Layer
 
-The MCP Gateway provides important security controls but is designed to be **one component in a comprehensive defense-in-depth strategy**:
+The ContextForge provides important security controls but is designed to be **one component in a comprehensive defense-in-depth strategy**:
 
 1. **Upstream validation**: All MCP servers should be validated and trusted before connection
 2. **Gateway validation**: Input/output validation and sanitization at the gateway level
@@ -240,11 +240,11 @@ Before connecting any MCP server to the gateway:
 
 ### Downstream Application Responsibilities
 
-Applications consuming data from MCP Gateway should:
+Applications consuming data from ContextForge should:
 
 - **Never trust data implicitly** - validate all inputs
 - **Implement context-appropriate sanitization** for their UI framework
-- **Use Content Security Policy (CSP)** headers (automatically provided by MCP Gateway)
+- **Use Content Security Policy (CSP)** headers (automatically provided by ContextForge)
 - **Escape data appropriately** for the output context (HTML, JavaScript, SQL, etc.)
 - **Implement their own authentication** and authorization
 - **Monitor for security anomalies** in rendered content
@@ -253,7 +253,7 @@ Applications consuming data from MCP Gateway should:
 
 ## 📋 Security Checklist for Deployments
 
-When deploying MCP Gateway in production:
+When deploying ContextForge in production:
 
 - [ ] Disable features you are not using in production (`FEATURES_ROOTS_ENABLED=false`, `FEATURES_PROMPTS_ENABLED=false`, `FEATURES_RESOURCES_ENABLED=false`)
 - [ ] Disable Admin UI and API in production (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=false`)
@@ -512,7 +512,7 @@ flowchart TD
 
 ## 📦 Supported Versions and Security Updates
 
-**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project contributors.
+**⚠️ Important**: ContextForge is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project contributors.
 
 ### Version Support Policy
 
@@ -527,7 +527,7 @@ flowchart TD
 
 ### Security Update Process
 
-All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release), subject to maintainer availability. However, since MCP Gateway is provided as-is, you are strongly encouraged to perform your own vulnerability scanning and apply security patches to your deployments, especially if you are customizing or extending base images or dependencies. Relying solely on upstream updates may not be sufficient for your production security posture.
+All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release), subject to maintainer availability. However, since ContextForge is provided as-is, you are strongly encouraged to perform your own vulnerability scanning and apply security patches to your deployments, especially if you are customizing or extending base images or dependencies. Relying solely on upstream updates may not be sufficient for your production security posture.
 
 ### Community Support
 
@@ -538,7 +538,7 @@ All Container Images and Python dependencies are updated with every release (maj
 
 ### 🚨 Security Patching Policy
 
-> **⚠️ Disclaimer**: All patching and response timelines below are provided on a **best-effort basis** with **no service-level agreements (SLAs), guarantees, or commercial support**. MCP Gateway is an open-source project maintained by the community without official backing from IBM or its affiliates.
+> **⚠️ Disclaimer**: All patching and response timelines below are provided on a **best-effort basis** with **no service-level agreements (SLAs), guarantees, or commercial support**. ContextForge is an open-source project maintained by the community without official backing from IBM or its affiliates.
 
 Our security patching strategy prioritizes meaningful updates while maintaining overall system stability:
 
@@ -558,7 +558,7 @@ All security patches undergo best-effort verification:
 - Container security scanning for image-based updates
 - Integration testing with dependent services
 
-This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of the MCP Gateway service.
+This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of the ContextForge service.
 
 ---
 

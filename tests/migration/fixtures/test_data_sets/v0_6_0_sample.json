@@ -1,7 +1,7 @@
 {
   "metadata": {
     "version": "0.6.0",
-    "description": "Sample test data for MCP Gateway v0.6.0 with enhanced features",
+    "description": "Sample test data for ContextForge v0.6.0 with enhanced features",
     "created_by": "migration_test_suite",
     "total_records": 15
   },
@@ -253,7 +253,7 @@
         "name": "welcome_prompt_v060",
         "description": "Enhanced welcome prompt with personalization",
         "display_name": "Welcome Prompt v0.6.0",
-        "template": "Welcome to MCP Gateway v0.6.0, {{name}}! 🚀\n\nI'm here to help you with {{task}}. With our enhanced features, I can now:\n- {{feature_1}}\n- {{feature_2}}\n- {{feature_3}}\n\nHow would you like to get started?",
+        "template": "Welcome to ContextForge v0.6.0, {{name}}! 🚀\n\nI'm here to help you with {{task}}. With our enhanced features, I can now:\n- {{feature_1}}\n- {{feature_2}}\n- {{feature_3}}\n\nHow would you like to get started?",
         "annotations": {
           "category": "greeting",
           "variables": "5",

@@ -4,9 +4,9 @@ Location: ./tests/unit/mcpgateway/test_metrics.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-MCP Gateway Metrics Tests.
+ContextForge Metrics Tests.
 
-This module contains unit tests for the metrics functionality of the MCP Gateway.
+This module contains unit tests for the metrics functionality of the ContextForge.
 It tests the Prometheus metrics endpoint and validates that metrics are properly
 exposed, formatted, and behave according to configuration.
 

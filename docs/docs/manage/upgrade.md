@@ -1,12 +1,12 @@
-# Upgrading MCP Gateway and Managing Database Migrations
+# Upgrading ContextForge and Managing Database Migrations
 
-This guide provides step-by-step instructions for upgrading the MCP Gateway and handling associated database migrations to ensure a smooth transition with minimal downtime.
+This guide provides step-by-step instructions for upgrading the ContextForge and handling associated database migrations to ensure a smooth transition with minimal downtime.
 
 ---
 
 ## 🔄 Upgrade Overview
 
-MCP Gateway is under active development, and while we strive for backward compatibility, it's essential to review version changes carefully when upgrading. Due to rapid iterations, documentation updates may sometimes lag. If you encounter issues, consult our [GitHub repository](https://github.com/ibm/mcp-context-forge) or reach out via GitHub Issues.
+ContextForge is under active development, and while we strive for backward compatibility, it's essential to review version changes carefully when upgrading. Due to rapid iterations, documentation updates may sometimes lag. If you encounter issues, consult our [GitHub repository](https://github.com/ibm/mcp-context-forge) or reach out via GitHub Issues.
 
 ---
 
@@ -26,7 +26,7 @@ Check the [release notes](https://github.com/ibm/mcp-context-forge/releases) for
 - **Breaking Changes**: Identify any changes that might affect your current setup.
 - **Migration Scripts**: Look for any provided scripts or instructions for database migrations.
 
-### 3. Update MCP Gateway
+### 3. Update ContextForge
 
 Depending on your deployment method: podman, docker, kubernetes, etc.
 
@@ -41,7 +41,7 @@ If the new version includes database schema changes:
 
 Post-upgrade, ensure:
 
-* **Service Availability**: MCP Gateway is running and accessible.
+* **Service Availability**: ContextForge is running and accessible.
 * **Functionality**: All features and integrations are working as expected.
 * **Logs**: Check logs for any errors or warnings.
 
@@ -57,7 +57,7 @@ Post-upgrade, ensure:
 
 ## 📚 Additional Resources
 
-* [MCP Gateway GitHub Repository](https://github.com/ibm/mcp-context-forge)
-* [MCP Gateway Documentation](../index.md)
+* [ContextForge GitHub Repository](https://github.com/ibm/mcp-context-forge)
+* [ContextForge Documentation](../index.md)
 
 ---

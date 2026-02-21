@@ -2,11 +2,11 @@
 """Location: ./mcpgateway/services/grpc_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: MCP Gateway Contributors
+Authors: ContextForge Contributors
 
 gRPC Service Management
 
-This module implements gRPC service management for the MCP Gateway.
+This module implements gRPC service management for the ContextForge.
 It handles gRPC service registration, reflection-based discovery, listing,
 retrieval, updates, activation toggling, and deletion.
 """

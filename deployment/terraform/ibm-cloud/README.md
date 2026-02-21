@@ -1,7 +1,7 @@
-# MCP Gateway - Terraform IaaS + PaaS Layer
+# ContextForge - Terraform IaaS + PaaS Layer
 
 Deploys an IKS cluster plus managed PostgreSQL & Redis on IBM Cloud,
-then rolls out the MCP Gateway container via Helm.
+then rolls out the ContextForge container via Helm.
 
 ## Prerequisites
 

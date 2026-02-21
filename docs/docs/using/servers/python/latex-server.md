@@ -45,7 +45,7 @@ make install
 # Stdio mode (for Claude Desktop, IDEs)
 make dev
 
-# HTTP mode (via MCP Gateway)
+# HTTP mode (via ContextForge)
 make serve-http
 ```
 
@@ -233,13 +233,13 @@ Create documents from built-in templates.
 
 ## Integration
 
-### With MCP Gateway
+### With ContextForge
 
 ```bash
 # Start the LaTeX server via HTTP
 make serve-http
 
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:8000/gateways \
   -H "Content-Type: application/json" \
   -d '{

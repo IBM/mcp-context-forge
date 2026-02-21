@@ -1,10 +1,10 @@
 # Password Management & Recovery
 
-This guide covers all supported password reset and account recovery paths for MCP Gateway administrators.
+This guide covers all supported password reset and account recovery paths for ContextForge administrators.
 
 ## Overview
 
-MCP Gateway supports:
+ContextForge supports:
 
 - Self-service password reset (`Forgot Password` flow)
 - Admin-initiated password resets and account unlocks

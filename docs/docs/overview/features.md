@@ -1,7 +1,6 @@
 # ✨ Features Overview
 
-MCP Gateway is a **gateway + registry + proxy** purpose-built for the **Model Context Protocol (MCP)**. It unifies REST, MCP, and stdio worlds while
-adding auth, caching, federation, and an HTMX-powered Admin UI.
+**ContextForge** is an AI gateway that unifies tools, agents, models, and APIs — providing MCP federation, LLM proxy, agent routing, rate limiting, auth, caching, and an HTMX-powered Admin UI.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`

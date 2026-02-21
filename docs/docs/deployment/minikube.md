@@ -27,7 +27,7 @@ Minikube provides a self-contained environment, enabling you to replicate produc
           └──────────┬───────────┬──────┘
                      │/          │/
       ┌──────────────▼─────┐ ┌────▼───────────┐
-      │  MCP Context Forge │ │ PgAdmin (opt.) │
+      │  ContextForge │ │ PgAdmin (opt.) │
       └─────────┬──────────┘ └────┬───────────┘
                 │                 │
    ┌────────────▼──────┐ ┌────────▼────────────┐
@@ -172,7 +172,7 @@ kubectl apply -f deployment/k8s/postgres-service.yaml
 kubectl apply -f deployment/k8s/redis-deployment.yaml
 kubectl apply -f deployment/k8s/redis-service.yaml
 
-# MCP Gateway
+# ContextForge
 kubectl apply -f deployment/k8s/mcp-context-forge-deployment.yaml
 kubectl apply -f deployment/k8s/mcp-context-forge-service.yaml
 kubectl apply -f deployment/k8s/mcp-context-forge-ingress.yaml
@@ -326,4 +326,4 @@ curl http://gateway.local/health
 
 ---
 
-Minikube gives you the fastest, vendor-neutral sandbox for experimenting with MCP Gateway-and everything above doubles as CI instructions for self-hosted GitHub runners or ephemeral integration tests.
+Minikube gives you the fastest, vendor-neutral sandbox for experimenting with ContextForge-and everything above doubles as CI instructions for self-hosted GitHub runners or ephemeral integration tests.

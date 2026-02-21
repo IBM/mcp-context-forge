@@ -1,6 +1,6 @@
 # Available Plugins
 
-MCP Context Forge provides a comprehensive collection of production-ready plugins for security, performance, content transformation, and compliance. This page catalogs all available native and external plugins.
+ContextForge provides a comprehensive collection of production-ready plugins for security, performance, content transformation, and compliance. This page catalogs all available native and external plugins.
 
 ## Plugin Categories
 

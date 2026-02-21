@@ -10,7 +10,7 @@ This document provides step-by-step instructions for testing the `outputSchema` 
    make install
    ```
 
-2. **Start the MCP Gateway** (in separate terminal):
+2. **Start the ContextForge** (in separate terminal):
    ```bash
    cd /home/cmihai/github/mcp-context-forge
    make dev
@@ -31,7 +31,7 @@ python3 -m mcpgateway.translate \
   --expose-sse
 ```
 
-### 2. Register with MCP Gateway
+### 2. Register with ContextForge
 
 ```bash
 curl -X POST http://localhost:4444/gateways \

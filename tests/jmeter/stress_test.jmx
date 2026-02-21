@@ -2,7 +2,7 @@
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Stress Test (Ramp to 10,000 RPS)" enabled="true">
-      <stringProp name="TestPlan.comments">MCP Gateway stress test. Progressive ramp from 1,000 to 10,000+ RPS to find system breaking point.</stringProp>
+      <stringProp name="TestPlan.comments">ContextForge stress test. Progressive ramp from 1,000 to 10,000+ RPS to find system breaking point.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>

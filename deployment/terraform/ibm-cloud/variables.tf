@@ -28,13 +28,13 @@ variable "redis_version" {
 }
 
 variable "gateway_image" {
-  description = "OCI image reference for the MCP Gateway container"
+  description = "OCI image reference for the ContextForge container"
   type        = string
   default     = "icr.io/your-namespace/mcpgateway:latest"
 }
 
 variable "gateway_replicas" {
-  description = "Number of MCP Gateway pods"
+  description = "Number of ContextForge pods"
   type        = number
   default     = 2
 }

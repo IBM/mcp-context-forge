@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Tests for the MCP Gateway WebSocket transport implementation.
+Tests for the ContextForge WebSocket transport implementation.
 """
 
 # Standard

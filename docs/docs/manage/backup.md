@@ -1,6 +1,6 @@
 # Backups
 
-MCP Gateway stores its runtime state in a SQL database and optionally in Redis (for sessions and caching). This guide explains how to persist and restore that state safely.
+ContextForge stores its runtime state in a SQL database and optionally in Redis (for sessions and caching). This guide explains how to persist and restore that state safely.
 
 ---
 
@@ -73,7 +73,7 @@ You should see previously registered tools and templates.
 
 ## 🧬 Understanding the Database Schema
 
-MCP Gateway uses a relational database (e.g. SQLite or PostgreSQL) to persist all registered entities and track tool/server usage. When session storage is configured as `CACHE_TYPE=database`, it also persists active user sessions and streamed message content.
+ContextForge uses a relational database (e.g. SQLite or PostgreSQL) to persist all registered entities and track tool/server usage. When session storage is configured as `CACHE_TYPE=database`, it also persists active user sessions and streamed message content.
 
 ---
 

@@ -45,9 +45,9 @@ docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.8.0 -transport=http
 docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.8.0 -transport=dual
 ```
 
-### Using MCP Gateway's Translate Module
+### Using ContextForge's Translate Module
 
-The MCP Gateway's `translate` module can expose the stdio server via HTTP/SSE:
+The ContextForge's `translate` module can expose the stdio server via HTTP/SSE:
 
 ```bash
 # Expose fast-time-server via SSE on port 8003
@@ -1152,9 +1152,9 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-## MCP Gateway Integration
+## ContextForge Integration
 
-The fast-time-server integrates seamlessly with MCP Gateway in multiple ways:
+The fast-time-server integrates seamlessly with ContextForge in multiple ways:
 
 ### Method 1: Direct Docker Integration
 
@@ -1166,7 +1166,7 @@ docker run --rm -d \
   ghcr.io/ibm/fast-time-server:0.8.0 \
   -transport=dual
 
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
   -d '{
@@ -1185,7 +1185,7 @@ python3 -m mcpgateway.translate \
   --expose-sse \
   --port 8003
 
-# Register the translated endpoint with MCP Gateway
+# Register the translated endpoint with ContextForge
 curl -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
   -d '{
@@ -1500,7 +1500,7 @@ docker run -p HOST_PORT:CONTAINER_PORT ...
 docker run --user $(id -u):$(id -g) ...
 ```
 
-#### MCP Gateway translate issues
+#### ContextForge translate issues
 ```bash
 # Translate module not finding server
 # Ensure Docker is running and image is pulled:
@@ -1619,10 +1619,10 @@ curl -s -X POST http://localhost:8080/api/v1/prompts/schedule_meeting/execute \
   }' | jq -r '.text'
 ```
 
-### Integration with MCP Gateway
+### Integration with ContextForge
 ```bash
 #!/bin/bash
-# Complete MCP Gateway integration example
+# Complete ContextForge integration example
 
 # 1. Start fast-time-server with translate
 echo "Starting fast-time-server with translate module..."
@@ -1633,8 +1633,8 @@ python3 -m mcpgateway.translate \
 TRANSLATE_PID=$!
 sleep 3
 
-# 2. Register with MCP Gateway
-echo "Registering with MCP Gateway..."
+# 2. Register with ContextForge
+echo "Registering with ContextForge..."
 RESPONSE=$(curl -s -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
   -d '{
@@ -1658,7 +1658,7 @@ curl -s -X POST http://localhost:4444/servers \
     \"description\": \"Virtual server with time and timezone capabilities\"
   }"
 
-echo "Setup complete! Fast-time-server is now available via MCP Gateway."
+echo "Setup complete! Fast-time-server is now available via ContextForge."
 echo "Press Ctrl+C to stop..."
 wait $TRANSLATE_PID
 ```
@@ -1702,7 +1702,7 @@ print(f"Converted time: {result['converted_time']}")
 ## Related Resources
 
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
-- [MCP Gateway Documentation](../../index.md)
+- [ContextForge Documentation](../../index.md)
 - [Go MCP SDK](https://github.com/mark3labs/mcp-go)
 - [Time Zone Database](https://www.iana.org/time-zones)
 - [Fast Time Server GitHub](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/go/fast-time-server)
@@ -1713,5 +1713,5 @@ print(f"Converted time: {result['converted_time']}")
 For issues, questions, or contributions:
 
 - Open an issue on [GitHub](https://github.com/IBM/mcp-context-forge/issues)
-- Check the [MCP Gateway discussions](https://github.com/IBM/mcp-context-forge/discussions)
+- Check the [ContextForge discussions](https://github.com/IBM/mcp-context-forge/discussions)
 - Review the [source code](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/go/fast-time-server)

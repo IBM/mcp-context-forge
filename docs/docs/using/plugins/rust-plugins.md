@@ -5,7 +5,7 @@
 
 ## Overview
 
-The MCP Context Forge supports high-performance Rust implementations of plugins through PyO3 bindings. Rust plugins provide significant performance benefits for computationally expensive operations like PII detection, pattern matching, and data transformation, while maintaining a transparent Python interface.
+The ContextForge supports high-performance Rust implementations of plugins through PyO3 bindings. Rust plugins provide significant performance benefits for computationally expensive operations like PII detection, pattern matching, and data transformation, while maintaining a transparent Python interface.
 
 ### Key Benefits
 

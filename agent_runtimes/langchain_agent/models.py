@@ -83,8 +83,8 @@ class ToolListResponse(BaseModel):
 
 # Agent Configuration Models
 class AgentConfig(BaseModel):
-    # MCP Gateway Configuration
-    mcp_gateway_url: str = Field(..., description="MCP Gateway URL")
+    # ContextForge Configuration
+    mcp_gateway_url: str = Field(..., description="ContextForge URL")
     gateway_bearer_token: str | None = Field(None, description="Gateway authentication token")
     tools_allowlist: list[str] | None = Field(None, description="List of allowed tool IDs")
 

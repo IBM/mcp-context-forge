@@ -1,8 +1,8 @@
-# 🚀 Deploying the MCP Gateway Stack with Helm
+# 🚀 Deploying the ContextForge Stack with Helm
 
-This guide walks you through installing, upgrading, and removing the full **MCP Gateway Stack** using Helm. The stack includes:
+This guide walks you through installing, upgrading, and removing the full **ContextForge Stack** using Helm. The stack includes:
 
-* 🧠 MCP Context Forge (the gateway)
+* 🧠 ContextForge (the gateway)
 * 🗄 PostgreSQL database
 * ⚡ Redis cache
 * 🧑💻 PgAdmin UI (optional)
@@ -24,7 +24,7 @@ flowchart TD
     end
 
     subgraph Application Layer
-        mcp[MCP Context Forge]
+        mcp[ContextForge]
         pgadmin[PgAdmin UI<br/>optional]
         rediscommander[Redis Commander UI<br/>optional]
     end
@@ -295,7 +295,7 @@ flowchart TD
 
 ???+ info "🚀 Install or Upgrade the Stack"
 
-    Install the MCP Gateway Stack into your Kubernetes cluster using Helm. This will deploy all components defined in your `my-values.yaml`.
+    Install the ContextForge Stack into your Kubernetes cluster using Helm. This will deploy all components defined in your `my-values.yaml`.
 
     === "Install for the first time"
 
@@ -311,7 +311,7 @@ flowchart TD
 
     === "What does this deploy?"
 
-        - MCP Context Forge (API Gateway)
+        - ContextForge (API Gateway)
         - PostgreSQL with optional persistence
         - Redis cache
         - (Optional) PgAdmin & Redis Commander
@@ -568,7 +568,7 @@ flowchart TD
 
     | Key                                           | Default     | Description                                      |
     |----------------------------------------------|-------------|--------------------------------------------------|
-    | `mcpContextForge.image.tag`                  | `latest`    | Image version for MCP Context Forge              |
+    | `mcpContextForge.image.tag`                  | `latest`    | Image version for ContextForge              |
     | `mcpContextForge.ingress.enabled`            | `true`      | Enables ingress resource creation                |
     | `mcpContextForge.ingress.host`               | `gateway.local` | Hostname used in Ingress (change in production) |
     | `mcpContextForge.service.type`               | `ClusterIP` | Use `LoadBalancer` if running in cloud           |
@@ -613,4 +613,4 @@ See full annotations in `values.yaml`.
 
 ---
 
-✅ You now have a production-ready Helm workflow for MCP Context Forge. It's CI-friendly, customizable, and tested across Kubernetes distributions.
+✅ You now have a production-ready Helm workflow for ContextForge. It's CI-friendly, customizable, and tested across Kubernetes distributions.

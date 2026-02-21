@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Tag Service Implementation.
-This module implements tag management and retrieval for all entities in the MCP Gateway.
+This module implements tag management and retrieval for all entities in the ContextForge.
 It handles:
 - Fetching all unique tags across entities
 - Filtering tags by entity type
@@ -54,7 +54,7 @@ def _get_admin_stats_cache():
 class TagService:
     """Service for managing and retrieving tags across all entities.
 
-    This service provides comprehensive tag management functionality across all MCP Gateway
+    This service provides comprehensive tag management functionality across all ContextForge
     entity types (tools, resources, prompts, servers, gateways). It handles tag discovery,
     entity lookup by tags, and statistics aggregation.
 

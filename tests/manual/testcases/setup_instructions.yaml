@@ -1,9 +1,9 @@
-# MCP Gateway v0.9.0 - Setup Instructions
+# ContextForge v0.9.0 - Setup Instructions
 # Complete environment setup guide for manual testers
 # Must be completed before any other testing
 
 worksheet_name: "Setup Instructions"
-description: "Complete environment setup and validation for MCP Gateway testing"
+description: "Complete environment setup and validation for ContextForge testing"
 priority: "CRITICAL"
 estimated_time: "30-60 minutes"
 prerequisite: true
@@ -130,7 +130,7 @@ tests:
     critical: true
 
   - step: "13"
-    action: "Start MCP Gateway"
+    action: "Start ContextForge"
     command: "make dev"
     expected: "'Uvicorn running on http://0.0.0.0:4444' message"
     troubleshooting: "Keep this terminal window open during testing"

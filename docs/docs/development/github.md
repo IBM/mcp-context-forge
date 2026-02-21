@@ -227,7 +227,7 @@ Expected output:
 
 If you see anything other than `{"status":"healthy"}`, investigate before approving the PR.
 
-Quickly confirm that the MCP Gateway is configured with the correct database, and it is reachable:
+Quickly confirm that the ContextForge is configured with the correct database, and it is reachable:
 
 ```bash
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/version | jq

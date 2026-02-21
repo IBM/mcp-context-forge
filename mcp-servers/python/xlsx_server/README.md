@@ -41,7 +41,7 @@ make install
 make dev
 ```
 
-### HTTP Mode (via MCP Gateway)
+### HTTP Mode (via ContextForge)
 
 ```bash
 make serve-http

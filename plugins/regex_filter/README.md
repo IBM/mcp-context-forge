@@ -1,9 +1,9 @@
-# Search Replace Plugin for MCP Gateway
+# Search Replace Plugin for ContextForge
 
 > Author: Teryl Taylor
 > Version: 0.1.0
 
-A native plugin for MCP Gateway that performs regex-based search and replace operations on prompt arguments and responses.
+A native plugin for ContextForge that performs regex-based search and replace operations on prompt arguments and responses.
 
 ## Features
 
@@ -15,7 +15,7 @@ A native plugin for MCP Gateway that performs regex-based search and replace ope
 
 ## Installation
 
-The plugin is included with MCP Gateway and requires no additional installation. Simply enable it in your configuration.
+The plugin is included with ContextForge and requires no additional installation. Simply enable it in your configuration.
 
 ## Configuration
 
@@ -241,4 +241,4 @@ Apache-2.0
 
 ## Support
 
-For issues or questions, please open an issue in the MCP Gateway repository.
+For issues or questions, please open an issue in the ContextForge repository.

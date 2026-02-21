@@ -2,7 +2,7 @@
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-gunicorn.sh
 #  Author : Mihai Criveti
-#  Purpose: Launch the MCP Gateway API under Gunicorn with optional TLS support
+#  Purpose: Launch the ContextForge API under Gunicorn with optional TLS support
 #
 #  Description:
 #    This script provides a robust way to launch a production API server using
@@ -82,12 +82,12 @@ check_existing_process() {
 
         # Check if the process is actually running
         if kill -0 "${pid}" 2>/dev/null; then
-            echo "⚠️  WARNING: Another instance of MCP Gateway appears to be running (PID: ${pid})"
+            echo "⚠️  WARNING: Another instance of ContextForge appears to be running (PID: ${pid})"
 
             # Check if it's actually gunicorn
             if ps -p "${pid}" -o comm= | grep -q gunicorn; then
                 if [[ "${FORCE_START}" != "true" ]]; then
-                    echo "❌  FATAL: MCP Gateway is already running!"
+                    echo "❌  FATAL: ContextForge is already running!"
                     echo "   To stop it: kill ${pid}"
                     echo "   To force start anyway: FORCE_START=true $0"
                     exit 1
@@ -212,7 +212,7 @@ fi
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 5: Display Application Banner
-# Show a fancy ASCII art banner for the MCP Gateway
+# Show a fancy ASCII art banner for the ContextForge
 #────────────────────────────────────────────────────────────────────────────────
 cat <<'EOF'
 ███╗   ███╗ ██████╗██████╗      ██████╗  █████╗ ████████╗███████╗██╗    ██╗ █████╗ ██╗   ██╗

@@ -1,6 +1,6 @@
-# MCP Gateway API Manual Testing Guide
+# ContextForge API Manual Testing Guide
 
-Complete CLI testing examples for MCP Gateway API endpoints.
+Complete CLI testing examples for ContextForge API endpoints.
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ go install github.com/rakyll/hey@latest
 #!/bin/bash
 # Save this as test_gateway.sh and run: bash test_gateway.sh
 
-echo "=== MCP Gateway API Tests ==="
+echo "=== ContextForge API Tests ==="
 
 # 1. Health Check (no auth required)
 echo -e "\n1. Health Check:"
@@ -237,7 +237,7 @@ Create a comprehensive benchmark script:
 #!/bin/bash
 # Save as benchmark.sh
 
-echo "=== MCP Gateway Performance Benchmark ==="
+echo "=== ContextForge Performance Benchmark ==="
 echo "Starting at $(date)"
 
 # Get token
@@ -333,7 +333,7 @@ Create a continuous test script that runs every 5 seconds:
 
 while true; do
   clear
-  echo "=== MCP Gateway Health Check ==="
+  echo "=== ContextForge Health Check ==="
   echo "Timestamp: $(date)"
 
   # Get token

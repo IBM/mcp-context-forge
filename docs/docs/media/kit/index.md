@@ -1,6 +1,6 @@
 # 🧰 Media Kit
 
-Everything you need to write about **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)**-assets, ready-to-use copy, badges, images, and quick-start commands.
+Everything you need to write about **[ContextForge](https://github.com/IBM/mcp-context-forge)**-assets, ready-to-use copy, badges, images, and quick-start commands.
 
 ---
 
@@ -25,11 +25,11 @@ It's widely supported by GitHub Copilot, Microsoft Copilot, AWS Bedrock, Google 
 
 ---
 
-## 💡 Why [ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)?
+## 💡 Why [ContextForge](https://github.com/IBM/mcp-context-forge)?
 
 > **Problem:** Most teams build one-off adapters for each tool or model, leading to maintenance burden and slow development.
 
-[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge) solves this by proxying all MCP and REST tool servers through a **single HTTPS + JSON-RPC endpoint**, with discovery, security, and observability built in.
+[ContextForge](https://github.com/IBM/mcp-context-forge) solves this by proxying all MCP and REST tool servers through a **single HTTPS + JSON-RPC endpoint**, with discovery, security, and observability built in.
 
 It lets you create Virtual Servers - remixing tools/prompts/resources from multiple servers, introduce strong Auth - and change protocol versions on the fly. It lets you easily create new MCP Servers without having to write any code - by proxing existing REST services.
 
@@ -50,13 +50,13 @@ And is readily available as open source, published a container image and as a Py
 ## 📑 Sample Announcements
 
 ???+ "📣 Non-Technical Post"
-    ### Meet ContextForge MCP Gateway: Simplify AI Tool Connections
+    ### Meet ContextForge: Simplify AI Tool Connections
 
     Building AI agents should be easy-but each tool speaks a different dialect.
 
-    **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)** is a universal hub: one secure endpoint that discovers your tools and works seamlessly with Copilot, CrewAI, LangChain, and more.
+    **[ContextForge](https://github.com/IBM/mcp-context-forge)** is a universal hub: one secure endpoint that discovers your tools and works seamlessly with Copilot, CrewAI, LangChain, and more.
 
-    > "What should be simple often becomes a debugging nightmare. The ContextForge MCP Gateway solves that." - Mihai Criveti
+    > "What should be simple often becomes a debugging nightmare. The ContextForge solves that." - Mihai Criveti
 
     **Try it in 60 seconds:**
     ```bash
@@ -72,9 +72,9 @@ And is readily available as open source, published a container image and as a Py
     Please ⭐ the project on GitHub if you find this useful, it helps us grow!
 
 ???+ "🛠️ Technical Post"
-    ### Introducing ContextForge MCP Gateway: The Missing Proxy for AI Agents and Tools
+    ### Introducing ContextForge: The Missing Proxy for AI Agents and Tools
 
-    **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)** normalizes STDIO, SSE, REST, and HTTP MCP servers into one HTTPS + JSON-RPC interface with full MCP support.
+    **[ContextForge](https://github.com/IBM/mcp-context-forge)** normalizes STDIO, SSE, REST, and HTTP MCP servers into one HTTPS + JSON-RPC interface with full MCP support.
 
     It includes schema-validated retries, JWT auth, and a built-in catalog UI.
 
@@ -110,14 +110,14 @@ And is readily available as open source, published a container image and as a Py
 
 ---
 
-???+ "🛠️ Connect Cline VS Code Extension to ContextForge MCP Gateway"
+???+ "🛠️ Connect Cline VS Code Extension to ContextForge"
 
-    > A great idea is to create posts, videos or articles on using specific clients or with MCP Gateway.
+    > A great idea is to create posts, videos or articles on using specific clients or with ContextForge.
     Provide details on how to run and register a number of useful MCP Servers, adding them to the gateway, then using specific clients to connect. For example, Visual Studio Cline, GitHub Copilot, Langchain, etc. Example:
 
-    ### Connect your Cline extension to MCP Gateway
+    ### Connect your Cline extension to ContextForge
 
-    **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)** offers a unified HTTPS + JSON-RPC endpoint for AI tools, making integration seamless-including with **Cline**, a VS Code extension that supports MCP.
+    **[ContextForge](https://github.com/IBM/mcp-context-forge)** offers a unified HTTPS + JSON-RPC endpoint for AI tools, making integration seamless-including with **Cline**, a VS Code extension that supports MCP.
 
     **Start the Gateway (Docker):**
     ```bash
@@ -154,7 +154,7 @@ And is readily available as open source, published a container image and as a Py
 
     #### 🔍 What is Cline?
 
-    [Cline](https://cline.bot/) is a powerful AI coding assistant for VS Code. It supports MCP, allowing it to discover and use tools provided through MCP Gateway.
+    [Cline](https://cline.bot/) is a powerful AI coding assistant for VS Code. It supports MCP, allowing it to discover and use tools provided through ContextForge.
 
     ---
 
@@ -164,7 +164,7 @@ And is readily available as open source, published a container image and as a Py
 
     ```json
     {
-      "name": "MCP Gateway",
+      "name": "ContextForge",
       "url": "http://localhost:4444",
       "auth": {
         "type": "bearer",
@@ -189,7 +189,7 @@ And is readily available as open source, published a container image and as a Py
       ```
     * Display results and JSON output directly within the VS Code interface
 
-    Try it yourself-and don't forget to ⭐ the project at [ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)!
+    Try it yourself-and don't forget to ⭐ the project at [ContextForge](https://github.com/IBM/mcp-context-forge)!
 
 
 ## 🖼️ Logo & Images
@@ -207,12 +207,12 @@ And is readily available as open source, published a container image and as a Py
 **Tweet / X**
 
 !!! example "Twitter / X"
-    🚀 ContextForge MCP Gateway is now open source! One endpoint to unify & secure AI-tool connections (STDIO, SSE, REST). Give it a spin and drop a ⭐ → https://github.com/IBM/mcp-context-forge #mcp #ai #tools
+    🚀 ContextForge is now open source! One endpoint to unify & secure AI-tool connections (STDIO, SSE, REST). Give it a spin and drop a ⭐ → https://github.com/IBM/mcp-context-forge #mcp #ai #tools
 
 **LinkedIn**
 
 !!! example
-    Thrilled to share **ContextForge MCP Gateway**-an open-source hub that turns fragmented AI-tool integrations into a single secure interface with discovery, observability, and a live catalog UI. Check it out on GitHub and leave us a star ⭐!
+    Thrilled to share **ContextForge**-an open-source hub that turns fragmented AI-tool integrations into a single secure interface with discovery, observability, and a live catalog UI. Check it out on GitHub and leave us a star ⭐!
     `#mcp #ai #tools`
 
 !!! tip Examples Posts

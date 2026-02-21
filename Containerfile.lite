@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ###############################################################################
-# ContextForge MCP Gateway (lite) - OCI-compliant container build
+# ContextForge (lite) - OCI-compliant container build
 #
 # This multi-stage Dockerfile produces a minimal runtime image using
 # ubi10-minimal as the base, supporting multiplatform builds (amd64, arm64,
@@ -223,7 +223,7 @@ ARG ENABLE_PROFILING=false
 # ----------------------------------------------------------------------------
 LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
-    org.opencontainers.image.description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
+    org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
     org.opencontainers.image.version="1.0.0-RC-1"
 

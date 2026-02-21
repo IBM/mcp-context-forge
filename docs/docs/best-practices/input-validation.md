@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MCP Gateway provides comprehensive input validation and output sanitization to protect against common security vulnerabilities including:
+The ContextForge provides comprehensive input validation and output sanitization to protect against common security vulnerabilities including:
 
 - **Path Traversal**: Prevents access to files outside allowed directories
 - **Command Injection**: Blocks shell metacharacters in parameters

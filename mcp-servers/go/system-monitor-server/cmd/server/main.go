@@ -827,7 +827,7 @@ func main() {
         // Register handlers
         mux.Handle("/sse", sseHandler)
         mux.Handle("/messages", sseHandler) // Support plural (backward compatibility)
-        mux.Handle("/message", sseHandler)  // Support singular (MCP Gateway compatibility)
+        mux.Handle("/message", sseHandler)  // Support singular (ContextForge compatibility)
         mux.Handle("/http", httpHandler)
 
         // Register health and version endpoints

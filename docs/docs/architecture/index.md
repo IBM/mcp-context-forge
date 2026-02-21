@@ -1,10 +1,10 @@
 # Architecture Overview
 
-The **MCP Gateway** (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It acts as a unified entry point for tools, resources, prompts, and servers, federating local and remote nodes into a coherent MCP-compliant interface.
+The **ContextForge** (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It acts as a unified entry point for tools, resources, prompts, and servers, federating local and remote nodes into a coherent MCP-compliant interface.
 
 ## High-Level Architecture Summary
 
-**MCP Gateway (ContextForge)** is a comprehensive production-grade gateway built on modern Python technologies with a performance-first approach. For a detailed visual diagram of the high-performance components (Rust-powered libraries, async patterns, caching layers, and Kubernetes scaling), see the [Performance Architecture Diagram](performance-architecture.md).
+**ContextForge (ContextForge)** is a comprehensive production-grade gateway built on modern Python technologies with a performance-first approach. For a detailed visual diagram of the high-performance components (Rust-powered libraries, async patterns, caching layers, and Kubernetes scaling), see the [Performance Architecture Diagram](performance-architecture.md).
 
 ## Design Diagrams
 

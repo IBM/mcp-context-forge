@@ -1,4 +1,4 @@
-# Bee Agent Framework Integration with MCP Gateway
+# Bee Agent Framework Integration with ContextForge
 
 The Bee Agent Framework is an open-source platform developed by IBM for building, deploying, and managing AI agents at scale. Integrating Bee with the Model Context Protocol (MCP) allows agents to dynamically discover and utilize tools hosted on MCP servers, enhancing their capabilities and flexibility.
 
@@ -41,7 +41,7 @@ To use MCP tools in the Bee Agent Framework, follow these steps:
 
 ---
 
-## 🔗 Connecting to MCP Gateway
+## 🔗 Connecting to ContextForge
 
 Bee provides a native `MCPTool` class to simplify integration with MCP servers. Here's how to set it up:
 

@@ -2,7 +2,7 @@
 
 > Author: Mihai Criveti
 
-A sample plugin that demonstrates the use of resource pre-fetch and post-fetch hooks in the MCP Gateway plugin system.
+A sample plugin that demonstrates the use of resource pre-fetch and post-fetch hooks in the ContextForge plugin system.
 
 ## Features
 
@@ -60,7 +60,7 @@ config:
 plugins:
   - name: resource_filter_example
     description: "Filters and validates resources"
-    author: "MCP Gateway Team"
+    author: "ContextForge Team"
     kind: plugins.resource_filter.resource_filter.ResourceFilterPlugin
     version: "1.0.0"
     hooks:

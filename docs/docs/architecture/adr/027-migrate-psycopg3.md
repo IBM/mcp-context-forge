@@ -6,7 +6,7 @@
 
 ## Context
 
-The MCP Gateway uses PostgreSQL as one of its supported production database backends. Historically, the project used `psycopg2` (via `psycopg2-binary`) as the PostgreSQL adapter. Psycopg2 has been the standard PostgreSQL adapter for Python for over 15 years.
+The ContextForge uses PostgreSQL as one of its supported production database backends. Historically, the project used `psycopg2` (via `psycopg2-binary`) as the PostgreSQL adapter. Psycopg2 has been the standard PostgreSQL adapter for Python for over 15 years.
 
 Psycopg3 (the `psycopg` package) is a complete rewrite of the PostgreSQL adapter, offering significant improvements in architecture, performance, and features. SQLAlchemy 2.x provides native support for psycopg3 via the `postgresql+psycopg://` dialect.
 
@@ -127,7 +127,7 @@ Features:
 
 ### Patterns Requiring Attention
 
-These patterns are not used in the MCP Gateway codebase but should be noted:
+These patterns are not used in the ContextForge codebase but should be noted:
 
 1. **Tuple IN clause**: `IN %s` with tuple doesn't work; use `= ANY(%s)` with list
 2. **IS NULL with parameter**: `IS %s` doesn't work; use `IS NOT DISTINCT FROM %s`
@@ -150,4 +150,4 @@ These patterns are not used in the MCP Gateway codebase but should be noted:
 
 ## Status
 
-This decision is implemented. The MCP Gateway uses psycopg3 as the only supported PostgreSQL adapter.
+This decision is implemented. The ContextForge uses psycopg3 as the only supported PostgreSQL adapter.

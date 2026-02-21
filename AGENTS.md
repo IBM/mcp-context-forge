@@ -10,11 +10,11 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
 
-**Note:** The `llms/` directory contains guidance for LLMs *using* the Context Forge solution (end-user runtime guidance), not for code agents working on this codebase.
+**Note:** The `llms/` directory contains guidance for LLMs *using* the ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
 
 ## Project Overview
 
-MCP Gateway (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It federates MCP and REST services, providing unified discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI.
+ContextForge (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It federates MCP and REST services, providing unified discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI.
 
 ## Project Structure
 
@@ -69,7 +69,7 @@ make flake8 bandit interrogate pylint verify
 
 ## Authentication & RBAC Overview
 
-MCP Gateway implements a **two-layer security model**:
+ContextForge implements a **two-layer security model**:
 
 1. **Token Scoping (Layer 1)**: Controls what resources a user CAN SEE (data filtering)
 2. **RBAC (Layer 2)**: Controls what actions a user CAN DO (permission checks)

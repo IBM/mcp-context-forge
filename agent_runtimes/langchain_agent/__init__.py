@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """MCP LangChain Agent Package.
 
-A production-ready LangChain agent that integrates with the MCP Gateway,
+A production-ready LangChain agent that integrates with the ContextForge,
 providing both OpenAI-compatible chat completions and A2A JSON-RPC endpoints.
 
 Features:
-- Dynamic tool discovery from MCP Gateway
+- Dynamic tool discovery from ContextForge
 - OpenAI-compatible API (/v1/chat/completions)
 - A2A JSON-RPC communication endpoint
 - Configurable tool allowlists for security
@@ -27,7 +27,7 @@ Examples:
 """
 
 __version__ = "1.0.0"
-__author__ = "MCP Context Forge Contributors"
+__author__ = "ContextForge Contributors"
 __email__ = "noreply@example.com"
 
 # Core exports

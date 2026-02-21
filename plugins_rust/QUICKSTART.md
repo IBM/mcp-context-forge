@@ -1,6 +1,6 @@
 # Rust Plugins Quick Start Guide
 
-Get started with Rust-accelerated plugins for MCP Gateway in under 5 minutes.
+Get started with Rust-accelerated plugins for ContextForge in under 5 minutes.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ Get started with Rust-accelerated plugins for MCP Gateway in under 5 minutes.
 The fastest way to get started is using pre-built wheels (when available):
 
 ```bash
-# Install MCP Gateway with Rust plugins
+# Install ContextForge with Rust plugins
 pip install mcpgateway[rust]
 ```
 

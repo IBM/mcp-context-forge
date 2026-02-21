@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Admin UI Routes for MCP Gateway.
-This module contains all the administrative UI endpoints for the MCP Gateway.
+Admin UI Routes for ContextForge AI Gateway.
+This module contains all the administrative UI endpoints for the ContextForge AI Gateway.
 It provides a comprehensive interface for managing servers, tools, resources,
 prompts, gateways, and roots through RESTful API endpoints. The module handles
 all aspects of CRUD operations for these entities, including creation,
@@ -1293,7 +1293,7 @@ async def get_overview_partial(
 
     This endpoint returns a rendered HTML partial containing an architecture
     diagram showing ContextForge inputs (Virtual Servers), middleware (Plugins),
-    and outputs (A2A Agents, MCP Gateways, Tools, etc.) along with key metrics.
+    and outputs (A2A Agents, ContextForges, Tools, etc.) along with key metrics.
 
     Args:
         request: FastAPI request object
@@ -1312,7 +1312,7 @@ async def get_overview_partial(
         servers_total = db.query(func.count(DbServer.id)).scalar() or 0  # pylint: disable=not-callable
         servers_active = db.query(func.count(DbServer.id)).filter(DbServer.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 
-        # MCP Gateways - uses 'enabled' field
+        # ContextForges - uses 'enabled' field
         gateways_total = db.query(func.count(DbGateway.id)).scalar() or 0  # pylint: disable=not-callable
         gateways_active = db.query(func.count(DbGateway.id)).filter(DbGateway.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 
@@ -14498,7 +14498,7 @@ async def admin_test_a2a_agent(
         agent = await a2a_service.get_agent(db, agent_id)
 
         # Parse request body to get user-provided query
-        default_message = "Hello from MCP Gateway Admin UI test!"
+        default_message = "Hello from ContextForge Admin UI test!"
         try:
             body = await _read_request_json(request)
             # Use 'or' to also handle empty string queries

@@ -4,7 +4,7 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
 # Authors: Mihai Criveti, Manav Gupta
-# Description: Build & automation helpers for the MCP Gateway project
+# Description: Build & automation helpers for the ContextForge project
 # Usage: run `make` or `make help` to view available targets
 #
 # help: 🐍 MCP CONTEXT FORGE  (An enterprise-ready Model Context Protocol Gateway)
@@ -23,7 +23,7 @@ ENABLE_RUST_BUILD ?= 0
 # Project variables
 PROJECT_NAME      = mcpgateway
 DOCS_DIR          = docs
-HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "MCP Gateway" --cleanup
+HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "ContextForge" --cleanup
 
 TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
 MCP_2025_TEST_DIR ?= tests/compliance/mcp_2025_11_25
@@ -392,7 +392,7 @@ certs-mcp-ca:                    ## Generate CA for MCP plugin mTLS
 		openssl genrsa -out certs/mcp/ca/ca.key 4096; \
 		openssl req -new -x509 -key certs/mcp/ca/ca.key -out certs/mcp/ca/ca.crt \
 			-days $(MCP_CERT_DAYS) \
-			-subj "/CN=MCP-Gateway-CA/O=MCPGateway/OU=Plugins"; \
+			-subj "/CN=ContextForge-CA/O=ContextForge/OU=Plugins"; \
 		echo "01" > certs/mcp/ca/ca.srl; \
 		echo "✅  MCP CA created: ./certs/mcp/ca/ca.{key,crt}"; \
 	fi
@@ -1140,7 +1140,7 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 	@echo "   🔥 Prometheus: http://localhost:9090"
 	@echo "   🧵 Tempo:      http://localhost:3200 (OTLP: 4317 gRPC, 4318 HTTP)"
 	@echo ""
-	@echo "   ★ MCP Gateway Overview (home dashboard):"
+	@echo "   ★ ContextForge Overview (home dashboard):"
 	@echo "      • Gateway replicas, Nginx, PostgreSQL, Redis status"
 	@echo "      • Request rate, error rate, P95 latency"
 	@echo "      • Nginx connections and throughput"
@@ -1543,7 +1543,7 @@ performance-up:                            ## Start performance stack (7 gateway
 	@echo "   🐘 PostgreSQL: Primary + Read Replica (load balanced via PgBouncer)"
 	@echo ""
 	@echo "   📊 Key Dashboards:"
-	@echo "      • MCP Gateway Overview - main dashboard (set as home)"
+	@echo "      • ContextForge Overview - main dashboard (set as home)"
 	@echo "      • PostgreSQL Replication - primary/replica stats, lag, distribution"
 	@echo "      • PostgreSQL Database - detailed DB metrics"
 	@echo "      • PgBouncer - connection pool stats"

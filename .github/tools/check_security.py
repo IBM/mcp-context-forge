@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Security configuration checker for MCP Gateway."""
+"""Security configuration checker for ContextForge."""
 
 import sys
 import os

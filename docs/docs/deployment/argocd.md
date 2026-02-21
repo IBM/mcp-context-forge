@@ -1,6 +1,6 @@
-# 🚢 Deploying the MCP Gateway Stack with **Argo CD**
+# 🚢 Deploying the ContextForge Stack with **Argo CD**
 
-This guide shows how to operate the **MCP Gateway Stack** with a *Git-Ops* workflow powered by [Argo CD](https://argo-cd.readthedocs.io). Once wired up, every commit to the repository becomes an automatic deployment (or rollback) to your Kubernetes cluster.
+This guide shows how to operate the **ContextForge Stack** with a *Git-Ops* workflow powered by [Argo CD](https://argo-cd.readthedocs.io). Once wired up, every commit to the repository becomes an automatic deployment (or rollback) to your Kubernetes cluster.
 
 > 🌳 Git source of truth:
 > `https://github.com/IBM/mcp-context-forge`

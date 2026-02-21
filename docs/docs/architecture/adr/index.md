@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This page tracks all significant design decisions made for the MCP Gateway project, using the [ADR](https://adr.github.io/) format.
+This page tracks all significant design decisions made for the ContextForge project, using the [ADR](https://adr.github.io/) format.
 
 | ID    | Title                                              | Status    | Section        | Date        |
 |-------|----------------------------------------------------|-----------|----------------|-------------|

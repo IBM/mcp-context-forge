@@ -2,12 +2,12 @@
 
 ## Overview
 
-This feature enables automatic role assignment for Microsoft EntraID (formerly Azure AD) SSO users based on their group memberships or app role assignments. Users are automatically assigned Context Forge RBAC roles based on their EntraID groups, providing granular access control without manual intervention.
+This feature enables automatic role assignment for Microsoft EntraID (formerly Azure AD) SSO users based on their group memberships or app role assignments. Users are automatically assigned ContextForge RBAC roles based on their EntraID groups, providing granular access control without manual intervention.
 
 ## Features
 
 - ✅ Extract groups and roles from EntraID tokens
-- ✅ Map EntraID groups to Context Forge RBAC roles
+- ✅ Map EntraID groups to ContextForge RBAC roles
 - ✅ Support for both Security Groups (Object IDs) and App Roles
 - ✅ Automatic role synchronization on login
 - ✅ Platform admin assignment via admin groups
@@ -19,7 +19,7 @@ This feature enables automatic role assignment for Microsoft EntraID (formerly A
 
 ### Role System
 
-Context Forge includes a comprehensive RBAC system with the following default roles:
+ContextForge includes a comprehensive RBAC system with the following default roles:
 
 1. **`platform_admin`** (global scope)
 
@@ -69,7 +69,7 @@ Context Forge includes a comprehensive RBAC system with the following default ro
 
 4. **Role Mapping** (`_map_groups_to_roles()`)
 
-   - Maps EntraID groups to Context Forge roles
+   - Maps EntraID groups to ContextForge roles
    - Checks admin groups first (case-insensitive)
    - Applies role mappings from configuration
    - Assigns default role if no mappings found
@@ -95,7 +95,7 @@ Context Forge includes a comprehensive RBAC system with the following default ro
 #### Token Configuration (Azure Portal)
 
 > **Important**: Groups and roles must be configured in the **ID token**, not just the access token.
-> Microsoft's OIDC userinfo endpoint does not return group claims - Context Forge extracts them from the ID token.
+> Microsoft's OIDC userinfo endpoint does not return group claims - ContextForge extracts them from the ID token.
 
 1. Navigate to **Azure Portal** → **App Registrations** → Your App
 2. Go to **Token Configuration**
@@ -302,7 +302,7 @@ EntraID can return groups in different formats:
 
 EntraID has a token size limit (~200 groups). When a user belongs to more groups than can fit in the token, EntraID returns a "group overage" indicator (`_claim_names`/`_claim_sources`) instead of the actual groups array.
 
-**Context Forge behavior on overage:**
+**ContextForge behavior on overage:**
 1. Detects the overage claim in the ID token
 2. Calls `POST https://graph.microsoft.com/v1.0/me/getMemberObjects`
 3. Uses returned group IDs for admin checks and RBAC mappings
@@ -357,7 +357,7 @@ Attempting Microsoft Graph fallback to resolve complete group membership.
 1. Token includes `groups` or `roles` claim
 2. `SSO_ENTRA_GROUPS_CLAIM` matches claim name in token
 3. Group IDs/names match `SSO_ENTRA_ROLE_MAPPINGS`
-4. Roles exist in Context Forge (check via Admin UI)
+4. Roles exist in ContextForge (check via Admin UI)
 
 **Debug:**
 ```bash
@@ -492,7 +492,7 @@ Extracts user info and groups from EntraID token.
 ```
 
 #### `_map_groups_to_roles(user_email, user_groups, provider)`
-Maps EntraID groups to Context Forge roles.
+Maps EntraID groups to ContextForge roles.
 
 **Returns:**
 ```python

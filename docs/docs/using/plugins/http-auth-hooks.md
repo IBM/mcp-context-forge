@@ -2,7 +2,7 @@
 
 ## Overview
 
-HTTP authentication hooks enable plugins to customize how MCP Gateway authenticates incoming requests. These hooks support custom authentication mechanisms like API keys, LDAP, mTLS certificates, and external authentication services without modifying core gateway code.
+HTTP authentication hooks enable plugins to customize how ContextForge authenticates incoming requests. These hooks support custom authentication mechanisms like API keys, LDAP, mTLS certificates, and external authentication services without modifying core gateway code.
 
 !!! example "Complete Example Implementation"
     For a full working example of HTTP authentication hooks, see the **[Simple Token Auth Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth)** which demonstrates:
@@ -16,7 +16,7 @@ HTTP authentication hooks enable plugins to customize how MCP Gateway authentica
 
 ## Why HTTP Authentication Hooks?
 
-Traditional authentication in MCP Gateway supports:
+Traditional authentication in ContextForge supports:
 
 - JWT bearer tokens
 - API tokens (database-backed)

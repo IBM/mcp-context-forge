@@ -6,10 +6,10 @@ owner: Mihai Criveti
 
 # 🚀 Quick Start
 
-MCP Gateway can be running on your laptop or server in **< 5 minutes**.
+ContextForge can be running on your laptop or server in **< 5 minutes**.
 Pick an install method below, generate an auth token, then walk through a real tool + server demo.
 
-## Installing and starting MCP Gateway
+## Installing and starting ContextForge
 
 !!! tip "Choose a base URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -152,7 +152,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 3306:3306 \
               mysql:8
 
-            # Start MCP Gateway with MySQL connection
+            # Start ContextForge with MySQL connection
             docker run -d --name mcpgateway \
               -p 4444:4444 \
               --link mysql-db:mysql \
@@ -174,7 +174,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 5432:5432 \
               postgres:17
 
-            # Start MCP Gateway with PostgreSQL connection
+            # Start ContextForge with PostgreSQL connection
             docker run -d --name mcpgateway \
               -p 4444:4444 \
               --link postgres-db:postgres \
@@ -352,5 +352,5 @@ Use the `BASE_URL` you set above (for example `http://localhost:4444` or `http:/
 * Tweak **`.env`** - see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
-You now have an authenticated MCP Gateway proxying a live tool, exposed via SSE **and** stdio.
+You now have an authenticated ContextForge proxying a live tool, exposed via SSE **and** stdio.
 Jump into the Admin UI or start wiring it into your agents and clients!

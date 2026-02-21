@@ -167,7 +167,7 @@ def test_settings_default_values():
     with patch.dict(os.environ, dummy_env, clear=True):
         settings = Settings(_env_file=None)
 
-        assert settings.app_name == "MCP_Gateway"
+        assert settings.app_name == "ContextForge"
         assert settings.host == "127.0.0.1"
         assert settings.port == 4444
         assert settings.database_url == "sqlite:///./mcp.db"

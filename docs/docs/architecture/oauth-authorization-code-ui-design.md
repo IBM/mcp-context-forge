@@ -12,7 +12,7 @@ This document describes how the Admin UI initiates OAuth 2.0 Authorization Code 
 !!! note "Scope of This Document"
     This document covers the **UI implementation** for gateway OAuth token delegation - specifically how administrators configure OAuth settings and authorize access to upstream MCP servers.
 
-    For information about **user authentication to MCP Gateway** (SSO, JWT tokens, RBAC), see:
+    For information about **user authentication to ContextForge** (SSO, JWT tokens, RBAC), see:
 
     - [RBAC Configuration](../manage/rbac.md) - Token scoping, permissions, and access control
     - [Multi-Tenancy Architecture](./multitenancy.md) - User authentication flows and team management
@@ -216,7 +216,7 @@ sequenceDiagram
 
 ## Relationship to Gateway Authentication
 
-This OAuth flow is for **upstream server authentication** and is separate from user authentication to the MCP Gateway:
+This OAuth flow is for **upstream server authentication** and is separate from user authentication to the ContextForge:
 
 | Aspect | Gateway OAuth (this doc) | User Auth to Gateway |
 |--------|-------------------------|---------------------|
@@ -244,7 +244,7 @@ For user authentication and RBAC configuration, see [RBAC Configuration](../mana
 | `DCR_ALLOWED_ISSUERS` | `[]` | Allowlist of issuer URLs |
 | `DCR_TOKEN_ENDPOINT_AUTH_METHOD` | `client_secret_basic` | Token endpoint auth method |
 | `DCR_METADATA_CACHE_TTL` | `3600` | Cache TTL for AS metadata discovery |
-| `DCR_CLIENT_NAME_TEMPLATE` | `MCP Gateway ({gateway_name})` | DCR client_name template |
+| `DCR_CLIENT_NAME_TEMPLATE` | `ContextForge ({gateway_name})` | DCR client_name template |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | `false` | Request refresh token even if AS metadata omits support |
 | `OAUTH_DISCOVERY_ENABLED` | `true` | Enable RFC 8414 discovery |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD` | `S256` | Defined but currently unused; PKCE is always S256 |

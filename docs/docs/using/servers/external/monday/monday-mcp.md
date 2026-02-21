@@ -31,7 +31,7 @@ monday.com is a flexible Work Operating System (Work OS) that powers teams to ru
 
 ## Prerequisites
 
-Before integrating monday.com MCP Server with MCP Gateway, ensure you have:
+Before integrating monday.com MCP Server with ContextForge, ensure you have:
 
 ### monday.com Account Setup
 
@@ -45,8 +45,8 @@ Before integrating monday.com MCP Server with MCP Gateway, ensure you have:
 2. Go to **Developers** → **My Apps** → **Create App**
 3. Configure your OAuth application:
 
-   - **App Name**: Choose a descriptive name (e.g., "MCP Gateway Integration")
-   - **Redirect URI**: Set to your MCP Gateway callback URL (e.g., `https://your-gateway.com/oauth/callback`)
+   - **App Name**: Choose a descriptive name (e.g., "ContextForge Integration")
+   - **Redirect URI**: Set to your ContextForge callback URL (e.g., `https://your-gateway.com/oauth/callback`)
    - **Scopes**: Select required permissions (see [Required Permissions](#required-permissions))
 
 4. Save your **Client ID** and **Client Secret** securely
@@ -81,7 +81,7 @@ MONDAY_WEBHOOK_SECRET=your_webhook_secret_here
 
 ### OAuth2.1 Flow Configuration
 
-monday.com uses OAuth2.1 for secure authentication. The MCP Gateway handles the OAuth flow automatically when properly configured.
+monday.com uses OAuth2.1 for secure authentication. The ContextForge handles the OAuth flow automatically when properly configured.
 
 #### Step 1: Configure OAuth Endpoints
 
@@ -126,11 +126,11 @@ The response will include an authorization URL. Direct users to this URL to gran
 
 #### Step 3: Handle OAuth Callback
 
-After user authorization, monday.com redirects to your callback URL with an authorization code. The MCP Gateway automatically exchanges this for access and refresh tokens.
+After user authorization, monday.com redirects to your callback URL with an authorization code. The ContextForge automatically exchanges this for access and refresh tokens.
 
 ### Token Management
 
-The MCP Gateway automatically handles:
+The ContextForge automatically handles:
 
 - **Token Storage**: Securely stores access and refresh tokens
 - **Token Refresh**: Automatically refreshes expired tokens
@@ -161,11 +161,11 @@ curl -X POST http://localhost:4444/servers \
   }'
 ```
 
-## MCP Gateway Integration
+## ContextForge Integration
 
 ### Server Registration
 
-Register the monday.com MCP Server with your MCP Gateway instance:
+Register the monday.com MCP Server with your ContextForge instance:
 
 ```bash
 # Using OAuth2.1 (Recommended)
@@ -201,7 +201,7 @@ curl -X POST http://localhost:4444/servers \
 The monday.com MCP Server uses Server-Sent Events (SSE) for real-time communication:
 
 ```python
-# Python example: Connect to monday.com via MCP Gateway
+# Python example: Connect to monday.com via ContextForge
 import asyncio
 from mcp_gateway_client import MCPGatewayClient
 
@@ -1148,13 +1148,13 @@ async def connect_with_retry(gateway, server_id, max_retries=5):
 
 1. Check monday.com service status at [status.monday.com](https://status.monday.com)
 2. Verify network connectivity to `mcp.monday.com`
-3. Review MCP Gateway logs for detailed error messages
+3. Review ContextForge logs for detailed error messages
 
 ```bash
 # Test connectivity
 curl -v https://mcp.monday.com/sse
 
-# Check MCP Gateway logs
+# Check ContextForge logs
 docker logs mcp-gateway --tail 100 | grep monday
 ```
 
@@ -1418,7 +1418,7 @@ MONDAY_WEBHOOK_SECRET=your_webhook_secret_here
 # Optional: Direct token (for testing)
 MONDAY_ACCESS_TOKEN=your_access_token_here
 
-# MCP Gateway Configuration
+# ContextForge Configuration
 MCPGATEWAY_BEARER_TOKEN=your_gateway_token_here
 MCPGATEWAY_BASE_URL=http://localhost:4444
 
@@ -1511,19 +1511,19 @@ networks:
 
 - [monday.com Community](https://community.monday.com) - Community forum and discussions
 - [monday.com Support](https://support.monday.com) - Official support portal
-- [MCP Gateway GitHub](https://github.com/IBM/mcp-context-forge) - Report issues and contribute
+- [ContextForge GitHub](https://github.com/IBM/mcp-context-forge) - Report issues and contribute
 - [monday.com Status](https://status.monday.com) - Service status and incidents
 
 ### Tutorials and Examples
 
-- [MCP Gateway Tutorials](../../../../tutorials/index.md) - Getting started guides
+- [ContextForge Tutorials](../../../../tutorials/index.md) - Getting started guides
 - [API Usage Examples](../../../../manage/api-usage.md) - API integration examples
 - [Deployment Guide](../../../../deployment/index.md) - Deployment best practices
 
 ## Next Steps
 
 1. **Set up OAuth**: Register your application in monday.com
-2. **Configure MCP Gateway**: Add monday.com server to your gateway
+2. **Configure ContextForge**: Add monday.com server to your gateway
 3. **Test connection**: Verify authentication and basic operations
 4. **Explore tools**: Try different tools to understand capabilities
 5. **Build workflows**: Create custom automations for your use cases

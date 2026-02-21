@@ -2,7 +2,7 @@
 
 ## Overview
 
-MCP Gateway implements [RFC 9728: OAuth 2.0 Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) to enable OAuth-protected MCP servers to advertise their authorization server configuration. This allows MCP clients (like Claude Desktop, MCP Inspector) to discover OAuth endpoints and initiate browser-based SSO flows.
+ContextForge implements [RFC 9728: OAuth 2.0 Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) to enable OAuth-protected MCP servers to advertise their authorization server configuration. This allows MCP clients (like Claude Desktop, MCP Inspector) to discover OAuth endpoints and initiate browser-based SSO flows.
 
 ## RFC 9728 Requirements
 
@@ -221,7 +221,7 @@ curl -i https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000
 
 **Test with MCP Inspector:**
 
-1. Configure an OAuth-enabled server in MCP Gateway
+1. Configure an OAuth-enabled server in ContextForge
 2. Open MCP Inspector
 3. Connect to the server using the MCP endpoint: `https://gateway.example.com/servers/{server_id}/mcp`
 4. MCP Inspector should automatically discover OAuth metadata via RFC 9728
@@ -229,7 +229,7 @@ curl -i https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000
 
 ## Migration Guide
 
-### For MCP Gateway Administrators
+### For ContextForge Administrators
 
 **No action required.** The implementation maintains backward compatibility:
 

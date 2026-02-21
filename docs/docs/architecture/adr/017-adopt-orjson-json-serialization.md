@@ -6,7 +6,7 @@
 
 ## Context
 
-The MCP Gateway handles large volumes of JSON-RPC requests and responses, tool invocations, resource payloads, and API endpoints. JSON serialization and deserialization is a critical performance bottleneck in high-throughput scenarios.
+The ContextForge handles large volumes of JSON-RPC requests and responses, tool invocations, resource payloads, and API endpoints. JSON serialization and deserialization is a critical performance bottleneck in high-throughput scenarios.
 
 Python's standard library `json` module is implemented in pure Python with some C optimizations, but still represents a significant CPU overhead for:
 

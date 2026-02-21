@@ -1,6 +1,6 @@
 # Configuration Reference
 
-This guide provides comprehensive configuration options for MCP Gateway, including database setup, environment variables, and deployment-specific settings.
+This guide provides comprehensive configuration options for ContextForge, including database setup, environment variables, and deployment-specific settings.
 
 ---
 
@@ -49,7 +49,7 @@ These values in `.env.example` differ from code defaults to provide a working lo
 
 ## 🗄️ Database Configuration
 
-MCP Gateway supports multiple database backends with full feature parity across all supported systems.
+ContextForge supports multiple database backends with full feature parity across all supported systems.
 
 ### Supported Databases
 
@@ -93,7 +93,7 @@ MCP Gateway supports multiple database backends with full feature parity across 
     - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
-    - Supports all MCP Gateway features including federation, caching, and A2A agents
+    - Supports all ContextForge features including federation, caching, and A2A agents
 
 #### Connection String Format
 
@@ -167,7 +167,7 @@ docker run -d --name mysql-mcp \
   -p 3306:3306 \
   mysql:8
 
-# Connection string for MCP Gateway (same for both)
+# Connection string for ContextForge (same for both)
 DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 ```
 
@@ -179,7 +179,7 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
 | Setting            | Description                              | Default                | Options                |
 |--------------------|------------------------------------------|------------------------|------------------------|
-| `APP_NAME`         | Gateway / OpenAPI title                  | `MCP_Gateway`          | string                 |
+| `APP_NAME`         | Gateway / OpenAPI title                  | `ContextForge`         | string                 |
 | `HOST`             | Bind address for the app                 | `127.0.0.1`            | IPv4/IPv6              |
 | `PORT`             | Port the server listens on               | `4444`                 | 1-65535                |
 | `CLIENT_MODE`      | Client-only mode for gateway-as-client   | `false`                | bool                   |
@@ -407,7 +407,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 
 ### LLM Settings (Internal API)
 
-The LLM Settings feature enables MCP Gateway to act as a unified LLM provider with an OpenAI-compatible API.
+The LLM Settings feature enables ContextForge to act as a unified LLM provider with an OpenAI-compatible API.
 
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
@@ -470,7 +470,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `SMTP_USER`                   | SMTP username                                     | (none)                | string  |
 | `SMTP_PASSWORD`               | SMTP password                                     | (none)                | string  |
 | `SMTP_FROM_EMAIL`             | Sender email address                              | (none)                | string  |
-| `SMTP_FROM_NAME`              | Sender display name                               | `MCP Gateway`         | string  |
+| `SMTP_FROM_NAME`              | Sender display name                               | `ContextForge`         | string  |
 | `SMTP_USE_TLS`                | Use STARTTLS                                      | `true`                | bool    |
 | `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
 | `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
@@ -554,7 +554,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_ENTRA_TENANT_ID`         | Microsoft Entra ID tenant ID                     | (none)                | string  |
 | `SSO_ENTRA_GROUPS_CLAIM`      | JWT claim for Entra groups/roles                | `groups`              | string  |
 | `SSO_ENTRA_ADMIN_GROUPS`      | Groups granting `platform_admin`                | `[]`                  | JSON array |
-| `SSO_ENTRA_ROLE_MAPPINGS`     | Map Entra groups to Context Forge roles         | `{}`                  | JSON object |
+| `SSO_ENTRA_ROLE_MAPPINGS`     | Map Entra groups to ContextForge roles         | `{}`                  | JSON object |
 | `SSO_ENTRA_DEFAULT_ROLE`      | Default role when no mapping matches            | (none)                | string/null |
 | `SSO_ENTRA_SYNC_ROLES_ON_LOGIN` | Synchronize mapped roles on every login       | `true`                | bool    |
 | `SSO_ENTRA_GRAPH_API_ENABLED` | Enable Graph API fallback for groups overage    | `true`                | bool    |
@@ -597,7 +597,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
 | `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
-| `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
+| `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `ContextForge ({gateway_name})` | string        |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
@@ -661,7 +661,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 ### SSRF Protection
 
-MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.
+ContextForge includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.
 
 | Setting                     | Description                                                      | Default | Options |
 | --------------------------- | ---------------------------------------------------------------- | ------- | ------- |
@@ -716,7 +716,7 @@ MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to preven
 
 ### Ed25519 Certificate Signing
 
-MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification.
+ContextForge supports **Ed25519 digital signatures** for certificate validation and integrity verification.
 
 | Setting                     | Description                                      | Default | Options |
 | --------------------------- | ------------------------------------------------ | ------- | ------- |
@@ -733,7 +733,7 @@ python mcpgateway/utils/generate_keys.py
 
 ### Response Compression
 
-MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses.
+ContextForge includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses.
 
 | Setting                       | Description                                       | Default | Options              |
 | ----------------------------- | ------------------------------------------------- | ------- | -------------------- |
@@ -766,7 +766,7 @@ MCP Gateway includes automatic response compression middleware that reduces band
 
 ### Observability (OpenTelemetry)
 
-MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed tracing. Works with Phoenix, Jaeger, Zipkin, Tempo, DataDog, New Relic, and any OTLP-compatible backend.
+ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed tracing. Works with Phoenix, Jaeger, Zipkin, Tempo, DataDog, New Relic, and any OTLP-compatible backend.
 
 | Setting                         | Description                                    | Default               | Options                                    |
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |

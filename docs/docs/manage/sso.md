@@ -6,7 +6,7 @@
 
     For SSO deployments, configure group‑to‑team mappings to auto‑assign users on first login. See [Team Management](teams.md) and the provider tutorials for examples.
 
-MCP Gateway supports enterprise Single Sign-On authentication through OAuth2 and OpenID Connect (OIDC) providers. This enables seamless integration with existing identity providers while maintaining backward compatibility with local authentication.
+ContextForge supports enterprise Single Sign-On authentication through OAuth2 and OpenID Connect (OIDC) providers. This enables seamless integration with existing identity providers while maintaining backward compatibility with local authentication.
 
 ## Overview
 
@@ -245,7 +245,7 @@ Response:
 1. **GitHub Settings** → **Developer settings** → **OAuth Apps**
 2. **New OAuth App**:
 
-   - **Application name**: `MCP Gateway - YourOrg`
+   - **Application name**: `ContextForge - YourOrg`
    - **Homepage URL**: `https://your-gateway.com`
    - **Authorization callback URL**: `https://your-gateway.com/auth/sso/callback/github`
 
@@ -345,7 +345,7 @@ SSO_OKTA_ISSUER=https://your-company.okta.com
 1. **Azure Portal** → **Microsoft Entra ID** → **App registrations**
 2. **New registration**:
 
-   - **Name**: `MCP Gateway - YourOrg`
+   - **Name**: `ContextForge - YourOrg`
    - **Supported account types**: Accounts in this organizational directory only
    - **Redirect URI**: `https://your-gateway.com/auth/sso/callback/entra`
 

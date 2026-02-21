@@ -16,9 +16,9 @@ The GitHub MCP Server connects AI tools directly to GitHub's platform, giving AI
 - **Code Analysis:** Examine security findings, review Dependabot alerts, understand code patterns
 - **Team Collaboration:** Access discussions, manage notifications, analyze team activity
 
-## Integration with MCP Gateway
+## Integration with ContextForge
 
-There are two ways to use the GitHub MCP Server with MCP Gateway:
+There are two ways to use the GitHub MCP Server with ContextForge:
 
 ### Option 1: Remote GitHub MCP Server (Recommended)
 
@@ -27,7 +27,7 @@ The remote server is hosted by GitHub at `https://api.githubcopilot.com/mcp/` an
 #### Using OAuth Authentication
 
 ```bash
-# Register the GitHub MCP server with MCP Gateway
+# Register the GitHub MCP server with ContextForge
 curl -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
@@ -63,7 +63,7 @@ curl -X POST http://localhost:4444/gateways \
 
 ### Option 2: Local GitHub MCP Server (Docker)
 
-Run the GitHub MCP server locally using Docker and expose it through MCP Gateway.
+Run the GitHub MCP server locally using Docker and expose it through ContextForge.
 
 #### Prerequisites
 
@@ -81,7 +81,7 @@ python3 -m mcpgateway.translate --stdio \
   --port 9001
 ```
 
-2. **Register with MCP Gateway:**
+2. **Register with ContextForge:**
 
 ```bash
 curl -X POST http://localhost:4444/gateways \
@@ -173,7 +173,7 @@ curl -X POST http://localhost:4444/servers \
 
 ## Using GitHub Tools
 
-Once configured, you can access GitHub tools through the MCP Gateway:
+Once configured, you can access GitHub tools through the ContextForge:
 
 ### List Available Tools
 
@@ -255,7 +255,7 @@ docker run -i --rm \
 1. **Token Management**: Store GitHub PATs securely using environment variables or secret management systems
 2. **Scope Limitation**: Only grant the minimum required permissions for your use case
 3. **Rate Limiting**: The GitHub API has rate limits - monitor usage and implement appropriate caching
-4. **Audit Logging**: Enable MCP Gateway audit logging to track all GitHub operations
+4. **Audit Logging**: Enable ContextForge audit logging to track all GitHub operations
 
 ## Troubleshooting
 
@@ -290,4 +290,4 @@ docker logs $(docker ps -q -f ancestor=ghcr.io/github/github-mcp-server)
 - [GitHub MCP Server Repository](https://github.com/github/github-mcp-server)
 - [GitHub Personal Access Tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
 - [GitHub API Documentation](https://docs.github.com/en/rest)
-- [MCP Gateway Documentation](../../../index.md)
+- [ContextForge Documentation](../../../index.md)

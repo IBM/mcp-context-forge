@@ -1,10 +1,10 @@
-# How ContextForge Fits the Criteria for Selecting an Enterprise MCP Gateway
+# How ContextForge Fits the Criteria for Selecting an Enterprise ContextForge
 
 A practical framework for evaluating MCP gateways, and how ContextForge addresses each criterion.
 
 ---
 
-## Why an MCP Gateway?
+## Why an ContextForge?
 
 Organizations deploying AI agents face fragmented tool ecosystems, inconsistent security controls, and no centralized governance across agent interactions. An MCP gateway provides the unified control plane: federating tools, enforcing policy, and delivering visibility across your AI infrastructure.
 
@@ -12,22 +12,22 @@ This framework outlines what to evaluate and why each criterion matters.
 
 ---
 
-## The MCP Gateway Landscape
+## The ContextForge Landscape
 
-The MCP gateway market has matured rapidly. Options range from managed SaaS platforms (Composio, MintMCP, Apigee MCP Gateway) to cloud-native solutions (Azure MCP Gateway, Docker MCP Gateway) to self-hosted open source (ContextForge, Lasso Security, Bifrost).
+The MCP gateway market has matured rapidly. Options range from managed SaaS platforms (Composio, MintMCP, Apigee ContextForge) to cloud-native solutions (Azure ContextForge, Docker ContextForge) to self-hosted open source (ContextForge, Lasso Security, Bifrost).
 
 ```mermaid
 flowchart TB
-    subgraph "MCP Gateway Options"
+    subgraph "ContextForge Options"
         direction TB
         subgraph managed["Managed SaaS"]
             composio["Composio"]
             mintmcp["MintMCP"]
-            apigee["Apigee MCP Gateway"]
+            apigee["Apigee ContextForge"]
         end
         subgraph cloud["Cloud-Native"]
-            azure["Azure MCP Gateway"]
-            docker["Docker MCP Gateway"]
+            azure["Azure ContextForge"]
+            docker["Docker ContextForge"]
         end
         subgraph selfhosted["Self-Hosted Open Source"]
             contextforge["ContextForge"]
@@ -137,7 +137,7 @@ flowchart LR
 
     subgraph gate2["Gate 2: MCP Layer"]
         direction TB
-        gateway["MCP Gateway"]
+        gateway["ContextForge"]
         authz["Tool Authorization"]
         validate["Argument Validation"]
     end

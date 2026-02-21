@@ -150,7 +150,7 @@ export SANDBOX_CONTAINER_IMAGE=python-sandbox:latest  # Container image name
 make dev
 ```
 
-### HTTP Mode (via MCP Gateway)
+### HTTP Mode (via ContextForge)
 
 ```bash
 make serve-http

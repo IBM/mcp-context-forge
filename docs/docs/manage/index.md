@@ -1,6 +1,6 @@
 # Management Overview
 
-This section provides operational guidance for running and maintaining a production instance of MCP Gateway.
+This section provides operational guidance for running and maintaining a production instance of ContextForge.
 
 Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, this section helps you monitor, back up, and maintain the system.
 
@@ -40,7 +40,7 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 Most operational settings (logging level, database pool size, auth mode) are controlled through `.env` or environment variables.
 
 !!! info "MariaDB & MySQL Fully Supported"
-    MCP Gateway now has **complete MariaDB/MySQL support** alongside SQLite and PostgreSQL:
+    ContextForge now has **complete MariaDB/MySQL support** alongside SQLite and PostgreSQL:
 
     - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility

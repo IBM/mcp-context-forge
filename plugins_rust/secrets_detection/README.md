@@ -14,7 +14,7 @@ High-performance secret detection plugin implemented in Rust with optimized rege
 - **Python**: 3.11+ (ABI3 compatible)
 - **Rust**: Latest stable toolchain (1.70+)
 - **maturin**: Python package builder for Rust extensions
-- **Virtual Environment**: Activated MCP Gateway venv
+- **Virtual Environment**: Activated ContextForge venv
 
 Install prerequisites:
 ```bash
@@ -36,7 +36,7 @@ The plugin automatically integrates with the Python fallback implementation in `
 
 ## Configuration
 
-The plugin supports extensive configuration through the MCP Gateway plugin system:
+The plugin supports extensive configuration through the ContextForge plugin system:
 
 ```yaml
 # plugins/config.yaml
@@ -58,7 +58,7 @@ secrets_detection:
     min_findings_to_block: 1         # Threshold for blocking
 ```
 
-## Integration with MCP Gateway
+## Integration with ContextForge
 
 The Rust plugin seamlessly integrates as an acceleration layer for the existing Python plugin:
 

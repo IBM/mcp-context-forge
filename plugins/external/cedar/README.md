@@ -1,4 +1,4 @@
-# Cedar RBAC Plugin for MCP Gateway
+# Cedar RBAC Plugin for ContextForge
 
 > Author: Shriti Priya
 > Version: 0.1.0
@@ -323,7 +323,7 @@ INFO:     127.0.0.1:55196 - "GET /health HTTP/1.1" 200 OK
 There are set of test cases in the `cedar/tests` folder. The file named `test_cedarpolicyplugin.py` file which contains detailed test cases for RBAC policies enforced on tools, prompts and resources.
 run `make test` to run all the test cases.
 
-## End to End Testing from the UI for ContextForge MCP Gateway
+## End to End Testing from the UI for ContextForge
 
 Run the following from the project root folder:
 

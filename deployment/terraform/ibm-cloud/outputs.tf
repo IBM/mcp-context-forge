@@ -1,5 +1,5 @@
 output "gateway_url" {
-  description = "FQDN for the MCP Gateway ingress"
+  description = "FQDN for the ContextForge ingress"
   value       = "https://gateway.${var.prefix}.apps.${var.region}.containers.appdomain.cloud"
 }
 

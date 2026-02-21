@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for TOON Encoder Plugin.
 
-Tests the plugin integration with the MCP Gateway plugin framework.
+Tests the plugin integration with the ContextForge plugin framework.
 """
 
 import json

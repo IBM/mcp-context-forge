@@ -1,6 +1,6 @@
-# OpenWebUI with Ollama, LiteLLM, MCPO, and MCP Gateway Deployment Guide
+# OpenWebUI with Ollama, LiteLLM, MCPO, and ContextForge Deployment Guide
 
-This guide provides a comprehensive walkthrough for deploying OpenWebUI with local LLM models via Ollama, integrated with MCP (Model Context Protocol) tools through MCPO and MCP Gateway.
+This guide provides a comprehensive walkthrough for deploying OpenWebUI with local LLM models via Ollama, integrated with MCP (Model Context Protocol) tools through MCPO and ContextForge.
 
 ## 🏗 Architecture Overview
 
@@ -26,7 +26,7 @@ flowchart TD
   %% MCP Integration Layer
   subgraph "MCP Integration"
     MCPO[MCPO Server 🔌<br/>Port 8000<br/>MCP → OpenAPI Bridge]
-    MCG[MCP Gateway 🚪<br/>Port 4444<br/>MCP Registry & Federation]
+    MCG[ContextForge 🚪<br/>Port 4444<br/>MCP Registry & Federation]
     MCP1[MCP Server 1 📦]
     MCP2[MCP Server 2 📦]
     MCPN[MCP Server N 📦]
@@ -58,7 +58,7 @@ flowchart TD
 2. **Ollama**: Local LLM runtime supporting various models (Llama, Mistral, Granite, etc.)
 3. **LiteLLM**: Unified proxy providing OpenAI-compatible API for multiple model backends
 4. **MCPO**: Bridges MCP servers to OpenAPI, making tools accessible to OpenWebUI
-5. **MCP Gateway**: Central registry and federation point for MCP servers
+5. **ContextForge**: Central registry and federation point for MCP servers
 6. **PostgreSQL**: Persistent storage for OpenWebUI data
 
 ---
@@ -194,15 +194,15 @@ curl http://localhost:4000/v1/models \
   -H "Authorization: Bearer sk-1234567890"
 ```
 
-### Step 4: Set Up MCP Gateway
+### Step 4: Set Up ContextForge
 
-Deploy the MCP Gateway (ContextForge) for managing MCP servers:
+Deploy the ContextForge (ContextForge) for managing MCP servers:
 
 ```bash
 # Create data directory
 mkdir -p $(pwd)/mcpgateway_data
 
-# Run MCP Gateway
+# Run ContextForge
 docker run -d \
   --name mcpgateway \
   --network openwebui-net \
@@ -224,7 +224,7 @@ docker exec mcpgateway \
   --username admin@example.com --exp 10080 --secret your-secret-key
 ```
 
-Access the MCP Gateway UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
+Access the ContextForge UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
 
 ### Step 5: Deploy MCPO
 
@@ -348,7 +348,7 @@ docker logs -f openwebui
 
 ### 6.4 Add MCP Servers to Gateway
 
-1. Access MCP Gateway at http://localhost:4444/admin
+1. Access ContextForge at http://localhost:4444/admin
 2. Navigate to **Gateways** tab
 3. Click **Add Gateway** to register external MCP servers
 4. Example configuration:
@@ -513,7 +513,7 @@ docker exec openwebui curl http://litellm:4000/health
 curl -H "Authorization: Bearer mcpo-secret-key" \
   http://localhost:8000/{tool-name}/list-tools
 
-# Verify MCP Gateway
+# Verify ContextForge
 curl -H "Authorization: Bearer $(cat mcpgateway_token.txt)" \
   http://localhost:4444/tools
 ```
@@ -537,7 +537,7 @@ curl -H "Authorization: Bearer $(cat mcpgateway_token.txt)" \
 - [Ollama Documentation](https://github.com/ollama/ollama)
 - [LiteLLM Documentation](https://docs.litellm.ai/)
 - [MCPO Documentation](https://github.com/open-webui/mcpo)
-- [MCP Gateway Documentation](https://github.com/ibm/mcp-context-forge)
+- [ContextForge Documentation](https://github.com/ibm/mcp-context-forge)
 - [Model Context Protocol Spec](https://modelcontextprotocol.io/)
 
 ---

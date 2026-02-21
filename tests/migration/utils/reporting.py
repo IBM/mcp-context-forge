@@ -123,7 +123,7 @@ class MigrationReportGenerator:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MCP Gateway Migration Test Dashboard</title>
+    <title>ContextForge Migration Test Dashboard</title>
     <style>
         * {
             margin: 0;
@@ -357,7 +357,7 @@ class MigrationReportGenerator:
 </head>
 <body>
     <div class="header">
-        <h1>🔄 MCP Gateway Migration Test Dashboard</h1>
+        <h1>🔄 ContextForge Migration Test Dashboard</h1>
         <p>Comprehensive Database Migration Testing Results</p>
         <p style="font-size: 0.9rem; opacity: 0.8;">Generated: {generation_time}</p>
     </div>
@@ -440,7 +440,7 @@ class MigrationReportGenerator:
     </div>
 
     <div class="footer">
-        <p>MCP Gateway Migration Test Suite | Generated with comprehensive validation and performance monitoring</p>
+        <p>ContextForge Migration Test Suite | Generated with comprehensive validation and performance monitoring</p>
     </div>
 
     <script>

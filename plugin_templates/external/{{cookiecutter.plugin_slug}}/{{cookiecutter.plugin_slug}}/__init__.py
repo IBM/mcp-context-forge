@@ -1,4 +1,4 @@
-"""MCP Gateway {{cookiecutter.plugin_name}} Plugin - {{cookiecutter.description}}.
+"""ContextForge {{cookiecutter.plugin_name}} Plugin - {{cookiecutter.description}}.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

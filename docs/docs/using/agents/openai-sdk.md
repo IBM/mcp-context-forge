@@ -1,7 +1,7 @@
 
-# OpenAI Agents SDK + MCP Gateway
+# OpenAI Agents SDK + ContextForge
 
-OpenAI's Agents SDK supports structured tool use and multi-modal workflows. MCP Gateway can serve as a unified tool registry for OpenAI agents.
+OpenAI's Agents SDK supports structured tool use and multi-modal workflows. ContextForge can serve as a unified tool registry for OpenAI agents.
 
 ---
 

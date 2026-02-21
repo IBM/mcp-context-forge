@@ -16,7 +16,7 @@ The Model Context Protocol (MCP) specification version 2025-06-18 introduced **e
 ```mermaid
 sequenceDiagram
     participant Server as MCP Server
-    participant Gateway as MCP Gateway
+    participant Gateway as ContextForge
     participant Client as MCP Client (elicitation-capable)
     participant User
 
@@ -39,7 +39,7 @@ sequenceDiagram
 
 ### Gateway Architectural Challenge
 
-The MCP Gateway operates as both:
+The ContextForge operates as both:
 
 1. **Server to downstream clients** (Claude Desktop, API consumers)
 2. **Client to upstream servers** (MCP servers, federated gateways)

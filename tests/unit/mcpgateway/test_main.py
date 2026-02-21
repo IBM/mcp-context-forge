@@ -524,7 +524,7 @@ class TestHealthAndInfrastructure:
             # When UI is disabled, should return API info
             assert response.status_code == 200
             data = response.json()
-            assert data["name"] == "MCP_Gateway"
+            assert data["name"] == "ContextForge"
             assert data["ui_enabled"] is False
 
     def test_static_files(self, test_client):
@@ -555,8 +555,8 @@ class TestProtocolEndpoints:
         mock_result = InitializeResult(
             protocolVersion=PROTOCOL_VERSION,
             capabilities=mock_capabilities,
-            serverInfo={"name": "MCP Gateway", "version": "1.0.0"},
-            instructions="MCP Gateway providing federated tools, resources and prompts.",
+            serverInfo={"name": "ContextForge", "version": "1.0.0"},
+            instructions="ContextForge providing federated tools, resources and prompts.",
         )
         mock_handle_initialize.return_value = mock_result
 

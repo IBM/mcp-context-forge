@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Cache Package.
-Provides caching components for the MCP Gateway including:
+Provides caching components for the ContextForge including:
 - Resource content caching
 - Session registry for MCP connections
 - GlobalConfig caching for passthrough headers

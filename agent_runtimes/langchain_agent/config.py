@@ -32,7 +32,7 @@ def _parse_tools_list(tools_str: str) -> list[str] | None:
 def get_settings() -> AgentConfig:
     """Get application settings from environment variables"""
     return AgentConfig(
-        # MCP Gateway Configuration
+        # ContextForge Configuration
         mcp_gateway_url=os.getenv("MCP_GATEWAY_URL", "http://localhost:4444"),
         gateway_bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN"),
         tools_allowlist=_parse_tools_list(os.getenv("TOOLS", "")),

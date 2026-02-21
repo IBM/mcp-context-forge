@@ -1,6 +1,6 @@
 # TLS/SSL Configuration Guide
 
-This guide explains how to configure TLS/SSL encryption for the MCP Gateway and nginx reverse proxy in Docker Compose deployments.
+This guide explains how to configure TLS/SSL encryption for the ContextForge and nginx reverse proxy in Docker Compose deployments.
 
 **⚠️ Important: TLS is OPTIONAL and DISABLED by default.** The default deployment uses HTTP-only for simplicity. Enable TLS only when needed for production or testing secure connections.
 
@@ -163,7 +163,7 @@ Auto-generated certificates include:
 
 ## Overview
 
-The MCP Gateway supports TLS/SSL encryption at multiple layers:
+The ContextForge supports TLS/SSL encryption at multiple layers:
 
 1. **Gateway TLS** - Direct HTTPS connections to the gateway (port 4444)
 2. **Nginx Frontend TLS** - HTTPS connections from clients to nginx (port 8443)

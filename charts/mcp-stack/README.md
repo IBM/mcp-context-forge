@@ -4,7 +4,7 @@
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
-  - MCP Gateway application (HTTP / WebSocket server)
+  - ContextForge application (HTTP / WebSocket server)
   - PostgreSQL database with persistent storage
   - Redis cache for sessions & completions
   - Optional PgAdmin and Redis-Commander web UIs
@@ -45,7 +45,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS | string | `"100"` |  |
 | mcpContextForge.config.ANYIO_CANCEL_DELIVERY_PATCH_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.APP_DOMAIN | string | `"http://localhost"` |  |
-| mcpContextForge.config.APP_NAME | string | `"MCP_Gateway"` |  |
+| mcpContextForge.config.APP_NAME | string | `"ContextForge"` |  |
 | mcpContextForge.config.APP_ROOT_PATH | string | `""` |  |
 | mcpContextForge.config.AUDIT_TRAIL_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.AUTH_CACHE_BATCH_QUERIES | string | `"true"` |  |
@@ -425,7 +425,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.WELL_KNOWN_CACHE_MAX_AGE | string | `"3600"` |  |
 | mcpContextForge.config.WELL_KNOWN_CUSTOM_FILES | string | `"{}"` |  |
 | mcpContextForge.config.WELL_KNOWN_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.WELL_KNOWN_ROBOTS_TXT | string | `"User-agent: *\nDisallow: /\n\n# MCP Gateway is a private API gateway\n# Public crawling is disabled by default\n"` |  |
+| mcpContextForge.config.WELL_KNOWN_ROBOTS_TXT | string | `"User-agent: *\nDisallow: /\n\n# ContextForge is a private API gateway\n# Public crawling is disabled by default\n"` |  |
 | mcpContextForge.config.WELL_KNOWN_SECURITY_TXT | string | `""` |  |
 | mcpContextForge.config.WELL_KNOWN_SECURITY_TXT_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.X_CONTENT_TYPE_OPTIONS_ENABLED | string | `"true"` |  |
@@ -503,7 +503,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.BASIC_AUTH_USER | string | `"admin"` |  |
 | mcpContextForge.secret.DCR_ALLOWED_ISSUERS | string | `"[]"` |  |
 | mcpContextForge.secret.DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS | string | `"true"` |  |
-| mcpContextForge.secret.DCR_CLIENT_NAME_TEMPLATE | string | `"MCP Gateway ({gateway_name})"` |  |
+| mcpContextForge.secret.DCR_CLIENT_NAME_TEMPLATE | string | `"ContextForge ({gateway_name})"` |  |
 | mcpContextForge.secret.DCR_DEFAULT_SCOPES | string | `"[\"mcp:read\"]"` |  |
 | mcpContextForge.secret.DCR_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.DCR_METADATA_CACHE_TTL | string | `"3600"` |  |
@@ -628,7 +628,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.SSO_TRUSTED_DOMAINS | string | `"[]"` |  |
 | mcpContextForge.secret.SMTP_ENABLED | string | `"false"` |  |
 | mcpContextForge.secret.SMTP_FROM_EMAIL | string | `""` |  |
-| mcpContextForge.secret.SMTP_FROM_NAME | string | `"MCP Gateway"` |  |
+| mcpContextForge.secret.SMTP_FROM_NAME | string | `"ContextForge"` |  |
 | mcpContextForge.secret.SMTP_HOST | string | `""` |  |
 | mcpContextForge.secret.SMTP_PASSWORD | string | `""` |  |
 | mcpContextForge.secret.SMTP_PORT | string | `"587"` |  |

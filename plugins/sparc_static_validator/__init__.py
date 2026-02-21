@@ -3,7 +3,7 @@
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-SPARC Static Validator Plugin for MCP Gateway.
+SPARC Static Validator Plugin for ContextForge.
 """
 
 from plugins.sparc_static_validator.sparc_static_validator import SPARCStaticValidatorPlugin

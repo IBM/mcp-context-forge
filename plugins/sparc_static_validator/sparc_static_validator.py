@@ -18,7 +18,7 @@ Key Features:
     - Non-existent parameter detection
     - Enum/allowed values validation
 
-The plugin integrates with MCP Gateway's plugin framework and automatically
+The plugin integrates with ContextForge's plugin framework and automatically
 retrieves tool schemas from the global context metadata.
 """
 
@@ -217,10 +217,10 @@ class SPARCStaticValidatorPlugin(Plugin):
         return None
 
     def _convert_to_tool_spec(self, tool_name: str, input_schema: Dict[str, Any], description: str = "") -> "ToolSpec":
-        """Convert MCP Gateway tool schema to SPARC ToolSpec format.
+        """Convert ContextForge tool schema to SPARC ToolSpec format.
 
         The SPARC static checker expects an OpenAI-style ToolSpec format.
-        This method converts the MCP Gateway's JSON Schema input_schema
+        This method converts the ContextForge's JSON Schema input_schema
         to the expected format.
 
         Args:
@@ -243,7 +243,7 @@ class SPARCStaticValidatorPlugin(Plugin):
         )
 
     def _convert_to_tool_call(self, tool_name: str, args: Dict[str, Any], call_id: str = "1") -> "ToolCall":
-        """Convert MCP Gateway tool call to SPARC ToolCall format.
+        """Convert ContextForge tool call to SPARC ToolCall format.
 
         The SPARC static checker expects an OpenAI-style ToolCall format
         with arguments as a JSON-encoded string.

@@ -123,7 +123,7 @@ This guide helps you to set up your local environment for contributing to the Mo
 
 ### Port 4444 Already in Use
 
--   **Problem**: Port 4444, used by the MCP Gateway and MkDocs, may be occupied by another process, causing conflicts.
+-   **Problem**: Port 4444, used by the ContextForge and MkDocs, may be occupied by another process, causing conflicts.
 -   **Fix**:
 
     -   **Check**: Run `netstat -aon | findstr :4444` (Windows) or `ss -tuln | grep 4444` (Linux) to identify the process ID (PID).

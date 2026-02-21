@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Load testing for slow-time-server via MCP Gateway.
+"""Load testing for slow-time-server via ContextForge.
 
 This module tests the slow-time-server through the gateway to validate
 timeout enforcement, circuit breaker behaviour, session pool resilience,

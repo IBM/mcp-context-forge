@@ -1,4 +1,4 @@
-# Semantic Kernel Integration with MCP Gateway
+# Semantic Kernel Integration with ContextForge
 
 [Semantic Kernel](https://aka.ms/semantic-kernel) is a Microsoft OSS framework for building AI-first apps.
 
@@ -8,7 +8,7 @@
 
 Support for external tools via REST allows you to call MCP tools from SK plugins using `HttpFunction`.
 
-Define a plugin that points to MCP Gateway's `/tools/invoke` and pass arguments as JSON.
+Define a plugin that points to ContextForge's `/tools/invoke` and pass arguments as JSON.
 
 ---
 

@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 # Author : Mihai Criveti
-# Description: 🛠️ MCP Gateway Smoke-Test Utility
+# Description: 🛠️ ContextForge Smoke-Test Utility
 
-This script verifies a full install + runtime setup of the MCP Gateway:
+This script verifies a full install + runtime setup of the ContextForge:
 - Creates a virtual environment and installs dependencies.
 - Builds and runs the Docker HTTPS container.
 - Starts the MCP Time Server via mcpgateway.translate.
@@ -731,7 +731,7 @@ def step_13_prompt_management():
 
     # Test 1: Create simple prompt without arguments
     logging.info("📋 Test: Create simple prompt")
-    simple_prompt = {"name": f"greeting_{uuid.uuid4().hex[:8]}", "description": "Simple greeting prompt", "template": "Hello! Welcome to the MCP Gateway. How can I help you today?", "arguments": []}
+    simple_prompt = {"name": f"greeting_{uuid.uuid4().hex[:8]}", "description": "Simple greeting prompt", "template": "Hello! Welcome to the ContextForge. How can I help you today?", "arguments": []}
     r = request("POST", "/prompts", json_data=simple_prompt)
     if r.status_code in (200, 201):
         test_ctx.add_prompt(simple_prompt["name"])
@@ -984,7 +984,7 @@ STEPS: List[Tuple[str, StepFunc]] = [
 
 # ──────────────────────────────── Main ───────────────────────────────────
 def main():
-    ap = argparse.ArgumentParser(description="MCP Gateway smoke-test")
+    ap = argparse.ArgumentParser(description="ContextForge smoke-test")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--tail", type=int, default=10, help="Tail window (default 10)")
     ap.add_argument("--start-step", type=int, default=1)
@@ -1019,7 +1019,7 @@ def main():
     failed = False
 
     try:
-        logging.info("🚀 Starting MCP Gateway smoke test")
+        logging.info("🚀 Starting ContextForge smoke test")
         logging.info("📋 Environment:")
         logging.info("  - Gateway port: %d", PORT_GATEWAY)
         logging.info("  - Time server port: %d", PORT_TIME_SERVER)

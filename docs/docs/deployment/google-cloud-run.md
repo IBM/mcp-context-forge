@@ -1,12 +1,12 @@
-# ☁️ Deploying MCP Gateway on Google Cloud Run
+# ☁️ Deploying ContextForge on Google Cloud Run
 
-MCP Gateway can be deployed to [Google Cloud Run](https://cloud.google.com/run), a fully managed, autoscaling platform for containerized applications. This guide provides step-by-step instructions to provision PostgreSQL and Redis backends, deploy the container, configure environment variables, authenticate using JWT, and monitor logs-all optimized for cost-efficiency.
+ContextForge can be deployed to [Google Cloud Run](https://cloud.google.com/run), a fully managed, autoscaling platform for containerized applications. This guide provides step-by-step instructions to provision PostgreSQL and Redis backends, deploy the container, configure environment variables, authenticate using JWT, and monitor logs-all optimized for cost-efficiency.
 
 ---
 
 ## ✅ Overview
 
-Google Cloud Run is an ideal platform for MCP Gateway due to its:
+Google Cloud Run is an ideal platform for ContextForge due to its:
 
 * **Serverless and cost-efficient** model with scale-to-zero capability.
 * **Public HTTPS endpoints** with automatic TLS configuration.
@@ -262,7 +262,7 @@ gcloud sql instances patch mcpgw-db \
   --authorized-networks=0.0.0.0/0
 ```
 
-#### Deploy the MCP Gateway container with minimal resource allocation:
+#### Deploy the ContextForge container with minimal resource allocation:
 
 ```bash
 gcloud run deploy mcpgateway \
@@ -333,7 +333,7 @@ mcpgw=> \dt;
 
 ### Generate a JWT Bearer Token
 
-Use the MCP Gateway container to generate a JWT token:
+Use the ContextForge container to generate a JWT token:
 
 ```bash
 docker run -it --rm ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
@@ -405,7 +405,7 @@ Instead of project-wide permissions, grant permissions on specific resources:
 ```bash
 # Create service account
 gcloud iam service-accounts create github-mcpgateway \
-  --display-name="GitHub MCP Gateway Deploy"
+  --display-name="GitHub ContextForge Deploy"
 
 # Grant permission ONLY on the specific Cloud Run service
 gcloud run services add-iam-policy-binding mcpgateway \
@@ -467,4 +467,4 @@ gcloud iam service-accounts keys create restricted-key.json \
 
 ---
 
-By following this guide, you can deploy MCP Gateway on Google Cloud Run using the most cost-effective configurations, ensuring efficient resource utilization and seamless scalability.
+By following this guide, you can deploy ContextForge on Google Cloud Run using the most cost-effective configurations, ensuring efficient resource utilization and seamless scalability.

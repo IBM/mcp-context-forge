@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MCP Gateway implements a high-performance parallel session cleanup mechanism using `asyncio.gather()` with bounded concurrency to optimize database operations in multi-worker deployments. This document explains the implementation and performance benefits.
+The ContextForge implements a high-performance parallel session cleanup mechanism using `asyncio.gather()` with bounded concurrency to optimize database operations in multi-worker deployments. This document explains the implementation and performance benefits.
 
 ## Implementation
 

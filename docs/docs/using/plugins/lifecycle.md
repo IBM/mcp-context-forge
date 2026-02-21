@@ -24,7 +24,7 @@ graph LR
 
     B --> C
 
-    subgraph CF["Context Forge"]
+    subgraph CF["ContextForge"]
         E["gateway"]
         D o--"MCP<br>&nbsp;&nbsp;<small>tools/call <i>hook</i></small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"--o E
     end
@@ -37,15 +37,15 @@ The process breaks down into these main steps:
 - **Bootstrap**: Start with a plugin template and run the bootstrap command to set up your project structure
 - **Build**: Compile and package your plugin code
 - **Serve**: Launch a local development server to test your plugin
-- **Connect**: Your served plugin automatically integrates with Context Forge's gateway via MCP (Model Context Protocol), using tool calls over standardized hooks for seamless communication
+- **Connect**: Your served plugin automatically integrates with ContextForge's gateway via MCP (Model Context Protocol), using tool calls over standardized hooks for seamless communication
 
-This streamlined approach lets developers focus on building functionality rather than wrestling with configuration, while ensuring plugins work smoothly within the broader Context Forge ecosystem.
+This streamlined approach lets developers focus on building functionality rather than wrestling with configuration, while ensuring plugins work smoothly within the broader ContextForge ecosystem.
 
 ### Bootstrap
 
-Creating a new plugin for Context Forge only takes a few minutes!
+Creating a new plugin for ContextForge only takes a few minutes!
 
-Using the `mcpplugins` tool (installed with Context Forge),
+Using the `mcpplugins` tool (installed with ContextForge),
 
 ```bash
 mcpplugins bootstrap --destination your/plugin/dir

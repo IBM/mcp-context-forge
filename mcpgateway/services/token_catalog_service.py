@@ -225,7 +225,7 @@ class TokenCatalogService:
 
         This internal method creates a properly formatted JWT token with all
         necessary claims including user identity, scopes, team membership,
-        and expiration. The token follows the MCP Gateway JWT structure.
+        and expiration. The token follows the ContextForge JWT structure.
 
         Args:
             user_email: User's email address for the token subject

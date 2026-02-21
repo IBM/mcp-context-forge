@@ -1,4 +1,4 @@
-# OPA Plugin for MCP Gateway
+# OPA Plugin for ContextForge
 
 > Author: Shriti Priya
 > Version: 0.1.0
@@ -297,4 +297,4 @@ Apache-2.0
 
 ## Support
 
-For issues or questions, please open an issue in the MCP Gateway repository.
+For issues or questions, please open an issue in the ContextForge repository.

@@ -1,6 +1,6 @@
 # Output Schema Test MCP Server
 
-A test MCP server for validating outputSchema field support in the MCP Gateway.
+A test MCP server for validating outputSchema field support in the ContextForge.
 
 ## Purpose
 
@@ -82,7 +82,7 @@ This will:
 
 ## Testing Output Schema Support
 
-### 1. Register with MCP Gateway
+### 1. Register with ContextForge
 
 ```bash
 # Add as a gateway peer
@@ -191,7 +191,7 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### Via MCP Gateway
+### Via ContextForge
 
 Register as a gateway peer (see Testing section above).
 

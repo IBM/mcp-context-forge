@@ -5,7 +5,7 @@ deployment:
   type: kubernetes
   namespace: mcp-gateway-test
 
-# MCP Gateway configuration
+# ContextForge configuration
 gateway:
   # Use pre-built gateway image
   image: mcpgateway/mcpgateway:latest

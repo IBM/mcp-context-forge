@@ -370,7 +370,7 @@ class MonitoredReverseProxy(ReverseProxyClient):
 
 ## Related Documentation
 
-- [MCP Gateway Documentation](../index.md)
+- [ContextForge Documentation](../index.md)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
 - [Transport Protocols](../architecture/index.md)
 - [Authentication Guide](../manage/securing.md)

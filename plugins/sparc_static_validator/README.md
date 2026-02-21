@@ -38,7 +38,7 @@ The SPARC Static Validator plugin provides comprehensive **syntax validation** f
 The plugin requires the optional `altk` dependency:
 
 ```bash
-# Install MCP Gateway with ALTK support
+# Install ContextForge with ALTK support
 pip install mcp-contextforge-gateway[altk]
 ```
 

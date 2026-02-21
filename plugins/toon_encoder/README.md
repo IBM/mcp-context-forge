@@ -50,7 +50,7 @@ Savings: 52.8% (122 bytes saved)
 
 ### Why This Matters
 
-For an agent using MCP Gateway to federate 10+ MCP servers:
+For an agent using ContextForge to federate 10+ MCP servers:
 - Each tool call returns JSON responses (database queries, API data, etc.)
 - JSON verbosity (quoted keys, quoted strings, punctuation) inflates token count
 - **Accumulated impact across many tool calls:**
@@ -63,7 +63,7 @@ For an agent using MCP Gateway to federate 10+ MCP servers:
 ### Prerequisites
 
 - Python 3.11+
-- MCP Gateway repository cloned
+- ContextForge repository cloned
 - `uv` package manager (or pip)
 
 ### Step 1: Set Up Development Environment
@@ -168,7 +168,7 @@ curl -X POST http://localhost:8000/tools/my-tool/invoke \
 
 ## Installation
 
-The plugin is included in the MCP Gateway plugins directory. Enable it in your configuration:
+The plugin is included in the ContextForge plugins directory. Enable it in your configuration:
 
 ### 1. Add to `plugins/config.yaml`
 
@@ -493,10 +493,10 @@ TOON is a lossless format - all data from the original JSON is preserved.
 
 ### Complete System Prompt Example
 
-Here's a complete example for an agent using MCP Gateway with TOON:
+Here's a complete example for an agent using ContextForge with TOON:
 
 ```
-You are a helpful assistant with access to tools via MCP Gateway.
+You are a helpful assistant with access to tools via ContextForge.
 
 ## Tool Response Format: TOON
 

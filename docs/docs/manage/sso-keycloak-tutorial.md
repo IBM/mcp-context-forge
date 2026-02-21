@@ -1,6 +1,6 @@
 # Keycloak OIDC Setup Tutorial
 
-This tutorial walks you through setting up Keycloak Single Sign-On (SSO) authentication for MCP Gateway, enabling enterprise identity management with the popular open-source identity and access management solution.
+This tutorial walks you through setting up Keycloak Single Sign-On (SSO) authentication for ContextForge, enabling enterprise identity management with the popular open-source identity and access management solution.
 
 ## Quick Start (Docker Compose)
 
@@ -33,7 +33,7 @@ Preconfigured local endpoints and credentials:
 
 ## Prerequisites
 
-- MCP Gateway installed and running
+- ContextForge installed and running
 - Keycloak instance with admin access (self-hosted or cloud)
 - Keycloak admin console access with appropriate permissions
 - Access to your gateway's environment configuration
@@ -193,7 +193,7 @@ Realm roles apply across all clients in the realm:
 **Example roles**:
 
 - **Role name**: `gateway-admin`
-- **Description**: Administrator role for MCP Gateway
+- **Description**: Administrator role for ContextForge
 - Click **Save**
 
 Repeat for additional roles:
@@ -204,7 +204,7 @@ Repeat for additional roles:
 
 ### 4.2 Create Client Roles (Optional)
 
-Client roles are specific to the MCP Gateway client:
+Client roles are specific to the ContextForge client:
 
 1. Navigate to **Clients** → Select your `mcp-gateway` client
 2. Go to **Roles** tab
@@ -284,7 +284,7 @@ To include group membership in tokens:
 2. Go to **Mappers** tab
 3. Verify or create **Group Membership** mapper (see Step 3.2)
 
-## Step 6: Configure MCP Gateway Environment
+## Step 6: Configure ContextForge Environment
 
 ### 6.1 Keycloak Auto-Discovery Feature
 
@@ -1007,7 +1007,7 @@ After Keycloak SSO is working:
 5. **Customize login themes** for brand consistency
 6. **Set up event logging** for audit compliance
 7. **Configure session management** and timeout policies
-8. **Implement group-based team mapping** in MCP Gateway
+8. **Implement group-based team mapping** in ContextForge
 9. **Document your configuration** for team reference
 
 ## Related Documentation
@@ -1048,4 +1048,4 @@ If you encounter issues:
 4. Review gateway logs for Keycloak-specific errors
 5. Test JWT token claims at [jwt.io](https://jwt.io)
 6. Consult Keycloak documentation and community forums
-7. Check [MCP Gateway issue tracker](https://github.com/IBM/mcp-context-forge/issues)
+7. Check [ContextForge issue tracker](https://github.com/IBM/mcp-context-forge/issues)

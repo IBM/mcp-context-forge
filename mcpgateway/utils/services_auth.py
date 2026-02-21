@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-mcpgateway.utils.services_auth - Authentication utilities for MCP Gateway
+mcpgateway.utils.services_auth - Authentication utilities for ContextForge
 Doctest examples
 ----------------
 >>> import os

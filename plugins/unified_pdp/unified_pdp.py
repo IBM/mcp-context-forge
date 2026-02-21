@@ -6,7 +6,7 @@ Authors: Your Name
 
 Unified Policy Decision Point plugin.
 
-Integrates the PDP orchestrator into the MCP Context Forge gateway plugin
+Integrates the PDP orchestrator into the ContextForge gateway plugin
 framework.  Hooks into ``tool_pre_invoke`` and ``resource_pre_fetch``; on
 every call it builds a Subject/Resource/Context from the hook payload,
 calls ``PolicyDecisionPoint.check_access()``, and either passes the

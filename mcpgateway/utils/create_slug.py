@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Manav Gupta
 
-Slug generation utilities for MCP Gateway.
+Slug generation utilities for ContextForge.
 This module provides utilities for creating URL-friendly slugs from text.
 It handles Unicode normalization, special character replacement, and
 contraction processing to generate clean, readable slugs.

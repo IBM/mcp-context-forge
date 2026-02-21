@@ -1,4 +1,4 @@
-# {{cookiecutter.plugin_name}} for Context Forge MCP Gateway
+# {{cookiecutter.plugin_name}} for ContextForge
 
 {{cookiecutter.description}}.
 

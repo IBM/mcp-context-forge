@@ -1,4 +1,4 @@
-# OAuth 2.0 Integration Design for MCP Gateway
+# OAuth 2.0 Integration Design for ContextForge
 
 **Version**: 1.2
 **Status**: Design + implementation notes
@@ -10,9 +10,9 @@
 This document describes the design for the Admin UI initiated OAuth 2.0 Authorization Code flow for MCP gateways and how the backend stores and uses user-delegated tokens.
 
 !!! note "Scope of This Document"
-    This document covers **gateway OAuth token delegation** - how MCP Gateway obtains and uses OAuth tokens to authenticate with upstream MCP servers on behalf of users.
+    This document covers **gateway OAuth token delegation** - how ContextForge obtains and uses OAuth tokens to authenticate with upstream MCP servers on behalf of users.
 
-    For information about **user authentication to MCP Gateway** (SSO, JWT tokens, RBAC), see:
+    For information about **user authentication to ContextForge** (SSO, JWT tokens, RBAC), see:
 
     - [RBAC Configuration](../manage/rbac.md) - Token scoping, permissions, and access control
     - [Multi-Tenancy Architecture](./multitenancy.md) - User authentication flows and team management
@@ -130,7 +130,7 @@ OAuth tokens obtained through the Authorization Code flow are used to authentica
 
 ### Relationship to Gateway Authentication
 
-This OAuth flow is **separate** from user authentication to the MCP Gateway itself:
+This OAuth flow is **separate** from user authentication to the ContextForge itself:
 
 | Aspect | Gateway OAuth (this doc) | User Auth to Gateway |
 |--------|-------------------------|---------------------|

@@ -33,7 +33,7 @@ def test_config_loader_load():
     assert config.plugins[0].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert config.plugins[0].description == "A plugin for finding and replacing words."
     assert config.plugins[0].version == "0.1"
-    assert config.plugins[0].author == "MCP Context Forge Team"
+    assert config.plugins[0].author == "ContextForge Team"
     assert config.plugins[0].hooks[0] == "prompt_pre_fetch"
     assert config.plugins[0].hooks[1] == "prompt_post_fetch"
     assert config.plugins[0].config

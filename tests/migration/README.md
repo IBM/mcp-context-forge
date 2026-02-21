@@ -1,6 +1,6 @@
 # Migration Test Suite
 
-A comprehensive test suite for validating **application-level database migrations** across MCP Gateway container versions following an **n-2 support policy**. This suite tests both SQLite (via Docker) and PostgreSQL/Redis (via docker-compose) deployments using realistic application container scenarios with extensive logging and reporting.
+A comprehensive test suite for validating **application-level database migrations** across ContextForge container versions following an **n-2 support policy**. This suite tests both SQLite (via Docker) and PostgreSQL/Redis (via docker-compose) deployments using realistic application container scenarios with extensive logging and reporting.
 
 **Migration Approach**: This test suite validates **application-managed migrations** where containers handle their own database initialization and schema evolution automatically, rather than executing manual Alembic commands. This approach reflects real-world deployment scenarios where applications manage their own database state.
 
@@ -527,4 +527,4 @@ When adding new migration tests:
 
 ---
 
-For more details on the MCP Gateway project, see the main [README.md](../../README.md) and [CLAUDE.md](../../CLAUDE.md) files.
+For more details on the ContextForge project, see the main [README.md](../../README.md) and [CLAUDE.md](../../CLAUDE.md) files.

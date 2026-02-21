@@ -1,6 +1,6 @@
-# 🧪 Testing MCP Gateway
+# 🧪 Testing ContextForge
 
-This section covers the testing strategy and tools for MCP Gateway.
+This section covers the testing strategy and tools for ContextForge.
 
 ---
 

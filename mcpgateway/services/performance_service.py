@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Performance Monitoring Service.
 
 This module provides comprehensive system and application performance monitoring
-for the MCP Gateway. It collects metrics from:
+for the ContextForge. It collects metrics from:
 - System resources (CPU, memory, disk, network) via psutil
 - Gunicorn workers and processes
 - Database connection pools

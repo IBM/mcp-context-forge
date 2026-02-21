@@ -227,9 +227,9 @@ data:
   dashboards.yaml: |
     apiVersion: 1
     providers:
-      - name: MCP Gateway Dashboards
+      - name: ContextForge Dashboards
         orgId: 1
-        folder: MCP Gateway
+        folder: ContextForge
         type: file
         disableDeletion: false
         updateIntervalSeconds: 30

@@ -21,7 +21,7 @@ gRPC provides approximately **8x better performance** than MCP/HTTP transport du
 
 ```
 ┌─────────────────────┐           gRPC            ┌─────────────────────┐
-│   MCP Gateway       │◄────────────────────────►│  External Plugin    │
+│   ContextForge       │◄────────────────────────►│  External Plugin    │
 │   (Client)          │      (HTTP/2 + Proto)     │  Server (gRPC)      │
 │                     │                           │                     │
 │  GrpcExternalPlugin │                           │  GrpcPluginServicer │

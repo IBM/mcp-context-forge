@@ -1,6 +1,6 @@
 # Cline (VS Code Extension)
 
-[Cline](https://cline.bot/) is a Visual Studio Code extension that brings AI-powered coding assistance directly into your editor. It supports the Model Context Protocol (MCP), enabling seamless integration with MCP-compatible servers like MCP Gateway.
+[Cline](https://cline.bot/) is a Visual Studio Code extension that brings AI-powered coding assistance directly into your editor. It supports the Model Context Protocol (MCP), enabling seamless integration with MCP-compatible servers like ContextForge.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -33,9 +33,9 @@
 
 ---
 
-## 🔗 Connecting to MCP Gateway
+## 🔗 Connecting to ContextForge
 
-To integrate Cline with your MCP Gateway:
+To integrate Cline with your ContextForge:
 
 1. **Configure MCP Server**:
 
@@ -73,7 +73,7 @@ To integrate Cline with your MCP Gateway:
 3. **Verify Connection**:
 
    - In the Cline interface, navigate to the MCP Servers section.
-   - Confirm that the MCP Gateway server is listed and shows a green status indicator.
+   - Confirm that the ContextForge server is listed and shows a green status indicator.
 
 ---
 
@@ -81,7 +81,7 @@ To integrate Cline with your MCP Gateway:
 
 Once connected:
 
-- **Discover Tools**: Cline will automatically fetch and list available tools from the MCP Gateway.
+- **Discover Tools**: Cline will automatically fetch and list available tools from the ContextForge.
 - **Invoke Tools**: Use natural language prompts in Cline to invoke tools. For example:
 
   - "Run the `hello_world` tool with the argument `name: Alice`."

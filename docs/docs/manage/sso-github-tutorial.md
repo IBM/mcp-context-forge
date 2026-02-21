@@ -1,10 +1,10 @@
 # GitHub SSO Setup Tutorial
 
-This tutorial walks you through setting up GitHub Single Sign-On (SSO) authentication for MCP Gateway, allowing users to log in with their GitHub accounts.
+This tutorial walks you through setting up GitHub Single Sign-On (SSO) authentication for ContextForge, allowing users to log in with their GitHub accounts.
 
 ## Prerequisites
 
-- MCP Gateway installed and running
+- ContextForge installed and running
 - GitHub account with admin access to create OAuth apps
 - Access to your gateway's environment configuration
 
@@ -21,9 +21,9 @@ This tutorial walks you through setting up GitHub Single Sign-On (SSO) authentic
 
 Fill out the OAuth application form:
 
-**Application name**: `MCP Gateway - [Your Organization]`
+**Application name**: `ContextForge - [Your Organization]`
 
-- Example: `MCP Gateway - Acme Corp`
+- Example: `ContextForge - Acme Corp`
 
 **Homepage URL**: Your gateway's public URL
 
@@ -58,7 +58,7 @@ http://localhost:4444/auth/sso/callback/github
 4. **Important**: Copy the client secret immediately - you won't see it again
 5. Store both Client ID and Client Secret securely
 
-## Step 2: Configure MCP Gateway Environment
+## Step 2: Configure ContextForge Environment
 
 ### 2.1 Update Environment Variables
 

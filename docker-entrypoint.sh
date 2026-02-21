@@ -22,11 +22,11 @@ HTTP_SERVER="${HTTP_SERVER:-gunicorn}"
 
 case "${HTTP_SERVER}" in
     granian)
-        echo "Starting MCP Gateway with Granian (Rust-based HTTP server)..."
+        echo "Starting ContextForge with Granian (Rust-based HTTP server)..."
         exec ./run-granian.sh "$@"
         ;;
     gunicorn)
-        echo "Starting MCP Gateway with Gunicorn + Uvicorn..."
+        echo "Starting ContextForge with Gunicorn + Uvicorn..."
         exec ./run-gunicorn.sh "$@"
         ;;
     *)

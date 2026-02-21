@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Tests for the admin module with improved coverage.
-This module tests the admin UI routes for the MCP Gateway, ensuring
+This module tests the admin UI routes for the ContextForge, ensuring
 they properly handle server, tool, resource, prompt, gateway and root management.
 Enhanced with additional test cases for better coverage.
 """
@@ -4279,7 +4279,7 @@ class TestA2AAgentManagement:
         result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result.status_code == 200
         params = service.invoke_agent.call_args.args[2]
-        assert "Hello from MCP Gateway Admin UI test!" in params["params"]["message"]["parts"][0]["text"]
+        assert "Hello from ContextForge Admin UI test!" in params["params"]["message"]["parts"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_generic_test_params_branch(self, monkeypatch, mock_request, mock_db, allow_permission):

@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
-MCP Gateway - Main module for toolops services.
+ContextForge - Main module for toolops services.
 
 This module defines the different toolops services
 

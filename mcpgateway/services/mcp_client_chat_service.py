@@ -531,7 +531,7 @@ class WatsonxConfig(BaseModel):
 
 class GatewayConfig(BaseModel):
     """
-    Configuration for MCP Gateway internal LLM provider.
+    Configuration for ContextForge internal LLM provider.
 
     Allows LLM Chat to use models configured in the gateway's LLM Settings.
     The gateway routes requests to the appropriate configured provider.

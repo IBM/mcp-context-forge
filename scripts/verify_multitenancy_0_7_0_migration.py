@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MCP Gateway v0.7.0 Multitenancy Migration Verification
+"""ContextForge v0.7.0 Multitenancy Migration Verification
 
 This script verifies that the v0.6.0 → v0.7.0 multitenancy migration
 completed successfully and that old servers/resources are visible in
@@ -56,7 +56,7 @@ except ImportError as e:
 def verify_migration():
     """Verify the multitenancy migration was successful."""
 
-    print("🔍 MCP Gateway v0.7.0 Multitenancy Migration Verification")
+    print("🔍 ContextForge v0.7.0 Multitenancy Migration Verification")
     print("📅 Migration: v0.6.0 → v0.7.0")
     print("=" * 65)
 

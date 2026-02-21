@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Handlers Package.
-Provides request handlers for the MCP Gateway including:
+Provides request handlers for the ContextForge including:
 - Sampling request handling
 """
 

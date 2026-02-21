@@ -1,6 +1,6 @@
 ## Observability
 
-MCP Gateway provides comprehensive observability through two complementary systems:
+ContextForge provides comprehensive observability through two complementary systems:
 
 1. **Internal Observability** - Built-in database-backed tracing with Admin UI dashboards
 2. **OpenTelemetry** - Standard distributed tracing to external backends (Phoenix, Jaeger, Tempo)
@@ -19,7 +19,7 @@ MCP Gateway provides comprehensive observability through two complementary syste
 # Enable internal observability
 export OBSERVABILITY_ENABLED=true
 
-# Run MCP Gateway
+# Run ContextForge
 mcpgateway
 
 # View dashboards at http://localhost:4444/admin/observability
@@ -36,7 +36,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 # Start Phoenix for AI/LLM observability
 docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest
 
-# Run MCP Gateway
+# Run ContextForge
 mcpgateway
 
 # View traces at http://localhost:6006
@@ -107,7 +107,7 @@ deploying Prometheus in Kubernetes.
 ### Grafana and dashboards
 
 - Use Grafana to import dashboards for Kubernetes, PostgreSQL and Redis (IDs
-    suggested elsewhere in the repo). For MCP Gateway app metrics, create panels
+    suggested elsewhere in the repo). For ContextForge app metrics, create panels
     for:
 
     - Request rate: `rate(http_requests_total[1m])`

@@ -6,7 +6,7 @@
 
 ## Context
 
-The MCP Gateway uses short-lived caching for:
+The ContextForge uses short-lived caching for:
 
 - Tool responses and resource lookups
 - Peer discovery metadata

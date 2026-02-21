@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-PII Filter Plugin for MCP Gateway.
+PII Filter Plugin for ContextForge.
 This plugin detects and masks Personally Identifiable Information (PII) in prompts
 and their responses, including SSNs, credit cards, emails, phone numbers, and more.
 """

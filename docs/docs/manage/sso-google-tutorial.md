@@ -1,10 +1,10 @@
 # Google OAuth/OIDC Setup Tutorial
 
-This tutorial walks you through setting up Google Single Sign-On (SSO) authentication for MCP Gateway, allowing users to log in with their Google accounts.
+This tutorial walks you through setting up Google Single Sign-On (SSO) authentication for ContextForge, allowing users to log in with their Google accounts.
 
 ## Prerequisites
 
-- MCP Gateway installed and running
+- ContextForge installed and running
 - Google account with access to Google Cloud Console
 - Access to your gateway's environment configuration
 
@@ -13,7 +13,7 @@ This tutorial walks you through setting up Google Single Sign-On (SSO) authentic
 ### 1.1 Access Google Cloud Console
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Select or create a project for your MCP Gateway
+2. Select or create a project for your ContextForge
 3. In the left sidebar, navigate to **APIs & Services** → **Credentials**
 
 ### 1.2 Enable Required APIs
@@ -33,7 +33,7 @@ Before creating credentials, enable the necessary APIs:
 2. Choose **External** (for general use) or **Internal** (for Google Workspace)
 3. Fill out the required fields:
 
-**App name**: `MCP Gateway - [Your Organization]`
+**App name**: `ContextForge - [Your Organization]`
 
 **User support email**: Your support email
 
@@ -61,7 +61,7 @@ Before creating credentials, enable the necessary APIs:
 3. Choose **Web application**
 4. Configure the client:
 
-**Name**: `MCP Gateway OAuth Client`
+**Name**: `ContextForge OAuth Client`
 
 **Authorized JavaScript origins**: Your gateway domain
 
@@ -75,7 +75,7 @@ Before creating credentials, enable the necessary APIs:
 5. Click **Create**
 6. **Important**: Copy the Client ID and Client Secret immediately
 
-## Step 2: Configure MCP Gateway Environment
+## Step 2: Configure ContextForge Environment
 
 ### 2.1 Update Environment Variables
 
@@ -369,7 +369,7 @@ If using Google Workspace:
 1. Go to [Google Admin Console](https://admin.google.com)
 2. Navigate to **Security** → **API controls**
 3. Click **MANAGE THIRD-PARTY APP ACCESS**
-4. Configure app access for your MCP Gateway OAuth app
+4. Configure app access for your ContextForge OAuth app
 
 ### Domain-Wide Delegation (Advanced)
 

@@ -8,7 +8,7 @@
 
 ## Context
 
-The MCP Gateway needed to support standardized well-known URIs as defined by RFC 8615 to enable proper web service discovery, security contact information, and crawler management. Well-known URIs are standardized endpoints that web services expose for automated discovery and security contact purposes.
+The ContextForge needed to support standardized well-known URIs as defined by RFC 8615 to enable proper web service discovery, security contact information, and crawler management. Well-known URIs are standardized endpoints that web services expose for automated discovery and security contact purposes.
 
 The implementation needed to address:
 
@@ -60,7 +60,7 @@ well_known_enabled: bool = True
 well_known_robots_txt: str = """User-agent: *
 Disallow: /
 
-# MCP Gateway is a private API gateway
+# ContextForge is a private API gateway
 # Public crawling is disabled by default"""
 
 well_known_security_txt: str = ""

@@ -1,16 +1,16 @@
-# 🚀 Deploying the MCP Gateway Stack to IBM Cloud Kubernetes Service with Argo CD
+# 🚀 Deploying the ContextForge Stack to IBM Cloud Kubernetes Service with Argo CD
 
 !!! warning "Preview"
     This guide is in preview and will continue to evolve. Content is accurate but may receive refinements as the Helm chart and GitOps flows mature.
 
 !!! abstract "What you'll achieve"
 
-    * Build or pull the OCI image(s) for MCP Gateway
+    * Build or pull the OCI image(s) for ContextForge
     * Push them to **IBM Container Registry (ICR)**
     * Provision an **IKS** cluster with VPC-native networking
     * Install & bootstrap **Argo CD** for GitOps management
     * Deploy the MCP Stack Helm chart via Argo CD
-    * Configure MCP Gateway with servers and tools
+    * Configure ContextForge with servers and tools
     * Connect clients (VS Code Copilot, LangChain Agent, Claude Desktop)
     * Set up observability, scaling, and managed databases
 
@@ -35,7 +35,7 @@ flowchart TD
         icr["ICR<br/>eu.icr.io"]
         argocd["Argo CD"]
         helm["Helm Release<br/>mcp-stack"]
-        gateway["MCP Gateway Pods"]
+        gateway["ContextForge Pods"]
         db["PostgreSQL PVC"]
         redis["Redis PVC"]
         kms["Key Protect KMS"]
@@ -359,7 +359,7 @@ spec:
 Create **`charts/mcp-stack/envs/iks/values.yaml`**:
 
 ```yaml
-# MCP Gateway Configuration
+# ContextForge Configuration
 mcpContextForge:
   replicaCount: 2
 
@@ -567,7 +567,7 @@ kubectl create secret generic postgres-secret -n mcp \
 kubectl create secret generic redis-secret -n mcp \
   --from-literal=redis-password="$REDIS_PASSWORD"
 
-# Create MCP Gateway config
+# Create ContextForge config
 kubectl create secret generic mcp-gateway-secret -n mcp \
   --from-literal=JWT_SECRET_KEY="$JWT_SECRET" \
   --from-literal=PLATFORM_ADMIN_EMAIL="admin@example.com" \
@@ -621,7 +621,7 @@ kubectl get pv,pvc -n mcp
 
 ---
 
-## 8. Test and Configure MCP Gateway
+## 8. Test and Configure ContextForge
 
 ### 8.1. Generate API Token
 
@@ -755,7 +755,7 @@ sed -i 's/tag: "0.7.0"/tag: "0.9.0"/' charts/mcp-stack/envs/iks/values.yaml
 
 # Commit and push
 git add charts/mcp-stack/envs/iks/values.yaml
-git commit -m "Upgrade MCP Gateway to v0.9.0"
+git commit -m "Upgrade ContextForge to v0.9.0"
 git push
 
 # Argo CD will automatically sync the changes
@@ -806,7 +806,7 @@ helm upgrade mcp-stack charts/mcp-stack -n mcp \
 # Create a backup using IBM Cloud Snapshots
 ibmcloud ks storage snapshot-create --cluster mcp-cluster \
   --pvc $(kubectl get pvc -n mcp -o jsonpath='{.items[0].metadata.name}') \
-  --description "MCP Gateway backup $(date +%Y%m%d)"
+  --description "ContextForge backup $(date +%Y%m%d)"
 
 # List snapshots
 ibmcloud ks storage snapshots --cluster mcp-cluster
@@ -1014,13 +1014,13 @@ kubectl describe networkpolicy deny-by-default -n mcp
 
 ## 14. Performance Testing
 
-Performance testing helps validate the stability, scalability, and responsiveness of the MCP Gateway under different workloads. This section outlines how to perform load tests using `hey` and how to inspect performance metrics.
+Performance testing helps validate the stability, scalability, and responsiveness of the ContextForge under different workloads. This section outlines how to perform load tests using `hey` and how to inspect performance metrics.
 
 ---
 
 ### 14.1. Run Basic Load Test with `hey`
 
-[`hey`](https://github.com/rakyll/hey) is a CLI load-testing tool for HTTP endpoints. You can use it to simulate traffic to the MCP Gateway's `/health` or `/version` endpoint:
+[`hey`](https://github.com/rakyll/hey) is a CLI load-testing tool for HTTP endpoints. You can use it to simulate traffic to the ContextForge's `/health` or `/version` endpoint:
 
 ```bash
 # Install hey (if not already installed)
@@ -1118,7 +1118,7 @@ python3 -m mcpgateway.translate --stdio "npx -y kubernetes-mcp-server@latest" --
 ## 16. FAQ
 
 **Q**: *How do I rotate the JWT secret without downtime?*
-**A**: Update the secret and restart the MCP Gateway pods:
+**A**: Update the secret and restart the ContextForge pods:
 ```bash
 NEW_JWT_SECRET=$(openssl rand -hex 32)
 kubectl patch secret mcp-gateway-secret -n mcp \
@@ -1146,7 +1146,7 @@ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/
 
 ---
 
-✅ You now have a production-ready MCP Gateway stack on IBM Cloud Kubernetes Service with GitOps management, managed databases, and comprehensive observability!
+✅ You now have a production-ready ContextForge stack on IBM Cloud Kubernetes Service with GitOps management, managed databases, and comprehensive observability!
 
 ## Next Steps
 

@@ -1,4 +1,4 @@
-# AutoGen Integration with MCP Gateway
+# AutoGen Integration with ContextForge
 
 [AutoGen](https://github.com/microsoft/autogen) is an open-source framework from Microsoft for building multi-agent systems. It supports tool calling and dynamic agent coordination.
 

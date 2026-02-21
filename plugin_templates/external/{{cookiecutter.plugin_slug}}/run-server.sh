@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-server.sh
-#  Purpose: Launch the MCP Gateway's Plugin API
+#  Purpose: Launch the ContextForge's Plugin API
 #
 #  Description:
 #    This script launches a plugin API server supporting multiple transports:

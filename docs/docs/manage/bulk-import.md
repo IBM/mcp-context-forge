@@ -1,6 +1,6 @@
 # Bulk Import Tools
 
-The MCP Gateway provides a bulk import endpoint for efficiently loading multiple tools in a single request, perfect for migrations, environment setup, and team onboarding.
+The ContextForge provides a bulk import endpoint for efficiently loading multiple tools in a single request, perfect for migrations, environment setup, and team onboarding.
 
 !!! info "Configuration Options"
     This feature is controlled by several environment variables:

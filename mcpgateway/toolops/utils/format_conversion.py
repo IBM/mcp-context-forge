@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
-MCP Gateway - module for converting MCP tool format to toolops specific internal format.
+ContextForge - module for converting MCP tool format to toolops specific internal format.
 
 """
 # Standard

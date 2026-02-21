@@ -1,6 +1,6 @@
-# ⚙️ Fly.io Deployment Guide for MCP Gateway
+# ⚙️ Fly.io Deployment Guide for ContextForge
 
-This guide covers the complete deployment workflow for the **MCP Gateway** on Fly.io, including common troubleshooting steps.
+This guide covers the complete deployment workflow for the **ContextForge** on Fly.io, including common troubleshooting steps.
 
 ---
 
@@ -215,7 +215,7 @@ DB_NAME="${APP_NAME}-db"
 REGION="yyz"
 PASSWORD=$(openssl rand -base64 32)
 
-echo "🚀 Deploying MCP Gateway to Fly.io..."
+echo "🚀 Deploying ContextForge to Fly.io..."
 
 # Create app
 fly launch --name $APP_NAME --no-deploy --region $REGION

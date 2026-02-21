@@ -1,6 +1,6 @@
-# 🎭 Playwright UI Tests for MCP Context Forge
+# 🎭 Playwright UI Tests for ContextForge
 
-This directory contains end-to-end UI tests for the MCP Context Forge admin interface and web UI components using [Playwright](https://playwright.dev/).
+This directory contains end-to-end UI tests for the ContextForge admin interface and web UI components using [Playwright](https://playwright.dev/).
 
 ## 📁 Directory Structure
 
@@ -101,7 +101,7 @@ class TestFeatureName:
         page.goto(f"{base_url}/admin")
 
         # Assert page loaded
-        expect(page).to_have_title("MCP Gateway Admin")
+        expect(page).to_have_title("ContextForge Admin")
 
         # Interact with elements
         page.click('button:has-text("Add Server")')
@@ -327,7 +327,7 @@ page.click("button", timeout=10000)  # 10 seconds for this action
 - [Playwright Python Documentation](https://playwright.dev/python/)
 - [Playwright Best Practices](https://playwright.dev/docs/best-practices)
 - [pytest-playwright Plugin](https://github.com/microsoft/playwright-pytest)
-- [MCP Gateway Documentation](https://ibm.github.io/mcp-context-forge/)
+- [ContextForge Documentation](https://ibm.github.io/mcp-context-forge/)
 
 ## 🤝 Contributing
 

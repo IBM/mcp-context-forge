@@ -1,6 +1,6 @@
-# Testing Guide for MCP Gateway (ContextForge)
+# Testing Guide for ContextForge (ContextForge)
 
-This comprehensive guide covers all aspects of testing the MCP Gateway, from unit tests to end-to-end integration testing.
+This comprehensive guide covers all aspects of testing the ContextForge, from unit tests to end-to-end integration testing.
 
 ## Table of Contents
 - [Quick Start](#quick-start)
@@ -550,4 +550,4 @@ pytest --cache-clear tests/
 - [Coverage.py Documentation](https://coverage.readthedocs.io/)
 - [Playwright Documentation](https://playwright.dev/python/)
 - [Hypothesis Documentation](https://hypothesis.readthedocs.io/)
-- [MCP Gateway Contributing Guide](CONTRIBUTING.md)
+- [ContextForge Contributing Guide](CONTRIBUTING.md)

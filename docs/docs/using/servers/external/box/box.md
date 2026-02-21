@@ -168,9 +168,9 @@ class BoxOAuth21Client:
         return response.status_code == 200
 ```
 
-#### Step 3: MCP Gateway Integration
+#### Step 3: ContextForge Integration
 
-Configure Box MCP in your MCP Gateway:
+Configure Box MCP in your ContextForge:
 
 ```yaml
 # config.yaml
@@ -208,7 +208,7 @@ BOX_WEBHOOK_SECRET=your_webhook_secret
 
 ## Integration Example
 
-### Complete OAuth 2.1 Flow with MCP Gateway
+### Complete OAuth 2.1 Flow with ContextForge
 
 ```python
 import asyncio
@@ -259,7 +259,7 @@ class BoxMCPGatewayClient:
                 self.tokens = self.oauth_client.exchange_code_for_tokens(code, redirect_uri)
                 self.token_expiry = datetime.now() + timedelta(seconds=self.tokens['expires_in'])
 
-                # Register with MCP Gateway
+                # Register with ContextForge
                 await self.register_with_gateway()
 
                 app['auth_complete'].set()
@@ -281,7 +281,7 @@ class BoxMCPGatewayClient:
         print("Authentication completed successfully!")
 
     async def register_with_gateway(self):
-        """Register Box MCP server with MCP Gateway"""
+        """Register Box MCP server with ContextForge"""
         async with aiohttp.ClientSession() as session:
             # Register the server
             server_data = {
@@ -306,7 +306,7 @@ class BoxMCPGatewayClient:
                 if response.status == 201:
                     result = await response.json()
                     self.gateway_id = result['id']
-                    print(f"Registered with MCP Gateway: {self.gateway_id}")
+                    print(f"Registered with ContextForge: {self.gateway_id}")
                 else:
                     raise Exception(f"Gateway registration failed: {await response.text()}")
 
@@ -327,7 +327,7 @@ class BoxMCPGatewayClient:
             await self.update_gateway_token()
 
     async def update_gateway_token(self):
-        """Update MCP Gateway with refreshed token"""
+        """Update ContextForge with refreshed token"""
         async with aiohttp.ClientSession() as session:
             update_data = {
                 "access_token": self.tokens['access_token'],

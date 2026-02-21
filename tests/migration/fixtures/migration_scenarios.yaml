@@ -5,7 +5,7 @@
 # This file contains scenario definitions that reference versions dynamically
 
 metadata:
-  description: "Migration test scenarios for MCP Gateway"
+  description: "Migration test scenarios for ContextForge"
   version: "2.0.0"
   created_by: "migration_test_suite"
   policy: "n-2 support policy (current + 2 previous versions)"

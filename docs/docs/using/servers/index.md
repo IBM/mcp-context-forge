@@ -1,6 +1,6 @@
 # 🎯 Sample MCP Servers
 
-The **MCP Context Forge Gateway** includes a collection of **high-performance sample MCP servers** built in different programming languages. These servers serve multiple purposes: demonstrating best practices for MCP implementation, providing ready-to-use tools for testing and development, and showcasing the performance characteristics of different language ecosystems.
+The **ContextForge Gateway** includes a collection of **high-performance sample MCP servers** built in different programming languages. These servers serve multiple purposes: demonstrating best practices for MCP implementation, providing ready-to-use tools for testing and development, and showcasing the performance characteristics of different language ecosystems.
 
 > **Perfect for testing, learning, and production use** - each server is optimized for speed, reliability, and demonstrates language-specific MCP patterns.
 
@@ -78,7 +78,7 @@ make build && make run
 
 ## 🌐 Gateway Integration
 
-All sample servers are designed to integrate seamlessly with the MCP Gateway:
+All sample servers are designed to integrate seamlessly with the ContextForge:
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -205,7 +205,7 @@ We're particularly interested in:
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 
 ### **Gateway Documentation**
-- [MCP Context Forge Gateway](../../index.md)
+- [ContextForge Gateway](../../index.md)
 - [mcpgateway.wrapper Usage](../mcpgateway-wrapper.md)
 - [mcpgateway.translate Bridge](../mcpgateway-translate.md)
 

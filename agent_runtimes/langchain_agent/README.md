@@ -1,10 +1,10 @@
 # MCP LangChain Agent
 
-A production-ready LangChain agent that integrates with the MCP Gateway, providing both OpenAI-compatible chat completions and A2A JSON-RPC endpoints for seamless AI agent communication.
+A production-ready LangChain agent that integrates with the ContextForge, providing both OpenAI-compatible chat completions and A2A JSON-RPC endpoints for seamless AI agent communication.
 
 ## 🚀 Features
 
-- **🔧 Dynamic Tool Discovery**: Automatically discovers and integrates tools from MCP Gateway
+- **🔧 Dynamic Tool Discovery**: Automatically discovers and integrates tools from ContextForge
 - **🤖 OpenAI-Compatible API**: Standard `/v1/chat/completions` endpoint with streaming support
 - **🔄 A2A Communication**: JSON-RPC endpoint for agent-to-agent communication
 - **🛡️ Security**: Configurable tool allowlists and authentication
@@ -28,7 +28,7 @@ The agent consists of several key components:
 |----------|--------|-------------|
 | `/health` | GET | Health check for monitoring |
 | `/ready` | GET | Readiness check for Kubernetes |
-| `/list_tools` | GET | Available tools from MCP Gateway |
+| `/list_tools` | GET | Available tools from ContextForge |
 | `/v1/chat/completions` | POST | OpenAI-compatible chat API |
 | `/a2a` | POST | A2A JSON-RPC communication |
 
@@ -46,7 +46,7 @@ Structure:
 agent_runtimes/langchain_agent/
 ├── app.py                    # FastAPI application incl. /v1/chat/completions and /a2a
 ├── agent_langchain.py    # Core Langchain agent
-├── mcp_client.py            # MCP Gateway client
+├── mcp_client.py            # ContextForge client
 ├── models.py                # Pydantic models
 ├── config.py                # Configuration management
 ├── start_agent.py           # Startup script
@@ -64,7 +64,7 @@ agent_runtimes/langchain_agent/
 ### Prerequisites
 - Python 3.10 or higher
 - OpenAI API key
-- Running MCP Gateway instance
+- Running ContextForge instance
 
 ### Installation
 
@@ -95,14 +95,14 @@ editor .env
 ```
 
 ### Configuration
-1) Start the MCP Gateway (from project root):
+1) Start the ContextForge (from project root):
 ```bash
 make serve
 ```
 
 ### Development Workflow
 
-**1. Start the MCP Gateway** (from project root):
+**1. Start the ContextForge** (from project root):
 ```bash
 make serve
 ```

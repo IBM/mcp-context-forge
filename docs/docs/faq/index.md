@@ -1,8 +1,8 @@
-# ContextForge MCP Gateway - Frequently Asked Questions
+# ContextForge - Frequently Asked Questions
 
 ## ⚡ Quickstart
 
-???+ example "🚀 How can I install and run MCP Gateway in one command?"
+???+ example "🚀 How can I install and run ContextForge in one command?"
     PyPI (pipx / uvx makes an isolated venv):
 
     ```bash
@@ -49,7 +49,7 @@
     See the provided [media kit](../media/index.md)
 
 ???+ tip "📄 How do I describe the gateway in boilerplate copy?"
-    > "ContextForge MCP Gateway is an open-source reverse-proxy that unifies MCP and REST tool servers under a single secure HTTPS endpoint with discovery, auth and observability baked in."
+    > "ContextForge is an open-source reverse-proxy that unifies MCP and REST tool servers under a single secure HTTPS endpoint with discovery, auth and observability baked in."
 
 ---
 
@@ -86,7 +86,7 @@
 
 ## 🚀 Running & Deployment
 
-???+ example "🏠 How do I run MCP Gateway locally using PyPI?"
+???+ example "🏠 How do I run ContextForge locally using PyPI?"
     ```bash
     python3 -m venv .venv && source .venv/bin/activate
     pip install mcp-contextforge-gateway
@@ -102,7 +102,7 @@
 
     Docker Compose is also available, ex: `make compose-up`.
 
-???+ example "☁️ How can I deploy MCP Gateway on Google Cloud Run, Code Engine, Kubernetes, AWS, etc?"
+???+ example "☁️ How can I deploy ContextForge on Google Cloud Run, Code Engine, Kubernetes, AWS, etc?"
     See the [Deployment Documentation](../deployment/index.md) for detailed deployment instructions across local, docker, podman, compose, AWS, Azure, GCP, IBM Cloud, Helm, Minikube, Kubernetes, OpenShift and more.
 
 ---
@@ -159,7 +159,7 @@
     - Set `ALLOWED_ORIGINS` or `CORS_ENABLED` for CORS headers.
 
 ???+ example "🔐 How do I pass Authorization headers to upstream MCP servers when the gateway uses authentication?"
-    When MCP Gateway uses authentication (JWT/Bearer/Basic/OAuth), there's a conflict if you need to pass different Authorization headers to upstream MCP servers.
+    When ContextForge uses authentication (JWT/Bearer/Basic/OAuth), there's a conflict if you need to pass different Authorization headers to upstream MCP servers.
 
     **Solution: Use X-Upstream-Authorization header**
 
@@ -190,7 +190,7 @@
     ```
 
 ???+ example "🌉 How do I add a peer MCP gateway?"
-    A "Gateway" is another MCP Server. The MCP Gateway itself is an MCP Server. This means you can add any MCP Server under "Gateways" and it will retrieve Tools/Resources/Prompts.
+    A "Gateway" is another MCP Server. The ContextForge itself is an MCP Server. This means you can add any MCP Server under "Gateways" and it will retrieve Tools/Resources/Prompts.
 
     ```bash
     curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \\
@@ -277,7 +277,7 @@
 
 ## 💻 Integration Recipes
 
-???+ example "🦜 How do I use MCP Gateway with LangChain?"
+???+ example "🦜 How do I use ContextForge with LangChain?"
     ```python
     import os
     from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -399,7 +399,7 @@
 
 ## ❓ Rarely Asked Questions (RAQ)
 
-???+ example "🐙 Does MCP Gateway work on a Raspberry Pi?"
+???+ example "🐙 Does ContextForge work on a Raspberry Pi?"
     Yes - build as `arm64` and reduce RAM/workers.
 
 ---

@@ -4,7 +4,7 @@
 name = "encoded_exfil_detection"
 version = "0.1.0"
 edition = "2024"
-authors = ["MCP Gateway Contributors"]
+authors = ["ContextForge Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/IBM/mcp-context-forge"
 description = "Rust acceleration for encoded exfiltration detection plugin"

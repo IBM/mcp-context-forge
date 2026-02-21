@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 
 A2A Agent Service
 
-This module implements A2A (Agent-to-Agent) agent management for the MCP Gateway.
+This module implements A2A (Agent-to-Agent) agent management for the ContextForge.
 It handles agent registration, listing, retrieval, updates, activation toggling, deletion,
 and interactions with A2A-compatible agents.
 """

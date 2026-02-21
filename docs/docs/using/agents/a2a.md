@@ -1,6 +1,6 @@
 # A2A (Agent-to-Agent) Integration
 
-The MCP Gateway supports A2A (Agent-to-Agent) integration, allowing you to register external AI agents and expose them as MCP tools for seamless integration with other agents and MCP clients.
+The ContextForge supports A2A (Agent-to-Agent) integration, allowing you to register external AI agents and expose them as MCP tools for seamless integration with other agents and MCP clients.
 
 ## Overview
 
@@ -333,4 +333,4 @@ curl -X POST "http://localhost:8000/rpc" \
 
 ---
 
-For more information on MCP Gateway features and configuration, see the [main documentation](../../overview/index.md).
+For more information on ContextForge features and configuration, see the [main documentation](../../overview/index.md).

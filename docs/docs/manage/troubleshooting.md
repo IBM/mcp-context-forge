@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide covers common issues and their solutions when running MCP Gateway.
+This guide covers common issues and their solutions when running ContextForge.
 
 ---
 

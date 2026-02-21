@@ -2,7 +2,7 @@
 
 ## Overview
 
-This prompt guides you through auditing the MCP Gateway codebase for proper database transaction management. The goal is to identify endpoints missing explicit `db.commit(); db.close()` calls, which cause PostgreSQL connection leaks under load.
+This prompt guides you through auditing the ContextForge codebase for proper database transaction management. The goal is to identify endpoints missing explicit `db.commit(); db.close()` calls, which cause PostgreSQL connection leaks under load.
 
 ## Background: How Database Sessions Work
 

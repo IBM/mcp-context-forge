@@ -2,7 +2,7 @@
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-granian.sh
 #  Author : Mihai Criveti
-#  Purpose: Launch the MCP Gateway API under Granian (Rust-based ASGI server)
+#  Purpose: Launch the ContextForge API under Granian (Rust-based ASGI server)
 #
 #  Description:
 #    This script provides a robust way to launch a production API server using
@@ -94,11 +94,11 @@ check_existing_process() {
         pid=$(<"${LOCK_FILE}")
 
         if kill -0 "${pid}" 2>/dev/null; then
-            echo "⚠️  WARNING: Another instance of MCP Gateway appears to be running (PID: ${pid})"
+            echo "⚠️  WARNING: Another instance of ContextForge appears to be running (PID: ${pid})"
 
             if ps -p "${pid}" -o comm= | grep -q granian; then
                 if [[ "${FORCE_START}" != "true" ]]; then
-                    echo "❌  FATAL: MCP Gateway is already running!"
+                    echo "❌  FATAL: ContextForge is already running!"
                     echo "   To stop it: kill ${pid}"
                     echo "   To force start anyway: FORCE_START=true $0"
                     exit 1

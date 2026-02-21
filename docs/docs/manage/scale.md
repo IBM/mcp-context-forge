@@ -1,10 +1,10 @@
-# Scaling MCP Gateway
+# Scaling ContextForge
 
-> Comprehensive guide to scaling MCP Gateway from development to production, covering vertical scaling, horizontal scaling, connection pooling, performance tuning, and Kubernetes deployment strategies.
+> Comprehensive guide to scaling ContextForge from development to production, covering vertical scaling, horizontal scaling, connection pooling, performance tuning, and Kubernetes deployment strategies.
 
 ## Overview
 
-MCP Gateway is designed to scale from single-container development environments to distributed multi-node production deployments. For a visual overview of the high-performance architecture including Rust-powered components, see the [Performance Architecture Diagram](../architecture/performance-architecture.md).
+ContextForge is designed to scale from single-container development environments to distributed multi-node production deployments. For a visual overview of the high-performance architecture including Rust-powered components, see the [Performance Architecture Diagram](../architecture/performance-architecture.md).
 
 This guide covers:
 
@@ -46,7 +46,7 @@ Python's Global Interpreter Lock (GIL) prevents multiple native threads from exe
 
 ### Pydantic v2: Rust-Powered Performance
 
-MCP Gateway leverages **Pydantic v2.11+** for all request/response validation and schema definitions. Unlike pure Python libraries, Pydantic v2 includes a **Rust-based core** (`pydantic-core`) that significantly improves performance:
+ContextForge leverages **Pydantic v2.11+** for all request/response validation and schema definitions. Unlike pure Python libraries, Pydantic v2 includes a **Rust-based core** (`pydantic-core`) that significantly improves performance:
 
 **Performance benefits:**
 
@@ -64,9 +64,9 @@ MCP Gateway leverages **Pydantic v2.11+** for all request/response validation an
 
 This means that even within a single worker process, Pydantic's Rust core can run concurrently with Python code for validation-heavy workloads.
 
-### MCP Gateway's Solution: Gunicorn with Multiple Workers
+### ContextForge's Solution: Gunicorn with Multiple Workers
 
-MCP Gateway uses **Gunicorn with UvicornWorker** to spawn multiple worker processes:
+ContextForge uses **Gunicorn with UvicornWorker** to spawn multiple worker processes:
 
 ```python
 # gunicorn.config.py
@@ -164,7 +164,7 @@ resources:
 
 ### PostgreSQL 18 (Current)
 
-**Status**: Production-ready - MCP Gateway's default Docker Compose configuration uses PostgreSQL 18.
+**Status**: Production-ready - ContextForge's default Docker Compose configuration uses PostgreSQL 18.
 
 PostgreSQL 18 provides significant performance improvements:
 
@@ -290,9 +290,9 @@ PYTHON_GIL=0 python3.14 -m gunicorn ...
 - **Testing**: Experiment with Python 3.14 beta in non-production environments
 - **Monitoring**: Watch for library compatibility announcements
 
-**Why MCP Gateway is well-positioned for free-threading:**
+**Why ContextForge is well-positioned for free-threading:**
 
-MCP Gateway's architecture already benefits from components that will perform even better with Python 3.14:
+ContextForge's architecture already benefits from components that will perform even better with Python 3.14:
 
 1. **Pydantic v2 Rust core**: Already bypasses GIL for validation - will work seamlessly with free-threading
 2. **FastAPI/Uvicorn**: Built for async I/O - natural fit for thread-based concurrency
@@ -578,7 +578,7 @@ docker-compose logs -f gateway
 
 ### Connection Pool Architecture
 
-MCP Gateway uses a two-tier connection pooling architecture:
+ContextForge uses a two-tier connection pooling architecture:
 
 **Without PgBouncer** (direct connection):
 ```
@@ -649,7 +649,7 @@ DB_PREPARE_THRESHOLD=5       # Auto-prepare queries after N executions (0=disabl
 
 #### psycopg3 Performance Features
 
-MCP Gateway uses **psycopg3** (`psycopg[c,binary]`) instead of psycopg2, providing significant performance improvements and modern features.
+ContextForge uses **psycopg3** (`psycopg[c,binary]`) instead of psycopg2, providing significant performance improvements and modern features.
 
 **Why psycopg3:**
 
@@ -893,7 +893,7 @@ kubectl exec -it postgres-pod -- psql -U admin -d postgresdb \
 
 ### Database Session Management
 
-To prevent connection pool exhaustion under high load, MCP Gateway releases database sessions before making upstream HTTP calls:
+To prevent connection pool exhaustion under high load, ContextForge releases database sessions before making upstream HTTP calls:
 
 **Problem:** Database sessions held during slow upstream calls (100ms - 4+ minutes) exhaust the connection pool even when the database is lightly loaded.
 
@@ -1027,7 +1027,7 @@ REDIS_LEADER_HEARTBEAT_INTERVAL=3
 
 ### Hiredis High-Performance Parser
 
-MCP Gateway uses `redis[hiredis]` for significantly faster Redis protocol parsing, especially beneficial for large responses.
+ContextForge uses `redis[hiredis]` for significantly faster Redis protocol parsing, especially beneficial for large responses.
 
 **Performance Impact:**
 
@@ -1084,7 +1084,7 @@ REDIS_URL=redis://redis-cluster:6379/0?cluster=true
 
 ### Application Architecture Performance
 
-MCP Gateway's technology stack is optimized for high performance:
+ContextForge's technology stack is optimized for high performance:
 
 **Rust-Powered Components:**
 
@@ -1133,7 +1133,7 @@ ulimit -n
 
 ### HTTP Server Selection
 
-MCP Gateway supports two production HTTP servers:
+ContextForge supports two production HTTP servers:
 
 | Server | Description | Best For |
 |--------|-------------|----------|
@@ -1300,7 +1300,7 @@ METRICS_CACHE_TTL_SECONDS=60
 
 ### Application-Level Caching
 
-MCP Gateway implements multi-level caching to reduce database load by 80-95%:
+ContextForge implements multi-level caching to reduce database load by 80-95%:
 
 #### JWT Token Cache
 
@@ -1388,7 +1388,7 @@ TEAM_CACHE_ROLE_TTL=60
 
 ### High-Performance JSON Serialization
 
-MCP Gateway uses **orjson** for JSON operations, providing 2-3x faster serialization:
+ContextForge uses **orjson** for JSON operations, providing 2-3x faster serialization:
 
 ```bash
 # orjson is used by default via ORJSONResponse
@@ -1445,7 +1445,7 @@ AUDIT_TRAIL_ENABLED=true
 
 **Overview**: Deploy an nginx reverse proxy with intelligent caching to dramatically reduce backend load and improve response times.
 
-The MCP Gateway includes a production-ready nginx caching proxy configuration (`nginx/`) with three dedicated cache zones:
+The ContextForge includes a production-ready nginx caching proxy configuration (`nginx/`) with three dedicated cache zones:
 
 1. **Static Assets Cache** (1GB, 30-day TTL): CSS, JS, images, fonts
 2. **API Response Cache** (512MB, 5-minute TTL): Read-only endpoints
@@ -1599,7 +1599,7 @@ docker-compose exec nginx cat /var/log/nginx/access.log | \
 
 **Bandwidth Optimization**: Reduce data transfer by 30-70% with automatic response compression.
 
-MCP Gateway includes built-in response compression middleware that automatically compresses JSON, HTML, CSS, and JavaScript responses.
+ContextForge includes built-in response compression middleware that automatically compresses JSON, HTML, CSS, and JavaScript responses.
 
 #### Compression Algorithms Comparison
 
@@ -1869,7 +1869,7 @@ TOKEN=$MCPGATEWAY_BEARER_TOKEN k6 run load-test.k6.js
 
 ### Health Check Endpoints
 
-MCP Gateway provides two health endpoints:
+ContextForge provides two health endpoints:
 
 #### Liveness Probe: `/health`
 
@@ -2003,7 +2003,7 @@ kubectl get events -n mcp-gateway \
 
 ### Stateless Design Principles
 
-MCP Gateway is designed to be **stateless**, enabling horizontal scaling:
+ContextForge is designed to be **stateless**, enabling horizontal scaling:
 
 1. **No local session storage**: All sessions in Redis
 2. **No in-memory caching** (in production): Use Redis
@@ -2040,7 +2040,7 @@ CACHE_TYPE=redis
 
 #### Session Cleanup Performance
 
-For high session counts, MCP Gateway uses parallel session cleanup with bounded concurrency to efficiently manage database-backed sessions:
+For high session counts, ContextForge uses parallel session cleanup with bounded concurrency to efficiently manage database-backed sessions:
 
 - Uses `asyncio.gather()` with semaphore for parallel database operations
 - Default concurrency limit of 20 prevents DB pool exhaustion
@@ -2051,7 +2051,7 @@ See [Parallel Session Cleanup](parallel-session-cleanup.md) for implementation d
 
 ### Long-Running Connections
 
-MCP Gateway supports long-running connections for streaming:
+ContextForge supports long-running connections for streaming:
 
 #### Server-Sent Events (SSE)
 
@@ -2349,7 +2349,7 @@ spec:
 
 ### OpenTelemetry Integration
 
-MCP Gateway includes built-in OpenTelemetry support:
+ContextForge includes built-in OpenTelemetry support:
 
 ```bash
 # Enable observability
@@ -2453,7 +2453,7 @@ spec:
 
 ### Performance Technology Stack
 
-MCP Gateway is built on a high-performance foundation:
+ContextForge is built on a high-performance foundation:
 
 ✅ **Pydantic v2.11+** - Rust-powered validation (5-50x faster than v1)
 ✅ **FastAPI** - Modern async framework with OpenAPI support

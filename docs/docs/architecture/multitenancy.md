@@ -1,6 +1,6 @@
 # Multi-Tenancy Architecture
 
-The MCP Gateway implements a comprehensive multi-tenant architecture that provides secure isolation, flexible resource sharing, and granular access control. This document describes the complete multi-tenancy design, user lifecycle, team management, and resource scoping mechanisms.
+The ContextForge implements a comprehensive multi-tenant architecture that provides secure isolation, flexible resource sharing, and granular access control. This document describes the complete multi-tenancy design, user lifecycle, team management, and resource scoping mechanisms.
 
 ## Overview
 
@@ -352,7 +352,7 @@ The `normalize_token_teams()` function returns:
 
 ## Two-Layer Security Model
 
-MCP Gateway implements two distinct security layers that work together:
+ContextForge implements two distinct security layers that work together:
 
 ### Layer 1: Token Scoping (Data Filtering)
 
@@ -415,7 +415,7 @@ Request: POST /tools/{id}/execute
 
 ### Resource Architecture
 
-All resources in the MCP Gateway are scoped to teams with three visibility levels:
+All resources in the ContextForge are scoped to teams with three visibility levels:
 
 ```mermaid
 flowchart TD
@@ -541,7 +541,7 @@ flowchart TD
 
 ## Role-Based Access Control (RBAC)
 
-The MCP Gateway implements a comprehensive RBAC system with four built-in roles that are automatically created during system bootstrap. These roles provide granular permission management across different scopes.
+The ContextForge implements a comprehensive RBAC system with four built-in roles that are automatically created during system bootstrap. These roles provide granular permission management across different scopes.
 
 ### System Roles
 
@@ -722,7 +722,7 @@ sequenceDiagram
 
 ## Password Management
 
-MCP Gateway now supports:
+ContextForge now supports:
 
 - Self-service forgot-password/reset flow:
   - `POST /auth/email/forgot-password`

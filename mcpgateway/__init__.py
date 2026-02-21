@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway - A flexible feature-rich FastAPI-based gateway for the Model Context Protocol (MCP).
+ContextForge - A flexible feature-rich FastAPI-based gateway for the Model Context Protocol (MCP).
 """
 
 __author__ = "Mihai Criveti"

@@ -1,9 +1,9 @@
-# Denylist Filter Plugin for MCP Gateway
+# Denylist Filter Plugin for ContextForge
 
 > Author: Fred Araujo
 > Version: 0.1.0
 
-A plugin for detecting deny words in MCP Gateway prompts.
+A plugin for detecting deny words in ContextForge prompts.
 
 ## Features
 
@@ -115,4 +115,4 @@ Apache-2.0
 
 ## Support
 
-For issues or questions, please open an issue in the MCP Gateway repository.
+For issues or questions, please open an issue in the ContextForge repository.

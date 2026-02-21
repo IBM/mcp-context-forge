@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Webhook Notification Plugin for MCP Gateway.
+"""Webhook Notification Plugin for ContextForge.
 
-This package provides webhook notification capabilities for the MCP Gateway,
+This package provides webhook notification capabilities for the ContextForge,
 allowing administrators to receive HTTP notifications on various events,
 violations, and state changes.
 """

@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Schema Definitions.
-This module provides Pydantic models for request/response validation in the MCP Gateway.
+ContextForge Schema Definitions.
+This module provides Pydantic models for request/response validation in the ContextForge.
 It implements schemas for:
 - Tool registration and invocation
 - Resource management and subscriptions

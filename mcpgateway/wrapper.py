@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
-MCP Gateway Wrapper.
-MCP Client (stdio) <-> MCP Gateway Bridge
+ContextForge Wrapper.
+MCP Client (stdio) <-> ContextForge Bridge
 
 This module implements a wrapper stdio bridge that facilitates
 interaction between the MCP client and the MCP gateway.
