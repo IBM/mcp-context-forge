@@ -403,7 +403,7 @@ make sri-generate
 
 When updating a CDN library version:
 
-1. Update the URL in `scripts/generate-sri-hashes.py`
+1. Update the URL in `scripts/cdn_resources.py`
 2. Run `make sri-generate` to calculate new hash
 3. Update the URL in templates (admin.html, login.html, etc.)
 4. Run `make sri-verify` to confirm hash matches

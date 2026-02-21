@@ -375,7 +375,7 @@ def load_sri_hashes() -> Dict[str, str]:
             with sri_file.open("r") as f:
                 return json.load(f)
     except Exception as e:
-        LOGGER.warning(f"Failed to load SRI hashes: {e}")
+        LOGGER.warning("Failed to load SRI hashes: %s", e)
 
     return {}
 
@@ -3691,6 +3691,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
             "root_path": root_path,
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3767,6 +3768,7 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
             "token_error": token_error,
             "password_min_length": settings.password_min_length,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "sri_hashes": load_sri_hashes(),
         },
     )
 

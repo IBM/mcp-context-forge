@@ -17006,7 +17006,7 @@ class TestAdminTokensPartialSearch:
 class TestLoadSriHashes:
     """Test suite for load_sri_hashes() function."""
 
-    def test_load_sri_hashes_success(self, tmp_path, monkeypatch):
+    def test_load_sri_hashes_success(self, tmp_path):
         """Test successful loading of SRI hashes from file."""
         # First-Party
         from mcpgateway import admin as admin_mod
@@ -17031,7 +17031,7 @@ class TestLoadSriHashes:
             assert "alpine.js" in result
             assert result["htmx.min.js"] == "sha384-test2"
 
-    def test_load_sri_hashes_file_not_found(self, tmp_path, monkeypatch):
+    def test_load_sri_hashes_file_not_found(self, tmp_path):
         """Test load_sri_hashes returns empty dict when file doesn't exist."""
         # First-Party
         from mcpgateway import admin as admin_mod
@@ -17045,7 +17045,7 @@ class TestLoadSriHashes:
 
             assert result == {}
 
-    def test_load_sri_hashes_invalid_json(self, tmp_path, monkeypatch):
+    def test_load_sri_hashes_invalid_json(self, tmp_path):
         """Test load_sri_hashes returns empty dict on invalid JSON."""
         # First-Party
         from mcpgateway import admin as admin_mod
@@ -17063,7 +17063,7 @@ class TestLoadSriHashes:
 
             assert result == {}
 
-    def test_load_sri_hashes_permission_error(self, tmp_path, monkeypatch):
+    def test_load_sri_hashes_permission_error(self, tmp_path):
         """Test load_sri_hashes returns empty dict on permission error."""
         # First-Party
         from mcpgateway import admin as admin_mod
@@ -17082,7 +17082,7 @@ class TestLoadSriHashes:
 
                 assert result == {}
 
-    def test_load_sri_hashes_caching(self, tmp_path, monkeypatch):
+    def test_load_sri_hashes_caching(self, tmp_path):
         """Test that load_sri_hashes uses lru_cache correctly."""
         # First-Party
         from mcpgateway import admin as admin_mod
@@ -17110,7 +17110,7 @@ class TestLoadSriHashes:
             assert result2 == test_hashes  # Still the old value due to cache
             assert result2 == result1
 
-    def test_load_sri_hashes_empty_file(self, tmp_path, monkeypatch):
+    def test_load_sri_hashes_empty_file(self, tmp_path):
         """Test load_sri_hashes with empty JSON object."""
         # First-Party
         from mcpgateway import admin as admin_mod
@@ -17128,7 +17128,7 @@ class TestLoadSriHashes:
 
             assert result == {}
 
-    def test_load_sri_hashes_in_admin_ui_endpoint(self, monkeypatch):
+    def test_load_sri_hashes_in_admin_ui_endpoint(self):
         """Test that admin_ui endpoint includes SRI hashes in template context."""
         # First-Party
         from mcpgateway import admin as admin_mod
@@ -17144,7 +17144,7 @@ class TestLoadSriHashes:
             result = admin_mod.load_sri_hashes()
             assert result == test_hashes
 
-    def test_load_sri_hashes_unicode_content(self, tmp_path, monkeypatch):
+    def test_load_sri_hashes_unicode_content(self, tmp_path):
         """Test load_sri_hashes handles unicode content correctly."""
         # First-Party
         from mcpgateway import admin as admin_mod
