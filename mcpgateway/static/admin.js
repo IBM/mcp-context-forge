@@ -3484,6 +3484,145 @@ async function editTool(toolId) {
                 break;
         }
 
+        // Add URL change listener for REST tools to auto-populate schemas
+        const editUrlField = safeGetElement("edit-tool-url");
+        if (editUrlField && tool.integrationType === "REST") {
+            // Store original URL to detect changes
+            editUrlField.dataset.originalUrl = tool.url || "";
+            
+            // Remove any existing listener to avoid duplicates
+            const newUrlField = editUrlField.cloneNode(true);
+            editUrlField.parentNode.replaceChild(newUrlField, editUrlField);
+            
+            newUrlField.addEventListener("blur", async function() {
+                const newUrl = this.value.trim();
+                const originalUrl = this.dataset.originalUrl || "";
+                
+                // Only fetch if URL actually changed and is not empty
+                if (newUrl && newUrl !== originalUrl && newUrl.startsWith("http")) {
+                    console.log(`URL changed from ${originalUrl} to ${newUrl}, fetching new schemas...`);
+                    
+                    try {
+                        // Extract base URL and path
+                        const urlObj = new URL(newUrl);
+                        const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+                        const pathTemplate = urlObj.pathname;
+                        
+                        // Fetch OpenAPI spec via backend proxy to avoid CORS issues
+                        const proxyUrl = `${window.ROOT_PATH}/admin/fetch-openapi-spec?base_url=${encodeURIComponent(baseUrl)}`;
+                        console.log(`Fetching OpenAPI spec via: ${proxyUrl}`);
+                        
+                        const response = await fetchWithTimeout(proxyUrl, { timeout: 15000 });
+                        console.log(`Response status: ${response.status}`);
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json().catch(() => ({ error: response.statusText }));
+                            throw new Error(errorData.error || `HTTP ${response.status}`);
+                        }
+                        
+                        const spec = await response.json();
+                        
+                        if (!spec || !spec.paths) {
+                            throw new Error("Invalid OpenAPI spec: missing 'paths'");
+                        }
+                        
+                        // Find matching path in spec
+                        const normalizedPath = pathTemplate.replace(/^\/+/, "");
+                        let matchingPath = null;
+                        
+                        for (const pathKey in spec.paths) {
+                            if (pathKey.replace(/^\/+/, "") === normalizedPath) {
+                                matchingPath = pathKey;
+                                break;
+                            }
+                        }
+                        
+                        if (!matchingPath) {
+                            console.warn(`Path '${pathTemplate}' not found in OpenAPI spec`);
+                            return;
+                        }
+                        
+                        // Get request type (default to POST for REST)
+                        const requestTypeField = safeGetElement("edit-tool-request-type");
+                        const requestType = (requestTypeField?.value || "POST").toLowerCase();
+                        
+                        const pathItem = spec.paths[matchingPath];
+                        if (!pathItem[requestType]) {
+                            console.warn(`Method '${requestType}' not found for path '${matchingPath}'`);
+                            return;
+                        }
+                        
+                        const operation = pathItem[requestType];
+                        
+                        // Extract input schema from requestBody
+                        let inputSchema = { type: "object", properties: {} };
+                        if (operation.requestBody?.content?.["application/json"]?.schema) {
+                            let schemaDef = operation.requestBody.content["application/json"].schema;
+                            
+                            // Resolve $ref if present
+                            if (schemaDef.$ref) {
+                                const schemaName = schemaDef.$ref.split("/").pop();
+                                if (spec.components?.schemas?.[schemaName]) {
+                                    inputSchema = spec.components.schemas[schemaName];
+                                }
+                            } else {
+                                inputSchema = schemaDef;
+                            }
+                        }
+                        
+                        // Extract output schema from responses
+                        let outputSchema = null;
+                        for (const statusCode of ["200", "201", "default"]) {
+                            if (operation.responses?.[statusCode]?.content?.["application/json"]?.schema) {
+                                let schemaDef = operation.responses[statusCode].content["application/json"].schema;
+                                
+                                // Resolve $ref if present
+                                if (schemaDef.$ref) {
+                                    const schemaName = schemaDef.$ref.split("/").pop();
+                                    if (spec.components?.schemas?.[schemaName]) {
+                                        outputSchema = spec.components.schemas[schemaName];
+                                        break;
+                                    }
+                                } else {
+                                    outputSchema = schemaDef;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Update schema fields - get fresh references
+                        const editSchemaField = safeGetElement("edit-tool-schema");
+                        const editOutputSchemaField = safeGetElement("edit-tool-output-schema");
+                        
+                        if (editSchemaField) {
+                            editSchemaField.value = JSON.stringify(inputSchema, null, 2);
+                        }
+                        if (window.editToolSchemaEditor) {
+                            window.editToolSchemaEditor.setValue(JSON.stringify(inputSchema, null, 2));
+                            window.editToolSchemaEditor.refresh();
+                        }
+                        
+                        if (outputSchema) {
+                            if (editOutputSchemaField) {
+                                editOutputSchemaField.value = JSON.stringify(outputSchema, null, 2);
+                            }
+                            if (window.editToolOutputSchemaEditor) {
+                                window.editToolOutputSchemaEditor.setValue(JSON.stringify(outputSchema, null, 2));
+                                window.editToolOutputSchemaEditor.refresh();
+                            }
+                        }
+                        
+                        console.log("✓ Schemas updated from new URL");
+                        showSuccessMessage("Schemas updated from new URL's OpenAPI spec");
+                        
+                    } catch (error) {
+                        console.error("Error fetching schemas from new URL:", error);
+                        showErrorMessage(`Could not fetch schemas from new URL: ${error.message}`);
+                    }
+                }
+            });
+        }
+
         openModal("tool-edit-modal");
 
         // Ensure editors are refreshed after modal display
@@ -16821,6 +16960,142 @@ function setupFormHandlers() {
                 refreshEditors();
             }
         });
+        
+        // Add URL change listener for REST tools to auto-populate schemas in add form
+        const addToolUrlField = safeGetElement("tool-url");
+        const addToolTypeField = safeGetElement("tool-type");
+        
+        if (addToolUrlField) {
+            addToolUrlField.addEventListener("blur", async function() {
+                const newUrl = this.value.trim();
+                const integrationType = addToolTypeField?.value || "REST";
+                
+                // Only fetch if URL is provided and integration type is REST
+                if (newUrl && newUrl.startsWith("http") && integrationType === "REST") {
+                    console.log(`Add Tool: Fetching schemas for URL: ${newUrl}`);
+                    
+                    try {
+                        // Extract base URL and path
+                        const urlObj = new URL(newUrl);
+                        const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+                        const pathTemplate = urlObj.pathname;
+                        
+                        // Fetch OpenAPI spec via backend proxy
+                        const proxyUrl = `${window.ROOT_PATH}/admin/fetch-openapi-spec?base_url=${encodeURIComponent(baseUrl)}`;
+                        console.log(`Fetching OpenAPI spec via: ${proxyUrl}`);
+                        
+                        const response = await fetchWithTimeout(proxyUrl, { timeout: 15000 });
+                        console.log(`Response status: ${response.status}`);
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json().catch(() => ({ error: response.statusText }));
+                            throw new Error(errorData.error || `HTTP ${response.status}`);
+                        }
+                        
+                        const spec = await response.json();
+                        
+                        if (!spec || !spec.paths) {
+                            throw new Error("Invalid OpenAPI spec: missing 'paths'");
+                        }
+                        
+                        // Find matching path in spec
+                        const normalizedPath = pathTemplate.replace(/^\/+/, "");
+                        let matchingPath = null;
+                        
+                        for (const pathKey in spec.paths) {
+                            if (pathKey.replace(/^\/+/, "") === normalizedPath) {
+                                matchingPath = pathKey;
+                                break;
+                            }
+                        }
+                        
+                        if (!matchingPath) {
+                            console.warn(`Path '${pathTemplate}' not found in OpenAPI spec`);
+                            showErrorMessage(`Path '${pathTemplate}' not found in OpenAPI spec`);
+                            return;
+                        }
+                        
+                        // Get request type (default to POST for REST)
+                        const requestTypeField = safeGetElement("tool-request-type");
+                        const requestType = (requestTypeField?.value || "POST").toLowerCase();
+                        
+                        const pathItem = spec.paths[matchingPath];
+                        if (!pathItem[requestType]) {
+                            console.warn(`Method '${requestType}' not found for path '${matchingPath}'`);
+                            showErrorMessage(`Method '${requestType}' not found for path '${matchingPath}'`);
+                            return;
+                        }
+                        
+                        const operation = pathItem[requestType];
+                        
+                        // Extract input schema from requestBody
+                        let inputSchema = { type: "object", properties: {} };
+                        if (operation.requestBody?.content?.["application/json"]?.schema) {
+                            let schemaDef = operation.requestBody.content["application/json"].schema;
+                            
+                            // Resolve $ref if present
+                            if (schemaDef.$ref) {
+                                const schemaName = schemaDef.$ref.split("/").pop();
+                                if (spec.components?.schemas?.[schemaName]) {
+                                    inputSchema = spec.components.schemas[schemaName];
+                                }
+                            } else {
+                                inputSchema = schemaDef;
+                            }
+                        }
+                        
+                        // Extract output schema from responses
+                        let outputSchema = null;
+                        for (const statusCode of ["200", "201", "default"]) {
+                            if (operation.responses?.[statusCode]?.content?.["application/json"]?.schema) {
+                                let schemaDef = operation.responses[statusCode].content["application/json"].schema;
+                                
+                                // Resolve $ref if present
+                                if (schemaDef.$ref) {
+                                    const schemaName = schemaDef.$ref.split("/").pop();
+                                    if (spec.components?.schemas?.[schemaName]) {
+                                        outputSchema = spec.components.schemas[schemaName];
+                                        break;
+                                    }
+                                } else {
+                                    outputSchema = schemaDef;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Update schema fields
+                        const addSchemaField = safeGetElement("tool-schema");
+                        const addOutputSchemaField = safeGetElement("tool-output-schema");
+                        
+                        if (addSchemaField) {
+                            addSchemaField.value = JSON.stringify(inputSchema, null, 2);
+                        }
+                        if (window.toolSchemaEditor) {
+                            window.toolSchemaEditor.setValue(JSON.stringify(inputSchema, null, 2));
+                            window.toolSchemaEditor.refresh();
+                        }
+                        
+                        if (outputSchema) {
+                            if (addOutputSchemaField) {
+                                addOutputSchemaField.value = JSON.stringify(outputSchema, null, 2);
+                            }
+                            if (window.toolOutputSchemaEditor) {
+                                window.toolOutputSchemaEditor.setValue(JSON.stringify(outputSchema, null, 2));
+                                window.toolOutputSchemaEditor.refresh();
+                            }
+                        }
+                        
+                        console.log("✓ Schemas populated from URL in add tool form");
+                        showSuccessMessage("Schemas populated from URL's OpenAPI spec");
+                        
+                    } catch (error) {
+                        console.error("Error fetching schemas for add tool:", error);
+                        showErrorMessage(`Could not fetch schemas: ${error.message}`);
+                    }
+                }
+            });
+        }
     }
 
     const paramButton = safeGetElement("add-parameter-btn");

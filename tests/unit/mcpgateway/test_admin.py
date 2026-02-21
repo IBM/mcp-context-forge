@@ -1356,7 +1356,7 @@ class TestAdminToolRoutes:
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
         assert tool_update.headers == {}
-        assert tool_update.input_schema == {}
+        assert tool_update.input_schema == {"type": "object", "properties": {}}
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):

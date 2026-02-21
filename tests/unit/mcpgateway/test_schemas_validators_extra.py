@@ -79,7 +79,7 @@ def test_tool_create_prevent_manual_and_passthrough_rules():
 
 
 def test_tool_create_passthrough_validators():
-    values = ToolCreate.extract_base_url_and_path_template({"integration_type": "REST", "url": "http://example.com/api"})
+    values = ToolCreate.extract_base_url_and_populate_schemas({"integration_type": "REST", "url": "http://example.com/api"})
     assert values["base_url"] == "http://example.com"
     assert values["path_template"] == "/api"
 
@@ -354,7 +354,7 @@ def test_tool_update_more_branches(caplog):
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert any("Description too long" in rec.message for rec in caplog.records)
 
-    assert ToolUpdate.extract_base_url_and_path_template({"integration_type": "REST", "url": "example.com/api"})["path_template"].startswith("/")
+    assert ToolUpdate.extract_base_url_and_populate_schemas({"integration_type": "REST", "url": "example.com/api"})["path_template"].startswith("/")
 
     assert ToolUpdate.validate_base_url(None) is None
     with pytest.raises(ValueError):

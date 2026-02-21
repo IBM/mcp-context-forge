@@ -707,32 +707,48 @@ class ToolCreate(BaseModel):
     @classmethod
     def extract_base_url_and_path_template(cls, values: dict) -> dict:
         """
-        Only for integration_type 'REST':
-        If 'url' is provided, extract 'base_url' and 'path_template'.
-        Ensures path_template starts with a single '/'.
+        For integration_type 'REST': Extract 'base_url' and 'path_template' from 'url' if provided.
+        
+        Note: Schema population from OpenAPI specs should be handled by the service layer
+        or frontend to avoid SSRF vulnerabilities and blocking I/O in Pydantic validators.
 
         Args:
             values (dict): The input values to process.
 
         Returns:
-            dict: The updated values with base_url and path_template if applicable.
+            dict: The updated values with base_url and path_template extracted from url.
         """
         integration_type = values.get("integration_type")
         if integration_type != "REST":
-            # Only process for REST, skip for others
             return values
+
+        # Extract base_url and path_template from url if provided
         url = values.get("url")
+        logger.debug(f"extract_base_url_and_path_template: url={url}, integration_type={integration_type}")
         if url:
             parsed = urlparse(str(url))
             base_url = f"{parsed.scheme}://{parsed.netloc}"
             path_template = parsed.path
+            logger.debug(f"Extracted base_url={base_url}, path_template={path_template}")
+            
             # Ensure path_template starts with a single '/'
             if path_template:
                 path_template = "/" + path_template.lstrip("/")
+                
             if not values.get("base_url"):
                 values["base_url"] = base_url
+                logger.debug(f"Set base_url to {base_url}")
             if not values.get("path_template"):
                 values["path_template"] = path_template
+                logger.debug(f"Set path_template to {path_template}")
+        else:
+            logger.debug("No url field provided, cannot extract base_url and path_template")
+
+        # Ensure we have at least a minimal input_schema for REST tools
+        if not values.get("input_schema"):
+            values["input_schema"] = {"type": "object", "properties": {}}
+            logger.debug("Set default empty input_schema")
+
         return values
 
     @field_validator("base_url")
@@ -1072,6 +1088,43 @@ class ToolUpdate(BaseModelWithConfigDict):
                     values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_path_template(cls, values: dict) -> dict:
+        """
+        For integration_type 'REST': Extract 'base_url' and 'path_template' from 'url' if provided.
+        
+        Note: Schema population is handled by the frontend via /admin/fetch-openapi-spec endpoint
+        to avoid SSRF vulnerabilities and blocking I/O in Pydantic validators.
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url and path_template extracted from url.
+        """
+        integration_type = values.get("integration_type")
+        if integration_type != "REST":
+            return values
+
+        # Extract base_url and path_template from url if provided
+        url = values.get("url")
+        if url:
+            parsed = urlparse(str(url))
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            path_template = parsed.path
+            
+            # Ensure path_template starts with a single '/'
+            if path_template:
+                path_template = "/" + path_template.lstrip("/")
+                
+            if not values.get("base_url"):
+                values["base_url"] = base_url
+            if not values.get("path_template"):
+                values["path_template"] = path_template
+
+        return values
+
     @field_validator("displayName")
     @classmethod
     def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
@@ -1126,33 +1179,6 @@ class ToolUpdate(BaseModelWithConfigDict):
             raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
         return values
 
-    @model_validator(mode="before")
-    @classmethod
-    def extract_base_url_and_path_template(cls, values: dict) -> dict:
-        """
-        If 'integration_type' is 'REST' and 'url' is provided, extract 'base_url' and 'path_template'.
-        Ensures path_template starts with a single '/'.
-
-        Args:
-            values (dict): The input values to process.
-
-        Returns:
-            dict: The updated values with base_url and path_template if applicable.
-        """
-        integration_type = values.get("integration_type")
-        url = values.get("url")
-        if integration_type == "REST" and url:
-            parsed = urlparse(str(url))
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            path_template = parsed.path
-            # Ensure path_template starts with a single '/'
-            if path_template:
-                path_template = "/" + path_template.lstrip("/")
-            if not values.get("base_url"):
-                values["base_url"] = base_url
-            if not values.get("path_template"):
-                values["path_template"] = path_template
-        return values
 
     @field_validator("base_url")
     @classmethod
