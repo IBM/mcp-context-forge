@@ -6551,7 +6551,7 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit devskim
+SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit devskim sri-verify
 
 .PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
