@@ -20,9 +20,10 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import SessionLocal
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
 
@@ -57,7 +58,7 @@ def get_db():
 
 
 @router.get("/traces", response_model=List[ObservabilityTraceRead])
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def list_traces(
     start_time: Optional[datetime] = Query(None, description="Filter traces after this time"),
     end_time: Optional[datetime] = Query(None, description="Filter traces before this time"),
@@ -102,6 +103,7 @@ async def list_traces(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
+        >>> from unittest.mock import MagicMock
         >>> class FakeTrace:
         ...     def __init__(self, trace_id='t1'):
         ...         self.trace_id = trace_id
@@ -119,7 +121,7 @@ async def list_traces(
         ...         return [FakeTrace('t1')]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_list_traces():
-        ...     traces = await obs.list_traces(db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     traces = await obs.list_traces(db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return traces[0].trace_id
         >>> asyncio.run(run_list_traces())
         't1'
@@ -143,7 +145,7 @@ async def list_traces(
 
 
 @router.post("/traces/query", response_model=List[ObservabilityTraceRead])
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def query_traces_advanced(
     # Third-Party
     request_body: dict,
@@ -188,9 +190,10 @@ async def query_traces_advanced(
         >>> import asyncio
         >>> from fastapi import HTTPException
         >>> from mcpgateway.config import settings
+        >>> from unittest.mock import MagicMock
         >>> async def run_invalid_query():
         ...     try:
-        ...         await query_traces_advanced({"start_time": "not-a-date"}, db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...         await query_traces_advanced({"start_time": "not-a-date"}, db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     except HTTPException as e:
         ...         return (e.status_code, "Invalid request body" in str(e.detail))
         >>> asyncio.run(run_invalid_query())
@@ -207,7 +210,7 @@ async def query_traces_advanced(
         ...         return [FakeTrace()]
         >>> obs.ObservabilityService = FakeService2
         >>> async def run_query_traces():
-        ...     traces = await obs.query_traces_advanced({}, db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     traces = await obs.query_traces_advanced({}, db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return traces[0].trace_id
         >>> asyncio.run(run_query_traces())
         'tx'
@@ -257,7 +260,7 @@ async def query_traces_advanced(
 
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)):
     """Get a trace by ID with all its spans and events.
 
@@ -278,13 +281,14 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
+        >>> from unittest.mock import MagicMock
         >>> class FakeService:
         ...     def get_trace_with_spans(self, db, trace_id):
         ...         return None
         >>> obs.ObservabilityService = FakeService
         >>> async def run_missing_trace():
         ...     try:
-        ...         await obs.get_trace("missing", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...         await obs.get_trace("missing", db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     except obs.HTTPException as e:
         ...         return e.status_code
         >>> asyncio.run(run_missing_trace())
@@ -294,7 +298,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
         ...         return {'trace_id': trace_id}
         >>> obs.ObservabilityService = FakeService2
         >>> async def run_found_trace():
-        ...     trace = await obs.get_trace("found", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     trace = await obs.get_trace("found", db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return trace["trace_id"]
         >>> asyncio.run(run_found_trace())
         'found'
@@ -307,7 +311,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
 
 
 @router.get("/spans", response_model=List[ObservabilitySpanRead])
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def list_spans(
     trace_id: Optional[str] = Query(None, description="Filter by trace ID"),
     resource_type: Optional[str] = Query(None, description="Filter by resource type"),
@@ -341,6 +345,7 @@ async def list_spans(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
+        >>> from unittest.mock import MagicMock
         >>> class FakeSpan:
         ...     def __init__(self):
         ...         self.span_id = 's1'
@@ -351,7 +356,7 @@ async def list_spans(
         ...         return [FakeSpan()]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_list_spans():
-        ...     spans = await obs.list_spans(db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     spans = await obs.list_spans(db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return spans[0].span_id
         >>> asyncio.run(run_list_spans())
         's1'
@@ -371,7 +376,7 @@ async def list_spans(
 
 
 @router.delete("/traces/cleanup")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def cleanup_old_traces(
     days: int = Query(7, ge=1, description="Delete traces older than this many days"),
     db: Session = Depends(get_db),
@@ -393,12 +398,13 @@ async def cleanup_old_traces(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
+        >>> from unittest.mock import MagicMock
         >>> class FakeService:
         ...     def delete_old_traces(self, db, cutoff):
         ...         return 5
         >>> obs.ObservabilityService = FakeService
         >>> async def run_cleanup():
-        ...     res = await obs.cleanup_old_traces(days=7, db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     res = await obs.cleanup_old_traces(days=7, db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return res["deleted"]
         >>> asyncio.run(run_cleanup())
         5
@@ -410,7 +416,7 @@ async def cleanup_old_traces(
 
 
 @router.get("/stats")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_stats(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
@@ -471,7 +477,7 @@ async def get_stats(
 
 
 @router.post("/traces/export")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def export_traces(
     request_body: dict,
     format: str = Query("json", description="Export format (json, csv, ndjson)"),
@@ -505,9 +511,10 @@ async def export_traces(
         >>> from fastapi import HTTPException
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
+        >>> from unittest.mock import MagicMock
         >>> async def run_invalid_export():
         ...     try:
-        ...         await export_traces({}, format="xml", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...         await export_traces({}, format="xml", db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     except HTTPException as e:
         ...         return (e.status_code, "format must be one of" in str(e.detail))
         >>> asyncio.run(run_invalid_export())
@@ -529,17 +536,17 @@ async def export_traces(
         ...         return [FakeTrace()]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_json_export():
-        ...     out = await obs.export_traces({}, format="json", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     out = await obs.export_traces({}, format="json", db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return out[0]["trace_id"]
         >>> asyncio.run(run_json_export())
         'tx'
         >>> async def run_csv_export():
-        ...     resp = await obs.export_traces({}, format="csv", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     resp = await obs.export_traces({}, format="csv", db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return hasattr(resp, "media_type") and "csv" in resp.media_type
         >>> asyncio.run(run_csv_export())
         True
         >>> async def run_ndjson_export():
-        ...     resp2 = await obs.export_traces({}, format="ndjson", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     resp2 = await obs.export_traces({}, format="ndjson", db=None, _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         ...     return type(resp2).__name__
         >>> asyncio.run(run_ndjson_export())
         'StreamingResponse'
@@ -650,7 +657,7 @@ async def export_traces(
 
 
 @router.get("/analytics/query-performance")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_query_performance(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
@@ -674,6 +681,7 @@ async def get_query_performance(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
+        >>> from unittest.mock import MagicMock
         >>> class MockDialect:
         ...     name = "sqlite"
         >>> class MockBind:
@@ -688,7 +696,7 @@ async def get_query_performance(
         ...     def all(self):
         ...         return []
         >>> async def run_empty_stats():
-        ...     return (await obs.get_query_performance(hours=1, db=EmptyDB(), _user={"email": settings.platform_admin_email, "db": None}))["total_traces"]
+        ...     return (await obs.get_query_performance(hours=1, db=EmptyDB(), _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]}))["total_traces"]
         >>> asyncio.run(run_empty_stats())
         0
 
@@ -702,7 +710,7 @@ async def get_query_performance(
         ...     def all(self):
         ...         return [(10,), (20,), (30,), (40,)]
         >>> async def run_small_stats():
-        ...     return await obs.get_query_performance(hours=1, db=SmallDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     return await obs.get_query_performance(hours=1, db=SmallDB(), _user={"email": settings.platform_admin_email, "db": MagicMock(), "permissions": ["*"]})
         >>> res = asyncio.run(run_small_stats())
         >>> res["total_traces"]
         4

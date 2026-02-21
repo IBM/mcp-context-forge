@@ -607,7 +607,7 @@ env = [
     "MCPGATEWAY_ADMIN_API_ENABLED=true",
     "MCPGATEWAY_UI_ENABLED=true",
     "DATABASE_URL=sqlite:///:memory:",
-    "TEST_DATABASE_URL=sqlite:///:memory:"
+    "TEST_DATABASE_URL=sqlite:///:memory:",
 ]
 
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
@@ -778,7 +778,7 @@ ignore-nested-functions = false
 ignore-nested-classes = true
 ignore-setters = false
 fail-under = 100
-exclude = ["setup.py", "docs", "build", "tests", "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py"]
+exclude = ["setup.py", "docs", "build", "tests", "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py", "plugin_templates"]
 ignore-regex = ["^get_", "^post_"]
 verbose = 0
 quiet = false

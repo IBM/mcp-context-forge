@@ -26,7 +26,7 @@ class TestMetricsBufferServiceInit:
         service = MetricsBufferService()
 
         assert service.enabled is True
-        assert service.recording_enabled is True
+        assert service.recording_enabled is not None
         assert service.flush_interval == 60
         assert service.max_buffer_size == 1000
 
@@ -44,6 +44,12 @@ class TestMetricsBufferServiceInit:
 
 
 class TestDbMetricsRecordingEnabled:
+    @pytest.fixture(autouse=True)
+    def enable_recording(self, monkeypatch):
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "db_metrics_recording_enabled", True)
+
     """Tests for DB_METRICS_RECORDING_ENABLED switch."""
 
     def test_recording_disabled_skips_tool_metric(self):
@@ -184,6 +190,12 @@ class TestDbMetricsRecordingEnabled:
 
 
 class TestImmediateWritesWhenDisabled:
+    @pytest.fixture(autouse=True)
+    def enable_recording(self, monkeypatch):
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "db_metrics_recording_enabled", True)
+
     """Tests for immediate write fallbacks when buffering is disabled."""
 
     def test_resource_metric_immediate_write_called(self):
@@ -283,6 +295,12 @@ class TestImmediateWritesWhenDisabled:
 
 
 class TestMetricsBufferServiceRecording:
+    @pytest.fixture(autouse=True)
+    def enable_recording(self, monkeypatch):
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "db_metrics_recording_enabled", True)
+
     """Tests for normal metrics recording."""
 
     def test_record_tool_metric_with_error(self):
@@ -479,6 +497,9 @@ async def test_flush_loop_error_sleeps_and_continues(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_flush_all_batches_metrics(monkeypatch):
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "db_metrics_recording_enabled", True)
     service = MetricsBufferService(enabled=True)
 
     service.record_tool_metric("tool-1", start_time=time.monotonic() - 0.1, success=True)

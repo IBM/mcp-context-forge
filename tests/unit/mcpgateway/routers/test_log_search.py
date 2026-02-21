@@ -287,7 +287,7 @@ async def test_search_logs_builds_response():
         sort_order="desc",
     )
 
-    response = await log_search.search_logs(request, user={"email": "user@example.com"}, db=db)
+    response = await log_search.search_logs(request, user={"email": "user@example.com", "permissions": ["*"]}, db=db)
     assert response.total == 1
     assert response.results[0].id == "log-1"
     assert response.results[0].message == "hello"
@@ -322,7 +322,7 @@ async def test_search_logs_has_error_true_and_sort_asc():
 
     request = log_search.LogSearchRequest(has_error=True, sort_order="asc", limit=10, offset=0)
 
-    response = await log_search.search_logs(request, user={"email": "user@example.com"}, db=db)
+    response = await log_search.search_logs(request, user={"email": "user@example.com", "permissions": ["*"]}, db=db)
     assert response.total == 1
     assert response.results[0].error_details["msg"] == "boom"
 
@@ -334,7 +334,7 @@ async def test_search_logs_error_path():
     request = log_search.LogSearchRequest()
 
     with pytest.raises(HTTPException):
-        await log_search.search_logs(request, user={"email": "user@example.com"}, db=db)
+        await log_search.search_logs(request, user={"email": "user@example.com", "permissions": ["*"]}, db=db)
 
 
 @pytest.mark.asyncio
@@ -385,7 +385,7 @@ async def test_trace_correlation_id_includes_metrics():
     db = MagicMock()
     db.execute.side_effect = [logs_result, security_result, audit_result, perf_result]
 
-    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com"}, db=db)
+    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com", "permissions": ["*"]}, db=db)
     assert response.correlation_id == "corr-1"
     assert response.log_count == 1
     assert response.error_count == 0
@@ -406,7 +406,7 @@ async def test_trace_correlation_id_no_logs_has_no_perf_metrics():
     db = MagicMock()
     db.execute.side_effect = [logs_result, security_result, audit_result]
 
-    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com"}, db=db)
+    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com", "permissions": ["*"]}, db=db)
     assert response.log_count == 0
     assert response.performance_metrics is None
 
@@ -440,7 +440,7 @@ async def test_trace_correlation_id_missing_component_or_operation_skips_perf_qu
     db = MagicMock()
     db.execute.side_effect = [logs_result, security_result, audit_result]
 
-    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com"}, db=db)
+    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com", "permissions": ["*"]}, db=db)
     assert response.performance_metrics is None
 
 
@@ -475,7 +475,7 @@ async def test_trace_correlation_id_no_perf_metric_found():
     db = MagicMock()
     db.execute.side_effect = [logs_result, security_result, audit_result, perf_result]
 
-    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com"}, db=db)
+    response = await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com", "permissions": ["*"]}, db=db)
     assert response.performance_metrics is None
 
 
@@ -485,7 +485,7 @@ async def test_trace_correlation_id_error_path():
     db.execute.side_effect = Exception("boom")
 
     with pytest.raises(HTTPException) as exc_info:
-        await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com"}, db=db)
+        await log_search.trace_correlation_id("corr-1", user={"email": "user@example.com", "permissions": ["*"]}, db=db)
 
     assert exc_info.value.status_code == 500
 
@@ -518,7 +518,7 @@ async def test_get_security_events_filters():
         end_time=datetime(2025, 1, 2, tzinfo=timezone.utc),
         limit=10,
         offset=0,
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["*"]},
         db=db,
     )
     assert response[0].event_type == "login"
@@ -553,7 +553,7 @@ async def test_get_security_events_no_filters():
         end_time=None,
         limit=10,
         offset=0,
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["*"]},
         db=db,
     )
     assert response[0].id == "sec-1"
@@ -573,7 +573,7 @@ async def test_get_security_events_error_path():
             end_time=None,
             limit=10,
             offset=0,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["*"]},
             db=db,
         )
 
@@ -610,7 +610,7 @@ async def test_get_audit_trails_filters():
         end_time=datetime(2025, 1, 2, tzinfo=timezone.utc),
         limit=10,
         offset=0,
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["*"]},
         db=db,
     )
     assert response[0].action == "update"
@@ -647,7 +647,7 @@ async def test_get_audit_trails_no_filters():
         end_time=None,
         limit=10,
         offset=0,
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["*"]},
         db=db,
     )
     assert response[0].id == "audit-1"
@@ -668,7 +668,7 @@ async def test_get_audit_trails_error_path():
             end_time=None,
             limit=10,
             offset=0,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["*"]},
             db=db,
         )
 
@@ -708,7 +708,7 @@ async def test_get_performance_metrics_with_backfill(monkeypatch):
         operation=None,
         hours=1.0,
         aggregation="5m",
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["*"]},
         db=db,
     )
     assert response[0].id == "perf-1"
@@ -748,7 +748,7 @@ async def test_get_performance_metrics_custom_window(monkeypatch):
         operation="op",
         hours=1.0,
         aggregation="24h",
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["*"]},
         db=db,
     )
     assert response[0].id == "perf-2"
@@ -788,7 +788,7 @@ async def test_get_performance_metrics_no_aggregation_enabled(monkeypatch):
         operation=None,
         hours=1.0,
         aggregation="5m",
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["*"]},
         db=db,
     )
 
@@ -809,7 +809,7 @@ async def test_get_performance_metrics_error_path(monkeypatch):
             operation=None,
             hours=1.0,
             aggregation="5m",
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["*"]},
             db=db,
         )
 

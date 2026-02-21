@@ -212,7 +212,7 @@ async def test_execute_tool_nl_testcases_json_decode_error_maps_to_http_400(monk
         await router.execute_tool_nl_testcases(
             router.ToolNLTestInput(tool_id="tool-1", tool_nl_test_cases=["ping"]),
             db=MagicMock(),
-            _user={"email": "test@example.com"},
+            _user={"email": "test@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
 
     assert exc_info.value.status_code == 400

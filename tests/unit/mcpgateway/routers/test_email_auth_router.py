@@ -472,10 +472,26 @@ async def test_admin_list_users_with_and_without_pagination():
 
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.list_users = AsyncMock(return_value=result)
-        response = await email_auth.list_users(include_pagination=True, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        response = await email_auth.list_users(
+            include_pagination=True,
+            current_user_ctx={
+                "db": mock_db,
+                "email": "admin@example.com",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
+            db=mock_db,
+        )
         assert response.users[0].email == "user@example.com"
 
-        response_list = await email_auth.list_users(include_pagination=False, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        response_list = await email_auth.list_users(
+            include_pagination=False,
+            current_user_ctx={
+                "db": mock_db,
+                "email": "admin@example.com",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
+            db=mock_db,
+        )
         assert isinstance(response_list, list)
         assert response_list[0].email == "user@example.com"
 
@@ -489,7 +505,15 @@ async def test_admin_list_users_error():
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.list_users = AsyncMock(side_effect=Exception("boom"))
         with pytest.raises(email_auth.HTTPException) as excinfo:
-            await email_auth.list_users(include_pagination=True, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+            await email_auth.list_users(
+                include_pagination=True,
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+                db=mock_db,
+            )
 
     assert excinfo.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
@@ -504,7 +528,14 @@ async def test_admin_list_all_auth_events():
 
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.get_auth_events = AsyncMock(return_value=[event])
-        result = await email_auth.list_all_auth_events(current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        result = await email_auth.list_all_auth_events(
+            current_user_ctx={
+                "db": mock_db,
+                "email": "admin@example.com",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
+            db=mock_db,
+        )
 
     assert result[0].event_type == "login"
 
@@ -534,7 +565,15 @@ async def test_admin_create_user_default_password_enforcement():
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
             MockAuthService.return_value.create_user = AsyncMock(return_value=user)
-            response = await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+            response = await email_auth.create_user(
+                user_request,
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+                db=mock_db,
+            )
 
     assert response.password_change_required is True
     mock_db.commit.assert_called()
@@ -568,10 +607,27 @@ async def test_admin_get_update_delete_user():
 
         update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated", is_admin=True)
 
-        response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        response = await email_auth.get_user(
+            "user@example.com",
+            current_user_ctx={
+                "db": mock_db,
+                "email": "admin@example.com",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
+            db=mock_db,
+        )
         assert response.email == "user@example.com"
 
-        response = await email_auth.update_user("user@example.com", update_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        response = await email_auth.update_user(
+            "user@example.com",
+            update_request,
+            current_user_ctx={
+                "db": mock_db,
+                "email": "admin@example.com",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
+            db=mock_db,
+        )
         assert response.full_name == "Updated"
         # Verify update_user was called with correct params
         auth_service.update_user.assert_called_once_with(
@@ -584,7 +640,15 @@ async def test_admin_get_update_delete_user():
             admin_origin_source="api",
         )
 
-        delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        delete_response = await email_auth.delete_user(
+            "user@example.com",
+            current_user_ctx={
+                "db": mock_db,
+                "email": "admin@example.com",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
+            db=mock_db,
+        )
         assert delete_response.success is True
 
 
@@ -617,7 +681,11 @@ async def test_admin_update_user_without_full_name_and_is_admin():
         response = await email_auth.update_user(
             "user@example.com",
             update_request,
-            current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+            current_user_ctx={
+                "db": mock_db,
+                "email": "admin@example.com",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
             db=mock_db,
         )
 
@@ -653,7 +721,11 @@ async def test_admin_update_user_invalid_password():
             await email_auth.update_user(
                 "user@example.com",
                 update_request,
-                current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
                 db=mock_db,
             )
 
@@ -680,7 +752,11 @@ async def test_admin_update_user_not_found():
             await email_auth.update_user(
                 "nonexistent@example.com",
                 update_request,
-                current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
                 db=mock_db,
             )
 
@@ -697,7 +773,15 @@ async def test_admin_delete_user_self_block():
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.is_last_active_admin = AsyncMock(return_value=False)
         with pytest.raises(email_auth.HTTPException) as excinfo:
-            await email_auth.delete_user("admin@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+            await email_auth.delete_user(
+                "admin@example.com",
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+                db=mock_db,
+            )
 
     assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -760,7 +844,11 @@ async def test_admin_update_last_admin_demote_blocked():
             await email_auth.update_user(
                 "admin@example.com",
                 update_request,
-                current_user_ctx={"db": mock_db, "email": "other-admin@example.com"},
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "other-admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
                 db=mock_db,
             )
 
@@ -786,7 +874,11 @@ async def test_admin_update_last_admin_deactivate_blocked():
             await email_auth.update_user(
                 "admin@example.com",
                 update_request,
-                current_user_ctx={"db": mock_db, "email": "other-admin@example.com"},
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "other-admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
                 db=mock_db,
             )
 
@@ -812,7 +904,11 @@ async def test_admin_update_protect_all_admins_blocked():
             await email_auth.update_user(
                 "admin@example.com",
                 update_request,
-                current_user_ctx={"db": mock_db, "email": "other-admin@example.com"},
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "other-admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
                 db=mock_db,
             )
 
@@ -1570,7 +1666,14 @@ async def test_list_all_auth_events_error():
         MockSvc.return_value.get_auth_events = AsyncMock(side_effect=RuntimeError("db down"))
 
         with pytest.raises(email_auth.HTTPException) as exc:
-            await email_auth.list_all_auth_events(current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+            await email_auth.list_all_auth_events(
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+                db=mock_db,
+            )
 
         assert exc.value.status_code == 500
 
@@ -1604,7 +1707,15 @@ class TestAdminCreateUserEdgeCases:
             mock_settings.default_user_password.get_secret_value.return_value = "defaultpass"
             MockSvc.return_value.create_user = AsyncMock(return_value=user)
 
-            response = await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+            response = await email_auth.create_user(
+                user_request,
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+                db=mock_db,
+            )
 
         assert response.email == "new@example.com"
         assert response.password_change_required is False
@@ -1622,7 +1733,15 @@ class TestAdminCreateUserEdgeCases:
             MockSvc.return_value.create_user = AsyncMock(side_effect=EmailValidationError("invalid email"))
 
             with pytest.raises(email_auth.HTTPException) as exc:
-                await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+                await email_auth.create_user(
+                    user_request,
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
+                    db=mock_db,
+                )
 
             assert exc.value.status_code == 400
 
@@ -1639,7 +1758,15 @@ class TestAdminCreateUserEdgeCases:
             MockSvc.return_value.create_user = AsyncMock(side_effect=PasswordValidationError("too weak"))
 
             with pytest.raises(email_auth.HTTPException) as exc:
-                await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+                await email_auth.create_user(
+                    user_request,
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
+                    db=mock_db,
+                )
 
             assert exc.value.status_code == 400
 
@@ -1656,7 +1783,15 @@ class TestAdminCreateUserEdgeCases:
             MockSvc.return_value.create_user = AsyncMock(side_effect=UserExistsError("exists"))
 
             with pytest.raises(email_auth.HTTPException) as exc:
-                await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+                await email_auth.create_user(
+                    user_request,
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
+                    db=mock_db,
+                )
 
             assert exc.value.status_code == 409
 
@@ -1673,7 +1808,15 @@ class TestAdminCreateUserEdgeCases:
             MockSvc.return_value.create_user = AsyncMock(side_effect=RuntimeError("db down"))
 
             with pytest.raises(email_auth.HTTPException) as exc:
-                await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+                await email_auth.create_user(
+                    user_request,
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
+                    db=mock_db,
+                )
 
             assert exc.value.status_code == 500
 
@@ -1695,7 +1838,11 @@ class TestAdminGetUserEdgeCases:
             with pytest.raises(email_auth.HTTPException) as exc:
                 await email_auth.get_user(
                     "missing@example.com",
-                    current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
                     db=mock_db,
                 )
 
@@ -1715,7 +1862,11 @@ class TestAdminGetUserEdgeCases:
             with pytest.raises(email_auth.HTTPException) as exc:
                 await email_auth.get_user(
                     "user@example.com",
-                    current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
                     db=mock_db,
                 )
 
@@ -1739,7 +1890,11 @@ async def test_admin_update_user_generic_exception():
             await email_auth.update_user(
                 "user@example.com",
                 update_request,
-                current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                current_user_ctx={
+                    "db": mock_db,
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
                 db=mock_db,
             )
 
@@ -1763,7 +1918,11 @@ class TestAdminDeleteUserEdgeCases:
             with pytest.raises(email_auth.HTTPException) as exc:
                 await email_auth.delete_user(
                     "lastadmin@example.com",
-                    current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
                     db=mock_db,
                 )
 
@@ -1785,7 +1944,11 @@ class TestAdminDeleteUserEdgeCases:
             with pytest.raises(email_auth.HTTPException) as exc:
                 await email_auth.delete_user(
                     "user@example.com",
-                    current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                    current_user_ctx={
+                        "db": mock_db,
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
                     db=mock_db,
                 )
 
@@ -1896,7 +2059,11 @@ async def test_admin_unlock_user_success():
     mock_db = MagicMock()
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
         MockSvc.return_value.unlock_user_account = AsyncMock(return_value=MagicMock())
-        response = await email_auth.unlock_user("user@example.com", current_user_ctx={"email": "admin@example.com"}, db=mock_db)
+        response = await email_auth.unlock_user(
+            "user@example.com",
+            current_user_ctx={"email": "admin@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            db=mock_db,
+        )
 
     assert response.success is True
     assert "unlocked" in response.message.lower()
@@ -2102,7 +2269,11 @@ async def test_admin_unlock_user_value_error_maps_to_404():
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as mock_svc:
         mock_svc.return_value.unlock_user_account = AsyncMock(side_effect=ValueError("not found"))
         with pytest.raises(email_auth.HTTPException) as exc:
-            await email_auth.unlock_user("user@example.com", current_user_ctx={"email": "admin@example.com"}, db=mock_db)
+            await email_auth.unlock_user(
+                "user@example.com",
+                current_user_ctx={"email": "admin@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+                db=mock_db,
+            )
 
     assert exc.value.status_code == 404
 
@@ -2117,7 +2288,11 @@ async def test_admin_unlock_user_generic_error_maps_to_500():
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as mock_svc:
         mock_svc.return_value.unlock_user_account = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(email_auth.HTTPException) as exc:
-            await email_auth.unlock_user("user@example.com", current_user_ctx={"email": "admin@example.com"}, db=mock_db)
+            await email_auth.unlock_user(
+                "user@example.com",
+                current_user_ctx={"email": "admin@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+                db=mock_db,
+            )
 
     assert exc.value.status_code == 500
 

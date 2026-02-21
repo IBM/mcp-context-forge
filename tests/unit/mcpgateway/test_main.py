@@ -374,8 +374,8 @@ def test_client(app_with_temp_db):
     app_with_temp_db.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
 
     # Override get_current_user_with_permissions for RBAC system
-    def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None):
-        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test"}
+    async def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "permissions": ["*"], "db": MagicMock()}
 
     app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
@@ -1099,8 +1099,7 @@ class TestResourceEndpoints:
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
-        resource_id = MOCK_RESOURCE_READ["id"]
-        response = test_client.post(f"/resources/subscribe", headers=auth_headers)
+        response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
@@ -2106,10 +2105,12 @@ class TestRealtimeEndpoints:
 
         # Track messages
         messages_received = []
-        websocket.receive_text = AsyncMock(side_effect=[
-            '{"jsonrpc":"2.0","method":"test","id":1}',
-            WebSocketDisconnect(),
-        ])
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                '{"jsonrpc":"2.0","method":"test","id":1}',
+                WebSocketDisconnect(),
+            ]
+        )
         websocket.send_text = AsyncMock(side_effect=lambda msg: messages_received.append(msg))
 
         await mcpgateway_main.websocket_endpoint(websocket)
@@ -2158,10 +2159,12 @@ class TestRealtimeEndpoints:
         websocket.headers = {"X-Forwarded-User": "proxy-user@example.com"}
 
         # Track messages
-        websocket.receive_text = AsyncMock(side_effect=[
-            '{"jsonrpc":"2.0","method":"test","id":1}',
-            WebSocketDisconnect(),
-        ])
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                '{"jsonrpc":"2.0","method":"test","id":1}',
+                WebSocketDisconnect(),
+            ]
+        )
         websocket.send_text = AsyncMock()
 
         await mcpgateway_main.websocket_endpoint(websocket)
@@ -2210,7 +2213,11 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(asyncio.CancelledError):
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(
+                    request,
+                    "1",
+                    user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()},
+                )
 
     @pytest.mark.asyncio
     async def test_server_sse_failure_cleanup(self):
@@ -2238,7 +2245,9 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(HTTPException) as excinfo:
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(
+                    request, "1", user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+                )
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -2267,7 +2276,9 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(asyncio.CancelledError):
-                await mcpgateway_main.utility_sse_endpoint(request, user={"email": "user@example.com"})
+                await mcpgateway_main.utility_sse_endpoint(
+                    request, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()}
+                )
 
     @pytest.mark.asyncio
     async def test_utility_sse_failure_cleanup(self):
@@ -2295,7 +2306,9 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(HTTPException) as excinfo:
-                await mcpgateway_main.utility_sse_endpoint(request, user={"email": "user@example.com"})
+                await mcpgateway_main.utility_sse_endpoint(
+                    request, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+                )
         assert excinfo.value.status_code == 500
 
 

@@ -79,7 +79,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -134,6 +134,7 @@ from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
@@ -2428,7 +2429,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 ###############
 @server_router.get("", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
 @server_router.get("/", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
-@require_permission("servers.read")
+@require_permission_v2("servers.read")
 async def list_servers(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
@@ -2511,7 +2512,7 @@ async def list_servers(
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
-@require_permission("servers.read")
+@require_permission_v2("servers.read")
 async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Retrieves a server by its ID.
@@ -2536,7 +2537,7 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends
 
 @server_router.post("", response_model=ServerRead, status_code=201)
 @server_router.post("/", response_model=ServerRead, status_code=201)
-@require_permission("servers.create")
+@require_permission_v2("servers.create")
 async def create_server(
     server: ServerCreate,
     request: Request,
@@ -2621,7 +2622,7 @@ async def create_server(
 
 
 @server_router.put("/{server_id}", response_model=ServerRead)
-@require_permission("servers.update")
+@require_permission_v2("servers.update")
 async def update_server(
     server_id: str,
     server: ServerUpdate,
@@ -2682,7 +2683,7 @@ async def update_server(
 
 
 @server_router.post("/{server_id}/state", response_model=ServerRead)
-@require_permission("servers.update")
+@require_permission_v2("servers.update")
 async def set_server_state(
     server_id: str,
     activate: bool = True,
@@ -2719,7 +2720,7 @@ async def set_server_state(
 
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead, deprecated=True)
-@require_permission("servers.update")
+@require_permission_v2("servers.update")
 async def toggle_server_status(
     server_id: str,
     activate: bool = True,
@@ -2745,7 +2746,7 @@ async def toggle_server_status(
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
-@require_permission("servers.delete")
+@require_permission_v2("servers.delete")
 async def delete_server(
     server_id: str,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this server"),
@@ -2787,7 +2788,7 @@ async def delete_server(
 
 
 @server_router.get("/{server_id}/sse")
-@require_permission("servers.use")
+@require_permission_v2("servers.use")
 async def sse_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
@@ -2889,7 +2890,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
 
 @server_router.post("/{server_id}/message")
-@require_permission("servers.use")
+@require_permission_v2("servers.use")
 async def message_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
     """
     Handles incoming messages for a specific server.
@@ -2955,7 +2956,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
-@require_permission("servers.read")
+@require_permission_v2("servers.read")
 async def server_get_tools(
     request: Request,
     server_id: str,
@@ -3008,7 +3009,7 @@ async def server_get_tools(
 
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
-@require_permission("servers.read")
+@require_permission_v2("servers.read")
 async def server_get_resources(
     request: Request,
     server_id: str,
@@ -3047,7 +3048,7 @@ async def server_get_resources(
 
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
-@require_permission("servers.read")
+@require_permission_v2("servers.read")
 async def server_get_prompts(
     request: Request,
     server_id: str,
@@ -3090,7 +3091,7 @@ async def server_get_prompts(
 ##################
 @a2a_router.get("", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
 @a2a_router.get("/", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
-@require_permission("a2a.read")
+@require_permission_v2("a2a.read")
 async def list_a2a_agents(
     request: Request,
     include_inactive: bool = False,
@@ -3184,7 +3185,7 @@ async def list_a2a_agents(
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
-@require_permission("a2a.read")
+@require_permission_v2("a2a.read")
 async def get_a2a_agent(
     agent_id: str,
     request: Request,
@@ -3232,7 +3233,7 @@ async def get_a2a_agent(
 
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
 @a2a_router.post("/", response_model=A2AAgentRead, status_code=201)
-@require_permission("a2a.create")
+@require_permission_v2("a2a.create")
 async def create_a2a_agent(
     agent: A2AAgentCreate,
     request: Request,
@@ -3318,7 +3319,7 @@ async def create_a2a_agent(
 
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
-@require_permission("a2a.update")
+@require_permission_v2("a2a.update")
 async def update_a2a_agent(
     agent_id: str,
     agent: A2AAgentUpdate,
@@ -3377,7 +3378,7 @@ async def update_a2a_agent(
 
 
 @a2a_router.post("/{agent_id}/state", response_model=A2AAgentRead)
-@require_permission("a2a.update")
+@require_permission_v2("a2a.update")
 async def set_a2a_agent_state(
     agent_id: str,
     activate: bool = True,
@@ -3414,7 +3415,7 @@ async def set_a2a_agent_state(
 
 
 @a2a_router.post("/{agent_id}/toggle", response_model=A2AAgentRead, deprecated=True)
-@require_permission("a2a.update")
+@require_permission_v2("a2a.update")
 async def toggle_a2a_agent_status(
     agent_id: str,
     activate: bool = True,
@@ -3440,7 +3441,7 @@ async def toggle_a2a_agent_status(
 
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
-@require_permission("a2a.delete")
+@require_permission_v2("a2a.delete")
 async def delete_a2a_agent(
     agent_id: str,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this agent"),
@@ -3481,7 +3482,7 @@ async def delete_a2a_agent(
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
-@require_permission("a2a.invoke")
+@require_permission_v2("a2a.invoke")
 async def invoke_a2a_agent(
     agent_name: str,
     request: Request,
@@ -3547,7 +3548,7 @@ async def invoke_a2a_agent(
 #############
 @tool_router.get("", response_model=Union[List[ToolRead], CursorPaginatedToolsResponse])
 @tool_router.get("/", response_model=Union[List[ToolRead], CursorPaginatedToolsResponse])
-@require_permission("tools.read")
+@require_permission_v2("tools.read")
 async def list_tools(
     request: Request,
     cursor: Optional[str] = None,
@@ -3655,7 +3656,7 @@ async def list_tools(
 
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
-@require_permission("tools.create")
+@require_permission_v2("tools.create")
 async def create_tool(
     tool: ToolCreate,
     request: Request,
@@ -3749,7 +3750,7 @@ async def create_tool(
 
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
-@require_permission("tools.read")
+@require_permission_v2("tools.read")
 async def get_tool(
     tool_id: str,
     request: Request,
@@ -3790,7 +3791,7 @@ async def get_tool(
 
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
-@require_permission("tools.update")
+@require_permission_v2("tools.update")
 async def update_tool(
     tool_id: str,
     tool: ToolUpdate,
@@ -3855,7 +3856,7 @@ async def update_tool(
 
 
 @tool_router.delete("/{tool_id}")
-@require_permission("tools.delete")
+@require_permission_v2("tools.delete")
 async def delete_tool(
     tool_id: str,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this tool"),
@@ -3893,7 +3894,7 @@ async def delete_tool(
 
 
 @tool_router.post("/{tool_id}/state")
-@require_permission("tools.update")
+@require_permission_v2("tools.update")
 async def set_tool_state(
     tool_id: str,
     activate: bool = True,
@@ -3935,7 +3936,7 @@ async def set_tool_state(
 
 
 @tool_router.post("/{tool_id}/toggle", deprecated=True)
-@require_permission("tools.update")
+@require_permission_v2("tools.update")
 async def toggle_tool_status(
     tool_id: str,
     activate: bool = True,
@@ -3965,7 +3966,7 @@ async def toggle_tool_status(
 #################
 # --- Resource templates endpoint - MUST come before variable paths ---
 @resource_router.get("/templates/list", response_model=ListResourceTemplatesResult)
-@require_permission("resources.read")
+@require_permission_v2("resources.read")
 async def list_resource_templates(
     request: Request,
     db: Session = Depends(get_db),
@@ -4017,7 +4018,7 @@ async def list_resource_templates(
 
 
 @resource_router.post("/{resource_id}/state")
-@require_permission("resources.update")
+@require_permission_v2("resources.update")
 async def set_resource_state(
     resource_id: str,
     activate: bool = True,
@@ -4059,7 +4060,7 @@ async def set_resource_state(
 
 
 @resource_router.post("/{resource_id}/toggle", deprecated=True)
-@require_permission("resources.update")
+@require_permission_v2("resources.update")
 async def toggle_resource_status(
     resource_id: str,
     activate: bool = True,
@@ -4086,7 +4087,7 @@ async def toggle_resource_status(
 
 @resource_router.get("", response_model=Union[List[ResourceRead], CursorPaginatedResourcesResponse])
 @resource_router.get("/", response_model=Union[List[ResourceRead], CursorPaginatedResourcesResponse])
-@require_permission("resources.read")
+@require_permission_v2("resources.read")
 async def list_resources(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
@@ -4178,7 +4179,7 @@ async def list_resources(
 
 @resource_router.post("", response_model=ResourceRead)
 @resource_router.post("/", response_model=ResourceRead)
-@require_permission("resources.create")
+@require_permission_v2("resources.create")
 async def create_resource(
     resource: ResourceCreate,
     request: Request,
@@ -4266,7 +4267,7 @@ async def create_resource(
 
 
 @resource_router.get("/{resource_id}")
-@require_permission("resources.read")
+@require_permission_v2("resources.read")
 async def read_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
     """
     Read a resource by its ID with plugin support.
@@ -4353,7 +4354,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
 
 @resource_router.get("/{resource_id}/info", response_model=ResourceRead)
-@require_permission("resources.read")
+@require_permission_v2("resources.read")
 async def get_resource_info(
     resource_id: str,
     include_inactive: bool = Query(False, description="Include inactive resources"),
@@ -4386,7 +4387,7 @@ async def get_resource_info(
 
 
 @resource_router.put("/{resource_id}", response_model=ResourceRead)
-@require_permission("resources.update")
+@require_permission_v2("resources.update")
 async def update_resource(
     resource_id: str,
     resource: ResourceUpdate,
@@ -4445,7 +4446,7 @@ async def update_resource(
 
 
 @resource_router.delete("/{resource_id}")
-@require_permission("resources.delete")
+@require_permission_v2("resources.delete")
 async def delete_resource(
     resource_id: str,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this resource"),
@@ -4484,7 +4485,7 @@ async def delete_resource(
 
 
 @resource_router.post("/subscribe")
-@require_permission("resources.read")
+@require_permission_v2("resources.read")
 async def subscribe_resource(user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
@@ -4503,7 +4504,7 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
 # Prompt APIs #
 ###############
 @prompt_router.post("/{prompt_id}/state")
-@require_permission("prompts.update")
+@require_permission_v2("prompts.update")
 async def set_prompt_state(
     prompt_id: str,
     activate: bool = True,
@@ -4545,7 +4546,7 @@ async def set_prompt_state(
 
 
 @prompt_router.post("/{prompt_id}/toggle", deprecated=True)
-@require_permission("prompts.update")
+@require_permission_v2("prompts.update")
 async def toggle_prompt_status(
     prompt_id: str,
     activate: bool = True,
@@ -4572,7 +4573,7 @@ async def toggle_prompt_status(
 
 @prompt_router.get("", response_model=Union[List[PromptRead], CursorPaginatedPromptsResponse])
 @prompt_router.get("/", response_model=Union[List[PromptRead], CursorPaginatedPromptsResponse])
-@require_permission("prompts.read")
+@require_permission_v2("prompts.read")
 async def list_prompts(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
@@ -4664,7 +4665,7 @@ async def list_prompts(
 
 @prompt_router.post("", response_model=PromptRead)
 @prompt_router.post("/", response_model=PromptRead)
-@require_permission("prompts.create")
+@require_permission_v2("prompts.create")
 async def create_prompt(
     prompt: PromptCreate,
     request: Request,
@@ -4761,7 +4762,7 @@ async def create_prompt(
 
 
 @prompt_router.post("/{prompt_id}")
-@require_permission("prompts.read")
+@require_permission_v2("prompts.read")
 async def get_prompt(
     request: Request,
     prompt_id: str,
@@ -4830,7 +4831,7 @@ async def get_prompt(
 
 
 @prompt_router.get("/{prompt_id}")
-@require_permission("prompts.read")
+@require_permission_v2("prompts.read")
 async def get_prompt_no_args(
     request: Request,
     prompt_id: str,
@@ -4886,7 +4887,7 @@ async def get_prompt_no_args(
 
 
 @prompt_router.put("/{prompt_id}", response_model=PromptRead)
-@require_permission("prompts.update")
+@require_permission_v2("prompts.update")
 async def update_prompt(
     prompt_id: str,
     prompt: PromptUpdate,
@@ -4953,7 +4954,7 @@ async def update_prompt(
 
 
 @prompt_router.delete("/{prompt_id}")
-@require_permission("prompts.delete")
+@require_permission_v2("prompts.delete")
 async def delete_prompt(
     prompt_id: str,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this prompt"),
@@ -5002,7 +5003,7 @@ async def delete_prompt(
 # Gateway APIs #
 ################
 @gateway_router.post("/{gateway_id}/state")
-@require_permission("gateways.update")
+@require_permission_v2("gateways.update")
 async def set_gateway_state(
     gateway_id: str,
     activate: bool = True,
@@ -5047,7 +5048,7 @@ async def set_gateway_state(
 
 
 @gateway_router.post("/{gateway_id}/toggle", deprecated=True)
-@require_permission("gateways.update")
+@require_permission_v2("gateways.update")
 async def toggle_gateway_status(
     gateway_id: str,
     activate: bool = True,
@@ -5074,7 +5075,7 @@ async def toggle_gateway_status(
 
 @gateway_router.get("", response_model=Union[List[GatewayRead], CursorPaginatedGatewaysResponse])
 @gateway_router.get("/", response_model=Union[List[GatewayRead], CursorPaginatedGatewaysResponse])
-@require_permission("gateways.read")
+@require_permission_v2("gateways.read")
 async def list_gateways(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
@@ -5155,7 +5156,7 @@ async def list_gateways(
 
 @gateway_router.post("", response_model=GatewayRead)
 @gateway_router.post("/", response_model=GatewayRead)
-@require_permission("gateways.create")
+@require_permission_v2("gateways.create")
 async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
@@ -5240,7 +5241,7 @@ async def register_gateway(
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
-@require_permission("gateways.read")
+@require_permission_v2("gateways.read")
 async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
@@ -5264,7 +5265,7 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
-@require_permission("gateways.update")
+@require_permission_v2("gateways.update")
 async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
@@ -5327,7 +5328,7 @@ async def update_gateway(
 
 
 @gateway_router.delete("/{gateway_id}")
-@require_permission("gateways.delete")
+@require_permission_v2("gateways.delete")
 async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
@@ -5369,7 +5370,7 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
 
 
 @gateway_router.post("/{gateway_id}/tools/refresh", response_model=GatewayRefreshResponse)
-@require_permission("gateways.update")
+@require_permission_v2("gateways.update")
 async def refresh_gateway_tools(
     gateway_id: str,
     request: Request,
@@ -6404,7 +6405,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-@require_permission("tools.invoke")
+@require_permission_v2("tools.invoke")
 async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
@@ -6503,7 +6504,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
 
 @utility_router.post("/message")
-@require_permission("tools.invoke")
+@require_permission_v2("tools.invoke")
 async def utility_message_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Handle a JSON-RPC message directed to a specific SSE session.
@@ -6547,7 +6548,7 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
 
 
 @utility_router.post("/logging/setLevel")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def set_log_level(request: Request, user=Depends(get_current_user_with_permissions)) -> None:
     """
     Update the server's log level at runtime.
@@ -6570,7 +6571,7 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
 # Metrics          #
 ####################
 @metrics_router.get("", response_model=dict)
-@require_permission("admin.metrics")
+@require_permission_v2("admin.metrics")
 async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
@@ -6604,7 +6605,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
 
 
 @metrics_router.post("/reset", response_model=dict)
-@require_permission("admin.metrics")
+@require_permission_v2("admin.metrics")
 async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
     """
     Reset metrics for a specific entity type and optionally a specific entity ID,
@@ -6794,7 +6795,7 @@ async def security_health(request: Request):
 
 @tag_router.get("", response_model=List[TagInfo])
 @tag_router.get("/", response_model=List[TagInfo])
-@require_permission("tags.read")
+@require_permission_v2("tags.read")
 async def list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
@@ -6834,7 +6835,7 @@ async def list_tags(
 
 
 @tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
-@require_permission("tags.read")
+@require_permission_v2("tags.read")
 async def get_entities_by_tag(
     tag_name: str,
     entity_types: Optional[str] = None,
@@ -6879,7 +6880,7 @@ async def get_entities_by_tag(
 
 
 @export_import_router.get("/export", response_model=Dict[str, Any])
-@require_permission("admin.export")
+@require_permission_v2("admin.export")
 async def export_configuration(
     request: Request,  # pylint: disable=unused-argument
     export_format: str = "json",  # pylint: disable=unused-argument
@@ -6961,7 +6962,7 @@ async def export_configuration(
 
 
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
-@require_permission("admin.export")
+@require_permission_v2("admin.export")
 async def export_selective_configuration(
     entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
 ) -> Dict[str, Any]:
@@ -7015,7 +7016,7 @@ async def export_selective_configuration(
 
 
 @export_import_router.post("/import", response_model=Dict[str, Any])
-@require_permission("admin.import")
+@require_permission_v2("admin.import")
 async def import_configuration(
     import_data: Dict[str, Any] = Body(...),
     conflict_strategy: str = "update",
@@ -7082,7 +7083,7 @@ async def import_configuration(
 
 
 @export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
-@require_permission("admin.import")
+@require_permission_v2("admin.import")
 async def get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Get the status of an import operation.
@@ -7107,7 +7108,7 @@ async def get_import_status(import_id: str, user=Depends(get_current_user_with_p
 
 
 @export_import_router.get("/import/status", response_model=List[Dict[str, Any]])
-@require_permission("admin.import")
+@require_permission_v2("admin.import")
 async def list_import_statuses(user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List all import operation statuses.
@@ -7125,7 +7126,7 @@ async def list_import_statuses(user=Depends(get_current_user_with_permissions)) 
 
 
 @export_import_router.post("/import/cleanup", response_model=Dict[str, Any])
-@require_permission("admin.import")
+@require_permission_v2("admin.import")
 async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Clean up completed import statuses older than specified age.

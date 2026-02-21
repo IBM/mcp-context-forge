@@ -11,14 +11,13 @@ Tests for error handling paths in admin.py to improve coverage.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from pydantic import ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import pytest
 
 # First-Party
-from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError
+from mcpgateway.services.server_service import ServerError, ServerNameConflictError
 
 
 class FakeForm(dict):
@@ -68,7 +67,7 @@ def mock_request():
 @pytest.fixture
 def mock_user():
     """Create a mock user."""
-    return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True}
+    return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "permissions": ["*"], "db": MagicMock()}
 
 
 @pytest.fixture

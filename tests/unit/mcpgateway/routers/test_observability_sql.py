@@ -35,7 +35,6 @@ def allow_permission(monkeypatch):
     monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
 
 
-
 class TestQueryPerformancePostgresql:
     """Tests for PostgreSQL query performance computation."""
 
@@ -169,7 +168,7 @@ class TestQueryPerformanceRouting:
                 result = await get_query_performance(
                     hours=1,
                     db=mock_db,
-                    _user={"email": settings.platform_admin_email, "db": mock_db},
+                    _user={"email": settings.platform_admin_email, "db": mock_db, "permissions": ["*"]},
                 )
 
                 # Verify PostgreSQL path was called
@@ -199,7 +198,7 @@ class TestQueryPerformanceRouting:
                 result = await get_query_performance(
                     hours=1,
                     db=mock_db,
-                    _user={"email": settings.platform_admin_email, "db": mock_db},
+                    _user={"email": settings.platform_admin_email, "db": mock_db, "permissions": ["*"]},
                 )
 
                 # Verify Python path was called
@@ -276,7 +275,7 @@ class TestObservabilityRouterEndpoints:
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.query_traces.return_value = [fake_trace]
 
-            result = await list_traces(db=mock_db, _user={"email": "admin", "db": mock_db})
+            result = await list_traces(db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
 
         assert result == [fake_trace]
 
@@ -294,7 +293,7 @@ class TestObservabilityRouterEndpoints:
             result = await query_traces_advanced(
                 {"start_time": "2025-01-01T00:00:00Z", "end_time": "2025-01-02T00:00:00Z"},
                 db=mock_db,
-                _user={"email": "admin", "db": mock_db},
+                _user={"email": "admin", "db": mock_db, "permissions": ["*"]},
             )
 
         assert result == [fake_trace]
@@ -308,7 +307,7 @@ class TestObservabilityRouterEndpoints:
         from mcpgateway.routers.observability import query_traces_advanced
 
         with pytest.raises(HTTPException) as exc_info:
-            await query_traces_advanced({"start_time": "not-a-date"}, db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
+            await query_traces_advanced({"start_time": "not-a-date"}, db=MagicMock(), _user={"email": "admin", "db": MagicMock(), "permissions": ["*"]})
 
         assert exc_info.value.status_code == 400
 
@@ -322,7 +321,7 @@ class TestObservabilityRouterEndpoints:
             mock_service.return_value.get_trace_with_spans.return_value = None
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_trace("missing", db=mock_db, _user={"email": "admin", "db": mock_db})
+                await get_trace("missing", db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
 
         assert exc_info.value.status_code == 404
 
@@ -336,7 +335,7 @@ class TestObservabilityRouterEndpoints:
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.get_trace_with_spans.return_value = trace
 
-            result = await get_trace("t1", db=mock_db, _user={"email": "admin", "db": mock_db})
+            result = await get_trace("t1", db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
 
         assert result == trace
 
@@ -351,7 +350,7 @@ class TestObservabilityRouterEndpoints:
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.query_spans.return_value = [fake_span]
 
-            result = await list_spans(db=mock_db, _user={"email": "admin", "db": mock_db})
+            result = await list_spans(db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
 
         assert result == [fake_span]
 
@@ -364,7 +363,7 @@ class TestObservabilityRouterEndpoints:
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.delete_old_traces.return_value = 5
 
-            result = await cleanup_old_traces(days=3, db=mock_db, _user={"email": "admin", "db": mock_db})
+            result = await cleanup_old_traces(days=3, db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
 
         assert result["deleted"] == 5
 
@@ -388,7 +387,7 @@ class TestObservabilityRouterEndpoints:
 
         mock_db.query.side_effect = [query_total, query_success, query_error, query_avg, query_slowest]
 
-        result = await get_stats(hours=24, db=mock_db, _user={"email": "admin", "db": mock_db})
+        result = await get_stats(hours=24, db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
 
         assert result["total_traces"] == 10
         assert result["success_count"] == 7
@@ -402,7 +401,7 @@ class TestObservabilityRouterEndpoints:
         from mcpgateway.routers.observability import export_traces
 
         with pytest.raises(HTTPException) as exc_info:
-            await export_traces({}, format="xml", db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
+            await export_traces({}, format="xml", db=MagicMock(), _user={"email": "admin", "db": MagicMock(), "permissions": ["*"]})
 
         assert exc_info.value.status_code == 400
 
@@ -428,14 +427,14 @@ class TestObservabilityRouterEndpoints:
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.query_traces.return_value = [fake_trace]
 
-            json_resp = await export_traces({}, format="json", db=mock_db, _user={"email": "admin", "db": mock_db})
+            json_resp = await export_traces({}, format="json", db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
             assert json_resp[0]["trace_id"] == "t1"
 
-            csv_resp = await export_traces({}, format="csv", db=mock_db, _user={"email": "admin", "db": mock_db})
+            csv_resp = await export_traces({}, format="csv", db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
             assert csv_resp.media_type == "text/csv"
             assert b"trace_id" in csv_resp.body
 
-            ndjson_resp = await export_traces({}, format="ndjson", db=mock_db, _user={"email": "admin", "db": mock_db})
+            ndjson_resp = await export_traces({}, format="ndjson", db=mock_db, _user={"email": "admin", "db": mock_db, "permissions": ["*"]})
             chunks = [chunk async for chunk in ndjson_resp.body_iterator]
             first_chunk = chunks[0]
             assert "trace_id" in (first_chunk.decode() if isinstance(first_chunk, bytes) else first_chunk)
@@ -453,7 +452,7 @@ class TestObservabilityRouterEndpoints:
                 {"start_time": "2025-01-01T00:00:00Z", "end_time": "2025-01-02T00:00:00Z"},
                 format="json",
                 db=mock_db,
-                _user={"email": "admin", "db": mock_db},
+                _user={"email": "admin", "db": mock_db, "permissions": ["*"]},
             )
 
         kwargs = mock_service.return_value.query_traces.call_args.kwargs
@@ -469,7 +468,7 @@ class TestObservabilityRouterEndpoints:
             mock_service.return_value.query_traces.side_effect = RuntimeError("boom")
 
             with pytest.raises(HTTPException) as exc_info:
-                await export_traces({}, format="json", db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
+                await export_traces({}, format="json", db=MagicMock(), _user={"email": "admin", "db": MagicMock(), "permissions": ["*"]})
 
         assert exc_info.value.status_code == 400
         assert "Export failed:" in exc_info.value.detail

@@ -75,7 +75,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -133,6 +133,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
@@ -1283,7 +1284,7 @@ def _build_search_response(
 
 
 @admin_router.get("/overview/partial")
-@require_permission("admin.overview", allow_admin_bypass=False)
+@require_permission_v2("admin.overview", allow_admin_bypass=False)
 async def get_overview_partial(
     request: Request,
     db: Session = Depends(get_db),
@@ -1448,7 +1449,7 @@ async def get_overview_partial(
 
 
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
     db: Session = Depends(get_db),
@@ -1480,7 +1481,7 @@ async def get_global_passthrough_headers(
 
 
 @admin_router.put("/config/passthrough-headers", response_model=GlobalConfigRead)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=20)  # Stricter limit for config updates
 async def update_global_passthrough_headers(
     request: Request,  # pylint: disable=unused-argument
@@ -1535,7 +1536,7 @@ async def update_global_passthrough_headers(
 
 
 @admin_router.post("/config/passthrough-headers/invalidate-cache")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=10)  # Strict limit for cache operations
 async def invalidate_passthrough_headers_cache(
     _user=Depends(get_current_user_with_permissions),
@@ -1574,7 +1575,7 @@ async def invalidate_passthrough_headers_cache(
 
 
 @admin_router.get("/config/passthrough-headers/cache-stats")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=30)
 async def get_passthrough_headers_cache_stats(
     _user=Depends(get_current_user_with_permissions),
@@ -1611,7 +1612,7 @@ async def get_passthrough_headers_cache_stats(
 
 
 @admin_router.post("/cache/a2a-stats/invalidate")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=10)
 async def invalidate_a2a_stats_cache(
     _user=Depends(get_current_user_with_permissions),
@@ -1648,7 +1649,7 @@ async def invalidate_a2a_stats_cache(
 
 
 @admin_router.get("/cache/a2a-stats/stats")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=30)
 async def get_a2a_stats_cache_stats(
     _user=Depends(get_current_user_with_permissions),
@@ -1678,7 +1679,7 @@ async def get_a2a_stats_cache_stats(
 
 
 @admin_router.get("/mcp-pool/metrics")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=60)
 async def get_mcp_session_pool_metrics(
     request: Request,  # pylint: disable=unused-argument
@@ -1733,7 +1734,7 @@ async def get_mcp_session_pool_metrics(
 
 
 @admin_router.get("/config/settings")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_configuration_settings(
     _db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -1884,7 +1885,7 @@ async def get_configuration_settings(
 
 
 @admin_router.get("/servers", response_model=PaginatedResponse)
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def admin_list_servers(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
@@ -1941,7 +1942,7 @@ async def admin_list_servers(
 
 
 @admin_router.get("/servers/partial", response_class=HTMLResponse)
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def admin_servers_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -2142,7 +2143,7 @@ async def admin_servers_partial_html(
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
@@ -2177,7 +2178,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
 
 
 @admin_router.post("/servers", response_model=ServerRead)
-@require_permission("servers.create", allow_admin_bypass=False)
+@require_permission_v2("servers.create", allow_admin_bypass=False)
 async def admin_add_server(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Add a new server via the admin UI.
@@ -2343,7 +2344,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/servers/{server_id}/edit")
-@require_permission("servers.update", allow_admin_bypass=False)
+@require_permission_v2("servers.update", allow_admin_bypass=False)
 async def admin_edit_server(
     server_id: str,
     request: Request,
@@ -2508,7 +2509,7 @@ async def admin_edit_server(
 
 
 @admin_router.post("/servers/{server_id}/state")
-@require_permission("servers.update", allow_admin_bypass=False)
+@require_permission_v2("servers.update", allow_admin_bypass=False)
 async def admin_set_server_state(
     server_id: str,
     request: Request,
@@ -2572,7 +2573,7 @@ async def admin_set_server_state(
 
 
 @admin_router.post("/servers/{server_id}/delete")
-@require_permission("servers.delete", allow_admin_bypass=False)
+@require_permission_v2("servers.delete", allow_admin_bypass=False)
 async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a server via the admin UI.
@@ -2626,7 +2627,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 
 
 @admin_router.get("/resources", response_model=PaginatedResponse)
-@require_permission("resources.read", allow_admin_bypass=False)
+@require_permission_v2("resources.read", allow_admin_bypass=False)
 async def admin_list_resources(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
@@ -2677,7 +2678,7 @@ async def admin_list_resources(
 
 
 @admin_router.get("/prompts", response_model=PaginatedResponse)
-@require_permission("prompts.read", allow_admin_bypass=False)
+@require_permission_v2("prompts.read", allow_admin_bypass=False)
 async def admin_list_prompts(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
@@ -2731,7 +2732,7 @@ async def admin_list_prompts(
 
 
 @admin_router.get("/gateways", response_model=PaginatedResponse)
-@require_permission("gateways.read", allow_admin_bypass=False)
+@require_permission_v2("gateways.read", allow_admin_bypass=False)
 async def admin_list_gateways(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
@@ -2785,7 +2786,7 @@ async def admin_list_gateways(
 
 
 @admin_router.post("/gateways/{gateway_id}/state")
-@require_permission("gateways.update", allow_admin_bypass=False)
+@require_permission_v2("gateways.update", allow_admin_bypass=False)
 async def admin_set_gateway_state(
     gateway_id: str,
     request: Request,
@@ -2846,7 +2847,7 @@ async def admin_set_gateway_state(
 
 
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
+@require_permission_v2("admin.dashboard", allow_admin_bypass=False)
 async def admin_ui(
     request: Request,
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -4387,7 +4388,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 
 
 @admin_router.get("/teams/ids", response_class=JSONResponse)
-@require_permission("teams.read", allow_admin_bypass=False)
+@require_permission_v2("teams.read", allow_admin_bypass=False)
 async def admin_get_all_team_ids(
     include_inactive: bool = False,
     visibility: Optional[str] = Query(None, description="Filter by visibility"),
@@ -4454,7 +4455,7 @@ async def admin_get_all_team_ids(
 
 
 @admin_router.get("/teams/search", response_class=JSONResponse)
-@require_permission("teams.read", allow_admin_bypass=False)
+@require_permission_v2("teams.read", allow_admin_bypass=False)
 async def admin_search_teams(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -4523,7 +4524,7 @@ async def admin_search_teams(
 
 
 @admin_router.get("/teams/partial")
-@require_permission("teams.read", allow_admin_bypass=False)
+@require_permission_v2("teams.read", allow_admin_bypass=False)
 async def admin_teams_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
@@ -4743,7 +4744,7 @@ async def admin_teams_partial_html(
 
 
 @admin_router.get("/teams")
-@require_permission("teams.read", allow_admin_bypass=False)
+@require_permission_v2("teams.read", allow_admin_bypass=False)
 async def admin_list_teams(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
@@ -4840,7 +4841,7 @@ async def admin_list_teams(
 
 
 @admin_router.post("/teams")
-@require_permission("teams.create", allow_admin_bypass=False)
+@require_permission_v2("teams.create", allow_admin_bypass=False)
 async def admin_create_team(
     request: Request,
     db: Session = Depends(get_db),
@@ -4928,7 +4929,7 @@ async def admin_create_team(
 
 
 @admin_router.get("/teams/{team_id}/members")
-@require_permission("teams.read", allow_admin_bypass=False)
+@require_permission_v2("teams.read", allow_admin_bypass=False)
 async def admin_view_team_members(
     team_id: str,
     request: Request,
@@ -5092,7 +5093,7 @@ async def admin_view_team_members(
 
 
 @admin_router.get("/teams/{team_id}/members/add")
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_add_team_members_view(
     team_id: str,
     request: Request,
@@ -5228,7 +5229,7 @@ async def admin_add_team_members_view(
 
 
 @admin_router.get("/teams/{team_id}/edit")
-@require_permission("teams.update", allow_admin_bypass=False)
+@require_permission_v2("teams.update", allow_admin_bypass=False)
 async def admin_get_team_edit(
     team_id: str,
     _request: Request,
@@ -5309,7 +5310,7 @@ async def admin_get_team_edit(
 
 
 @admin_router.post("/teams/{team_id}/update")
-@require_permission("teams.update", allow_admin_bypass=False)
+@require_permission_v2("teams.update", allow_admin_bypass=False)
 async def admin_update_team(
     team_id: str,
     request: Request,
@@ -5427,7 +5428,7 @@ async def admin_update_team(
 
 
 @admin_router.delete("/teams/{team_id}")
-@require_permission("teams.delete", allow_admin_bypass=False)
+@require_permission_v2("teams.delete", allow_admin_bypass=False)
 async def admin_delete_team(
     team_id: str,
     _request: Request,
@@ -5479,7 +5480,7 @@ async def admin_delete_team(
 
 
 @admin_router.post("/teams/{team_id}/add-member")
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_add_team_members(
     team_id: str,
     request: Request,
@@ -5699,7 +5700,7 @@ async def admin_add_team_members(
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
@@ -5775,7 +5776,7 @@ async def admin_update_team_member_role(
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_remove_team_member(
     team_id: str,
     request: Request,
@@ -5852,7 +5853,7 @@ async def admin_remove_team_member(
 
 
 @admin_router.post("/teams/{team_id}/leave")
-@require_permission("teams.join", allow_admin_bypass=False)  # Users who can join can also leave
+@require_permission_v2("teams.join", allow_admin_bypass=False)  # Users who can join can also leave
 async def admin_leave_team(
     team_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -5925,7 +5926,7 @@ async def admin_leave_team(
 
 
 @admin_router.post("/teams/{team_id}/join-request")
-@require_permission("teams.join", allow_admin_bypass=False)
+@require_permission_v2("teams.join", allow_admin_bypass=False)
 async def admin_create_join_request(
     team_id: str,
     request: Request,
@@ -6007,7 +6008,7 @@ async def admin_create_join_request(
 
 
 @admin_router.delete("/teams/{team_id}/join-request/{request_id}")
-@require_permission("teams.join", allow_admin_bypass=False)
+@require_permission_v2("teams.join", allow_admin_bypass=False)
 async def admin_cancel_join_request(
     team_id: str,
     request_id: str,
@@ -6056,7 +6057,7 @@ async def admin_cancel_join_request(
 
 
 @admin_router.get("/teams/{team_id}/join-requests")
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_list_join_requests(
     team_id: str,
     request: Request,
@@ -6147,7 +6148,7 @@ async def admin_list_join_requests(
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_approve_join_request(
     team_id: str,
     request_id: str,
@@ -6199,7 +6200,7 @@ async def admin_approve_join_request(
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_reject_join_request(
     team_id: str,
     request_id: str,
@@ -6381,7 +6382,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
 
 @admin_router.get("/users")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_list_users(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -6444,7 +6445,7 @@ async def admin_list_users(
 
 
 @admin_router.get("/users/partial", response_class=HTMLResponse)
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_users_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -6599,7 +6600,7 @@ async def admin_users_partial_html(
 
 
 @admin_router.get("/teams/{team_id}/members/partial", response_class=HTMLResponse)
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_team_members_partial_html(
     team_id: str,
     request: Request,
@@ -6686,7 +6687,7 @@ async def admin_team_members_partial_html(
 
 
 @admin_router.get("/teams/{team_id}/non-members/partial", response_class=HTMLResponse)
-@require_permission("teams.manage_members", allow_admin_bypass=False)
+@require_permission_v2("teams.manage_members", allow_admin_bypass=False)
 async def admin_team_non_members_partial_html(
     team_id: str,
     request: Request,
@@ -6826,7 +6827,7 @@ async def admin_search_users(
 
 
 @admin_router.post("/users")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_create_user(
     request: Request,
     db: Session = Depends(get_db),
@@ -6887,7 +6888,7 @@ async def admin_create_user(
 
 
 @admin_router.get("/users/{user_email}/edit")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_get_user_edit(
     user_email: str,
     _request: Request,
@@ -7049,7 +7050,7 @@ async def admin_get_user_edit(
 
 
 @admin_router.post("/users/{user_email}/update")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_update_user(
     user_email: str,
     request: Request,
@@ -7135,7 +7136,7 @@ async def admin_update_user(
 
 
 @admin_router.post("/users/{user_email}/activate")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_activate_user(
     user_email: str,
     _request: Request,
@@ -7180,7 +7181,7 @@ async def admin_activate_user(
 
 
 @admin_router.post("/users/{user_email}/deactivate")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_deactivate_user(
     user_email: str,
     _request: Request,
@@ -7233,7 +7234,7 @@ async def admin_deactivate_user(
 
 
 @admin_router.delete("/users/{user_email}")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_delete_user(
     user_email: str,
     _request: Request,
@@ -7285,7 +7286,7 @@ async def admin_delete_user(
 
 
 @admin_router.post("/users/{user_email}/unlock")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_unlock_user(
     user_email: str,
     _request: Request,
@@ -7323,7 +7324,7 @@ async def admin_unlock_user(
 
 
 @admin_router.post("/users/{user_email}/force-password-change")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_force_password_change(
     user_email: str,
     _request: Request,
@@ -7400,7 +7401,7 @@ async def admin_force_password_change(
 
 
 @admin_router.get("/tools", response_model=PaginatedResponse)
-@require_permission("tools.read", allow_admin_bypass=False)
+@require_permission_v2("tools.read", allow_admin_bypass=False)
 async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
@@ -7454,7 +7455,7 @@ async def admin_list_tools(
 
 
 @admin_router.get("/tools/partial", response_class=HTMLResponse)
-@require_permission("tools.read", allow_admin_bypass=False)
+@require_permission_v2("tools.read", allow_admin_bypass=False)
 async def admin_tools_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -7686,7 +7687,7 @@ async def admin_tools_partial_html(
 
 
 @admin_router.get("/tool-ops/partial", response_class=HTMLResponse)
-@require_permission("tools.read", allow_admin_bypass=False)
+@require_permission_v2("tools.read", allow_admin_bypass=False)
 async def admin_tool_ops_partial(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
@@ -7804,7 +7805,7 @@ async def admin_tool_ops_partial(
 
 
 @admin_router.get("/tools/ids", response_class=JSONResponse)
-@require_permission("tools.read", allow_admin_bypass=False)
+@require_permission_v2("tools.read", allow_admin_bypass=False)
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -7885,7 +7886,7 @@ async def admin_get_all_tool_ids(
 
 
 @admin_router.get("/tools/search", response_class=JSONResponse)
-@require_permission("tools.read", allow_admin_bypass=False)
+@require_permission_v2("tools.read", allow_admin_bypass=False)
 async def admin_search_tools(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
@@ -8015,7 +8016,7 @@ async def admin_search_tools(
 
 
 @admin_router.get("/prompts/partial", response_class=HTMLResponse)
-@require_permission("prompts.read", allow_admin_bypass=False)
+@require_permission_v2("prompts.read", allow_admin_bypass=False)
 async def admin_prompts_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -8243,7 +8244,7 @@ async def admin_prompts_partial_html(
 
 
 @admin_router.get("/gateways/partial", response_class=HTMLResponse)
-@require_permission("gateways.read", allow_admin_bypass=False)
+@require_permission_v2("gateways.read", allow_admin_bypass=False)
 async def admin_gateways_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -8433,7 +8434,7 @@ async def admin_gateways_partial_html(
 
 
 @admin_router.get("/gateways/ids", response_class=JSONResponse)
-@require_permission("gateways.read", allow_admin_bypass=False)
+@require_permission_v2("gateways.read", allow_admin_bypass=False)
 async def admin_get_all_gateways_ids(
     include_inactive: bool = False,
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -8493,7 +8494,7 @@ async def admin_get_all_gateways_ids(
 
 
 @admin_router.get("/gateways/search", response_class=JSONResponse)
-@require_permission("gateways.read", allow_admin_bypass=False)
+@require_permission_v2("gateways.read", allow_admin_bypass=False)
 async def admin_search_gateways(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
@@ -8601,7 +8602,7 @@ async def admin_search_gateways(
 
 
 @admin_router.get("/servers/ids", response_class=JSONResponse)
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def admin_get_all_server_ids(
     include_inactive: bool = False,
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -8663,7 +8664,7 @@ async def admin_get_all_server_ids(
 
 
 @admin_router.get("/servers/search", response_class=JSONResponse)
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def admin_search_servers(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
@@ -8770,7 +8771,7 @@ async def admin_search_servers(
 
 
 @admin_router.get("/resources/partial", response_class=HTMLResponse)
-@require_permission("resources.read", allow_admin_bypass=False)
+@require_permission_v2("resources.read", allow_admin_bypass=False)
 async def admin_resources_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -9000,7 +9001,7 @@ async def admin_resources_partial_html(
 
 
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
-@require_permission("prompts.read", allow_admin_bypass=False)
+@require_permission_v2("prompts.read", allow_admin_bypass=False)
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -9080,7 +9081,7 @@ async def admin_get_all_prompt_ids(
 
 
 @admin_router.get("/resources/ids", response_class=JSONResponse)
-@require_permission("resources.read", allow_admin_bypass=False)
+@require_permission_v2("resources.read", allow_admin_bypass=False)
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -9160,7 +9161,7 @@ async def admin_get_all_resource_ids(
 
 
 @admin_router.get("/resources/search", response_class=JSONResponse)
-@require_permission("resources.read", allow_admin_bypass=False)
+@require_permission_v2("resources.read", allow_admin_bypass=False)
 async def admin_search_resources(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
@@ -9280,7 +9281,7 @@ async def admin_search_resources(
 
 
 @admin_router.get("/prompts/search", response_class=JSONResponse)
-@require_permission("prompts.read", allow_admin_bypass=False)
+@require_permission_v2("prompts.read", allow_admin_bypass=False)
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
@@ -9409,7 +9410,7 @@ async def admin_search_prompts(
 
 
 @admin_router.get("/tokens/partial", response_class=HTMLResponse)
-@require_permission("tokens.read", allow_admin_bypass=False)
+@require_permission_v2("tokens.read", allow_admin_bypass=False)
 async def admin_tokens_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -9577,7 +9578,7 @@ async def admin_tokens_partial_html(
 
 
 @admin_router.get("/tokens/search", response_class=JSONResponse)
-@require_permission("tokens.read", allow_admin_bypass=False)
+@require_permission_v2("tokens.read", allow_admin_bypass=False)
 async def admin_search_tokens(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -9655,7 +9656,7 @@ async def admin_search_tokens(
 
 
 @admin_router.get("/a2a/partial", response_class=HTMLResponse)
-@require_permission("a2a.read", allow_admin_bypass=False)
+@require_permission_v2("a2a.read", allow_admin_bypass=False)
 async def admin_a2a_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -9869,7 +9870,7 @@ async def admin_a2a_partial_html(
 
 
 @admin_router.get("/a2a/ids", response_class=JSONResponse)
-@require_permission("a2a.read", allow_admin_bypass=False)
+@require_permission_v2("a2a.read", allow_admin_bypass=False)
 async def admin_get_all_agent_ids(
     include_inactive: bool = False,
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9929,7 +9930,7 @@ async def admin_get_all_agent_ids(
 
 
 @admin_router.get("/a2a/search", response_class=JSONResponse)
-@require_permission("a2a.read", allow_admin_bypass=False)
+@require_permission_v2("a2a.read", allow_admin_bypass=False)
 async def admin_search_a2a_agents(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
@@ -10037,7 +10038,7 @@ async def admin_search_a2a_agents(
 
 
 @admin_router.get("/search", response_class=JSONResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
+@require_permission_v2("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
@@ -10281,7 +10282,7 @@ async def admin_unified_search(
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
-@require_permission("tools.read", allow_admin_bypass=False)
+@require_permission_v2("tools.read", allow_admin_bypass=False)
 async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
@@ -10325,7 +10326,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
 
 @admin_router.post("/tools/")
 @admin_router.post("/tools")
-@require_permission("tools.create", allow_admin_bypass=False)
+@require_permission_v2("tools.create", allow_admin_bypass=False)
 async def admin_add_tool(
     request: Request,
     db: Session = Depends(get_db),
@@ -10466,7 +10467,7 @@ async def admin_add_tool(
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
 @admin_router.post("/tools/{tool_id}/edit", response_model=None)
-@require_permission("tools.update", allow_admin_bypass=False)
+@require_permission_v2("tools.update", allow_admin_bypass=False)
 async def admin_edit_tool(
     tool_id: str,
     request: Request,
@@ -10608,7 +10609,7 @@ async def admin_edit_tool(
 
 
 @admin_router.post("/tools/{tool_id}/delete")
-@require_permission("tools.delete", allow_admin_bypass=False)
+@require_permission_v2("tools.delete", allow_admin_bypass=False)
 async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a tool via the admin UI.
@@ -10663,7 +10664,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 
 
 @admin_router.post("/tools/{tool_id}/state")
-@require_permission("tools.update", allow_admin_bypass=False)
+@require_permission_v2("tools.update", allow_admin_bypass=False)
 async def admin_set_tool_state(
     tool_id: str,
     request: Request,
@@ -10727,7 +10728,7 @@ async def admin_set_tool_state(
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-@require_permission("gateways.read", allow_admin_bypass=False)
+@require_permission_v2("gateways.read", allow_admin_bypass=False)
 async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
@@ -10761,7 +10762,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/gateways")
-@require_permission("gateways.create", allow_admin_bypass=False)
+@require_permission_v2("gateways.create", allow_admin_bypass=False)
 async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
@@ -11015,7 +11016,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
 @admin_router.post("/gateways/{gateway_id}/edit")
-@require_permission("gateways.update", allow_admin_bypass=False)
+@require_permission_v2("gateways.update", allow_admin_bypass=False)
 async def admin_edit_gateway(
     gateway_id: str,
     request: Request,
@@ -11213,7 +11214,7 @@ async def admin_edit_gateway(
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
-@require_permission("gateways.delete", allow_admin_bypass=False)
+@require_permission_v2("gateways.delete", allow_admin_bypass=False)
 async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a gateway via the admin UI.
@@ -11267,7 +11268,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
 
 @admin_router.get("/resources/test/{resource_uri:path}")
-@require_permission("resources.read", allow_admin_bypass=False)
+@require_permission_v2("resources.read", allow_admin_bypass=False)
 async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Test reading a resource by its URI for the admin UI.
@@ -11316,7 +11317,7 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
 
 
 @admin_router.get("/resources/{resource_id}")
-@require_permission("resources.read", allow_admin_bypass=False)
+@require_permission_v2("resources.read", allow_admin_bypass=False)
 async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
@@ -11351,7 +11352,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
 
 
 @admin_router.post("/resources")
-@require_permission("resources.create", allow_admin_bypass=False)
+@require_permission_v2("resources.create", allow_admin_bypass=False)
 async def admin_add_resource(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Response:
     """
     Add a resource via the admin UI.
@@ -11461,7 +11462,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
 
 
 @admin_router.post("/resources/{resource_id}/edit")
-@require_permission("resources.update", allow_admin_bypass=False)
+@require_permission_v2("resources.update", allow_admin_bypass=False)
 async def admin_edit_resource(
     resource_id: str,
     request: Request,
@@ -11546,7 +11547,7 @@ async def admin_edit_resource(
 
 
 @admin_router.post("/resources/{resource_id}/delete")
-@require_permission("resources.delete", allow_admin_bypass=False)
+@require_permission_v2("resources.delete", allow_admin_bypass=False)
 async def admin_delete_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a resource via the admin UI.
@@ -11606,7 +11607,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
 
 
 @admin_router.post("/resources/{resource_id}/state")
-@require_permission("resources.update", allow_admin_bypass=False)
+@require_permission_v2("resources.update", allow_admin_bypass=False)
 async def admin_set_resource_state(
     resource_id: str,
     request: Request,
@@ -11667,7 +11668,7 @@ async def admin_set_resource_state(
 
 
 @admin_router.get("/prompts/{prompt_id}")
-@require_permission("prompts.read", allow_admin_bypass=False)
+@require_permission_v2("prompts.read", allow_admin_bypass=False)
 async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
@@ -11702,7 +11703,7 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
 
 
 @admin_router.post("/prompts")
-@require_permission("prompts.create", allow_admin_bypass=False)
+@require_permission_v2("prompts.create", allow_admin_bypass=False)
 async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a prompt via the admin UI.
 
@@ -11792,7 +11793,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/prompts/{prompt_id}/edit")
-@require_permission("prompts.update", allow_admin_bypass=False)
+@require_permission_v2("prompts.update", allow_admin_bypass=False)
 async def admin_edit_prompt(
     prompt_id: str,
     request: Request,
@@ -11885,7 +11886,7 @@ async def admin_edit_prompt(
 
 
 @admin_router.post("/prompts/{prompt_id}/delete")
-@require_permission("prompts.delete", allow_admin_bypass=False)
+@require_permission_v2("prompts.delete", allow_admin_bypass=False)
 async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a prompt via the admin UI.
@@ -11939,7 +11940,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
 
 
 @admin_router.post("/prompts/{prompt_id}/state")
-@require_permission("prompts.update", allow_admin_bypass=False)
+@require_permission_v2("prompts.update", allow_admin_bypass=False)
 async def admin_set_prompt_state(
     prompt_id: str,
     request: Request,
@@ -12000,7 +12001,7 @@ async def admin_set_prompt_state(
 
 
 @admin_router.get("/roots/export")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_export_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -12064,7 +12065,7 @@ async def admin_export_root(
 
 
 @admin_router.get("/roots/{uri:path}")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
     """Get a specific root by URI via the admin UI.
 
@@ -12100,7 +12101,7 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
 
 
 @admin_router.post("/roots")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
@@ -12159,7 +12160,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 
 @admin_router.post("/roots/{uri:path}/update")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """Update a root via the admin UI.
 
@@ -12216,7 +12217,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
 
 @admin_router.post("/roots/{uri:path}/delete")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
@@ -12294,7 +12295,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 
 @admin_router.get("/metrics")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_aggregated_metrics(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -12334,7 +12335,7 @@ async def get_aggregated_metrics(
 
 
 @admin_router.get("/metrics/partial", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_metrics_partial_html(
     request: Request,
     entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
@@ -12417,7 +12418,7 @@ async def admin_metrics_partial_html(
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
     """
     Reset all metrics for tools, resources, servers, and prompts.
@@ -12445,7 +12446,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-@require_permission("gateways.read", allow_admin_bypass=False)
+@require_permission_v2("gateways.read", allow_admin_bypass=False)
 async def admin_test_gateway(
     request: GatewayTestRequest, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
 ) -> GatewayTestResponse:
@@ -12600,7 +12601,7 @@ async def admin_test_gateway(
 
 # Event Streaming via SSE to the Admin UI
 @admin_router.get("/events")
-@require_permission("admin.events", allow_admin_bypass=False)
+@require_permission_v2("admin.events", allow_admin_bypass=False)
 async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """
     Stream admin events from all services via SSE (Server-Sent Events).
@@ -12813,7 +12814,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
 
 @admin_router.get("/tags", response_model=PaginatedResponse)
-@require_permission("tags.read", allow_admin_bypass=False)
+@require_permission_v2("tags.read", allow_admin_bypass=False)
 async def admin_list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
@@ -12912,7 +12913,7 @@ async def _read_request_json(request: Request) -> Any:
 
 @admin_router.post("/tools/import/")
 @admin_router.post("/tools/import")
-@require_permission("tools.create", allow_admin_bypass=False)
+@require_permission_v2("tools.create", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
 async def admin_import_tools(
     request: Request,
@@ -13075,7 +13076,7 @@ async def admin_import_tools(
 
 
 @admin_router.get("/logs")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_get_logs(
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
@@ -13168,7 +13169,7 @@ async def admin_get_logs(
 
 
 @admin_router.get("/logs/stream")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_stream_logs(
     request: Request,
     entity_type: Optional[str] = None,
@@ -13257,7 +13258,7 @@ async def admin_stream_logs(
 
 
 @admin_router.get("/logs/file")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_get_log_file(
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
@@ -13382,7 +13383,7 @@ async def admin_get_log_file(
 
 
 @admin_router.get("/logs/export")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_export_logs(
     export_format: str = Query("json", alias="format"),
     entity_type: Optional[str] = None,
@@ -13514,7 +13515,7 @@ async def admin_export_logs(
 
 
 @admin_router.get("/export/configuration")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_export_configuration(
     request: Request,  # pylint: disable=unused-argument
     types: Optional[str] = None,
@@ -13601,7 +13602,7 @@ async def admin_export_configuration(
 
 
 @admin_router.post("/export/selective")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_export_selective(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Export selected entities via Admin UI with entity selection.
@@ -13665,7 +13666,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
 
 
 @admin_router.post("/import/preview")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Preview import file to show available items for selective import.
@@ -13719,7 +13720,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
 
 @admin_router.post("/import/configuration")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Import configuration via Admin UI.
@@ -13783,7 +13784,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
 
 @admin_router.get("/import/status/{import_id}")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """Get import status via Admin UI.
 
@@ -13808,7 +13809,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
 
 
 @admin_router.get("/import/status")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """List all import statuses via Admin UI.
 
@@ -13831,7 +13832,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 
 
 @admin_router.get("/a2a/{agent_id}", response_model=A2AAgentRead)
-@require_permission("a2a.read", allow_admin_bypass=False)
+@require_permission_v2("a2a.read", allow_admin_bypass=False)
 async def admin_get_agent(
     agent_id: str,
     db: Session = Depends(get_db),
@@ -13869,7 +13870,7 @@ async def admin_get_agent(
 
 
 @admin_router.get("/a2a", response_model=PaginatedResponse)
-@require_permission("a2a.read", allow_admin_bypass=False)
+@require_permission_v2("a2a.read", allow_admin_bypass=False)
 async def admin_list_a2a_agents(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
@@ -13937,7 +13938,7 @@ async def admin_list_a2a_agents(
 
 
 @admin_router.post("/a2a")
-@require_permission("a2a.create", allow_admin_bypass=False)
+@require_permission_v2("a2a.create", allow_admin_bypass=False)
 async def admin_add_a2a_agent(
     request: Request,
     db: Session = Depends(get_db),
@@ -14142,7 +14143,7 @@ async def admin_add_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/edit")
-@require_permission("a2a.update", allow_admin_bypass=False)
+@require_permission_v2("a2a.update", allow_admin_bypass=False)
 async def admin_edit_a2a_agent(
     agent_id: str,
     request: Request,
@@ -14359,7 +14360,7 @@ async def admin_edit_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/state")
-@require_permission("a2a.update", allow_admin_bypass=False)
+@require_permission_v2("a2a.update", allow_admin_bypass=False)
 async def admin_set_a2a_agent_state(
     agent_id: str,
     request: Request,
@@ -14416,7 +14417,7 @@ async def admin_set_a2a_agent_state(
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
-@require_permission("a2a.delete", allow_admin_bypass=False)
+@require_permission_v2("a2a.delete", allow_admin_bypass=False)
 async def admin_delete_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -14468,7 +14469,7 @@ async def admin_delete_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/test")
-@require_permission("a2a.invoke", allow_admin_bypass=False)
+@require_permission_v2("a2a.invoke", allow_admin_bypass=False)
 async def admin_test_a2a_agent(
     agent_id: str,
     request: Request,
@@ -14546,7 +14547,7 @@ async def admin_test_a2a_agent(
 
 
 @admin_router.get("/grpc", response_model=PaginatedResponse)
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_list_grpc_services(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
@@ -14602,7 +14603,7 @@ async def admin_list_grpc_services(
 
 
 @admin_router.post("/grpc")
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_create_grpc_service(
     service: GrpcServiceCreate,
     request: Request,
@@ -14639,7 +14640,7 @@ async def admin_create_grpc_service(
 
 
 @admin_router.get("/grpc/{service_id}", response_model=GrpcServiceRead)
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_get_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -14669,7 +14670,7 @@ async def admin_get_grpc_service(
 
 
 @admin_router.put("/grpc/{service_id}")
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_update_grpc_service(
     service_id: str,
     service: GrpcServiceUpdate,
@@ -14710,7 +14711,7 @@ async def admin_update_grpc_service(
 
 
 @admin_router.post("/grpc/{service_id}/state")
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_set_grpc_service_state(
     service_id: str,
     activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
@@ -14746,7 +14747,7 @@ async def admin_set_grpc_service_state(
 
 
 @admin_router.post("/grpc/{service_id}/delete")
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_delete_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -14776,7 +14777,7 @@ async def admin_delete_grpc_service(
 
 
 @admin_router.post("/grpc/{service_id}/reflect")
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_reflect_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -14809,7 +14810,7 @@ async def admin_reflect_grpc_service(
 
 
 @admin_router.get("/grpc/{service_id}/methods")
-@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission_v2("admin.grpc", allow_admin_bypass=False)
 async def admin_get_grpc_methods(
     service_id: str,
     db: Session = Depends(get_db),
@@ -14839,7 +14840,7 @@ async def admin_get_grpc_methods(
 
 
 @admin_router.get("/sections/resources")
-@require_permission("resources.read", allow_admin_bypass=False)
+@require_permission_v2("resources.read", allow_admin_bypass=False)
 async def get_resources_section(
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -14894,7 +14895,7 @@ async def get_resources_section(
 
 
 @admin_router.get("/sections/prompts")
-@require_permission("prompts.read", allow_admin_bypass=False)
+@require_permission_v2("prompts.read", allow_admin_bypass=False)
 async def get_prompts_section(
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -14950,7 +14951,7 @@ async def get_prompts_section(
 
 
 @admin_router.get("/sections/servers")
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def get_servers_section(
     team_id: Optional[str] = None,
     include_inactive: bool = False,
@@ -15006,7 +15007,7 @@ async def get_servers_section(
 
 
 @admin_router.get("/sections/gateways")
-@require_permission("gateways.read", allow_admin_bypass=False)
+@require_permission_v2("gateways.read", allow_admin_bypass=False)
 async def get_gateways_section(
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -15072,7 +15073,7 @@ async def get_gateways_section(
 
 
 @admin_router.get("/plugins/partial")
-@require_permission("admin.plugins", allow_admin_bypass=False)
+@require_permission_v2("admin.plugins", allow_admin_bypass=False)
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
     """Render the plugins partial HTML template.
 
@@ -15122,7 +15123,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
 
 
 @admin_router.get("/plugins", response_model=PluginListResponse)
-@require_permission("admin.plugins", allow_admin_bypass=False)
+@require_permission_v2("admin.plugins", allow_admin_bypass=False)
 async def list_plugins(
     request: Request,
     search: Optional[str] = None,
@@ -15201,7 +15202,7 @@ async def list_plugins(
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
-@require_permission("admin.plugins", allow_admin_bypass=False)
+@require_permission_v2("admin.plugins", allow_admin_bypass=False)
 async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginStatsResponse:  # pylint: disable=unused-argument
     """Get plugin statistics.
 
@@ -15261,7 +15262,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.get("/plugins/{name}", response_model=PluginDetail)
-@require_permission("admin.plugins", allow_admin_bypass=False)
+@require_permission_v2("admin.plugins", allow_admin_bypass=False)
 async def get_plugin_details(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginDetail:  # pylint: disable=unused-argument
     """Get detailed information about a specific plugin.
 
@@ -15348,7 +15349,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 
 
 @admin_router.get("/mcp-registry/servers", response_model=CatalogListResponse)
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def list_catalog_servers(
     _request: Request,
     category: Optional[str] = None,
@@ -15404,7 +15405,7 @@ async def list_catalog_servers(
 
 
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
-@require_permission("servers.create", allow_admin_bypass=False)
+@require_permission_v2("servers.create", allow_admin_bypass=False)
 async def register_catalog_server(
     server_id: str,
     http_request: Request,
@@ -15505,7 +15506,7 @@ async def register_catalog_server(
 
 
 @admin_router.get("/mcp-registry/{server_id}/status", response_model=CatalogServerStatusResponse)
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def check_catalog_server_status(
     server_id: str,
     _db: Session = Depends(get_db),
@@ -15531,7 +15532,7 @@ async def check_catalog_server_status(
 
 
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
-@require_permission("servers.create", allow_admin_bypass=False)
+@require_permission_v2("servers.create", allow_admin_bypass=False)
 async def bulk_register_catalog_servers(
     request: CatalogBulkRegisterRequest,
     db: Session = Depends(get_db),
@@ -15557,7 +15558,7 @@ async def bulk_register_catalog_servers(
 
 
 @admin_router.get("/mcp-registry/partial")
-@require_permission("servers.read", allow_admin_bypass=False)
+@require_permission_v2("servers.read", allow_admin_bypass=False)
 async def catalog_partial(
     request: Request,
     category: Optional[str] = None,
@@ -15654,7 +15655,7 @@ async def catalog_partial(
 
 
 @admin_router.get("/system/stats")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_system_stats(
     request: Request,
     db: Session = Depends(get_db),
@@ -15726,7 +15727,7 @@ async def get_system_stats(
 
 
 @admin_router.get("/support-bundle/generate")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def admin_generate_support_bundle(
     log_lines: int = Query(default=1000, description="Number of log lines to include"),
     include_logs: bool = Query(default=True, description="Include log files"),
@@ -15807,7 +15808,7 @@ async def admin_generate_support_bundle(
 
 
 @admin_router.get("/maintenance/partial", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_maintenance_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -15857,7 +15858,7 @@ async def get_maintenance_partial(
 
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """Render the observability dashboard partial.
 
@@ -15874,7 +15875,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
 
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """Render the advanced metrics dashboard partial.
 
@@ -15891,7 +15892,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
 
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get observability statistics for the dashboard.
 
@@ -15936,7 +15937,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_observability_traces(
     request: Request,
     time_range: str = Query("24h"),
@@ -16037,7 +16038,7 @@ async def get_observability_traces(
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get detailed trace information with spans.
 
@@ -16071,7 +16072,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
 
 
 @admin_router.post("/observability/queries", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def save_observability_query(
     request: Request,  # pylint: disable=unused-argument
     name: str = Body(..., description="Name for the saved query"),
@@ -16124,7 +16125,7 @@ async def save_observability_query(
 
 
 @admin_router.get("/observability/queries", response_model=list)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """List saved observability queries for the current user.
 
@@ -16173,7 +16174,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Get a specific saved query by ID.
 
@@ -16221,7 +16222,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
 
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def update_observability_query(
     request: Request,  # pylint: disable=unused-argument
     query_id: int,
@@ -16296,7 +16297,7 @@ async def update_observability_query(
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Delete a saved query.
 
@@ -16330,7 +16331,7 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Track usage of a saved query (increments use count and updates last_used_at).
 
@@ -16381,7 +16382,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
 
 
 @admin_router.get("/observability/metrics/percentiles", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_latency_percentiles(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16545,7 +16546,7 @@ def _get_latency_percentiles_python(db: Session, cutoff_time: datetime, interval
 
 
 @admin_router.get("/observability/metrics/timeseries", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_timeseries_metrics(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16872,7 +16873,7 @@ def _get_latency_heatmap_python(db: Session, cutoff_time: datetime, hours: int, 
 
 
 @admin_router.get("/observability/metrics/top-slow", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_top_slow_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16941,7 +16942,7 @@ async def get_top_slow_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-volume", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_top_volume_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17008,7 +17009,7 @@ async def get_top_volume_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-errors", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_top_error_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17078,7 +17079,7 @@ async def get_top_error_endpoints(
 
 
 @admin_router.get("/observability/metrics/heatmap", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_latency_heatmap(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17127,7 +17128,7 @@ async def get_latency_heatmap(
 
 
 @admin_router.get("/observability/tools/usage", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_tool_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17200,7 +17201,7 @@ async def get_tool_usage(
 
 
 @admin_router.get("/observability/tools/performance", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_tool_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17252,7 +17253,7 @@ async def get_tool_performance(
 
 
 @admin_router.get("/observability/tools/errors", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_tool_errors(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17324,7 +17325,7 @@ async def get_tool_errors(
 
 
 @admin_router.get("/observability/tools/chains", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_tool_chains(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17404,7 +17405,7 @@ async def get_tool_chains(
 
 
 @admin_router.get("/observability/tools/partial", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_tools_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -17437,7 +17438,7 @@ async def get_tools_partial(
 
 
 @admin_router.get("/observability/prompts/usage", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_prompt_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17510,7 +17511,7 @@ async def get_prompt_usage(
 
 
 @admin_router.get("/observability/prompts/performance", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_prompt_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17562,7 +17563,7 @@ async def get_prompt_performance(
 
 
 @admin_router.get("/observability/prompts/errors", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_prompts_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -17626,7 +17627,7 @@ async def get_prompts_errors(
 
 
 @admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_prompts_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -17659,7 +17660,7 @@ async def get_prompts_partial(
 
 
 @admin_router.get("/observability/resources/usage", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_resource_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17732,7 +17733,7 @@ async def get_resource_usage(
 
 
 @admin_router.get("/observability/resources/performance", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_resource_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17784,7 +17785,7 @@ async def get_resource_performance(
 
 
 @admin_router.get("/observability/resources/errors", response_model=dict)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_resources_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -17848,7 +17849,7 @@ async def get_resources_errors(
 
 
 @admin_router.get("/observability/resources/partial", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_resources_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -17881,7 +17882,7 @@ async def get_resources_partial(
 
 
 @admin_router.get("/performance/stats", response_class=HTMLResponse)
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_performance_stats(
     request: Request,
     db: Session = Depends(get_db),
@@ -17944,7 +17945,7 @@ async def get_performance_stats(
 
 
 @admin_router.get("/performance/system")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_performance_system(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -17970,7 +17971,7 @@ async def get_performance_system(
 
 
 @admin_router.get("/performance/workers")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_performance_workers(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -17996,7 +17997,7 @@ async def get_performance_workers(
 
 
 @admin_router.get("/performance/requests")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_performance_requests(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -18022,7 +18023,7 @@ async def get_performance_requests(
 
 
 @admin_router.get("/performance/cache")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_performance_cache(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -18048,7 +18049,7 @@ async def get_performance_cache(
 
 
 @admin_router.get("/performance/history")
-@require_permission("admin.system_config", allow_admin_bypass=False)
+@require_permission_v2("admin.system_config", allow_admin_bypass=False)
 async def get_performance_history(
     period_type: str = Query("hourly", description="Aggregation period: hourly or daily"),
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),

@@ -4,7 +4,7 @@
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
@@ -330,7 +330,7 @@ async def test_create_sso_provider_conflict(monkeypatch: pytest.MonkeyPatch):
     )
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.create_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com"})
+        await sso_router.create_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 409
 
@@ -370,7 +370,7 @@ async def test_create_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
         userinfo_url="https://userinfo",
     )
 
-    result = await sso_router.create_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com"})
+    result = await sso_router.create_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert result["id"] == "provider"
     assert result["is_enabled"] is True
@@ -394,7 +394,7 @@ async def test_list_all_sso_providers(monkeypatch: pytest.MonkeyPatch):
     db = MagicMock()
     db.execute.return_value = result
 
-    response = await sso_router.list_all_sso_providers(db=db, user={"email": "admin@example.com"})
+    response = await sso_router.list_all_sso_providers(db=db, user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert response[0]["id"] == "provider"
 
@@ -411,7 +411,7 @@ async def test_get_sso_provider_not_found(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.get_sso_provider("missing", db=MagicMock(), user={"email": "admin@example.com"})
+        await sso_router.get_sso_provider("missing", db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 404
 
@@ -447,7 +447,7 @@ async def test_get_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
-    result = await sso_router.get_sso_provider("provider", db=MagicMock(), user={"email": "admin@example.com"})
+    result = await sso_router.get_sso_provider("provider", db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert result["authorization_url"] == "https://auth"
 
@@ -457,7 +457,7 @@ async def test_update_sso_provider_no_data(monkeypatch: pytest.MonkeyPatch):
     payload = sso_router.SSOProviderUpdateRequest()
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com"})
+        await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 400
 
@@ -476,7 +476,7 @@ async def test_update_sso_provider_not_found(monkeypatch: pytest.MonkeyPatch):
     payload = sso_router.SSOProviderUpdateRequest(name="Updated")
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com"})
+        await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 404
 
@@ -502,7 +502,7 @@ async def test_update_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
     payload = sso_router.SSOProviderUpdateRequest(name="Updated")
-    result = await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com"})
+    result = await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert result["updated_at"] == "updated"
 
@@ -519,7 +519,7 @@ async def test_delete_sso_provider_not_found(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.delete_sso_provider("provider", db=MagicMock(), user={"email": "admin@example.com"})
+        await sso_router.delete_sso_provider("provider", db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 404
 
@@ -535,7 +535,7 @@ async def test_delete_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
-    result = await sso_router.delete_sso_provider("provider", db=MagicMock(), user={"email": "admin@example.com"})
+    result = await sso_router.delete_sso_provider("provider", db=MagicMock(), user={"email": "admin@example.com", "permissions": ["*"]})
     assert "deleted successfully" in result["message"]
 
 
@@ -557,7 +557,7 @@ async def test_list_pending_approvals(monkeypatch: pytest.MonkeyPatch):
     db = MagicMock()
     db.execute.return_value = result
 
-    response = await sso_router.list_pending_approvals(db=db, user={"email": "admin@example.com"})
+    response = await sso_router.list_pending_approvals(db=db, user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert response[0].id == "approval"
 
@@ -570,7 +570,7 @@ async def test_handle_approval_request_not_found(monkeypatch: pytest.MonkeyPatch
     db.execute.return_value = result
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.handle_approval_request("missing", sso_router.ApprovalActionRequest(action="approve"), db=db, user={"email": "admin@example.com"})
+        await sso_router.handle_approval_request("missing", sso_router.ApprovalActionRequest(action="approve"), db=db, user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 404
 
@@ -586,7 +586,7 @@ async def test_handle_approval_request_already_processed(monkeypatch: pytest.Mon
     db.execute.return_value = result
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.handle_approval_request("approval", sso_router.ApprovalActionRequest(action="approve"), db=db, user={"email": "admin@example.com"})
+        await sso_router.handle_approval_request("approval", sso_router.ApprovalActionRequest(action="approve"), db=db, user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 400
 
@@ -603,7 +603,7 @@ async def test_handle_approval_request_expired(monkeypatch: pytest.MonkeyPatch):
     db.execute.return_value = result
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.handle_approval_request("approval", sso_router.ApprovalActionRequest(action="approve"), db=db, user={"email": "admin@example.com"})
+        await sso_router.handle_approval_request("approval", sso_router.ApprovalActionRequest(action="approve"), db=db, user={"email": "admin@example.com", "permissions": ["*"]})
 
     assert excinfo.value.status_code == 400
     assert approval.status == "expired"
@@ -626,7 +626,7 @@ async def test_handle_approval_request_approve(monkeypatch: pytest.MonkeyPatch):
         "approval",
         sso_router.ApprovalActionRequest(action="approve", notes="ok"),
         db=db,
-        user={"email": "admin@example.com"},
+        user={"email": "admin@example.com", "permissions": ["*"]},
     )
 
     approval.approve.assert_called_once_with("admin@example.com", "ok")
@@ -650,7 +650,7 @@ async def test_handle_approval_request_reject_missing_reason(monkeypatch: pytest
             "approval",
             sso_router.ApprovalActionRequest(action="reject"),
             db=db,
-            user={"email": "admin@example.com"},
+            user={"email": "admin@example.com", "permissions": ["*"]},
         )
 
     assert excinfo.value.status_code == 400
@@ -672,7 +672,7 @@ async def test_handle_approval_request_reject_success(monkeypatch: pytest.Monkey
         "approval",
         sso_router.ApprovalActionRequest(action="reject", reason="nope", notes="later"),
         db=db,
-        user={"email": "admin@example.com"},
+        user={"email": "admin@example.com", "permissions": ["*"]},
     )
 
     approval.reject.assert_called_once_with("admin@example.com", "nope", "later")
@@ -696,7 +696,7 @@ async def test_handle_approval_request_invalid_action(monkeypatch: pytest.Monkey
             "approval",
             sso_router.ApprovalActionRequest(action="noop"),
             db=db,
-            user={"email": "admin@example.com"},
+            user={"email": "admin@example.com", "permissions": ["*"]},
         )
 
     assert excinfo.value.status_code == 400
