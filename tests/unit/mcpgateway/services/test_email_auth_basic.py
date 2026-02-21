@@ -165,12 +165,17 @@ class TestEmailAuthBasic:
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        # Test the method
-        result = await service.get_user_by_email("test@example.com")
+        # Mock cache to simulate cache miss
+        with patch("mcpgateway.cache.auth_cache.auth_cache") as mock_cache:
+            mock_cache.get_user_by_email = AsyncMock(return_value=None)
+            mock_cache.cache_user_by_email = AsyncMock()
 
-        assert result == mock_user
-        assert result.email == "test@example.com"
-        mock_db.execute.assert_called_once()
+            # Test the method
+            result = await service.get_user_by_email("test@example.com")
+
+            assert result == mock_user
+            assert result.email == "test@example.com"
+            mock_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_user_by_email_not_found(self, service, mock_db):
@@ -192,11 +197,109 @@ class TestEmailAuthBasic:
         # Mock database to raise an exception
         mock_db.execute.side_effect = Exception("Database connection failed")
 
-        # Test the method - should return None on error
-        result = await service.get_user_by_email("test@example.com")
+        # Mock cache to simulate cache miss
+        with patch("mcpgateway.cache.auth_cache.auth_cache") as mock_cache:
+            mock_cache.get_user_by_email = AsyncMock(return_value=None)
 
-        assert result is None
-        mock_db.execute.assert_called_once()
+            # Test the method - should raise the database exception
+            with pytest.raises(Exception, match="Database connection failed"):
+                await service.get_user_by_email("test@example.com")
+
+            mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_user_by_email_cache_hit(self, service, mock_db):
+        """Test getting user by email with cache hit."""
+        # Mock auth_cache to return cached data
+        cached_data = {
+            "email": "cached@example.com",
+            "password_hash": "hashed",
+            "full_name": "Cached User",
+            "is_admin": False,
+            "admin_origin": None,
+            "is_active": True,
+            "email_verified_at": None,
+            "auth_provider": "local",
+            "password_hash_type": "argon2id",
+            "failed_login_attempts": 0,
+            "locked_until": None,
+            "password_change_required": False,
+            "password_changed_at": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": None,
+        }
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache") as mock_cache:
+            mock_cache.get_user_by_email = AsyncMock(return_value=cached_data)
+
+            result = await service.get_user_by_email("cached@example.com")
+
+            # Should return user from cache without hitting database
+            assert result is not None
+            assert result.email == "cached@example.com"
+            assert result.full_name == "Cached User"
+            mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_user_by_email_cache_miss_then_cache(self, service, mock_db):
+        """Test getting user by email with cache miss, then caching result."""
+        # Create a mock user
+        mock_user = MagicMock()
+        mock_user.email = "test@example.com"
+        mock_user.password_hash = "hashed"
+        mock_user.full_name = "Test User"
+        mock_user.is_admin = False
+        mock_user.admin_origin = None
+        mock_user.is_active = True
+        mock_user.email_verified_at = None
+        mock_user.auth_provider = "local"
+        mock_user.password_hash_type = "argon2id"
+        mock_user.failed_login_attempts = 0
+        mock_user.locked_until = None
+        mock_user.password_change_required = False
+        mock_user.password_changed_at = None
+        mock_user.created_at = datetime.now(timezone.utc)
+        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.last_login = None
+
+        # Mock database to return user
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_result
+
+        # Mock cache methods
+        with patch("mcpgateway.cache.auth_cache.auth_cache") as mock_cache:
+            mock_cache.get_user_by_email = AsyncMock(return_value=None)
+            mock_cache.cache_user_by_email = AsyncMock()
+
+            result = await service.get_user_by_email("test@example.com")
+
+            # Should query database and cache result
+            assert result == mock_user
+            mock_db.execute.assert_called_once()
+            mock_cache.cache_user_by_email.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_user_by_email_normalizes_email(self, service, mock_db):
+        """Test that get_user_by_email normalizes email to lowercase."""
+        mock_user = MagicMock()
+        mock_user.email = "test@example.com"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache") as mock_cache:
+            mock_cache.get_user_by_email = AsyncMock(return_value=None)
+            mock_cache.cache_user_by_email = AsyncMock()
+
+            # Test with uppercase email
+            result = await service.get_user_by_email("TEST@EXAMPLE.COM")
+
+            assert result == mock_user
+            # Verify the query used lowercase email
+            mock_db.execute.assert_called_once()
 
     # =========================================================================
     # Helper Method Tests
