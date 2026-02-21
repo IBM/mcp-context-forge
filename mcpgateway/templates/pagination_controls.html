@@ -12,147 +12,18 @@
 -->
 
 <div
+  x-data="paginationData()"
   data-base-url="{{ base_url }}"
-  x-data="{
-  currentPage: {{ pagination.page }},
-  perPage: {{ pagination.per_page }},
-  totalItems: {{ pagination.total_items }},
-  totalPages: {{ pagination.total_pages }},
-  hasNext: {{ 'true' if pagination.has_next else 'false' }},
-  hasPrev: {{ 'true' if pagination.has_prev else 'false' }},
-  targetSelector: '{{ hx_target|default('#tools-table') }}',
-  swapStyle: '{{ hx_swap|default('innerHTML') }}',
-  tableName: '{{ table_name|default('') }}',
-  baseUrl: '',
-
-  // Initialize from data attributes and URL parameters (namespaced per table)
-  init() {
-    this.baseUrl = $el.dataset.baseUrl || '';
-    if (!this.tableName) return;
-    const urlParams = new URLSearchParams(window.location.search);
-    const prefix = this.tableName + '_';
-    const urlPageSize = parseInt(urlParams.get(prefix + 'size'), 10);
-    if (urlPageSize && [10, 25, 50, 100, 200, 500].includes(urlPageSize)) {
-      this.perPage = urlPageSize;
-    }
-  },
-
-  // Navigate to specific page
-  goToPage(page) {
-    if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
-      this.currentPage = page;
-      this.loadPage(page);
-    }
-  },
-
-  // Navigate to previous page
-  prevPage() {
-    if (this.hasPrev) {
-      this.goToPage(this.currentPage - 1);
-    }
-  },
-
-  // Navigate to next page
-  nextPage() {
-    if (this.hasNext) {
-      this.goToPage(this.currentPage + 1);
-    }
-  },
-
-  // Change page size
-  changePageSize(size) {
-    this.perPage = parseInt(size, 10);
-    this.currentPage = 1;
-    this.loadPage(1);
-  },
-
-  // Update browser URL with current pagination state (namespaced per table)
-  // Preserves params from other tables to avoid mixing/overwriting
-  updateBrowserUrl(page, includeInactive) {
-    if (!this.tableName) return;
-    const currentUrl = new URL(window.location.href);
-    const newParams = new URLSearchParams(currentUrl.searchParams);
-    const prefix = this.tableName + '_';
-
-    // Update current table's params only
-    newParams.set(prefix + 'page', page);
-    newParams.set(prefix + 'size', this.perPage);
-    if (includeInactive !== undefined) {
-      newParams.set(prefix + 'inactive', includeInactive.toString());
-    }
-
-    const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-    safeReplaceState({}, '', newUrl);
-  },
-
-  // Load page via HTMX
-  loadPage(page) {
-    const url = new URL(this.baseUrl, window.location.origin);
-    url.searchParams.set('page', page);
-    url.searchParams.set('per_page', this.perPage);
-
-    // Dynamically get include_inactive from the checkbox if it exists
-    // Map target selector to checkbox ID (handle special cases)
-    // Examples: #servers-table -> show-inactive-servers
-    //           #servers-table-body -> show-inactive-servers
-    //           #resources-list-container -> show-inactive-resources
-    //           #agents-table -> show-inactive-a2a-agents
-    let checkboxId = this.targetSelector
-      .replace('#', 'show-inactive-')
-      .replace(/-table-body$/, '')
-      .replace(/-table$/, '')
-      .replace(/-list-container$/, '');
-    if (checkboxId === 'show-inactive-agents') {
-      checkboxId = 'show-inactive-a2a-agents';
-    }
-    const checkbox = document.getElementById(checkboxId);
-    let includeInactive = undefined;
-    if (checkbox) {
-      includeInactive = checkbox.checked;
-      url.searchParams.set('include_inactive', includeInactive.toString());
-    }
-
-    // Preserve other query parameters
-    {% if query_params %}
-    {% for key, value in query_params.items() %}
-    {% if key != 'include_inactive' and value is not none %}
-    url.searchParams.set({{ key | tojson }}, {{ value | tojson }});
-    {% endif %}
-    {% endfor %}
-    {% endif %}
-
-    // Preserve team_id from current URL (if present) - this ensures team filter
-    // is maintained during pagination
-    const currentUrlParams = new URLSearchParams(window.location.search);
-    const teamIdFromUrl = currentUrlParams.get('team_id');
-    if (teamIdFromUrl) {
-      url.searchParams.set('team_id', teamIdFromUrl);
-    }
-
-    // Update browser URL for bookmarking/sharing (with namespaced params)
-    this.updateBrowserUrl(page, includeInactive);
-
-    // Scroll to the top of the table before loading new content
-    const targetElement = document.querySelector(this.targetSelector);
-    if (targetElement) {
-      // Find the parent section/panel to scroll to
-      const panel = targetElement.closest('.tab-panel, .bg-white, .shadow');
-      if (panel) {
-        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }
-
-    // Trigger HTMX request - use innerHTML so we only replace tbody content (rows)
-    // The OOB swap will handle the pagination controls separately
-    htmx.ajax('GET', url.toString(), {
-      target: this.targetSelector,
-      swap: this.swapStyle,
-      indicator: '{{ hx_indicator|default('#loading') }}'
-    });
-  }
-}"
+  data-current-page="{{ pagination.page }}"
+  data-per-page="{{ pagination.per_page }}"
+  data-total-items="{{ pagination.total_items }}"
+  data-total-pages="{{ pagination.total_pages }}"
+  data-has-next="{{ 'true' if pagination.has_next else 'false' }}"
+  data-has-prev="{{ 'true' if pagination.has_prev else 'false' }}"
+  data-hx-target="{{ hx_target | default('#tools-table') }}"
+  data-hx-swap="{{ hx_swap | default('innerHTML') }}"
+  data-table-name="{{ table_name | default('') }}"
+  data-hx-indicator="{{ hx_indicator | default('#loading') }}"
   class="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700"
 >
   <!-- Page Size Selector -->
@@ -304,27 +175,14 @@
     </span>
   </div>
 </div>
-
-<!-- Keyboard Navigation Support -->
+{% if query_params %}
 <script>
-  document.addEventListener("alpine:init", () => {
-    // Add keyboard shortcuts for pagination
-    document.addEventListener("keydown", (e) => {
-      // Only handle if not in an input field
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
-        return;
-
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        // Trigger previous page - the Alpine.js component will check hasPrev
-        const prevBtn = document.querySelector('[\\@click="prevPage()"]');
-        if (prevBtn && !prevBtn.disabled) prevBtn.click();
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        // Trigger next page - the Alpine.js component will check hasNext
-        const nextBtn = document.querySelector('[\\@click="nextPage()"]');
-        if (nextBtn && !nextBtn.disabled) nextBtn.click();
-      }
-    });
-  });
+  window._paginationQuerySetters[{{ table_name | default('') | tojson }}] = function(url) {
+    {% for key, value in query_params.items() %}
+    {% if key != 'include_inactive' and value is not none %}
+    url.searchParams.set({{ key | tojson }}, {{ value | tojson }});
+    {% endif %}
+    {% endfor %}
+  };
 </script>
+{% endif %}
