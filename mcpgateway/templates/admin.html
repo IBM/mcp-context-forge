@@ -462,7 +462,7 @@
           {% endif %}
 
           <!-- LLM Section -->
-          {% if llmchat_enabled or 'settings' not in hidden_sections %}
+          {% if llmchat_enabled %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">LLM</span>
           </div>
@@ -1846,8 +1846,8 @@
         </div>
         {% endif %}
 
-        {% if 'settings' not in hidden_sections %}
         <!-- LLM Settings Panel -->
+      {% if llmchat_enabled and 'settings' not in hidden_sections %}
       <div id="llm-settings-panel" class="tab-panel hidden">
         <div class="container mx-auto">
           <!-- Tab Navigation -->

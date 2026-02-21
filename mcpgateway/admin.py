@@ -1282,6 +1282,56 @@ def _build_search_response(
     }
 
 
+def _metric_value(metric: Any, field: str, default: float = 0.0) -> float:
+    """Safely read a numeric field from metrics dict/model."""
+    value = metric.get(field, default) if isinstance(metric, dict) else getattr(metric, field, default)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _metric_timestamp(metric: Any, field: str = "last_execution_time") -> Optional[datetime]:
+    """Safely read a datetime field from metrics dict/model."""
+    value = metric.get(field) if isinstance(metric, dict) else getattr(metric, field, None)
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        normalized = value.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _safe_success_rate(successful: float, total: float) -> float:
+    """Return success rate percentage in range [0, 100]."""
+    if total <= 0:
+        return 100.0
+    return max(0.0, min(100.0, (successful / total) * 100.0))
+
+
+def _classify_health_signal(active: int, total: int, success_rate: float, latency_ms: float, is_stale: bool) -> str:
+    """Classify a health signal for topology cards."""
+    if is_stale:
+        return "stale"
+    if total > 0 and active <= 0:
+        return "critical"
+    if success_rate < 90.0 or latency_ms >= 1500.0:
+        return "critical"
+    if success_rate < 97.0 or latency_ms >= 800.0:
+        return "degraded"
+    if total <= 0:
+        return "unknown"
+    return "healthy"
+
+
 @admin_router.get("/overview/partial")
 @require_permission("admin.overview", allow_admin_bypass=False)
 async def get_overview_partial(
@@ -1371,30 +1421,170 @@ async def get_overview_partial(
         prompt_metrics = await overview_prompt_service.aggregate_metrics(db)
         resource_metrics = await overview_resource_service.aggregate_metrics(db)
 
-        # Calculate totals
-        total_executions = (
-            (tool_metrics.get("total_executions", 0) if isinstance(tool_metrics, dict) else getattr(tool_metrics, "total_executions", 0))
-            + (server_metrics.total_executions if hasattr(server_metrics, "total_executions") else server_metrics.get("total_executions", 0))
-            + (prompt_metrics.get("total_executions", 0) if isinstance(prompt_metrics, dict) else getattr(prompt_metrics, "total_executions", 0))
-            + (resource_metrics.total_executions if hasattr(resource_metrics, "total_executions") else resource_metrics.get("total_executions", 0))
-        )
+        # Calculate aggregate metrics
+        tool_total_executions = int(_metric_value(tool_metrics, "total_executions", 0.0))
+        server_total_executions = int(_metric_value(server_metrics, "total_executions", 0.0))
+        prompt_total_executions = int(_metric_value(prompt_metrics, "total_executions", 0.0))
+        resource_total_executions = int(_metric_value(resource_metrics, "total_executions", 0.0))
 
-        successful_executions = (
-            (tool_metrics.get("successful_executions", 0) if isinstance(tool_metrics, dict) else getattr(tool_metrics, "successful_executions", 0))
-            + (server_metrics.successful_executions if hasattr(server_metrics, "successful_executions") else server_metrics.get("successful_executions", 0))
-            + (prompt_metrics.get("successful_executions", 0) if isinstance(prompt_metrics, dict) else getattr(prompt_metrics, "successful_executions", 0))
-            + (resource_metrics.successful_executions if hasattr(resource_metrics, "successful_executions") else resource_metrics.get("successful_executions", 0))
-        )
+        tool_successful_executions = int(_metric_value(tool_metrics, "successful_executions", 0.0))
+        server_successful_executions = int(_metric_value(server_metrics, "successful_executions", 0.0))
+        prompt_successful_executions = int(_metric_value(prompt_metrics, "successful_executions", 0.0))
+        resource_successful_executions = int(_metric_value(resource_metrics, "successful_executions", 0.0))
 
-        success_rate = (successful_executions / total_executions * 100) if total_executions > 0 else 100.0
+        total_executions = tool_total_executions + server_total_executions + prompt_total_executions + resource_total_executions
+        successful_executions = tool_successful_executions + server_successful_executions + prompt_successful_executions + resource_successful_executions
+        success_rate = _safe_success_rate(successful_executions, total_executions)
 
-        # Calculate average latency across all services
-        latencies = []
-        for m in [tool_metrics, server_metrics, prompt_metrics, resource_metrics]:
-            avg_time = m.get("avg_response_time") if isinstance(m, dict) else getattr(m, "avg_response_time", None)
-            if avg_time is not None:
-                latencies.append(avg_time)
-        avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+        tool_avg_latency_ms = _metric_value(tool_metrics, "avg_response_time", 0.0) * 1000.0
+        server_avg_latency_ms = _metric_value(server_metrics, "avg_response_time", 0.0) * 1000.0
+        prompt_avg_latency_ms = _metric_value(prompt_metrics, "avg_response_time", 0.0) * 1000.0
+        resource_avg_latency_ms = _metric_value(resource_metrics, "avg_response_time", 0.0) * 1000.0
+
+        avg_latency_values = [lat for lat in [tool_avg_latency_ms, server_avg_latency_ms, prompt_avg_latency_ms, resource_avg_latency_ms] if lat > 0]
+        avg_latency_ms = sum(avg_latency_values) / len(avg_latency_values) if avg_latency_values else 0.0
+
+        metric_timestamps = [
+            _metric_timestamp(tool_metrics),
+            _metric_timestamp(server_metrics),
+            _metric_timestamp(prompt_metrics),
+            _metric_timestamp(resource_metrics),
+        ]
+        latest_metric_timestamp = max((ts for ts in metric_timestamps if ts is not None), default=None)
+        overview_generated_at = datetime.now(timezone.utc)
+        overview_last_updated_iso = overview_generated_at.isoformat()
+        metrics_data_age_seconds = int((overview_generated_at - latest_metric_timestamp).total_seconds()) if latest_metric_timestamp else None
+        stale_after_seconds = 300
+        overview_data_is_stale = metrics_data_age_seconds is None or metrics_data_age_seconds > stale_after_seconds
+
+        # Topology health summaries
+        outputs_total_executions = tool_total_executions + prompt_total_executions + resource_total_executions
+        outputs_successful_executions = tool_successful_executions + prompt_successful_executions + resource_successful_executions
+        outputs_success_rate = _safe_success_rate(outputs_successful_executions, outputs_total_executions)
+        outputs_latency_values = [lat for lat in [tool_avg_latency_ms, prompt_avg_latency_ms, resource_avg_latency_ms] if lat > 0]
+        outputs_avg_latency_ms = sum(outputs_latency_values) / len(outputs_latency_values) if outputs_latency_values else 0.0
+
+        input_success_rate = _safe_success_rate(server_successful_executions, server_total_executions)
+        enabled_plugins_count = int((plugin_stats.get("enabled_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "enabled_plugins", 0)) or 0)
+        total_plugins_count = int((plugin_stats.get("total_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "total_plugins", 0)) or 0)
+        core_active_count = int(gateways_active + enabled_plugins_count)
+        core_total_count = int(gateways_total + total_plugins_count)
+        outputs_active_count = int(gateways_active + tools_active + prompts_active + resources_active + (a2a_active if settings.mcpgateway_a2a_enabled else 0))
+        outputs_total_count = int(gateways_total + tools_total + prompts_total + resources_total + (a2a_total if settings.mcpgateway_a2a_enabled else 0))
+
+        input_status = _classify_health_signal(servers_active, servers_total, input_success_rate, server_avg_latency_ms, overview_data_is_stale)
+        core_status = _classify_health_signal(core_active_count, core_total_count, success_rate, avg_latency_ms, overview_data_is_stale)
+        outputs_status = _classify_health_signal(outputs_active_count, outputs_total_count, outputs_success_rate, outputs_avg_latency_ms, overview_data_is_stale)
+        ingress_status_filter = "error" if input_status in {"critical", "degraded", "stale"} else "all"
+        egress_status_filter = "error" if outputs_status in {"critical", "degraded", "stale"} else "all"
+
+        topology_payload = {
+            "lastUpdatedIso": overview_last_updated_iso,
+            "lastMetricAtIso": latest_metric_timestamp.isoformat() if latest_metric_timestamp else None,
+            "dataAgeSeconds": metrics_data_age_seconds,
+            "isStale": overview_data_is_stale,
+            "staleAfterSeconds": stale_after_seconds,
+            "defaultTimeRange": "24h",
+            "metricsContextLabel": "All-time aggregate (raw + hourly rollups)",
+            "healthContextLabel": "Signal health from latest execution aggregates",
+            "nodes": [
+                {
+                    "id": "inputs",
+                    "title": "Inputs",
+                    "subtitle": "Virtual servers receiving traffic",
+                    "active": int(servers_active),
+                    "total": int(servers_total),
+                    "successRate": round(input_success_rate, 1),
+                    "latencyMs": round(server_avg_latency_ms, 1),
+                    "status": input_status,
+                    "drilldown": {"tab": "catalog", "entity": "inputs"},
+                },
+                {
+                    "id": "core",
+                    "title": "ContextForge Core",
+                    "subtitle": "Gateway runtime and middleware",
+                    "active": core_active_count,
+                    "total": core_total_count,
+                    "successRate": round(success_rate, 1),
+                    "latencyMs": round(avg_latency_ms, 1),
+                    "status": core_status,
+                    "drilldown": {
+                        "tab": "observability",
+                        "entity": "core",
+                        "viewMode": "traces",
+                        "statusFilter": "all",
+                    },
+                },
+                {
+                    "id": "outputs",
+                    "title": "Outputs",
+                    "subtitle": "Gateways, tools, prompts, resources",
+                    "active": outputs_active_count,
+                    "total": outputs_total_count,
+                    "successRate": round(outputs_success_rate, 1),
+                    "latencyMs": round(outputs_avg_latency_ms, 1),
+                    "status": outputs_status,
+                    "drilldown": {
+                        "tab": "observability",
+                        "entity": "outputs",
+                        "viewMode": "tools",
+                        "statusFilter": egress_status_filter,
+                    },
+                },
+            ],
+            "edges": [
+                {
+                    "id": "ingress-flow",
+                    "title": "Ingress",
+                    "subtitle": "Inputs → Core",
+                    "throughput": server_total_executions,
+                    "successRate": round(input_success_rate, 1),
+                    "latencyMs": round(server_avg_latency_ms, 1),
+                    "status": input_status,
+                    "drilldown": {
+                        "tab": "observability",
+                        "entity": "ingress",
+                        "viewMode": "traces",
+                        "statusFilter": ingress_status_filter,
+                    },
+                },
+                {
+                    "id": "egress-flow",
+                    "title": "Egress",
+                    "subtitle": "Core → Outputs",
+                    "throughput": outputs_total_executions,
+                    "successRate": round(outputs_success_rate, 1),
+                    "latencyMs": round(outputs_avg_latency_ms, 1),
+                    "status": outputs_status,
+                    "drilldown": {
+                        "tab": "observability",
+                        "entity": "egress",
+                        "viewMode": "tools",
+                        "statusFilter": egress_status_filter,
+                    },
+                },
+            ],
+            "infrastructure": {
+                "database": {
+                    "label": db_dialect.capitalize(),
+                    "status": "healthy" if db_reachable else "critical",
+                    "detail": "Connected" if db_reachable else "Disconnected",
+                },
+                "cache": {
+                    "label": cache_type.capitalize(),
+                    "status": "healthy"
+                    if cache_type.lower() != "redis" or redis_reachable
+                    else "critical",
+                    "detail": "Connected"
+                    if cache_type.lower() != "redis" or redis_reachable
+                    else "Disconnected",
+                },
+            },
+        }
+
+        plugins_total = int((plugin_stats.get("total_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "total_plugins", 0)) or 0)
+        plugins_enabled = int((plugin_stats.get("enabled_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "enabled_plugins", 0)) or 0)
+        plugins_by_hook = (plugin_stats.get("plugins_by_hook", {}) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "plugins_by_hook", {})) or {}
 
         # Prepare context
         context = {
@@ -1416,13 +1606,22 @@ async def get_overview_partial(
             "resources_total": resources_total,
             "resources_active": resources_active,
             # Plugins (plugin_stats can be dict or PluginStatsResponse)
-            "plugins_total": plugin_stats.get("total_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "total_plugins", 0),
-            "plugins_enabled": plugin_stats.get("enabled_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "enabled_plugins", 0),
-            "plugins_by_hook": plugin_stats.get("plugins_by_hook", {}) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "plugins_by_hook", {}),
+            "plugins_total": plugins_total,
+            "plugins_enabled": plugins_enabled,
+            "plugins_by_hook": plugins_by_hook,
             # Metrics
             "total_executions": total_executions,
             "success_rate": success_rate,
-            "avg_latency_ms": avg_latency * 1000 if avg_latency else 0.0,
+            "avg_latency_ms": avg_latency_ms,
+            "metrics_window_label": "All-time aggregate (raw + hourly rollups)",
+            "health_window_label": "Current execution health snapshot",
+            # Topology payload
+            "topology_payload": topology_payload,
+            "overview_last_updated_iso": overview_last_updated_iso,
+            "overview_data_is_stale": overview_data_is_stale,
+            "overview_data_age_seconds": metrics_data_age_seconds,
+            "overview_stale_after_seconds": stale_after_seconds,
+            "overview_last_metric_at_iso": latest_metric_timestamp.isoformat() if latest_metric_timestamp else None,
             # Version
             "version": __version__,
             # Infrastructure

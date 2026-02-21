@@ -29,11 +29,11 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
     _escape_like,
+    _classify_health_signal,
     _generate_unified_teams_view,
     _get_user_team_ids,
     _get_latency_heatmap_postgresql,
@@ -46,10 +46,13 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_user_team_roles,
     _normalize_team_id,
     _normalize_search_query,
+    _metric_timestamp,
+    _metric_value,
     _owner_access_condition,
     _parse_tag_filter_groups,
     _read_request_json,
     _render_user_card_html,
+    _safe_success_rate,
     _validated_team_id_param,
     admin_a2a_partial_html,
     admin_activate_user,
@@ -2882,6 +2885,60 @@ class TestNormalizeUiHideValues:
         assert result == {"tools"}
 
 
+class TestOverviewMetricHelpers:
+    """Test metric helper utilities used by overview topology aggregation."""
+
+    def test_metric_value_handles_dict_model_and_invalid_values(self):
+        assert _metric_value({"avg_response_time": "1.25"}, "avg_response_time") == 1.25
+        assert _metric_value(SimpleNamespace(avg_response_time=2), "avg_response_time") == 2.0
+        assert _metric_value({"avg_response_time": None}, "avg_response_time", 7.0) == 7.0
+        assert _metric_value({"avg_response_time": "bad"}, "avg_response_time", 3.0) == 3.0
+
+    def test_metric_timestamp_parses_datetime_and_iso_formats(self):
+        naive = datetime(2026, 1, 2, 3, 4, 5)
+        aware = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+
+        naive_result = _metric_timestamp({"last_execution_time": naive})
+        assert naive_result is not None
+        assert naive_result.tzinfo == timezone.utc
+
+        assert _metric_timestamp({"last_execution_time": aware}) == aware
+
+        iso_result = _metric_timestamp({"last_execution_time": "2026-01-02T03:04:05Z"})
+        assert iso_result is not None
+        assert iso_result.tzinfo == timezone.utc
+
+        assert _metric_timestamp({"last_execution_time": "invalid"}) is None
+
+    def test_safe_success_rate_clamps_values(self):
+        assert _safe_success_rate(0, 0) == 100.0
+        assert _safe_success_rate(-5, 10) == 0.0
+        assert _safe_success_rate(15, 10) == 100.0
+        assert _safe_success_rate(5, 10) == 50.0
+
+    @pytest.mark.parametrize(
+        "active,total,success_rate,latency_ms,is_stale,expected",
+        [
+            (1, 1, 99.0, 100.0, True, "stale"),
+            (0, 2, 99.0, 100.0, False, "critical"),
+            (1, 1, 80.0, 100.0, False, "critical"),
+            (1, 1, 98.0, 900.0, False, "degraded"),
+            (0, 0, 100.0, 100.0, False, "unknown"),
+            (1, 1, 99.5, 150.0, False, "healthy"),
+        ],
+    )
+    def test_classify_health_signal_thresholds(
+        self,
+        active,
+        total,
+        success_rate,
+        latency_ms,
+        is_stale,
+        expected,
+    ):
+        assert _classify_health_signal(active, total, success_rate, latency_ms, is_stale) == expected
+
+
 class TestUIVisibilityConfig:
     """Test UI visibility config parsing and merge behavior."""
 
@@ -3124,6 +3181,49 @@ class TestAdminUIRoute:
             assert "prompts" in context
             assert "gateways" in context
             assert "roots" in context
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_includes_llmchat_feature_flag_in_context(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Template context should expose llmchat_enabled consistently."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        for llmchat_enabled in (False, True):
+            monkeypatch.setattr(settings, "llmchat_enabled", llmchat_enabled, raising=False)
+            mock_request.app.state.templates.TemplateResponse.reset_mock()
+
+            await admin_ui(
+                request=mock_request,
+                team_id=None,
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "admin", "db": mock_db},
+            )
+
+            template_call = mock_request.app.state.templates.TemplateResponse.call_args
+            assert template_call is not None
+            context = template_call[0][2]
+            assert context["llmchat_enabled"] is llmchat_enabled
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -7679,6 +7779,15 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     assert isinstance(response, HTMLResponse)
     assert mock_request.app.state.templates.TemplateResponse.called
 
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    assert template_call is not None
+    context = template_call.args[2]
+    assert "topology_payload" in context
+    assert context["topology_payload"]["nodes"][0]["id"] == "inputs"
+    assert context["topology_payload"]["nodes"][1]["id"] == "core"
+    assert context["topology_payload"]["nodes"][2]["id"] == "outputs"
+    assert context["overview_data_is_stale"] is True
+
 
 @pytest.mark.asyncio
 async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_request, mock_db):
@@ -7738,6 +7847,112 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
     response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     plugin_service.set_plugin_manager.assert_called_once_with(mock_request.app.state.plugin_manager)
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    assert template_call is not None
+    context = template_call.args[2]
+    outputs_node = context["topology_payload"]["nodes"][2]
+    assert outputs_node["active"] == 28
+    assert outputs_node["total"] == 34
+    assert context["topology_payload"]["infrastructure"]["cache"]["label"] == "Redis"
+
+
+@pytest.mark.asyncio
+async def test_get_overview_partial_sets_fresh_topology_when_recent_metrics(monkeypatch, mock_request, mock_db):
+    def make_query(value):
+        q = MagicMock()
+        q.filter.return_value = q
+        q.scalar.return_value = value
+        return q
+
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+    mock_db.query.side_effect = [
+        make_query(3),  # servers_total
+        make_query(3),  # servers_active
+        make_query(2),  # gateways_total
+        make_query(2),  # gateways_active
+        make_query(4),  # tools_total
+        make_query(4),  # tools_active
+        make_query(5),  # prompts_total
+        make_query(5),  # prompts_active
+        make_query(6),  # resources_total
+        make_query(6),  # resources_active
+    ]
+
+    plugin_service = MagicMock()
+    plugin_service.get_plugin_statistics = AsyncMock(return_value={"total_plugins": 2, "enabled_plugins": 2, "plugins_by_hook": {"post_tool": 1}})
+    monkeypatch.setattr("mcpgateway.admin.get_plugin_service", lambda: plugin_service)
+    mock_request.app.state.plugin_manager = None
+
+    engine = MagicMock()
+    engine.dialect.name = "sqlite"
+    monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
+    monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
+    monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
+    monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
+
+    current_time = datetime.now(timezone.utc)
+
+    class StubService:
+        def __init__(self, metrics):
+            self._metrics = metrics
+
+        async def aggregate_metrics(self, _db):
+            return self._metrics
+
+    monkeypatch.setattr(
+        "mcpgateway.admin.ToolService",
+        lambda: StubService(
+            {
+                "total_executions": 10,
+                "successful_executions": 10,
+                "avg_response_time": 0.2,
+                "last_execution_time": current_time,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.admin.ServerService",
+        lambda: StubService(
+            {
+                "total_executions": 10,
+                "successful_executions": 10,
+                "avg_response_time": 0.1,
+                "last_execution_time": current_time,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.admin.PromptService",
+        lambda: StubService(
+            {
+                "total_executions": 10,
+                "successful_executions": 10,
+                "avg_response_time": 0.3,
+                "last_execution_time": current_time,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.admin.ResourceService",
+        lambda: StubService(
+            {
+                "total_executions": 10,
+                "successful_executions": 10,
+                "avg_response_time": 0.4,
+                "last_execution_time": current_time,
+            }
+        ),
+    )
+
+    response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    assert template_call is not None
+    context = template_call.args[2]
+    assert context["overview_data_is_stale"] is False
+    assert context["overview_data_age_seconds"] is not None
+    assert context["topology_payload"]["isStale"] is False
+    assert len(context["topology_payload"]["edges"]) == 2
 
 
 @pytest.mark.asyncio
