@@ -389,7 +389,7 @@ def test_admin_update_partial(ctx: TestContext):
     ctx.create_user(email, full_name="Original Name")
 
     # Update name only — other fields must be preserved
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"full_name": "Updated Name"})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"full_name": "Updated Name"})
     test("Name-only update returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("Name updated", resp.body.get("full_name") == "Updated Name")
@@ -402,43 +402,43 @@ def test_admin_update_partial(ctx: TestContext):
     test("Login after partial update works", resp.status in (200, 403), f"status={resp.status}")
 
     # Update is_active only
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"is_active": False})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"is_active": False})
     test("is_active-only update returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("is_active changed to False", resp.body.get("is_active") is False)
         test("Name preserved", resp.body.get("full_name") == "Updated Name")
 
     # Reactivate
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"is_active": True})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"is_active": True})
     test("Reactivate returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("is_active back to True", resp.body.get("is_active") is True)
 
     # Update is_admin only
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"is_admin": True})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"is_admin": True})
     test("is_admin-only update returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("is_admin changed to True", resp.body.get("is_admin") is True)
 
     # Demote
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"is_admin": False})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"is_admin": False})
     test("Demote returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("is_admin back to False", resp.body.get("is_admin") is False)
 
     # Update pcr only
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"password_change_required": True})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password_change_required": True})
     test("pcr-only update returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("pcr changed to True", resp.body.get("password_change_required") is True)
 
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"password_change_required": False})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password_change_required": False})
     test("Clear pcr returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("pcr back to False", resp.body.get("password_change_required") is False)
 
     # Empty body (no-op)
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {})
     test("Empty body update returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("No-op preserves name", resp.body.get("full_name") == "Updated Name")
@@ -447,7 +447,7 @@ def test_admin_update_partial(ctx: TestContext):
 
     # Multi-field update
     resp = ctx.api(
-        "PUT",
+        "PATCH",
         f"/auth/email/admin/users/{email}",
         {
             "full_name": "Multi Updated",
@@ -463,8 +463,19 @@ def test_admin_update_partial(ctx: TestContext):
         test("Multi: is_active updated", resp.body.get("is_active") is False)
         test("Multi: pcr updated", resp.body.get("password_change_required") is True)
 
+    #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
+    # Tests to improve the coverage and maintain compatibility with PATCH endpoint
+    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"full_name": "Updated Name2"})
+    test("Name-only update with PUT returns 200", resp.status == 200, f"status={resp.status}")
+    if resp.status == 200:
+        test("Name updated", resp.body.get("full_name") == "Updated Name2")
+        test("is_admin preserved (True)", resp.body.get("is_admin") is True)
+        test("is_active preserved (False)", resp.body.get("is_active") is False)
+        test("pcr preserved (True)", resp.body.get("password_change_required") is True)
+    #---------->
+
     # Update non-existent user
-    resp = ctx.api("PUT", "/auth/email/admin/users/nonexistent-xyz@example.com", {"full_name": "Ghost"})
+    resp = ctx.api("PATCH", "/auth/email/admin/users/nonexistent-xyz@example.com", {"full_name": "Ghost"})
     test("Update non-existent user returns 404", resp.status == 404, f"status={resp.status}")
 
 
@@ -477,7 +488,7 @@ def test_password_management(ctx: TestContext):
 
     # Admin sets temp password + forces password change
     resp = ctx.api(
-        "PUT",
+        "PATCH",
         f"/auth/email/admin/users/{email}",
         {
             "password": "TempPass999!",
@@ -489,7 +500,7 @@ def test_password_management(ctx: TestContext):
         test("pcr=True honored despite password change", resp.body.get("password_change_required") is True)
 
     # Admin resets password without explicit pcr (should auto-clear)
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"password": "FinalPass999!"})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password": "FinalPass999!"})
     test("Password reset without pcr returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("pcr auto-cleared to False", resp.body.get("password_change_required") is False)
@@ -503,7 +514,7 @@ def test_password_management(ctx: TestContext):
     test("Old password rejected after reset", resp.status == 401, f"status={resp.status}")
 
     # Password update with short password
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"password": "Short!"})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password": "Short!"})
     test("Short password in update returns 400/422", resp.status in (400, 422), f"status={resp.status}")
 
     # Change password via user endpoint (self-service)
@@ -748,7 +759,7 @@ def test_edge_cases(ctx: TestContext):
     # Idempotent update (set same value)
     email_idem = test_email("idempotent")
     ctx.create_user(email_idem, full_name="Idempotent User", is_admin=False)
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email_idem}", {"is_admin": False})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email_idem}", {"is_admin": False})
     test("Idempotent update (same value) returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("Value unchanged after idempotent update", resp.body.get("is_admin") is False)
@@ -772,14 +783,14 @@ def test_last_admin_lockout_prevention(ctx: TestContext):
     ctx.create_user(email_b, is_admin=True, full_name="Guard Admin B")
 
     # Demoting A should succeed (B + platform admin still active)
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email_a}", {"is_admin": False})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email_a}", {"is_admin": False})
     test("Demote non-last admin returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("Non-last admin demoted", resp.body.get("is_admin") is False)
 
     # Re-promote A, then deactivate A (different path)
-    ctx.api("PUT", f"/auth/email/admin/users/{email_a}", {"is_admin": True})
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email_a}", {"is_active": False})
+    ctx.api("PATCH", f"/auth/email/admin/users/{email_a}", {"is_admin": True})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email_a}", {"is_active": False})
     test("Deactivate non-last admin returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("Non-last admin deactivated", resp.body.get("is_active") is False)
@@ -800,7 +811,7 @@ def test_last_admin_lockout_prevention(ctx: TestContext):
 
     # We'll make email_b the sole active admin.
     # Reactivate B in case it got touched, ensure admin+active.
-    ctx.api("PUT", f"/auth/email/admin/users/{email_b}", {"is_admin": True, "is_active": True})
+    ctx.api("PATCH", f"/auth/email/admin/users/{email_b}", {"is_admin": True, "is_active": True})
 
     # Demote every OTHER active admin (except email_b) temporarily.
     demoted: list[str] = []
@@ -808,19 +819,19 @@ def test_last_admin_lockout_prevention(ctx: TestContext):
         uemail = u["email"]
         if uemail == email_b:
             continue
-        r = ctx.api("PUT", f"/auth/email/admin/users/{uemail}", {"is_admin": False})
+        r = ctx.api("PATCH", f"/auth/email/admin/users/{uemail}", {"is_admin": False})
         if r.status == 200:
             demoted.append(uemail)
             vprint(f"Temporarily demoted {uemail}")
 
     try:
         # Now email_b should be the sole active admin. Verify the guard.
-        resp = ctx.api("PUT", f"/auth/email/admin/users/{email_b}", {"is_admin": False})
+        resp = ctx.api("PATCH", f"/auth/email/admin/users/{email_b}", {"is_admin": False})
         test("Demote last admin returns 400", resp.status == 400, f"status={resp.status}")
         if resp.status == 400:
             test("Demote error mentions last admin", "last" in resp.body.get("detail", "").lower())
 
-        resp = ctx.api("PUT", f"/auth/email/admin/users/{email_b}", {"is_active": False})
+        resp = ctx.api("PATCH", f"/auth/email/admin/users/{email_b}", {"is_active": False})
         test("Deactivate last admin returns 400", resp.status == 400, f"status={resp.status}")
         if resp.status == 400:
             test("Deactivate error mentions last admin", "last" in resp.body.get("detail", "").lower())
@@ -833,7 +844,7 @@ def test_last_admin_lockout_prevention(ctx: TestContext):
     finally:
         # Restore all temporarily demoted admins
         for uemail in demoted:
-            ctx.api("PUT", f"/auth/email/admin/users/{uemail}", {"is_admin": True})
+            ctx.api("PATCH", f"/auth/email/admin/users/{uemail}", {"is_admin": True})
             vprint(f"Restored admin: {uemail}")
 
 

@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -755,10 +755,58 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user")
 
 
-@email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse)
+@email_auth_router.patch("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
 async def update_user(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Update user information (admin only).
+
+    Args:
+        user_email: Email of user to update
+        user_request: Updated user information
+        current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
+
+    Returns:
+        EmailUserResponse: Updated user information
+
+    Raises:
+        HTTPException: If user not found or update fails
+    """
+    return await update_user_delegate(user_email, user_request, current_user_ctx, db)
+
+
+# ----------------------> [#2754] remove after Sun, 16 Aug 2026 23:59:59 UTC and replace update_user as directed in the docstring of update_user_delegate
+@email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse, deprecated=True)
+@require_permission("admin.user_management")
+async def update_user_deprecated(
+    user_email: str, user_request: AdminUserUpdateRequest, response: Response, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+):
+    """Update user information (admin only). Deprecated: use PATCH instead.
+
+    Args:
+        user_email: Email of user to update
+        user_request: Updated user information
+        current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
+        response: FastAPI Response object to manipulate the headers
+
+    Returns:
+        EmailUserResponse: Updated user information
+
+    Raises:
+        HTTPException: If user not found or update fails
+    """
+    result = await update_user_delegate(user_email, user_request, current_user_ctx, db)
+    deprecation_date = "@" + str(int(datetime(2026, 2, 24, 23, 59, 59, tzinfo=UTC).timestamp()))
+    response.headers["Deprecation"] = deprecation_date
+    response.headers["Sunset"] = "Sun, 16 Aug 2026 23:59:59 UTC"
+    return result
+
+
+async def update_user_delegate(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict, db: Session):
+    """Update user information. Common function for both update_user and update_user_deprecated.
+    Helps in reducing duplicate code and consistent behaviour. Move this entire code back to update_user after
+    Sun, 16 Aug 2026 23:59:59 UTC.
 
     Args:
         user_email: Email of user to update
@@ -800,6 +848,9 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     except Exception as e:
         logger.error(f"Error updating user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
+
+
+# -------------------------->
 
 
 @email_auth_router.delete("/admin/users/{user_email}", response_model=SuccessResponse)
