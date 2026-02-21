@@ -1146,7 +1146,9 @@ class ToolUpdate(BaseModelWithConfigDict):
             base_url = f"{parsed.scheme}://{parsed.netloc}"
             path_template = parsed.path
             # Ensure path_template starts with a single '/'
-            if path_template:
+            if path_template and not path_template.startswith("/"):
+                path_template = "/" + path_template.lstrip("/")
+            elif path_template:
                 path_template = "/" + path_template.lstrip("/")
             if not values.get("base_url"):
                 values["base_url"] = base_url
@@ -3796,6 +3798,30 @@ class ServerCreate(BaseModel):
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'. Meta servers expose meta-tools instead of real tools.")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden from tool listing endpoints")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema). Only applicable when server_type is 'meta'.")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server (MetaToolScope schema).")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: str) -> str:
+        """Validate server type value.
+
+        Args:
+            v: Server type to validate.
+
+        Returns:
+            Validated server type.
+
+        Raises:
+            ValueError: If server type is invalid.
+        """
+        if v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -3929,6 +3955,30 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Meta-server configuration (optional update fields)
+    server_type: Optional[str] = Field(None, description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: Optional[bool] = Field(None, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: Optional[str]) -> Optional[str]:
+        """Validate server type value.
+
+        Args:
+            v: Server type to validate.
+
+        Returns:
+            Validated server type.
+
+        Raises:
+            ValueError: If server type is invalid.
+        """
+        if v is not None and v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -4105,6 +4155,12 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
 
     @model_validator(mode="before")
     @classmethod
@@ -5373,45 +5429,6 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
-class ForgotPasswordRequest(BaseModel):
-    """Request schema for forgot-password flow."""
-
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    email: EmailStr = Field(..., description="Email address for password reset")
-
-
-class ResetPasswordRequest(BaseModel):
-    """Request schema for completing password reset."""
-
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    new_password: str = Field(..., min_length=8, description="New password to set")
-    confirm_password: str = Field(..., min_length=8, description="Password confirmation")
-
-    @model_validator(mode="after")
-    def validate_password_match(self):
-        """Ensure password and confirmation are identical.
-
-        Returns:
-            ResetPasswordRequest: Validated request instance.
-
-        Raises:
-            ValueError: If the password and confirmation do not match.
-        """
-        if self.new_password != self.confirm_password:
-            raise ValueError("Passwords do not match")
-        return self
-
-
-class PasswordResetTokenValidationResponse(BaseModel):
-    """Response schema for reset-token validation."""
-
-    valid: bool = Field(..., description="Whether token is currently valid")
-    message: str = Field(..., description="Validation status message")
-    expires_at: Optional[datetime] = Field(None, description="Token expiration timestamp when valid")
-
-
 class EmailUserResponse(BaseModel):
     """Response schema for user information.
 
@@ -5454,9 +5471,6 @@ class EmailUserResponse(BaseModel):
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
     password_change_required: bool = Field(False, description="Whether user must change password on next login")
-    failed_login_attempts: int = Field(0, description="Current failed login attempts counter")
-    locked_until: Optional[datetime] = Field(None, description="Account lock expiration timestamp")
-    is_locked: bool = Field(False, description="Whether the account is currently locked")
 
     @classmethod
     def from_email_user(cls, user) -> "EmailUserResponse":
@@ -5468,13 +5482,6 @@ class EmailUserResponse(BaseModel):
         Returns:
             EmailUserResponse: Response schema instance
         """
-        locked_until_raw = getattr(user, "locked_until", None)
-        locked_until = locked_until_raw if isinstance(locked_until_raw, datetime) else None
-        failed_attempts_raw = getattr(user, "failed_login_attempts", 0)
-        try:
-            failed_attempts = int(failed_attempts_raw or 0)
-        except (TypeError, ValueError):
-            failed_attempts = 0
         return cls(
             email=user.email,
             full_name=user.full_name,
@@ -5485,9 +5492,6 @@ class EmailUserResponse(BaseModel):
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
             password_change_required=user.password_change_required,
-            failed_login_attempts=failed_attempts,
-            locked_until=locked_until,
-            is_locked=bool(locked_until and locked_until > datetime.now(timezone.utc)),
         )
 
 
@@ -7750,3 +7754,30 @@ class PerformanceHistoryResponse(BaseModel):
     aggregates: List[PerformanceAggregateRead] = Field(default_factory=list, description="Historical aggregates")
     period_type: str = Field(..., description="Aggregation period type")
     total_count: int = Field(0, description="Total matching records")
+
+
+# --- Semantic Search Schemas ---
+
+
+class ToolSearchResult(BaseModelWithConfigDict):
+    """Schema for a single tool search result from semantic search.
+
+    Includes essential tool information and similarity score for ranking.
+    """
+
+    tool_name: str = Field(..., description="Tool name")
+    description: Optional[str] = Field(None, description="Tool description")
+    server_id: Optional[str] = Field(None, description="Server/gateway ID providing this tool")
+    server_name: Optional[str] = Field(None, description="Server/gateway name providing this tool")
+    similarity_score: float = Field(..., ge=0.0, le=1.0, description="Similarity score (0-1, higher = more relevant)")
+
+
+class SemanticSearchResponse(BaseModelWithConfigDict):
+    """Response schema for semantic tool search endpoint.
+
+    Returns a list of ranked tools matching the semantic query.
+    """
+
+    results: List[ToolSearchResult] = Field(..., description="Ranked list of matching tools")
+    query: str = Field(..., description="Original search query")
+    total_results: int = Field(..., ge=0, description="Total number of results returned")
