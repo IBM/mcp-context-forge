@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -40,6 +41,7 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+_TOOL_LOOKUP_CACHE = None
 
 
 def _get_registry_cache():
@@ -55,6 +57,21 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+def _get_tool_lookup_cache():
+    """Get tool lookup cache singleton lazily.
+
+    Returns:
+        ToolLookupCache instance.
+    """
+    global _TOOL_LOOKUP_CACHE  # pylint: disable=global-statement
+    if _TOOL_LOOKUP_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+        _TOOL_LOOKUP_CACHE = tool_lookup_cache
+    return _TOOL_LOOKUP_CACHE
 
 
 # Initialize logging service first
@@ -1229,6 +1246,20 @@ class A2AAgentService:
         a2a_stats_cache.invalidate()
         cache = _get_registry_cache()
         await cache.invalidate_agents()
+
+        # Cascade: update associated tool's enabled status to match agent
+        if agent.tool_id:
+            try:
+                now = datetime.now(timezone.utc)
+                tool_result = db.execute(update(DbTool).where(DbTool.id == agent.tool_id).where(DbTool.enabled != activate).values(enabled=activate, updated_at=now))
+                if tool_result.rowcount > 0:
+                    db.commit()
+                    await cache.invalidate_tools()
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    if agent.tool and agent.tool.name:
+                        await tool_lookup_cache.invalidate(agent.tool.name)
+            except Exception:
+                logger.warning("Failed to cascade tool state for A2A agent %s (tool_id=%s)", agent.id, agent.tool_id, exc_info=True)
 
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
