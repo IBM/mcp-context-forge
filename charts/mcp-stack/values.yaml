@@ -627,7 +627,7 @@ mcpContextForge:
     VALIDATION_ALLOWED_MIME_TYPES: '["text/plain", "text/html", "text/css", "text/markdown", "text/javascript", "application/json", "application/xml", "application/pdf", "image/png", "image/jpeg", "image/gif", "image/svg+xml", "application/octet-stream"]' # allowed MIME types (JSON array)
     VALIDATION_DANGEROUS_HTML_PATTERN: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>' # pattern to detect dangerous HTML tags
     VALIDATION_DANGEROUS_JS_PATTERN: '(?i)(?:^|\s|[\"''`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)' # pattern to detect JavaScript injection
-    VALIDATION_NAME_PATTERN: '^[a-zA-Z0-9_.\-\s]+$' # pattern for validating names (allows spaces)
+    VALIDATION_NAME_PATTERN: '^[a-zA-Z0-9_.\- ]+$' # pattern for validating names (literal space, not \s to reject control chars)
     VALIDATION_IDENTIFIER_PATTERN: '^[a-zA-Z0-9_\-\.]+$' # pattern for validating IDs (no spaces)
     VALIDATION_SAFE_URI_PATTERN: '^[a-zA-Z0-9_\-.:/?=&%{}]+$' # pattern for safe URI characters
     VALIDATION_UNSAFE_URI_PATTERN: '[<>"''\\]' # pattern to detect unsafe URI characters

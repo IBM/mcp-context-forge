@@ -413,7 +413,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.VALIDATION_MAX_TEMPLATE_LENGTH | string | `"65536"` |  |
 | mcpContextForge.config.VALIDATION_MAX_URL_LENGTH | string | `"2048"` |  |
 | mcpContextForge.config.VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` |  |
-| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\-\\s]+$"` |  |
+| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\- ]+$"` |  |
 | mcpContextForge.config.VALIDATION_SAFE_URI_PATTERN | string | `"^[a-zA-Z0-9_\\-.:/?=&%{}]+$"` |  |
 | mcpContextForge.config.VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.VALIDATION_TOOL_METHOD_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9_\\./-]*$"` |  |

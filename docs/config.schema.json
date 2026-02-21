@@ -3458,7 +3458,7 @@
       "type": "array"
     },
     "validation_name_pattern": {
-      "default": "^[a-zA-Z0-9_.\\-\\s]+$",
+      "default": "^[a-zA-Z0-9_.\\- ]+$",
       "title": "Validation Name Pattern",
       "type": "string"
     },
