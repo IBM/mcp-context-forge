@@ -521,7 +521,7 @@ class TestA2AProtocolCompliance:
 
 
 class TestContextForgeA2ATestEndpoint:
-    """Tests for the ContextForge admin A2A test endpoint."""
+    """Tests for ContextForge admin A2A test endpoint."""
 
     @pytest.mark.asyncio
     async def test_admin_test_endpoint_sends_user_query(self):

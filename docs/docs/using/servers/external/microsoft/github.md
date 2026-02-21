@@ -173,7 +173,7 @@ curl -X POST http://localhost:4444/servers \
 
 ## Using GitHub Tools
 
-Once configured, you can access GitHub tools through the ContextForge:
+Once configured, you can access GitHub tools through ContextForge:
 
 ### List Available Tools
 

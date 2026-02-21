@@ -1,6 +1,6 @@
 # MCP Security Hooks
 
-This document details the security-focused hook points in the ContextForge Plugin Framework, covering the complete MCP protocol request/response lifecycle and HTTP authentication.
+This document details the security-focused hook points in ContextForge Plugin Framework, covering the complete MCP protocol request/response lifecycle and HTTP authentication.
 
 ## MCP Security Hook Functions
 

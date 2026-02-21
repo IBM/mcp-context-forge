@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ContextForge Metrics Tests.
 
-This module contains unit tests for the metrics functionality of the ContextForge.
+This module contains unit tests for the metrics functionality of ContextForge.
 It tests the Prometheus metrics endpoint and validates that metrics are properly
 exposed, formatted, and behave according to configuration.
 

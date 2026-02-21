@@ -1,6 +1,6 @@
 # Output Schema Test MCP Server
 
-A test MCP server for validating outputSchema field support in the ContextForge.
+A test MCP server for validating outputSchema field support in ContextForge.
 
 ## Purpose
 

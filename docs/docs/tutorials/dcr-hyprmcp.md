@@ -181,7 +181,7 @@ This step is necessary to ensure that ContextForge can verify the JWTs issued by
 
 ### Step 3: ContextForge
 
-Add the ContextForge service to your compose file (put it in the `services` section):
+Add ContextForge service to your compose file (put it in the `services` section):
 
 ```yaml
 context-forge:

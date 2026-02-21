@@ -10,7 +10,7 @@ This document provides step-by-step instructions for testing the `outputSchema` 
    make install
    ```
 
-2. **Start the ContextForge** (in separate terminal):
+2. **Start ContextForge** (in separate terminal):
    ```bash
    cd /home/cmihai/github/mcp-context-forge
    make dev

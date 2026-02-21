@@ -1,4 +1,4 @@
-# 🚀 Deploying the ContextForge Stack to IBM Cloud Kubernetes Service with Argo CD
+# 🚀 Deploying ContextForge Stack to IBM Cloud Kubernetes Service with Argo CD
 
 !!! warning "Preview"
     This guide is in preview and will continue to evolve. Content is accurate but may receive refinements as the Helm chart and GitOps flows mature.
@@ -1014,13 +1014,13 @@ kubectl describe networkpolicy deny-by-default -n mcp
 
 ## 14. Performance Testing
 
-Performance testing helps validate the stability, scalability, and responsiveness of the ContextForge under different workloads. This section outlines how to perform load tests using `hey` and how to inspect performance metrics.
+Performance testing helps validate the stability, scalability, and responsiveness of ContextForge under different workloads. This section outlines how to perform load tests using `hey` and how to inspect performance metrics.
 
 ---
 
 ### 14.1. Run Basic Load Test with `hey`
 
-[`hey`](https://github.com/rakyll/hey) is a CLI load-testing tool for HTTP endpoints. You can use it to simulate traffic to the ContextForge's `/health` or `/version` endpoint:
+[`hey`](https://github.com/rakyll/hey) is a CLI load-testing tool for HTTP endpoints. You can use it to simulate traffic to ContextForge's `/health` or `/version` endpoint:
 
 ```bash
 # Install hey (if not already installed)
@@ -1118,7 +1118,7 @@ python3 -m mcpgateway.translate --stdio "npx -y kubernetes-mcp-server@latest" --
 ## 16. FAQ
 
 **Q**: *How do I rotate the JWT secret without downtime?*
-**A**: Update the secret and restart the ContextForge pods:
+**A**: Update the secret and restart ContextForge pods:
 ```bash
 NEW_JWT_SECRET=$(openssl rand -hex 32)
 kubectl patch secret mcp-gateway-secret -n mcp \

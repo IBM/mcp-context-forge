@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Handlers Package.
-Provides request handlers for the ContextForge including:
+Provides request handlers for ContextForge including:
 - Sampling request handling
 """
 

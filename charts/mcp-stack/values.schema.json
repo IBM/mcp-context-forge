@@ -62,7 +62,7 @@
     },
     "mcpContextForge": {
       "type": "object",
-      "description": "MCP Context-Forge Gateway configuration",
+      "description": "ContextForge Gateway configuration",
       "properties": {
         "replicaCount": {
           "type": "integer",

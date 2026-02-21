@@ -1,6 +1,6 @@
 # PostgreSQL 17 to 18 Upgrade Guide
 
-This guide explains how to upgrade PostgreSQL from version 17 to 18 in the ContextForge Helm chart with automated backup and restore to MinIO.
+This guide explains how to upgrade PostgreSQL from version 17 to 18 in ContextForge Helm chart with automated backup and restore to MinIO.
 
 ## Prerequisites
 

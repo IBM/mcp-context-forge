@@ -11,7 +11,7 @@ required for different LLM providers. Each provider
 has its own configuration schema to capture authentication details,
 regional settings, deployment identifiers, and provider-specific options.
 
-These configuration objects are intended to be used by the ContextForge
+These configuration objects are intended to be used by ContextForge
 to initialize and manage provider clients in a consistent and type-safe
 manner.
 """

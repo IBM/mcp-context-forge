@@ -1,6 +1,6 @@
 # Gateway Administrative Hooks
 
-This document details the administrative hook points in the ContextForge Plugin Framework, covering gateway management operations including server registration, updates, federation, and entity lifecycle management.
+This document details the administrative hook points in ContextForge Plugin Framework, covering gateway management operations including server registration, updates, federation, and entity lifecycle management.
 ## Administrative Hook Functions
 
 The framework provides administrative hooks for gateway management operations:

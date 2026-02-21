@@ -2,7 +2,7 @@
 
 > Author: Mihai Criveti
 
-A sample plugin that demonstrates the use of resource pre-fetch and post-fetch hooks in the ContextForge plugin system.
+A sample plugin that demonstrates the use of resource pre-fetch and post-fetch hooks in ContextForge plugin system.
 
 ## Features
 

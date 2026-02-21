@@ -2,11 +2,11 @@
 
 ⚠️ **Security Notice**: HTTP Header Passthrough is **disabled by default** for security reasons. Only enable this feature if you understand the security implications and have reviewed which headers should be passed through to backing MCP servers.
 
-The ContextForge supports **HTTP Header Passthrough**, allowing specific headers from incoming client requests to be forwarded to backing MCP servers. This feature is essential for maintaining authentication context and request tracing across the gateway infrastructure.
+ContextForge supports **HTTP Header Passthrough**, allowing specific headers from incoming client requests to be forwarded to backing MCP servers. This feature is essential for maintaining authentication context and request tracing across the gateway infrastructure.
 
 ## Overview
 
-When clients make requests through the ContextForge, certain headers (like authentication tokens or trace IDs) need to be preserved and passed to the underlying MCP servers. The header passthrough feature provides a configurable, secure way to forward these headers while preventing conflicts with existing authentication mechanisms.
+When clients make requests through ContextForge, certain headers (like authentication tokens or trace IDs) need to be preserved and passed to the underlying MCP servers. The header passthrough feature provides a configurable, secure way to forward these headers while preventing conflicts with existing authentication mechanisms.
 
 ## Key Features
 
@@ -126,7 +126,7 @@ ENABLE_OVERWRITE_BASE_HEADERS=true
 **Prerequisites**:
 
 1. Set `ENABLE_HEADER_PASSTHROUGH=true` in your environment
-2. Restart the ContextForge service
+2. Restart ContextForge service
 
 #### Global Configuration
 Access the admin interface to set global passthrough headers that apply to all gateways by default.
@@ -613,7 +613,7 @@ When upgrading to a version with header passthrough:
 
 ## Testing with the Built-in Test Tool
 
-The ContextForge admin interface includes a built-in test tool with passthrough header support:
+ContextForge admin interface includes a built-in test tool with passthrough header support:
 
 ### Using the Test Tool
 

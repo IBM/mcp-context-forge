@@ -6,7 +6,7 @@
 
 ## Context
 
-The ContextForge is a long-running service that executes tools, processes requests, and federates with remote peers.
+ContextForge is a long-running service that executes tools, processes requests, and federates with remote peers.
 Operators and developers must be able to observe:
 
 - Overall system health

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Tests for the admin module with improved coverage.
-This module tests the admin UI routes for the ContextForge, ensuring
+This module tests the admin UI routes for ContextForge, ensuring
 they properly handle server, tool, resource, prompt, gateway and root management.
 Enhanced with additional test cases for better coverage.
 """

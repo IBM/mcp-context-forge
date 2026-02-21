@@ -6,7 +6,7 @@ Authors: Mihai Criveti
 
 Resource Cache Implementation.
 This module implements a simple in-memory cache with TTL expiration for caching
-resource content in the ContextForge. Features:
+resource content in ContextForge. Features:
 - TTL-based expiration
 - Maximum size limit with LRU eviction
 - Thread-safe operations

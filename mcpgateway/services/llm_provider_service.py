@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 LLM Provider Service
 
-This module implements LLM provider management for the ContextForge.
+This module implements LLM provider management for ContextForge.
 It handles provider registration, CRUD operations, model management,
 and health checks for the internal LLM Chat feature.
 """

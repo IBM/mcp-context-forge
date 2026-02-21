@@ -1,6 +1,6 @@
 # cert-manager CA Issuer Setup (APPLY ONCE)
 # This example shows how to set up a self-signed CA using cert-manager
-# for issuing mTLS certificates to the ContextForge and plugins.
+# for issuing mTLS certificates to ContextForge and plugins.
 #
 # Prerequisites:
 # - cert-manager must be installed in your cluster

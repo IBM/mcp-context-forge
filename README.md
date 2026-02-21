@@ -630,7 +630,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ---
 
 <details>
-<summary><strong>🖧 Running the ContextForge stdio wrapper</strong></summary>
+<summary><strong>🖧 Running ContextForge stdio wrapper</strong></summary>
 
 The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """MCP LangChain Agent Package.
 
-A production-ready LangChain agent that integrates with the ContextForge,
+A production-ready LangChain agent that integrates with ContextForge,
 providing both OpenAI-compatible chat completions and A2A JSON-RPC endpoints.
 
 Features:

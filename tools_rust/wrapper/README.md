@@ -87,7 +87,7 @@ before running test scripts.
 
 ### `test-fast-time-curl.sh`
 
-This script directly interacts with the virtual server of the ContextForge using `curl`. It's useful for verifying that the ContextForge is running and responding as expected.
+This script directly interacts with the virtual server of ContextForge using `curl`. It's useful for verifying that ContextForge is running and responding as expected.
 
 ```bash
 ./scripts/test-fast-time-curl.sh
@@ -97,7 +97,7 @@ This script directly interacts with the virtual server of the ContextForge using
 
 By default, the test scripts run against the release version of the `mcp-stdio-wrapper`. If you need to test a development version, you must update the executable path within the relevant test script to point to your development build.
 
-This script utilizes the `mcp-stdio-wrapper` to send requests to the ContextForge. It demonstrates how the wrapper processes input and communicates with the gateway.
+This script utilizes the `mcp-stdio-wrapper` to send requests to ContextForge. It demonstrates how the wrapper processes input and communicates with the gateway.
 
 ```bash
 ./scripts/test-fast-time-wrapper.sh

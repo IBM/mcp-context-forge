@@ -5,7 +5,7 @@
 
 ## Overview
 
-The ContextForge Plugin Framework provides a comprehensive, production-grade system for extending gateway functionality through pre/post processing hooks at various points in the MCP request lifecycle. The framework supports both high-performance native plugins and sophisticated external AI service integrations.
+ContextForge Plugin Framework provides a comprehensive, production-grade system for extending gateway functionality through pre/post processing hooks at various points in the MCP request lifecycle. The framework supports both high-performance native plugins and sophisticated external AI service integrations.
 
 ### Key Capabilities
 
@@ -159,7 +159,7 @@ plugins:
 
 ### Plugin Configuration
 
-The plugin configuration file is used to configure a set of plugins that implement hook functions used to register to hook points throughout the ContextForge. An example configuration
+The plugin configuration file is used to configure a set of plugins that implement hook functions used to register to hook points throughout ContextForge. An example configuration
 is below. It contains two main sections: `plugins` and `plugin_settings`.
 
 !!! details "Plugin Configuration"
@@ -274,7 +274,7 @@ That's it — the gateway now runs the enabled plugins at the selected hook poin
 ### Plugin Configuration
 
 The `plugins` section lists the set of configured plugins that will be loaded
-by the ContextForge at startup.  Each plugin contains a set of standard configurations,
+by ContextForge at startup.  Each plugin contains a set of standard configurations,
 and then a `config` section designed for plugin specific configurations. The attributes
 are defined as follows:
 
@@ -1111,7 +1111,7 @@ async def test_my_plugin():
 
 Errors inside a plugin should be raised as exceptions.  The plugin manager will catch the error, and its behavior depends on both the gateway's and plugin's configuration as follows:
 
-1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of the ContextForge regardless of the plugin mode.
+1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of ContextForge regardless of the plugin mode.
 2. if `plugin_settings.fail_on_plugin_error` is set to false the error is handled based off of the plugin mode in the plugin's config as follows:
 
   * if `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.

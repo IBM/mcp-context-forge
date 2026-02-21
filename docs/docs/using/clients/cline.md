@@ -73,7 +73,7 @@ To integrate Cline with your ContextForge:
 3. **Verify Connection**:
 
    - In the Cline interface, navigate to the MCP Servers section.
-   - Confirm that the ContextForge server is listed and shows a green status indicator.
+   - Confirm that ContextForge server is listed and shows a green status indicator.
 
 ---
 
@@ -81,7 +81,7 @@ To integrate Cline with your ContextForge:
 
 Once connected:
 
-- **Discover Tools**: Cline will automatically fetch and list available tools from the ContextForge.
+- **Discover Tools**: Cline will automatically fetch and list available tools from ContextForge.
 - **Invoke Tools**: Use natural language prompts in Cline to invoke tools. For example:
 
   - "Run the `hello_world` tool with the argument `name: Alice`."

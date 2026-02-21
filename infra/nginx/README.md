@@ -1,6 +1,6 @@
 # Nginx Caching Proxy for ContextForge
 
-High-performance reverse proxy with CDN-like caching capabilities for the ContextForge. Provides intelligent caching for static assets, API responses, and schema endpoints with minimal configuration.
+High-performance reverse proxy with CDN-like caching capabilities for ContextForge. Provides intelligent caching for static assets, API responses, and schema endpoints with minimal configuration.
 
 ## Features
 

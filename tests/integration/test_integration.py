@@ -5,7 +5,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-End-to-end happy-path integration tests for the ContextForge API.
+End-to-end happy-path integration tests for ContextForge API.
 These tests exercise several endpoints together instead of in isolation:
 
 1. Create a tool ➜ create a server that references that tool.

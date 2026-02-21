@@ -242,7 +242,7 @@ This starts:
 * SSE endpoint: `http://localhost:8000/sse`
 * Message POST: `http://localhost:8000/message`
 
-To register it with the ContextForge:
+To register it with ContextForge:
 
 ```bash
 export MY_MCP_TOKEN="optional-auth-header-if-needed"
@@ -314,7 +314,7 @@ This smoke test validates:
 * ✅ Virtual server creation
 * ✅ SSE subscription and live messaging
 * ✅ JSON-RPC invocation flow
-* ✅ Connecting MCP Inspector to the ContextForge
+* ✅ Connecting MCP Inspector to ContextForge
 * ✅ Connecting the official GitHub MCP server to the Gateway
 
 ---

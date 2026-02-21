@@ -1,6 +1,6 @@
 # ContextForge Development Guide
 
-This guide provides comprehensive information for developers working on the ContextForge (ContextForge) project.
+This guide provides comprehensive information for developers working on ContextForge project.
 
 ## Table of Contents
 - [Quick Start](#quick-start)

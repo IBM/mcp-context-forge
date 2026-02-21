@@ -11,7 +11,7 @@ ContextForge supports connecting to servers with self-signed certificates by all
 
 ## Prerequisites
 
--   You must have administrator access to the ContextForge.
+-   You must have administrator access to ContextForge.
 -   You need the root CA certificate file (or the full certificate chain) in PEM format. Supported file extensions are `.pem`, `.crt`, `.cer`, and `.cert`.
 -   Maximum file size: **10 MB per certificate file**.
 -   The certificates must be valid PEM-encoded X.509 certificates.
@@ -20,7 +20,7 @@ ContextForge supports connecting to servers with self-signed certificates by all
 
 ### 1. Navigate to the Admin Panel
 
-Log in to the ContextForge and go to the **Admin** section.
+Log in to ContextForge and go to the **Admin** section.
 
 ### 2. Go to Gateways Tab
 
@@ -220,7 +220,7 @@ cp server-cert.pem ca-cert.pem
 
 ### 3. Upload to ContextForge
 
-1. In the ContextForge admin panel, go to **Gateways** → **Add Gateway**
+1. In ContextForge admin panel, go to **Gateways** → **Add Gateway**
 2. Enter the server URL: `https://mcp-server.local:8443`
 3. Upload the `ca-cert.pem` file in the CA Certificate section
 4. Save the gateway configuration

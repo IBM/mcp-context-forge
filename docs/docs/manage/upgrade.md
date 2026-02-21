@@ -1,6 +1,6 @@
 # Upgrading ContextForge and Managing Database Migrations
 
-This guide provides step-by-step instructions for upgrading the ContextForge and handling associated database migrations to ensure a smooth transition with minimal downtime.
+This guide provides step-by-step instructions for upgrading ContextForge and handling associated database migrations to ensure a smooth transition with minimal downtime.
 
 ---
 

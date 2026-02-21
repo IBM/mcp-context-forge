@@ -168,7 +168,7 @@ curl -X POST http://localhost:8000/tools/my-tool/invoke \
 
 ## Installation
 
-The plugin is included in the ContextForge plugins directory. Enable it in your configuration:
+The plugin is included in ContextForge plugins directory. Enable it in your configuration:
 
 ### 1. Add to `plugins/config.yaml`
 

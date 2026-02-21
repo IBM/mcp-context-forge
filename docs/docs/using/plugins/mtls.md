@@ -1,6 +1,6 @@
 # External Plugin mTLS Setup Guide
 
-This guide covers how to set up mutual TLS (mTLS) authentication between the ContextForge and external plugin servers.
+This guide covers how to set up mutual TLS (mTLS) authentication between ContextForge and external plugin servers.
 
 ## Port Configuration
 
@@ -13,7 +13,7 @@ When mTLS is enabled, the plugin runtime automatically starts a separate HTTP-on
 
 ## Certificate Generation
 
-The ContextForge includes Makefile targets to manage the complete certificate infrastructure for plugin mTLS.
+ContextForge includes Makefile targets to manage the complete certificate infrastructure for plugin mTLS.
 
 ### Quick Start
 
@@ -116,7 +116,7 @@ make certs-mcp-ca MCP_CERT_DAYS=1825
 
 #### `make certs-mcp-gateway`
 
-Generate the gateway client certificate used by the ContextForge to authenticate to plugin servers.
+Generate the gateway client certificate used by ContextForge to authenticate to plugin servers.
 
 **What it does**:
 

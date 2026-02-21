@@ -204,7 +204,7 @@ Repeat for additional roles:
 
 ### 4.2 Create Client Roles (Optional)
 
-Client roles are specific to the ContextForge client:
+Client roles are specific to ContextForge client:
 
 1. Navigate to **Clients** → Select your `mcp-gateway` client
 2. Go to **Roles** tab

@@ -220,7 +220,7 @@ class SPARCStaticValidatorPlugin(Plugin):
         """Convert ContextForge tool schema to SPARC ToolSpec format.
 
         The SPARC static checker expects an OpenAI-style ToolSpec format.
-        This method converts the ContextForge's JSON Schema input_schema
+        This method converts ContextForge's JSON Schema input_schema
         to the expected format.
 
         Args:

@@ -12,7 +12,7 @@ This framework outlines what to evaluate and why each criterion matters.
 
 ---
 
-## The ContextForge Landscape
+## ContextForge Landscape
 
 The MCP gateway market has matured rapidly. Options range from managed SaaS platforms (Composio, MintMCP, Apigee ContextForge) to cloud-native solutions (Azure ContextForge, Docker ContextForge) to self-hosted open source (ContextForge, Lasso Security, Bifrost).
 

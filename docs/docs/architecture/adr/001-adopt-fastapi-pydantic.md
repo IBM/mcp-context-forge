@@ -6,7 +6,7 @@
 
 ## Context
 
-The ContextForge must serve both human and machine clients with low-latency HTTP and WebSocket endpoints. Payloads require runtime validation and schema documentation, while internal data types must align with environment-driven settings and JSON models.
+ContextForge must serve both human and machine clients with low-latency HTTP and WebSocket endpoints. Payloads require runtime validation and schema documentation, while internal data types must align with environment-driven settings and JSON models.
 
 We explored Python-native frameworks that support async-first operation, data validation, OpenAPI generation, and modular service layout.
 

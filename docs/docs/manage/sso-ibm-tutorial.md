@@ -348,7 +348,7 @@ SSO_IBM_VERIFY_CLIENT_SECRET=your-actual-client-secret
 ### Error: "User not authorized"
 
 **Problem**: User not assigned access to the application
-**Solution**: Assign user or their group to the ContextForge application
+**Solution**: Assign user or their group to ContextForge application
 
 1. In IBM Security Verify admin console, go to Applications
 2. Find ContextForge application → Access tab

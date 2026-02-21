@@ -1,7 +1,7 @@
 # ContextForge - Terraform IaaS + PaaS Layer
 
 Deploys an IKS cluster plus managed PostgreSQL & Redis on IBM Cloud,
-then rolls out the ContextForge container via Helm.
+then rolls out ContextForge container via Helm.
 
 ## Prerequisites
 

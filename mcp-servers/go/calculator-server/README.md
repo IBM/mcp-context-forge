@@ -848,4 +848,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - 🌐 Website: [https://avisangle.github.io/](https://avisangle.github.io/)
 - 💻 GitHub: [https://github.com/avisangle](https://github.com/avisangle)
 
-For more information about MCP servers and the ContextForge project, visit the [IBM ContextForge repository](https://github.com/IBM/mcp-context-forge).
+For more information about MCP servers and ContextForge project, visit the [IBM ContextForge repository](https://github.com/IBM/mcp-context-forge).

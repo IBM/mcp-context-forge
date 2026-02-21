@@ -57,7 +57,7 @@ class TestAPIEndpoints:
         """Test that API documentation is accessible."""
         # Test Swagger UI
         admin_page.page.goto(f"{base_url}/docs")
-        expect(admin_page.page).to_have_title(re.compile(r"MCP[ _]Gateway - Swagger UI"))
+        expect(admin_page.page).to_have_title(re.compile(r"ContextForge - Swagger UI"))
         assert admin_page.page.is_visible(".swagger-ui")
 
         # Test ReDoc

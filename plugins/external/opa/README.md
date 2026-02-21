@@ -297,4 +297,4 @@ Apache-2.0
 
 ## Support
 
-For issues or questions, please open an issue in the ContextForge repository.
+For issues or questions, please open an issue in ContextForge repository.

@@ -6,7 +6,7 @@
 
 ## Context
 
-The ContextForge uses short-lived caching for:
+ContextForge uses short-lived caching for:
 
 - Tool responses and resource lookups
 - Peer discovery metadata

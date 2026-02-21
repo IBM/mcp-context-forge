@@ -6,7 +6,7 @@ Authors: Mihai Criveti
 
 System Metrics Service Implementation.
 This module provides comprehensive system metrics for monitoring deployment scale
-and resource utilization across all entity types in the ContextForge.
+and resource utilization across all entity types in ContextForge.
 
 It includes:
 - User and team counts (users, teams, memberships)

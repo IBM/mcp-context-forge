@@ -1,6 +1,6 @@
 ContextForge: Full Project Overview
 
-- Purpose: One-stop guidance for LLMs to develop, run, test, document, and deploy the ContextForge gateway.
+- Purpose: One-stop guidance for LLMs to develop, run, test, document, and deploy ContextForge gateway.
 - Tech: FastAPI + Pydantic + SQLAlchemy; optional Redis; Alembic migrations; hybrid plugin framework (native + external MCP).
 
 **Core Capabilities**

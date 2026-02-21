@@ -27,7 +27,7 @@
     [View on LinkedIn](https://www.linkedin.com/posts/crivetimihai_ibm-opensource-mcp-activity-7335982903681581056-29Oc)
 
     !!! quote
-        "Just open-sourced something I've been building - the ContextForge: turn any REST API into an MCP server, connect multiple MCP servers, combine tools into virtual servers, swap them on the fly, and adds observability and security - all in one container that can be deployed anywhere."
+        "Just open-sourced something I've been building - ContextForge: turn any REST API into an MCP server, connect multiple MCP servers, combine tools into virtual servers, swap them on the fly, and adds observability and security - all in one container that can be deployed anywhere."
 
 ## Articles
 

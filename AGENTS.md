@@ -10,11 +10,11 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
 
-**Note:** The `llms/` directory contains guidance for LLMs *using* the ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
+**Note:** The `llms/` directory contains guidance for LLMs *using* ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
 
 ## Project Overview
 
-ContextForge (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It federates MCP and REST services, providing unified discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI.
+ContextForge is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It federates MCP and REST services, providing unified discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI.
 
 ## Project Structure
 

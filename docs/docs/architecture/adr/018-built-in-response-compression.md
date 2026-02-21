@@ -6,7 +6,7 @@
 
 ## Context
 
-The ContextForge serves large JSON responses for endpoints like GET /tools, GET /servers, GET /openapi.json, and JSON-RPC messages. These responses can range from tens of kilobytes to several megabytes, especially in deployments with many registered tools and servers.
+ContextForge serves large JSON responses for endpoints like GET /tools, GET /servers, GET /openapi.json, and JSON-RPC messages. These responses can range from tens of kilobytes to several megabytes, especially in deployments with many registered tools and servers.
 
 Bandwidth consumption impacts:
 

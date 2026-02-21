@@ -527,4 +527,4 @@ When adding new migration tests:
 
 ---
 
-For more details on the ContextForge project, see the main [README.md](../../README.md) and [CLAUDE.md](../../CLAUDE.md) files.
+For more details on ContextForge project, see the main [README.md](../../README.md) and [CLAUDE.md](../../CLAUDE.md) files.

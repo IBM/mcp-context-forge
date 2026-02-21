@@ -1445,7 +1445,7 @@ AUDIT_TRAIL_ENABLED=true
 
 **Overview**: Deploy an nginx reverse proxy with intelligent caching to dramatically reduce backend load and improve response times.
 
-The ContextForge includes a production-ready nginx caching proxy configuration (`nginx/`) with three dedicated cache zones:
+ContextForge includes a production-ready nginx caching proxy configuration (`nginx/`) with three dedicated cache zones:
 
 1. **Static Assets Cache** (1GB, 30-day TTL): CSS, JS, images, fonts
 2. **API Response Cache** (512MB, 5-minute TTL): Read-only endpoints

@@ -1,4 +1,4 @@
-# 🚀 Deploying the ContextForge Stack with Helm
+# 🚀 Deploying ContextForge Stack with Helm
 
 This guide walks you through installing, upgrading, and removing the full **ContextForge Stack** using Helm. The stack includes:
 
@@ -295,7 +295,7 @@ flowchart TD
 
 ???+ info "🚀 Install or Upgrade the Stack"
 
-    Install the ContextForge Stack into your Kubernetes cluster using Helm. This will deploy all components defined in your `my-values.yaml`.
+    Install ContextForge Stack into your Kubernetes cluster using Helm. This will deploy all components defined in your `my-values.yaml`.
 
     === "Install for the first time"
 

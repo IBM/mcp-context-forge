@@ -22,7 +22,7 @@
 
 ## Overview
 
-This document defines a comprehensive, multi-layered performance testing strategy for the ContextForge ecosystem. The goal is to identify performance bottlenecks, establish baselines, and ensure the system meets service level objectives (SLOs) under various load conditions.
+This document defines a comprehensive, multi-layered performance testing strategy for ContextForge ecosystem. The goal is to identify performance bottlenecks, establish baselines, and ensure the system meets service level objectives (SLOs) under various load conditions.
 
 ### Objectives
 

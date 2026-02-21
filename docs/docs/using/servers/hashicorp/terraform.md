@@ -106,7 +106,7 @@ Given your configuration, the endpoint could be the following:
 
 ## ContextForge Integration
 
-> Set the following environment variables on your system, as they will be used in subsequent commands for the ContextForge integration.
+> Set the following environment variables on your system, as they will be used in subsequent commands for ContextForge integration.
 
 ```shell
 export MCPGATEWAY_BASE_URL=""       # e.g: http://mcp.gateway.com:4444

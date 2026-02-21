@@ -190,7 +190,7 @@
     ```
 
 ???+ example "🌉 How do I add a peer MCP gateway?"
-    A "Gateway" is another MCP Server. The ContextForge itself is an MCP Server. This means you can add any MCP Server under "Gateways" and it will retrieve Tools/Resources/Prompts.
+    A "Gateway" is another MCP Server. ContextForge itself is an MCP Server. This means you can add any MCP Server under "Gateways" and it will retrieve Tools/Resources/Prompts.
 
     ```bash
     curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \\

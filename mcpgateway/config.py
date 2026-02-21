@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
 ContextForge AI Gateway Configuration.
-This module defines configuration settings for the ContextForge AI Gateway using Pydantic.
+This module defines configuration settings for ContextForge AI Gateway using Pydantic.
 It loads configuration from environment variables with sensible defaults.
 
 Environment variables:

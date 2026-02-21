@@ -6,7 +6,7 @@ Authors: Teryl Taylor
 
 gRPC transport for external plugins.
 
-This package provides gRPC-based communication between the ContextForge and
+This package provides gRPC-based communication between ContextForge and
 external plugin servers. It offers a faster binary protocol alternative to
 the MCP/HTTP transport while maintaining the same plugin semantics.
 

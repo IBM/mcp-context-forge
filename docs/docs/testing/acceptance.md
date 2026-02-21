@@ -140,7 +140,7 @@ graph TB
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
-| Create Markdown Resource | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to the ContextForge!"}' $GW_URL/resources \| jq` | Create README | Success (201) | ☐ | Markdown content |
+| Create Markdown Resource | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to ContextForge!"}' $GW_URL/resources \| jq` | Create README | Success (201) | ☐ | Markdown content |
 | Create JSON Resource | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"uri": "config/app", "name": "app_config", "mimeType": "application/json", "content": "{\"version\": \"1.0.0\", \"debug\": false}"}' $GW_URL/resources \| jq` | Create config | Success (201) | ☐ | JSON content |
 | List Resources | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/resources \| jq` | List all resources | Shows created resources | ☐ | Verify creation |
 | Get Resource Content | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/resources/{resource-id}/content` | Read resource | Returns actual content | ☐ | May use caching |

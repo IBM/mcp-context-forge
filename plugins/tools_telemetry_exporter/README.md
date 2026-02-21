@@ -45,7 +45,7 @@ config:
 
 ## Requirements
 
-OpenTelemetry enabled on MCP context forge (see [Observability Setup](../../docs/docs/manage/observability.md#opentelemetry-external)).
+OpenTelemetry enabled on ContextForge (see [Observability Setup](../../docs/docs/manage/observability.md#opentelemetry-external)).
 
 
 ## Usage

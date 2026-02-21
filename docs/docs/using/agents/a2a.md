@@ -1,6 +1,6 @@
 # A2A (Agent-to-Agent) Integration
 
-The ContextForge supports A2A (Agent-to-Agent) integration, allowing you to register external AI agents and expose them as MCP tools for seamless integration with other agents and MCP clients.
+ContextForge supports A2A (Agent-to-Agent) integration, allowing you to register external AI agents and expose them as MCP tools for seamless integration with other agents and MCP clients.
 
 ## Overview
 

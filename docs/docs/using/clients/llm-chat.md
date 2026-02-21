@@ -83,7 +83,7 @@ Navigate to the **LLM Chat** tab in the admin interface. The interface features 
 
 ### Step 1: 🌐 Select a Virtual Server
 
-All the Virtual servers created in the ContextForge Gateway will be displayed in the left card.
+All the Virtual servers created in ContextForge Gateway will be displayed in the left card.
 Click the **Refresh Servers** button to reload available virtual servers, if needed. Each server card displays:
 
 - 📛 Server name and description

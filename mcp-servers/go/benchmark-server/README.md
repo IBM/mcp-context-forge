@@ -363,4 +363,4 @@ Apache-2.0
 
 ## Contributing
 
-This is a benchmarking tool for the ContextForge project. Contributions are welcome!
+This is a benchmarking tool for ContextForge project. Contributions are welcome!

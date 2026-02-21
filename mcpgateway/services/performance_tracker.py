@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Performance Tracking Service.
 
 This module provides performance tracking and analytics for all operations
-across the ContextForge, enabling identification of bottlenecks and
+across ContextForge, enabling identification of bottlenecks and
 optimization opportunities.
 """
 

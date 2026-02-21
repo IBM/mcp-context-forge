@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Status**: Stable
 
-The ContextForge Plugin Framework provides a comprehensive, production-ready system for extending ContextForge functionality through pluggable middleware components. These plugins interpose calls to MCP and agentic components to apply security, AI, business logic, and monitoring capabilities to existing flows. This specification defines the architecture, interfaces, and protocols for developing, deploying, and managing plugins within the MCP ecosystem.
+ContextForge Plugin Framework provides a comprehensive, production-ready system for extending ContextForge functionality through pluggable middleware components. These plugins interpose calls to MCP and agentic components to apply security, AI, business logic, and monitoring capabilities to existing flows. This specification defines the architecture, interfaces, and protocols for developing, deploying, and managing plugins within the MCP ecosystem.
 
 ## Table of Contents
 

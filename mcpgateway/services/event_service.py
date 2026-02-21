@@ -7,7 +7,7 @@ Authors: Keval Mahajan
 
 Description:
     This module implements a Centralized Event Service designed to decouple event
-    producers from consumers within the ContextForge architecture for various services
+    producers from consumers within ContextForge architecture for various services
     such as gateway_service, tool_service, and more.
 
     - Primary Transport (Redis): Uses Redis Pub/Sub for distributed event

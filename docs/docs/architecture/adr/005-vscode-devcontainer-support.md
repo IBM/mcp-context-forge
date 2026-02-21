@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-New contributors to the ContextForge project face significant setup friction when trying to get a development environment running. The manual setup process requires:
+New contributors to ContextForge project face significant setup friction when trying to get a development environment running. The manual setup process requires:
 
 - Installing Python 3.11
 - Installing Docker/Podman

@@ -36,7 +36,7 @@ The plugin automatically integrates with the Python fallback implementation in `
 
 ## Configuration
 
-The plugin supports extensive configuration through the ContextForge plugin system:
+The plugin supports extensive configuration through ContextForge plugin system:
 
 ```yaml
 # plugins/config.yaml

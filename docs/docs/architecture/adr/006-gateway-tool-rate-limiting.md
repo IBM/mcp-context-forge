@@ -6,7 +6,7 @@
 
 ## Context
 
-The ContextForge may serve hundreds of concurrent clients accessing multiple tools.
+ContextForge may serve hundreds of concurrent clients accessing multiple tools.
 Without protection, a single client or misbehaving tool could monopolize resources or overwhelm upstream services.
 
 The configuration includes:

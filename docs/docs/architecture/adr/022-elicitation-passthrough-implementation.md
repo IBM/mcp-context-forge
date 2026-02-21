@@ -39,7 +39,7 @@ sequenceDiagram
 
 ### Gateway Architectural Challenge
 
-The ContextForge operates as both:
+ContextForge operates as both:
 
 1. **Server to downstream clients** (Claude Desktop, API consumers)
 2. **Client to upstream servers** (MCP servers, federated gateways)

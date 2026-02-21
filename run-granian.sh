@@ -2,7 +2,7 @@
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-granian.sh
 #  Author : Mihai Criveti
-#  Purpose: Launch the ContextForge API under Granian (Rust-based ASGI server)
+#  Purpose: Launch ContextForge API under Granian (Rust-based ASGI server)
 #
 #  Description:
 #    This script provides a robust way to launch a production API server using

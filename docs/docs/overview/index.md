@@ -1,6 +1,6 @@
 # Overview
 
-Welcome to the ContextForge documentation.
+Welcome to ContextForge documentation.
 
 This section introduces what ContextForge is, the gateway patterns it supports, and what core features and capabilities it offers out of the box.
 

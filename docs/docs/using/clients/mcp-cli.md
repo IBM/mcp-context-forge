@@ -61,7 +61,7 @@ uv run mcp-cli --help
 ### Install ContextForge Gateway
 
 ```bash
-# Clone the ContextForge repository
+# Clone ContextForge repository
 git clone https://github.com/IBM/mcp-context-forge
 cd mcp-context-forge
 

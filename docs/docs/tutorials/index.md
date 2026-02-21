@@ -25,7 +25,7 @@ This tutorial helps you set up **OpenWebUI** integrated with **Ollama**, **LiteL
 - Running LLMs locally via Ollama
 - Using LiteLLM as a proxy for unified model access
 - Bridging MCP tools through MCPO to OpenWebUI
-- Managing MCP servers with the ContextForge
+- Managing MCP servers with ContextForge
 - Connecting it all through Docker networks
 
 Perfect for experimenting on your workstation or air-gapped environments.

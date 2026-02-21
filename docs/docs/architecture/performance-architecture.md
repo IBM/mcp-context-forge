@@ -1,6 +1,6 @@
 # ContextForge High-Performance Architecture
 
-This diagram showcases the performance-optimized architecture of ContextForge (ContextForge), highlighting Rust-powered components, async patterns, and scaling capabilities.
+This diagram showcases the performance-optimized architecture of ContextForge, highlighting Rust-powered components, async patterns, and scaling capabilities.
 
 ## Architecture Overview
 

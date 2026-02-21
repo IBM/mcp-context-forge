@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Admin UI Routes for ContextForge AI Gateway.
-This module contains all the administrative UI endpoints for the ContextForge AI Gateway.
+This module contains all the administrative UI endpoints for ContextForge AI Gateway.
 It provides a comprehensive interface for managing servers, tools, resources,
 prompts, gateways, and roots through RESTful API endpoints. The module handles
 all aspects of CRUD operations for these entities, including creation,
@@ -1293,7 +1293,7 @@ async def get_overview_partial(
 
     This endpoint returns a rendered HTML partial containing an architecture
     diagram showing ContextForge inputs (Virtual Servers), middleware (Plugins),
-    and outputs (A2A Agents, ContextForges, Tools, etc.) along with key metrics.
+    and outputs (A2A Agents, Gateways, Tools, etc.) along with key metrics.
 
     Args:
         request: FastAPI request object
@@ -1312,7 +1312,7 @@ async def get_overview_partial(
         servers_total = db.query(func.count(DbServer.id)).scalar() or 0  # pylint: disable=not-callable
         servers_active = db.query(func.count(DbServer.id)).filter(DbServer.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 
-        # ContextForges - uses 'enabled' field
+        # Gateways - uses 'enabled' field
         gateways_total = db.query(func.count(DbGateway.id)).scalar() or 0  # pylint: disable=not-callable
         gateways_active = db.query(func.count(DbGateway.id)).filter(DbGateway.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 

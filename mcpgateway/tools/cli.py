@@ -42,7 +42,7 @@ import typer
 import mcpgateway.plugins.tools.cli as plugins
 import mcpgateway.tools.builder.cli as builder
 
-app = typer.Typer(help="Command line tools for building, deploying, and interacting with the ContextForge AI Gateway")
+app = typer.Typer(help="Command line tools for building, deploying, and interacting with ContextForge AI Gateway")
 
 app.add_typer(plugins.app, name="plugin", help="Manage the plugin lifecycle")
 app.add_typer(builder.app, name="gateway", help="Manage the building and deployment of the gateway")

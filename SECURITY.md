@@ -68,7 +68,7 @@ Please review https://ibm.github.io/mcp-context-forge/architecture/multitenancy/
 
 ## Multi-layered Defense Strategy
 
-The ContextForge project implements a comprehensive, multi-layered security approach designed to protect against vulnerabilities at every stage of the development lifecycle. Our security strategy is built on the principle of "defense in depth," and "secure by design", incorporating Static Application Security Testing (SAST), Dynamic Application Security Testing (DAST), Software Composition Analysis (SCA), Interactive Application Security Testing (IAST), fuzz testing, mutation testing, chaos engineering, mandatory code reviews and continuous monitoring to ensure the highest security standards.
+ContextForge project implements a comprehensive, multi-layered security approach designed to protect against vulnerabilities at every stage of the development lifecycle. Our security strategy is built on the principle of "defense in depth," and "secure by design", incorporating Static Application Security Testing (SAST), Dynamic Application Security Testing (DAST), Software Composition Analysis (SCA), Interactive Application Security Testing (IAST), fuzz testing, mutation testing, chaos engineering, mandatory code reviews and continuous monitoring to ensure the highest security standards.
 
 ### Security Philosophy
 
@@ -85,7 +85,7 @@ Here's an expanded section for that part:
 - **Penetration Testing**: Regular security assessments
 - **Security Architecture Review**: All major design decisions undergo security architecture review to ensure security considerations are embedded from the earliest stages.
 
-This human-centered approach ensures that security is not just a technical implementation detail, but a fundamental aspect of how we design, build, and maintain the ContextForge service.
+This human-centered approach ensures that security is not just a technical implementation detail, but a fundamental aspect of how we design, build, and maintain ContextForge service.
 
 ### Comprehensive Security Pipeline
 
@@ -174,7 +174,7 @@ This approach ensures that security is integrated into daily development workflo
 
 ### Continuous Improvement
 
-Our security posture is continuously evolving. We regularly update our toolchain, review new security practices, and incorporate feedback from the security community. The comprehensive nature of our pipeline means that security vulnerabilities are caught early and addressed promptly, maintaining the integrity of the ContextForge service.
+Our security posture is continuously evolving. We regularly update our toolchain, review new security practices, and incorporate feedback from the security community. The comprehensive nature of our pipeline means that security vulnerabilities are caught early and addressed promptly, maintaining the integrity of ContextForge service.
 
 ---
 
@@ -219,7 +219,7 @@ Starting with 0.1.0:
 
 ### Gateway as One Layer
 
-The ContextForge provides important security controls but is designed to be **one component in a comprehensive defense-in-depth strategy**:
+ContextForge provides important security controls but is designed to be **one component in a comprehensive defense-in-depth strategy**:
 
 1. **Upstream validation**: All MCP servers should be validated and trusted before connection
 2. **Gateway validation**: Input/output validation and sanitization at the gateway level
@@ -558,7 +558,7 @@ All security patches undergo best-effort verification:
 - Container security scanning for image-based updates
 - Integration testing with dependent services
 
-This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of the ContextForge service.
+This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of ContextForge service.
 
 ---
 

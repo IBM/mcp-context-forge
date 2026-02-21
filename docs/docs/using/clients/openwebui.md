@@ -13,7 +13,7 @@ OpenWebUI supports integration with external tools via OpenAPI specifications. C
 ## 🛠️ Prerequisites
 
 - **OpenWebUI**: Ensure you have OpenWebUI installed and running. Refer to the [OpenWebUI documentation](https://docs.openwebui.com/) for installation instructions.
-- **ContextForge**: Set up and run the ContextForge. Detailed setup instructions can be found in the [ContextForge documentation](https://ibm.github.io/mcp-context-forge/).
+- **ContextForge**: Set up and run ContextForge. Detailed setup instructions can be found in the [ContextForge documentation](https://ibm.github.io/mcp-context-forge/).
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -25,17 +25,17 @@ OpenWebUI supports integration with external tools via OpenAPI specifications. C
 
 ### 1. Launch ContextForge
 
-Start the ContextForge to expose its tools via OpenAPI endpoints. For example:
+Start ContextForge to expose its tools via OpenAPI endpoints. For example:
 
 ```bash
 uv run mcpgateway
 ```
 
-Ensure that the ContextForge is accessible at a known URL, such as `http://localhost:4444` (or `http://localhost:8080` with Compose).
+Ensure that ContextForge is accessible at a known URL, such as `http://localhost:4444` (or `http://localhost:8080` with Compose).
 
 ### 2. Identify MCP Tool Endpoints
 
-Determine the specific tool endpoints provided by the ContextForge. These endpoints follow the OpenAPI specification and are typically accessible at URLs like:
+Determine the specific tool endpoints provided by ContextForge. These endpoints follow the OpenAPI specification and are typically accessible at URLs like:
 
 ```
 http://localhost:4444/tools/<tool-name>

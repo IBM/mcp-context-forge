@@ -28,7 +28,7 @@ variable "redis_version" {
 }
 
 variable "gateway_image" {
-  description = "OCI image reference for the ContextForge container"
+  description = "OCI image reference for ContextForge container"
   type        = string
   default     = "icr.io/your-namespace/mcpgateway:latest"
 }

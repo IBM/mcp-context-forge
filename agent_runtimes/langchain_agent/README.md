@@ -1,6 +1,6 @@
 # MCP LangChain Agent
 
-A production-ready LangChain agent that integrates with the ContextForge, providing both OpenAI-compatible chat completions and A2A JSON-RPC endpoints for seamless AI agent communication.
+A production-ready LangChain agent that integrates with ContextForge, providing both OpenAI-compatible chat completions and A2A JSON-RPC endpoints for seamless AI agent communication.
 
 ## 🚀 Features
 
@@ -95,14 +95,14 @@ editor .env
 ```
 
 ### Configuration
-1) Start the ContextForge (from project root):
+1) Start ContextForge (from project root):
 ```bash
 make serve
 ```
 
 ### Development Workflow
 
-**1. Start the ContextForge** (from project root):
+**1. Start ContextForge** (from project root):
 ```bash
 make serve
 ```

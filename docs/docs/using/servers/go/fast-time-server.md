@@ -47,7 +47,7 @@ docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.8.0 -transport=dual
 
 ### Using ContextForge's Translate Module
 
-The ContextForge's `translate` module can expose the stdio server via HTTP/SSE:
+ContextForge's `translate` module can expose the stdio server via HTTP/SSE:
 
 ```bash
 # Expose fast-time-server via SSE on port 8003

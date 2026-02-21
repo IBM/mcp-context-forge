@@ -1,12 +1,12 @@
 # API Usage Guide
 
-This guide provides comprehensive examples for using the ContextForge REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
+This guide provides comprehensive examples for using ContextForge REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
 
 ## Prerequisites
 
 Before using the API, you need to:
 
-1. **Start the ContextForge server**:
+1. **Start ContextForge server**:
 
     ```bash
     # Development server (port 8000, auto-reload)

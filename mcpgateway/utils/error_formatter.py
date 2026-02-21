@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 ContextForge Centralized for Pydantic validation error, SQL exception.
-This module provides centralized error formatting for the ContextForge,
+This module provides centralized error formatting for ContextForge,
 transforming technical Pydantic validation errors and SQLAlchemy database
 exceptions into user-friendly messages suitable for API responses.
 

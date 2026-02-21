@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ContextForge Metrics Service.
 
-This module provides comprehensive Prometheus metrics instrumentation for the ContextForge.
+This module provides comprehensive Prometheus metrics instrumentation for ContextForge.
 It configures and exposes HTTP metrics including request counts, latencies, response sizes,
 and custom application metrics.
 

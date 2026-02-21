@@ -9,7 +9,7 @@
 
 ## Context
 
-The ContextForge must support **federated operation**, where multiple gateway instances:
+ContextForge must support **federated operation**, where multiple gateway instances:
 
 - Automatically discover each other on a shared network
 - Exchange metadata and tool/service availability

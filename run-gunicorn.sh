@@ -2,7 +2,7 @@
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-gunicorn.sh
 #  Author : Mihai Criveti
-#  Purpose: Launch the ContextForge API under Gunicorn with optional TLS support
+#  Purpose: Launch ContextForge API under Gunicorn with optional TLS support
 #
 #  Description:
 #    This script provides a robust way to launch a production API server using
@@ -212,7 +212,7 @@ fi
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 5: Display Application Banner
-# Show a fancy ASCII art banner for the ContextForge
+# Show a fancy ASCII art banner for ContextForge
 #────────────────────────────────────────────────────────────────────────────────
 cat <<'EOF'
 ███╗   ███╗ ██████╗██████╗      ██████╗  █████╗ ████████╗███████╗██╗    ██╗ █████╗ ██╗   ██╗

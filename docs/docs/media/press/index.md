@@ -8,7 +8,7 @@
     [Read the article](https://ruslanmv.com/blog/watsonx-agent-to-mcp-gateway)
 
     !!! quote
-        This detailed, end-to-end tutorial provides a practical blueprint for developers. It walks through the entire process of building a watsonx.ai-powered agent, registering it with the ContextForge using SSE, and connecting it to a custom FastAPI frontend. The post serves as a hands-on guide for creating fully-functional, multi-component AI applications.
+        This detailed, end-to-end tutorial provides a practical blueprint for developers. It walks through the entire process of building a watsonx.ai-powered agent, registering it with ContextForge using SSE, and connecting it to a custom FastAPI frontend. The post serves as a hands-on guide for creating fully-functional, multi-component AI applications.
 
 !!! details "Getting Started with ContextForge on macOS (aiarchplaybook.substack.com)"
     **Author:** Shaikh Quader | **Publication:** AI Architect's Playbook | **Date:** June 26, 2025
@@ -31,7 +31,7 @@
     !!! quote
         "IBM's ContextForge is more than a bridge-it's a platform for accelerating GenAI transformation with agility and confidence. For startups and enterprises navigating the complex AI tool landscape, this innovation brings a modular, future-proof path to build smarter, scalable, and context-aware applications."
 
-        The article breaks down the technical benefits of the ContextForge and positions it as a game-changer for reducing integration overhead, improving developer productivity, and democratizing AI access for early-stage companies.
+        The article breaks down the technical benefits of ContextForge and positions it as a game-changer for reducing integration overhead, improving developer productivity, and democratizing AI access for early-stage companies.
 
 !!! details "IBM Introduces ContextForge to Simplify GenAI Tool Integration (Analytics India Magazine)"
     **Author:** Ankush Das | **Publication:** Analytics India Magazine | **Date:** June 10, 2025
@@ -47,6 +47,6 @@
     [Read the article](https://geekflare.com/news/ibm-launches-mcp-gateway-to-merge-and-manage-ai-tools/)
 
     !!! quote
-        "Built on FastAPI, the ContextForge is designed to act as a unified entry point for the Model Context Protocol (MCP)... According to Ruiz, this launch is particularly relevant for teams working on agent-based systems or orchestrating multiple AI tools within enterprise environments."
+        "Built on FastAPI, ContextForge is designed to act as a unified entry point for the Model Context Protocol (MCP)... According to Ruiz, this launch is particularly relevant for teams working on agent-based systems or orchestrating multiple AI tools within enterprise environments."
 
         The article highlights ContextForge's support for JSON-Schema validation, transport layer management, and its production-ready admin UI. It also mentions IBM Consulting's influence in shaping the tool and situates the launch within IBM's broader innovation efforts, including the new Watsonx AI Labs.

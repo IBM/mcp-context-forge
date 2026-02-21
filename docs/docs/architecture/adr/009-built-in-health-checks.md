@@ -6,7 +6,7 @@
 
 ## Context
 
-ContextForges must participate in mesh/federated deployments. Faulty nodes must be detected and removed automatically.
+ContextForge instances must participate in mesh/federated deployments. Faulty nodes must be detected and removed automatically.
 Additionally, cloud-native infrastructure (like Kubernetes, Docker Swarm, or systemd watchdogs) needs a way to check local health.
 
 The gateway config supports health-related settings:

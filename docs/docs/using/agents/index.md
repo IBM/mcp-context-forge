@@ -17,7 +17,7 @@ This section provides guidance on integrating various AI agent frameworks with t
 - [Semantic Kernel](semantic-kernel.md): Connect Semantic Kernel agents to MCP servers for enriched context and tool integration.
 
 ### A2A (Agent-to-Agent) Integration (External agents in ContextForge)
-- **[A2A Integration](a2a.md)**: Complete guide to registering external AI agents in the ContextForge
+- **[A2A Integration](a2a.md)**: Complete guide to registering external AI agents in ContextForge
 - **External AI Agents**: Register external AI agents (OpenAI, Anthropic, custom) as A2A agents in the gateway
 - **Tool Exposure**: A2A agents are automatically exposed as MCP tools for other agents to discover and use
 - **Protocol Support**: Supports JSONRPC, custom protocols, and multiple authentication methods
@@ -31,7 +31,7 @@ This section provides guidance on integrating various AI agent frameworks with t
 Each integration guide includes:
 
 - **Installation Instructions**: Step-by-step setup for the respective agent framework.
-- **Configuration Details**: How to connect the agent to the ContextForge, including authentication and transport options.
+- **Configuration Details**: How to connect the agent to ContextForge, including authentication and transport options.
 - **Usage Examples**: Sample code demonstrating how to invoke MCP tools within the agent's workflow.
 - **Additional Resources**: Links to official documentation and repositories for further reference.
 

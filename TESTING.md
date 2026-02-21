@@ -1,6 +1,6 @@
-# Testing Guide for ContextForge (ContextForge)
+# Testing Guide for ContextForge
 
-This comprehensive guide covers all aspects of testing the ContextForge, from unit tests to end-to-end integration testing.
+This comprehensive guide covers all aspects of testing ContextForge, from unit tests to end-to-end integration testing.
 
 ## Table of Contents
 - [Quick Start](#quick-start)

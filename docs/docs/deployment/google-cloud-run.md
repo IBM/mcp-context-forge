@@ -262,7 +262,7 @@ gcloud sql instances patch mcpgw-db \
   --authorized-networks=0.0.0.0/0
 ```
 
-#### Deploy the ContextForge container with minimal resource allocation:
+#### Deploy ContextForge container with minimal resource allocation:
 
 ```bash
 gcloud run deploy mcpgateway \
@@ -333,7 +333,7 @@ mcpgw=> \dt;
 
 ### Generate a JWT Bearer Token
 
-Use the ContextForge container to generate a JWT token:
+Use ContextForge container to generate a JWT token:
 
 ```bash
 docker run -it --rm ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \

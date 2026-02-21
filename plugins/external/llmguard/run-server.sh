@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-server.sh
-#  Purpose: Launch the ContextForge's Plugin API
+#  Purpose: Launch ContextForge's Plugin API
 #
 #  Description:
 #    This script launches an API server using

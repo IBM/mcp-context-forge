@@ -1,13 +1,13 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#   🐍 MCP CONTEXT FORGE - Makefile
-#   (An enterprise-ready Model Context Protocol Gateway)
+#   🐍 ContextForge AI Gateway - Makefile
+#   (A unified gateway for Tools, Agents, Models, and APIs)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
 # Authors: Mihai Criveti, Manav Gupta
-# Description: Build & automation helpers for the ContextForge project
+# Description: Build & automation helpers for ContextForge project
 # Usage: run `make` or `make help` to view available targets
 #
-# help: 🐍 MCP CONTEXT FORGE  (An enterprise-ready Model Context Protocol Gateway)
+# help: 🐍 ContextForge AI Gateway  (A unified gateway for Tools, Agents, Models, and APIs)
 #
 # ──────────────────────────────────────────────────────────────────────────
 SHELL := /bin/bash

@@ -56,7 +56,7 @@ And is readily available as open source, published a container image and as a Py
 
     **[ContextForge](https://github.com/IBM/mcp-context-forge)** is a universal hub: one secure endpoint that discovers your tools and works seamlessly with Copilot, CrewAI, LangChain, and more.
 
-    > "What should be simple often becomes a debugging nightmare. The ContextForge solves that." - Mihai Criveti
+    > "What should be simple often becomes a debugging nightmare. ContextForge solves that." - Mihai Criveti
 
     **Try it in 60 seconds:**
     ```bash

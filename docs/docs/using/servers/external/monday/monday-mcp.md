@@ -81,7 +81,7 @@ MONDAY_WEBHOOK_SECRET=your_webhook_secret_here
 
 ### OAuth2.1 Flow Configuration
 
-monday.com uses OAuth2.1 for secure authentication. The ContextForge handles the OAuth flow automatically when properly configured.
+monday.com uses OAuth2.1 for secure authentication. ContextForge handles the OAuth flow automatically when properly configured.
 
 #### Step 1: Configure OAuth Endpoints
 
@@ -126,11 +126,11 @@ The response will include an authorization URL. Direct users to this URL to gran
 
 #### Step 3: Handle OAuth Callback
 
-After user authorization, monday.com redirects to your callback URL with an authorization code. The ContextForge automatically exchanges this for access and refresh tokens.
+After user authorization, monday.com redirects to your callback URL with an authorization code. ContextForge automatically exchanges this for access and refresh tokens.
 
 ### Token Management
 
-The ContextForge automatically handles:
+ContextForge automatically handles:
 
 - **Token Storage**: Securely stores access and refresh tokens
 - **Token Refresh**: Automatically refreshes expired tokens

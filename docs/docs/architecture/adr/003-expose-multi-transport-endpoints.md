@@ -6,7 +6,7 @@
 
 ## Context
 
-The ContextForge must serve diverse clients: web browsers, CLIs, language-specific SDKs, and headless daemons.
+ContextForge must serve diverse clients: web browsers, CLIs, language-specific SDKs, and headless daemons.
 Different use cases require support for both **request/response** and **streaming** interactions.
 
 Requirements:

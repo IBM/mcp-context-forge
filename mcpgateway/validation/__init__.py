@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Validation Package.
-Provides validation components for the ContextForge including:
+Provides validation components for ContextForge including:
 - JSON-RPC request/response validation
 - Tag validation and normalization
 """

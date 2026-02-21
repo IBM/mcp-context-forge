@@ -7,7 +7,7 @@
 
 ## Context
 
-The ContextForge required a robust plugin framework to support AI safety middleware, security processing, and extensible gateway capabilities. The implementation needed to support both native plugins (running in-process) and external middleware service integrations while maintaining performance, security, and operational simplicity.
+ContextForge required a robust plugin framework to support AI safety middleware, security processing, and extensible gateway capabilities. The implementation needed to support both native plugins (running in-process) and external middleware service integrations while maintaining performance, security, and operational simplicity.
 
 ## Decision
 

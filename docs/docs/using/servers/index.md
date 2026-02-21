@@ -78,7 +78,7 @@ make build && make run
 
 ## 🌐 Gateway Integration
 
-All sample servers are designed to integrate seamlessly with the ContextForge:
+All sample servers are designed to integrate seamlessly with ContextForge:
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`

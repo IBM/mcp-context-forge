@@ -130,7 +130,7 @@ OAuth tokens obtained through the Authorization Code flow are used to authentica
 
 ### Relationship to Gateway Authentication
 
-This OAuth flow is **separate** from user authentication to the ContextForge itself:
+This OAuth flow is **separate** from user authentication to ContextForge itself:
 
 | Aspect | Gateway OAuth (this doc) | User Auth to Gateway |
 |--------|-------------------------|---------------------|

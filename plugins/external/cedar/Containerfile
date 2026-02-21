@@ -41,7 +41,7 @@ LABEL maintainer="ContextForge Team" \
       name="mcp/mcppluginserver" \
       version="${VERSION}" \
       url="https://github.com/IBM/mcp-context-forge" \
-      description="MCP Plugin Server for the ContextForge"
+      description="MCP Plugin Server for ContextForge"
 
 # App entrypoint
 ENTRYPOINT ["sh", "-c", "${HOME}/run-server.sh"]

@@ -216,7 +216,7 @@ sequenceDiagram
 
 ## Relationship to Gateway Authentication
 
-This OAuth flow is for **upstream server authentication** and is separate from user authentication to the ContextForge:
+This OAuth flow is for **upstream server authentication** and is separate from user authentication to ContextForge:
 
 | Aspect | Gateway OAuth (this doc) | User Auth to Gateway |
 |--------|-------------------------|---------------------|

@@ -4,7 +4,7 @@ The **ContextForge** (ContextForge) is a production-grade gateway, proxy, and re
 
 ## High-Level Architecture Summary
 
-**ContextForge (ContextForge)** is a comprehensive production-grade gateway built on modern Python technologies with a performance-first approach. For a detailed visual diagram of the high-performance components (Rust-powered libraries, async patterns, caching layers, and Kubernetes scaling), see the [Performance Architecture Diagram](performance-architecture.md).
+**ContextForge** is a comprehensive production-grade gateway built on modern Python technologies with a performance-first approach. For a detailed visual diagram of the high-performance components (Rust-powered libraries, async patterns, caching layers, and Kubernetes scaling), see the [Performance Architecture Diagram](performance-architecture.md).
 
 ## Design Diagrams
 
@@ -196,7 +196,7 @@ ContextForge is architected for **maximum deployment flexibility**, from standal
 
 ### Modular Standalone Execution
 
-The ContextForge ecosystem consists of **independently deployable modules** that can run standalone or be composed together:
+ContextForge ecosystem consists of **independently deployable modules** that can run standalone or be composed together:
 
 **Core Gateway:**
 

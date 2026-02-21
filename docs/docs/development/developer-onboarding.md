@@ -1,6 +1,6 @@
 # ✅ Developer Onboarding Checklist
 
-> Follow this checklist to set up your development environment, verify all features, and ensure consistent onboarding across the ContextForge project.
+> Follow this checklist to set up your development environment, verify all features, and ensure consistent onboarding across ContextForge project.
 
 ---
 

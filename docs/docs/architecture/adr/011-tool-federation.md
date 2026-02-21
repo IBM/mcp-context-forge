@@ -1,4 +1,4 @@
-# ADR-0011: Allow gateways to add tools with the same server side name to the ContextForge without conflict
+# ADR-0011: Allow gateways to add tools with the same server side name to ContextForge without conflict
 
 - *Status:* Implemented
 - *Date:* 2025-06-22

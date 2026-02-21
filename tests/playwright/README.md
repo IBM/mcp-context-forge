@@ -1,6 +1,6 @@
 # 🎭 Playwright UI Tests for ContextForge
 
-This directory contains end-to-end UI tests for the ContextForge admin interface and web UI components using [Playwright](https://playwright.dev/).
+This directory contains end-to-end UI tests for ContextForge admin interface and web UI components using [Playwright](https://playwright.dev/).
 
 ## 📁 Directory Structure
 

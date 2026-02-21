@@ -196,7 +196,7 @@ curl http://localhost:4000/v1/models \
 
 ### Step 4: Set Up ContextForge
 
-Deploy the ContextForge (ContextForge) for managing MCP servers:
+Deploy ContextForge for managing MCP servers:
 
 ```bash
 # Create data directory
@@ -224,7 +224,7 @@ docker exec mcpgateway \
   --username admin@example.com --exp 10080 --secret your-secret-key
 ```
 
-Access the ContextForge UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
+Access ContextForge UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
 
 ### Step 5: Deploy MCPO
 
