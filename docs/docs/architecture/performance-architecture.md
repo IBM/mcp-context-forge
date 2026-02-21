@@ -96,6 +96,11 @@ This diagram showcases the performance-optimized architecture of MCP Gateway (Co
 │  │  │  │  TTL: 30s      │ │  TTL: 60s      │ │  TTL: 15-20s   │ │   TTL: 30-60s  │ │   TTL: 60s  │ │   ││
 │  │  │  │  <1ms auth     │ │  0-1 queries   │ │  95%+ hit rate │ │  Dashboard opt │ │  42K→0 qry  │ │   ││
 │  │  │  └────────────────┘ └────────────────┘ └────────────────┘ └────────────────┘ └─────────────┘ │   ││
+│  │  │  ┌────────────────────────────────────────────────────────────────────────────────────────┐   │   ││
+│  │  │  │                         Metrics Aggregation Cache (Redis-backed)                       │   │   ││
+│  │  │  │  TTL: 60s  │  Shared across instances  │  Solves #2643 metric fluctuation             │   │   ││
+│  │  │  │  Caches PostgreSQL aggregates (func.sum/count)  │  Auto-invalidates on buffer flush   │   │   ││
+│  │  │  └────────────────────────────────────────────────────────────────────────────────────────┘   │   ││
 │  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘   ││
 │  │                                                                                                     ││
 │  │  ┌───────────────────────────────────────────────────────────────────────────────────────────────┐  ││
@@ -198,6 +203,7 @@ This diagram showcases the performance-optimized architecture of MCP Gateway (Co
 | **Auth Cache** | >90% | 8-15ms → 1-3ms | 3-4 → 0-1 queries/request |
 | **Registry Cache** | 95%+ | Variable | 50-200 → 0-1 queries |
 | **GlobalConfig Cache** | 99%+ | 1ms → 0.00001ms | 42K+ queries eliminated |
+| **Metrics Aggregation Cache** | 80%+ | 50-200ms → <1ms | PostgreSQL aggregate queries |
 
 ### Compression & Bandwidth
 
@@ -233,6 +239,7 @@ This diagram showcases the performance-optimized architecture of MCP Gateway (Co
 | #1828, #1837 | SSE/logging micro-optimizations | Reduced allocation overhead |
 | #1844 | Monitoring profile | Production observability |
 | #2025 | Startup resilience (exponential backoff) | Prevents crash-loop CPU storms |
+| #2643 | Redis-backed metrics cache | Consistent metrics in multi-instance deployments |
 
 ## Startup Resilience
 

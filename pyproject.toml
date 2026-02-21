@@ -607,7 +607,8 @@ env = [
     "MCPGATEWAY_ADMIN_API_ENABLED=true",
     "MCPGATEWAY_UI_ENABLED=true",
     "DATABASE_URL=sqlite:///:memory:",
-    "TEST_DATABASE_URL=sqlite:///:memory:"
+    "TEST_DATABASE_URL=sqlite:///:memory:",
+    "METRICS_CACHE_USE_REDIS=false"
 ]
 
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====

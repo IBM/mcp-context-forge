@@ -236,7 +236,7 @@ class ResourceService:
         cache_key = f"top_resources:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
-            cached = metrics_cache.get(cache_key)
+            cached = await metrics_cache.get_async(cache_key)
             if cached is not None:
                 return cached
 
@@ -257,7 +257,7 @@ class ResourceService:
 
         # Cache the result (if enabled)
         if is_cache_enabled():
-            metrics_cache.set(cache_key, top_performers)
+            await metrics_cache.set_async(cache_key, top_performers)
 
         return top_performers
 
@@ -2780,8 +2780,8 @@ class ResourceService:
             # First-Party
             from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-            metrics_cache.invalidate_prefix("top_resources:")
-            metrics_cache.invalidate("resources")
+            await metrics_cache.invalidate_prefix_async("top_resources:")
+            await metrics_cache.invalidate_async("resources")
 
             # Notify subscribers
             await self._notify_resource_updated(resource)
@@ -3544,7 +3544,7 @@ class ResourceService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         if is_cache_enabled():
-            cached = metrics_cache.get("resources")
+            cached = await metrics_cache.get_async("resources")
             if cached is not None:
                 return ResourceMetrics(**cached)
 
@@ -3567,7 +3567,7 @@ class ResourceService:
 
         # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("resources", metrics.model_dump())
+            await metrics_cache.set_async("resources", metrics.model_dump())
 
         return metrics
 
@@ -3596,8 +3596,8 @@ class ResourceService:
         # First-Party
         from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-        metrics_cache.invalidate("resources")
-        metrics_cache.invalidate_prefix("top_resources:")
+        await metrics_cache.invalidate_async("resources")
+        await metrics_cache.invalidate_prefix_async("top_resources:")
 
 
 # Lazy singleton - created on first access, not at module import time.

@@ -196,6 +196,110 @@ You can load your `.env` as a ConfigMap:
 
 ---
 
+## 🔄 Multi-Instance Deployments with Redis
+
+When deploying multiple gateway replicas behind a load balancer, configure Redis for shared metrics caching to ensure consistent metrics display across all instances.
+
+### Why Redis is Required for Multi-Instance
+
+Without Redis, each gateway instance maintains its own in-memory metrics cache. This causes:
+- **Fluctuating metrics values** on page refresh (different instances return different cached values)
+- **Non-monotonic totals** (values appear to decrease when hitting different instances)
+- **Inconsistent dashboards** (metrics vary based on which instance serves the request)
+
+See [Issue #2643](https://github.com/IBM/mcp-context-forge/issues/2643) for technical details.
+
+### Redis Configuration
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcpgateway-env
+data:
+  HOST: "0.0.0.0"
+  PORT: "4444"
+  DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp"
+  REDIS_URL: "redis://redis-service:6379"
+  METRICS_CACHE_USE_REDIS: "true"  # Required for multi-instance
+  METRICS_CACHE_TTL_SECONDS: "60"
+  JWT_SECRET_KEY: "your-secret-key"
+  PLATFORM_ADMIN_EMAIL: "admin@example.com"
+  PLATFORM_ADMIN_PASSWORD: "changeme"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpgateway
+spec:
+  replicas: 3  # Multiple instances
+  selector:
+    matchLabels:
+      app: mcpgateway
+  template:
+    metadata:
+      labels:
+        app: mcpgateway
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/YOUR_ORG/mcpgateway:latest
+          ports:
+            - containerPort: 4444
+          envFrom:
+            - configMapRef:
+                name: mcpgateway-env
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+```
+
+### Verification
+
+After deployment, verify Redis cache is working:
+
+```bash
+# Check gateway logs for Redis initialization
+kubectl logs -l app=mcpgateway | grep "Redis backend"
+# Should show: "MetricsCache initialized with Redis backend"
+
+# Connect to Redis and check cache keys
+kubectl exec -it deploy/redis -- redis-cli
+> KEYS metrics:*
+> GET metrics:aggregate:total_executions
+> TTL metrics:aggregate:total_executions
+```
+
+---
+
 ## 🗄 Database Deployment Examples
 
 ### MySQL Deployment

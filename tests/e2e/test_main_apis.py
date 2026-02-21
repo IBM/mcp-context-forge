@@ -62,6 +62,8 @@ from sqlalchemy.pool import StaticPool
 
 # Standard
 # Patch bootstrap_db to prevent it from running during tests
+# Disable Redis for metrics cache in tests (prevents event loop issues)
+os.environ["METRICS_CACHE_USE_REDIS"] = "false"
 
 with mock_patch("mcpgateway.bootstrap_db.main"):
     # First-Party
@@ -229,9 +231,18 @@ async def temp_db():
     sec_patcher = patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
     sec_patcher.start()
 
+    # Replace metrics_cache singleton with local-only version to prevent Redis event loop issues
+    # First-Party
+    from mcpgateway.cache.metrics_cache import MetricsCache
+
+    local_metrics_cache = MetricsCache(redis_client=None, ttl_seconds=10)
+    cache_patcher = patch("mcpgateway.cache.metrics_cache.metrics_cache", local_metrics_cache)
+    cache_patcher.start()
+
     yield engine
 
     # Cleanup
+    cache_patcher.stop()
     sec_patcher.stop()
     test_user_context_db.close()
     app.dependency_overrides.clear()

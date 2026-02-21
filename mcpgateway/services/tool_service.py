@@ -491,7 +491,7 @@ class ToolService:
         cache_key = f"top_tools:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
-            cached = metrics_cache.get(cache_key)
+            cached = await metrics_cache.get_async(cache_key)
             if cached is not None:
                 return cached
 
@@ -507,7 +507,7 @@ class ToolService:
 
         # Cache the result (if enabled)
         if is_cache_enabled():
-            metrics_cache.set(cache_key, top_performers)
+            await metrics_cache.set_async(cache_key, top_performers)
 
         return top_performers
 
@@ -2351,8 +2351,8 @@ class ToolService:
             # First-Party
             from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-            metrics_cache.invalidate_prefix("top_tools:")
-            metrics_cache.invalidate("tools")
+            await metrics_cache.invalidate_prefix_async("top_tools:")
+            await metrics_cache.invalidate_async("tools")
         except PermissionError as pe:
             db.rollback()
 
@@ -4465,7 +4465,7 @@ class ToolService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         if is_cache_enabled():
-            cached = metrics_cache.get("tools")
+            cached = await metrics_cache.get_async("tools")
             if cached is not None:
                 return cached
 
@@ -4478,7 +4478,7 @@ class ToolService:
 
         # Cache the result (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("tools", metrics)
+            await metrics_cache.set_async("tools", metrics)
 
         return metrics
 
@@ -4513,8 +4513,8 @@ class ToolService:
         # First-Party
         from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-        metrics_cache.invalidate("tools")
-        metrics_cache.invalidate_prefix("top_tools:")
+        await metrics_cache.invalidate_async("tools")
+        await metrics_cache.invalidate_prefix_async("top_tools:")
 
     async def create_tool_from_a2a_agent(
         self,

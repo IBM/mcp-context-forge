@@ -1291,6 +1291,7 @@ class Settings(BaseSettings):
     # Metrics Cache Configuration (for caching aggregate metrics queries)
     metrics_cache_enabled: bool = Field(default=True, description="Enable in-memory caching for aggregate metrics queries")
     metrics_cache_ttl_seconds: int = Field(default=60, ge=1, le=300, description="TTL for cached aggregate metrics in seconds")
+    metrics_cache_use_redis: bool = Field(default=False, description="Use Redis for shared metrics cache (required for multi-instance deployments)")
 
     # Metrics Cleanup Configuration (automatic deletion of old metrics)
     metrics_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of old metrics data")
