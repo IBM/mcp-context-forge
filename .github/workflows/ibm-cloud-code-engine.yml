@@ -107,11 +107,15 @@ jobs:
           CF_DEFAULT_USER_PASSWORD: ${{ secrets.CF_DEFAULT_USER_PASSWORD }}
         run: |
           missing=()
+          placeholder=()
           for var in CF_IBM_CLOUD_API_KEY CF_JWT_SECRET_KEY CF_BASIC_AUTH_PASSWORD \
                      CF_AUTH_ENCRYPTION_SECRET CF_PLATFORM_ADMIN_PASSWORD \
                      CF_DEFAULT_USER_PASSWORD; do
-            if [ -z "${!var}" ]; then
+            val="${!var}"
+            if [ -z "$val" ]; then
               missing+=("$var")
+            elif [ "$val" = "-" ] || [ "$val" = "changeme" ] || [ "$val" = "CHANGE_ME" ]; then
+              placeholder+=("$var")
             fi
           done
           for var in IBM_CLOUD_REGION REGISTRY_HOSTNAME ICR_NAMESPACE \
@@ -123,6 +127,11 @@ jobs:
           done
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::Required secrets/variables are empty or unconfigured: ${missing[*]}"
+            exit 1
+          fi
+          if [ ${#placeholder[@]} -gt 0 ]; then
+            echo "::error::Secrets contain placeholder values (e.g. '-', 'changeme'): ${placeholder[*]}"
+            echo "::error::Update these in GitHub → Settings → Environments → production → Secrets"
             exit 1
           fi
           echo "All required secrets and variables are present."
