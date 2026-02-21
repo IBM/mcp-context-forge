@@ -10,7 +10,12 @@ STATIC_DIR="${SCRIPT_DIR}/../app/mcpgateway/static/vendor"
 # Create vendor directory structure
 mkdir -p "${STATIC_DIR}/tailwindcss"
 mkdir -p "${STATIC_DIR}/htmx"
+mkdir -p "${STATIC_DIR}/codemirror/addon/mode"
 mkdir -p "${STATIC_DIR}/codemirror/mode/javascript"
+mkdir -p "${STATIC_DIR}/codemirror/mode/python"
+mkdir -p "${STATIC_DIR}/codemirror/mode/shell"
+mkdir -p "${STATIC_DIR}/codemirror/mode/go"
+mkdir -p "${STATIC_DIR}/codemirror/mode/rust"
 mkdir -p "${STATIC_DIR}/codemirror/theme"
 mkdir -p "${STATIC_DIR}/alpinejs"
 mkdir -p "${STATIC_DIR}/chartjs"
@@ -34,8 +39,23 @@ echo "  ⬇️  CodeMirror 5.65.18..."
 curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js" \
   -o "${STATIC_DIR}/codemirror/codemirror.min.js"
 
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/mode/simple.min.js" \
+  -o "${STATIC_DIR}/codemirror/addon/mode/simple.min.js"
+
 curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js" \
   -o "${STATIC_DIR}/codemirror/mode/javascript/javascript.min.js"
+
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js" \
+  -o "${STATIC_DIR}/codemirror/mode/python/python.min.js"
+
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/shell/shell.min.js" \
+  -o "${STATIC_DIR}/codemirror/mode/shell/shell.min.js"
+
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/go/go.min.js" \
+  -o "${STATIC_DIR}/codemirror/mode/go/go.min.js"
+
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/rust/rust.min.js" \
+  -o "${STATIC_DIR}/codemirror/mode/rust/rust.min.js"
 
 curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css" \
   -o "${STATIC_DIR}/codemirror/codemirror.min.css"
@@ -64,9 +84,6 @@ for font in fa-solid-900.woff2 fa-regular-400.woff2 fa-brands-400.woff2; do
   curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/${font}" \
     -o "${STATIC_DIR}/fontawesome/webfonts/${font}"
 done
-
-# Fix Font Awesome CSS paths for local serving (change ../webfonts to ./webfonts)
-sed -i 's|../webfonts|./webfonts|g' "${STATIC_DIR}/fontawesome/css/all.min.css"
 
 echo "✅ All CDN assets downloaded successfully to ${STATIC_DIR}"
 echo ""
