@@ -508,10 +508,10 @@ if (!window.getChartDefaults) {
     <div class="mb-8 pb-4 border-b-2 border-gray-200 dark:border-gray-700">
         <!-- Title and Filters Row -->
         <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
-            <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <span>🔍</span>
                 Observability Dashboard
-            </h1>
+            </h2>
             <div class="flex gap-4 items-center" x-show="viewMode === 'traces'">
             <select
                 x-model="selectedQueryId"
@@ -776,7 +776,7 @@ if (!window.getChartDefaults) {
          @click.self="showSaveQueryModal = false">
         <div class="bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full mx-4 p-8 shadow-2xl">
             <div class="flex justify-between items-center mb-6 pb-4 border-b border-gray-200 dark:border-gray-700">
-                <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 m-0">💾 Save Query</h2>
+                <h3 class="text-2xl font-bold text-gray-900 dark:text-gray-100 m-0">💾 Save Query</h3>
                 <button @click="showSaveQueryModal = false" class="bg-transparent border-0 text-2xl cursor-pointer text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100">×</button>
             </div>
 
