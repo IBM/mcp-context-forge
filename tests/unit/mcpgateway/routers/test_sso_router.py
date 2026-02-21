@@ -307,6 +307,46 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie(monkeypatch: pytest.MonkeyPatch, caplog):
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+    monkeypatch.setattr(sso_router.settings, "environment", "development")
+    monkeypatch.setattr(sso_router.settings, "secure_cookies", False)
+    monkeypatch.setattr(sso_router.settings, "cookie_samesite", "lax")
+    monkeypatch.setattr(sso_router.settings, "app_root_path", "/")
+    monkeypatch.setattr(sso_router.settings, "token_expiry", 60)
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            # Trigger "too large for cookie storage" branch in router callback.
+            return {"email": "user@example.com"}, {"id_token": "x" * 3900}
+
+        async def authenticate_or_create_user(self, *_args, **_kwargs):
+            return "token"
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    import mcpgateway.utils.security_cookies as cookie_module
+
+    set_cookie = MagicMock()
+    monkeypatch.setattr(cookie_module, "set_auth_cookie", set_cookie)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+
+    response = await sso_router.handle_sso_callback("keycloak", "code", "state", request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    assert response.headers.get("location", "").endswith("/admin")
+    assert "sso_id_token_hint=" not in response.headers.get("set-cookie", "")
+    assert "id_token too large for cookie storage" in caplog.text
+    assert set_cookie.called
+
+
+@pytest.mark.asyncio
 async def test_create_sso_provider_conflict(monkeypatch: pytest.MonkeyPatch):
     class DummyService:
         def __init__(self, _db):

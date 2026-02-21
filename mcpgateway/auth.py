@@ -990,7 +990,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    logger.debug("Attempting authentication with token: %s...", credentials.credentials[:20])
+    logger.debug("Attempting authentication with bearer credentials")
     email = None
 
     try:
@@ -1278,7 +1278,6 @@ async def get_current_user(
         logger.debug("JWT validation failed with error: %s, trying database API token", jwt_error)
         try:
             token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-            logger.debug("Generated token hash: %s", token_hash)
 
             # Lookup API token using fresh session in thread pool
             api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)

@@ -1317,9 +1317,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Debug: Check if token was decrypted
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
-                logger.error(f"Token appears to be encrypted! Encryption service may have failed. Token length: {len(access_token)}")
+                logger.error("OAuth token decryption may have failed before gateway initialization")
             else:
-                logger.info(f"Using decrypted OAuth token for {gateway.name} (length: {len(access_token)})")
+                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}

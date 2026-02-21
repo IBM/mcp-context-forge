@@ -24,9 +24,11 @@ TODO: this test bails out on the first failed validation pattern, need to fix th
 """
 
 # Standard
+import ast
 from datetime import datetime
 import json
 import logging
+from pathlib import Path
 from unittest.mock import patch
 
 # Third-Party
@@ -2098,6 +2100,117 @@ class TestSecurityBestPractices:
 
         ratio = max(valid_median, invalid_median) / min(valid_median, invalid_median)
         assert ratio < 1.5, f"Timing difference too large: {ratio:.2f}x"
+
+
+class TestSensitiveLoggingRegressions:
+    """Prevent regressions where raw credentials/tokens are logged."""
+
+    SENSITIVE_IDENTIFIERS = {
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "id_token",
+        "registration_access_token",
+        "auth_value",
+        "auth_token",
+        "authorization",
+        "password",
+        "token",
+    }
+
+    SAFE_TOKEN_OBJECT_FIELDS = {"id", "jti", "name", "token_hash"}
+
+    @classmethod
+    def _is_safe_token_attribute(cls, expression: ast.AST) -> bool:
+        """Allow non-secret token metadata logs (e.g. token.id, token.name)."""
+        return (
+            isinstance(expression, ast.Attribute)
+            and isinstance(expression.value, ast.Name)
+            and expression.value.id == "token"
+            and expression.attr in cls.SAFE_TOKEN_OBJECT_FIELDS
+        )
+
+    @classmethod
+    def _contains_sensitive_identifier(cls, expression: ast.AST) -> bool:
+        """Detect direct logging of sensitive variables or attributes."""
+        if cls._is_safe_token_attribute(expression):
+            return False
+
+        for node in ast.walk(expression):
+            if isinstance(node, ast.Name) and node.id in cls.SENSITIVE_IDENTIFIERS:
+                return True
+            if isinstance(node, ast.Attribute) and node.attr in cls.SENSITIVE_IDENTIFIERS:
+                return True
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "credentials" and node.attr == "credentials":
+                return True
+
+        return False
+
+    def test_contains_sensitive_identifier_detects_name(self):
+        """Name nodes for sensitive identifiers are flagged."""
+        expr = ast.parse("token").body[0].value
+        assert self._contains_sensitive_identifier(expr) is True
+
+    def test_contains_sensitive_identifier_detects_sensitive_attribute(self):
+        """Attribute nodes for sensitive identifiers are flagged."""
+        expr = ast.parse("ctx.access_token").body[0].value
+        assert self._contains_sensitive_identifier(expr) is True
+
+    def test_contains_sensitive_identifier_detects_credentials_attribute(self):
+        """Special-case credentials.credentials is treated as sensitive."""
+        expr = ast.parse("credentials.credentials").body[0].value
+        assert self._contains_sensitive_identifier(expr) is True
+
+    def test_runtime_logger_scan_reports_sensitive_interpolation(self, tmp_path, monkeypatch):
+        """Scanner should fail when a runtime logger call interpolates token data."""
+        bad_file = tmp_path / "bad_runtime_log.py"
+        bad_file.write_text(
+            "import logging\n"
+            "logger = logging.getLogger(__name__)\n"
+            "def f(token):\n"
+            "    logger.info(f'bad {token}')\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(Path, "rglob", lambda _self, _pattern: [bad_file])
+
+        with pytest.raises(AssertionError, match="Potential sensitive value logging detected"):
+            self.test_runtime_logger_calls_do_not_embed_sensitive_values()
+
+    def test_runtime_logger_calls_do_not_embed_sensitive_values(self):
+        """Scan runtime logger calls to ensure sensitive values are not interpolated."""
+        source_root = Path(__file__).resolve().parents[2] / "mcpgateway"
+        violations = []
+
+        for file_path in source_root.rglob("*.py"):
+            tree = ast.parse(file_path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not isinstance(node.func, ast.Attribute):
+                    continue
+                if node.func.attr not in {"debug", "info", "warning", "error", "exception", "critical"}:
+                    continue
+                if not isinstance(node.func.value, ast.Name) or node.func.value.id != "logger":
+                    continue
+
+                expressions_to_check = []
+
+                if node.args:
+                    message_expr = node.args[0]
+                    if isinstance(message_expr, ast.JoinedStr):
+                        for value in message_expr.values:
+                            if isinstance(value, ast.FormattedValue):
+                                expressions_to_check.append(value.value)
+                    # %-style / positional log args
+                    expressions_to_check.extend(node.args[1:])
+
+                for expr in expressions_to_check:
+                    if self._contains_sensitive_identifier(expr):
+                        violations.append(f"{file_path}:{node.lineno}")
+                        break
+
+        assert not violations, "Potential sensitive value logging detected:\n" + "\n".join(sorted(violations))
 
 
 if __name__ == "__main__":

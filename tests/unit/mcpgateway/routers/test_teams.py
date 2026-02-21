@@ -831,6 +831,24 @@ class TestTeamsRouter:
             assert "Invalid or expired invitation" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_accept_team_invitation_does_not_log_token_on_error(self, mock_user_context, mock_db, caplog):
+        """Ensure invitation token value is never logged on unexpected failures."""
+        token = "sensitive-invite-token-value"
+
+        with patch("mcpgateway.routers.teams.TeamInvitationService") as MockInviteService:
+            mock_invite_service = AsyncMock(spec=TeamInvitationService)
+            mock_invite_service.accept_invitation = AsyncMock(side_effect=RuntimeError("boom"))
+            MockInviteService.return_value = mock_invite_service
+
+            from mcpgateway.routers.teams import accept_team_invitation
+
+            with pytest.raises(HTTPException) as exc_info:
+                await accept_team_invitation(token, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            assert token not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_cancel_team_invitation_success(self, mock_user_context, mock_db, mock_invitation):
         """Test cancelling a team invitation."""
         invitation_id = mock_invitation.id
