@@ -14,7 +14,7 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 
 ## Project Overview
 
-ContextForge is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It federates MCP and REST services, providing unified discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI.
+ContextForge is a production-grade unified gateway for Tools, Agents, Models, and APIs. It federates MCP, A2A, and REST services (plus model/provider proxying), with unified discovery, auth/RBAC, rate-limiting, observability, virtual servers, multi-transport protocols, plugin extensibility, and an optional Admin UI.
 
 ## Project Structure
 
@@ -26,18 +26,22 @@ mcpgateway/                 # Core FastAPI application
 ├── schemas.py              # Pydantic validation schemas
 ├── services/               # Business logic layer (50+ services)
 ├── routers/                # HTTP endpoint definitions (19 routers)
-├── middleware/             # Cross-cutting concerns (15 middleware)
+├── middleware/             # Cross-cutting concerns (16 middleware)
 ├── transports/             # Protocol implementations (SSE, WebSocket, stdio, streamable HTTP)
 ├── plugins/                # Plugin framework infrastructure
 └── alembic/                # Database migrations
 
 tests/                      # Test suite (see tests/AGENTS.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
+plugins_rust/               # Rust plugin implementations for performance-sensitive paths
+plugin_templates/           # Starter templates for building new plugins
 charts/                     # Helm charts (see charts/AGENTS.md)
 deployment/                 # Infrastructure configs (see deployment/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
+agent_runtimes/             # Agent runtime integrations (for example LangChain runtime)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
+tools_rust/                 # Rust utilities (for example stdio wrapper tooling)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -45,7 +49,7 @@ llms/                       # End-user LLM guidance (not for code agents)
 
 ### Setup
 ```bash
-cp .env.example .env && make venv install-dev check-env    # Complete setup
+cp .env.example .env && make install-dev check-env    # Complete setup
 make venv                          # Create virtual environment with uv
 make install-dev                   # Install with dev dependencies
 make check-env                     # Verify .env against .env.example
@@ -55,7 +59,7 @@ make check-env                     # Verify .env against .env.example
 ```bash
 make dev                          # Dev server on :8000 with autoreload
 make serve                        # Production gunicorn on :4444
-make certs && make serve-ssl      # HTTPS on :4444
+make serve-ssl                    # HTTPS on :4444 (creates certs if needed)
 ```
 
 ### Code Quality
@@ -108,13 +112,15 @@ The `teams` claim in JWT tokens determines resource visibility:
 
 ## Key Environment Variables
 
+Defaults come from `mcpgateway/config.py`. `.env.example` intentionally overrides a few for local/dev convenience.
+
 ```bash
 # Core
-HOST=0.0.0.0
+HOST=127.0.0.1                  # .env.example uses 0.0.0.0
 PORT=4444
 DATABASE_URL=sqlite:///./mcp.db   # or postgresql+psycopg://...
-REDIS_URL=redis://localhost:6379
-RELOAD=true
+REDIS_URL=redis://localhost:6379/0
+RELOAD=false
 
 # Auth
 JWT_SECRET_KEY=your-secret-key
@@ -124,20 +130,20 @@ AUTH_REQUIRED=true                   # Set false ONLY for development
 AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
 
 # Features
-MCPGATEWAY_UI_ENABLED=true
-MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_UI_ENABLED=false          # .env.example sets true
+MCPGATEWAY_ADMIN_API_ENABLED=false   # .env.example sets true
 MCPGATEWAY_A2A_ENABLED=true
-PLUGINS_ENABLED=true
+PLUGINS_ENABLED=false
 PLUGIN_CONFIG_FILE=plugins/config.yaml
 
 # Logging
-LOG_LEVEL=INFO
+LOG_LEVEL=ERROR
 LOG_TO_FILE=false
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
 
 # Observability
 OBSERVABILITY_ENABLED=false
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=          # .env.example sets http://localhost:4317
 ```
 
 ## MCP Helpers
@@ -236,7 +242,7 @@ make test
 
 - **Python >= 3.11** with type hints; strict mypy
 - **Formatting**: Black (line length 200), isort (profile=black)
-- **Linting**: Ruff (F,E,W,B,ASYNC), Pylint per `pyproject.toml`
+- **Linting**: Ruff (`E3`,`E4`,`E7`,`E9`,`F`,`D1`), Pylint per `pyproject.toml`
 - **Naming**: `snake_case` functions/modules, `PascalCase` classes, `UPPER_CASE` constants
 - **Imports**: Group per isort sections (stdlib, third-party, first-party `mcpgateway`, local)
 
@@ -249,6 +255,22 @@ make test
 - Require green lint and tests before PR
 - Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
 
+## GitHub Issues (Brief)
+
+- Prefer issue templates in `.github/ISSUE_TEMPLATE/`: `bug-report-code.md`, `feature-request.md`, `docs-issue.md`, `testing--bug--unit--manual--or-new-test-.md`, `chore-task--devops--linting--maintenance-.md`.
+- Title style should include type prefix, for example: `[BUG]: ...`, `[FEATURE]: ...`, `[DOCS]: ...`, `[TESTING]: ...`, `[CHORE]: ...`.
+- Label baseline: one primary type label (`bug` or `enhancement` or `documentation` or `testing` or `chore`) plus `triage` on new issues.
+- Add 1-3 optional scope labels as needed (for example `security`, `performance`, `ui`, `api`, `python`, `devops`, `a2a`, `mcp-protocol`).
+- Epic title format: `[EPIC][SECURITY]: Security clearance levels plugin - Bell-LaPadula MAC implementation #1245`.
+- Epic labels: `epic`, `security`, `enhancement`, `triage` (plus optional scope labels).
+
+## Maintenance Guardrails (Brief)
+
+- Source of truth precedence: `mcpgateway/config.py` and runtime code > `Makefile` targets/dependencies > `.env.example` (dev overrides) > docs/comments.
+- When auditing repo state, prioritize active source directories and ignore transient/workbench content unless explicitly requested: `todo/`, `tmp/`, `artifacts/`, `logs/`, `coverage/`.
+- Issue lifecycle labels: use `awaiting-user` when blocked on reporter feedback, `blocked` for dependency blockers, `planned` when accepted but deferred, and `fixed` only after the resolving change is merged.
+- Avoid brittle numeric claims (counts of services/routers/middleware/plugins) unless you are actively validating and updating them in the same change; otherwise describe with approximate wording.
+
 ## Important Constraints
 
 - Never mention AI assistants in PRs/diffs
@@ -259,6 +281,7 @@ make test
 
 ## Key Files
 
+- `README.md` - Canonical project overview and quick start
 - `mcpgateway/main.py` - Application entry point
 - `mcpgateway/config.py` - Environment configuration
 - `mcpgateway/db.py` - SQLAlchemy ORM models and session management
