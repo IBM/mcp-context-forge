@@ -6372,7 +6372,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
-                        f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
+                        settings.internal_rpc_url,
                         json=orjson.loads(data),
                         headers=rpc_headers,
                     )

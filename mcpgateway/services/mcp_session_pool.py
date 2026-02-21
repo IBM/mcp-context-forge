@@ -1556,7 +1556,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 internal_headers["content-type"] = "application/json"
 
                 response = await client.post(
-                    f"http://127.0.0.1:{settings.port}/rpc",
+                    settings.internal_rpc_url,
                     json={"jsonrpc": "2.0", "method": method, "params": params, "id": req_id},
                     headers=internal_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,

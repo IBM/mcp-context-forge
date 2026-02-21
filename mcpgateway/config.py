@@ -206,6 +206,15 @@ class Settings(BaseSettings):
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
+    internal_rpc_host: str = Field(
+        default="127.0.0.1",
+        description=(
+            "Internal host for RPC calls made by the gateway to itself. "
+            "Use 127.0.0.1 (default) for standard deployments. "
+            "In containerized environments with custom networking, set to the service's internal hostname. "
+            "Never use client-provided URLs as they may not be resolvable in the gateway's network (e.g., hybrid cloud mesh)."
+        ),
+    )
     client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     api_allow_basic_auth: bool = Field(
@@ -1982,6 +1991,37 @@ Disallow: /
             False
         """
         return self.transport_type in ["sse", "all"]
+
+    @property
+    def internal_rpc_url(self) -> str:
+        """Get the internal RPC endpoint URL for self-calls.
+
+        Returns the URL that the gateway should use when making RPC calls to itself.
+        This ensures calls work in all deployment scenarios including hybrid cloud mesh
+        where client-provided URLs may not be resolvable in the gateway's network.
+
+        Returns:
+            str: Internal RPC URL (e.g., "http://127.0.0.1:4444/rpc")
+
+        Examples:
+            >>> settings = Settings(port=4444, app_root_path="")
+            >>> settings.internal_rpc_url
+            'http://127.0.0.1:4444/rpc'
+            >>> settings2 = Settings(port=8080, app_root_path="/api/v1")
+            >>> settings2.internal_rpc_url
+            'http://127.0.0.1:8080/api/v1/rpc'
+            >>> settings3 = Settings(port=4444, internal_rpc_host="gateway-service")
+            >>> settings3.internal_rpc_url
+            'http://gateway-service:4444/rpc'
+            >>> settings3 = Settings(port=4444, internal_rpc_host="http://gateway-service:4444/rpc")
+            >>> settings3.internal_rpc_url
+            'http://gateway-service:4444/rpc'
+
+        """
+
+        if self.internal_rpc_host.startswith(("http://", "https://")) and self.internal_rpc_host.endswith("/rpc"):
+            return self.internal_rpc_host
+        return f"http://{self.internal_rpc_host}:{self.port}{self.app_root_path}/rpc"
 
     class DatabaseSettings(TypedDict):
         """TypedDict for SQLAlchemy database settings."""

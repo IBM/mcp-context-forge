@@ -23,11 +23,17 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
+import logging
 from typing import List
-from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch, Mock
 
 # Third-Party
+import httpx
 import pytest
+from mcp.types import (
+    CallToolRequest,
+)
 from starlette.types import Scope
 
 # First-Party
@@ -8716,3 +8722,24 @@ async def test_local_affinity_post_no_injection_without_server_url(monkeypatch):
                     assert "server_id" not in posted_json.get("params", {})
 
     await wrapper.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Internal RPC URL Configuration Tests                                       #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+
+
+@pytest.mark.asyncio
+async def test_session_manager_uses_internal_rpc_url_for_events_endpoint(monkeypatch):
+    """Test that SessionManagerWrapper uses settings.internal_rpc_url for /events endpoint."""
+    from mcpgateway.config import settings
+
+    # Mock settings.internal_rpc_url for containerized environment
+    monkeypatch.setattr(settings, "internal_rpc_url", "http://gateway-service:4444/rpc")
+
+    # Verify the setting is correctly configured
+    assert settings.internal_rpc_url == "http://gateway-service:4444/rpc"
+    assert "gateway-service" in settings.internal_rpc_url

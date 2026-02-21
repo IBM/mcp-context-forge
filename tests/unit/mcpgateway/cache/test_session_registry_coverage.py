@@ -2437,13 +2437,14 @@ class TestGenerateResponseServersPath:
         msg = {"method": "ping", "id": 55, "params": {}}
 
         with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-            await registry.generate_response(
-                message=msg,
-                transport=tr,
-                server_id=None,
-                user={"auth_token": "tok"},
-                base_url="http://host/servers/abc123",
-            )
+            with patch("mcpgateway.config.settings.internal_rpc_url", None):
+                await registry.generate_response(
+                    message=msg,
+                    transport=tr,
+                    server_id=None,
+                    user={"auth_token": "tok"},
+                    base_url="http://host/servers/abc123",
+                )
 
         call_args = mock_client.post.call_args
         url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
@@ -2491,17 +2492,67 @@ class TestGenerateResponseServersPath:
 
         with patch("mcpgateway.cache.session_registry.urlparse", fake_urlparse):
             with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+                with patch("mcpgateway.config.settings.internal_rpc_url", None):
+                    await registry.generate_response(
+                        message=msg,
+                        transport=tr,
+                        server_id=None,
+                        user={"auth_token": "tok"},
+                        base_url="http://ignored/servers/abc123",
+                    )
+
+        call_args = mock_client.post.call_args
+        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
+        assert url == "http://host/rpc"
+
+
+# ---------------------------------------------------------------------------
+# generate_response: internal_rpc_url usage
+# ---------------------------------------------------------------------------
+class TestGenerateResponseInternalRPCURL:
+    """Verify that generate_response uses settings.internal_rpc_url when set."""
+
+    @pytest.mark.asyncio
+    async def test_generate_response_uses_internal_rpc_url(self, registry, stub_db, stub_services):
+        """Verify proper usage of configured internal_rpc_url."""
+        tr = FakeSSETransport("internal_rpc_srv")
+        await registry.add_session("internal_rpc_srv", tr)
+
+        mock_response = Mock()
+        mock_response.json.return_value = {"result": "success", "id": 99}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        class MockAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return mock_client
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        msg = {"method": "ping", "id": 99, "params": {}}
+
+        # Set a distinct internal URL
+        custom_rpc_url = "http://custom-internal-host:5555/rpc"
+
+        with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+            with patch("mcpgateway.config.settings.internal_rpc_url", custom_rpc_url):
                 await registry.generate_response(
                     message=msg,
                     transport=tr,
                     server_id=None,
                     user={"auth_token": "tok"},
-                    base_url="http://ignored/servers/abc123",
+                    base_url="http://original-base-url.com/servers/test",
                 )
 
+        # Verify the client was called with the custom internal URL, NOT the base_url derived one
         call_args = mock_client.post.call_args
         url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert url == "http://host/rpc"
+        assert url == custom_rpc_url
 
 
 # ---------------------------------------------------------------------------
