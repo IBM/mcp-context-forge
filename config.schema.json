@@ -1,8 +1,8 @@
 {
-  "description": "MCP Gateway configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'MCP_Gateway'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True\n    >>> s6 = Settings(log_detailed_skip_endpoints=[\"/metrics\", \"/health\"])\n    >>> s6.log_detailed_skip_endpoints\n    ['/metrics', '/health']\n    >>> s7 = Settings(log_detailed_sample_rate=0.5)\n    >>> s7.log_detailed_sample_rate\n    0.5\n    >>> s8 = Settings(log_resolve_user_identity=True)\n    >>> s8.log_resolve_user_identity\n    True\n    >>> s9 = Settings()\n    >>> s9.log_detailed_skip_endpoints\n    []\n    >>> s9.log_detailed_sample_rate\n    1.0\n    >>> s9.log_resolve_user_identity\n    False",
+  "description": "ContextForge configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'ContextForge'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True\n    >>> s6 = Settings(log_detailed_skip_endpoints=[\"/metrics\", \"/health\"])\n    >>> s6.log_detailed_skip_endpoints\n    ['/metrics', '/health']\n    >>> s7 = Settings(log_detailed_sample_rate=0.5)\n    >>> s7.log_detailed_sample_rate\n    0.5\n    >>> s8 = Settings(log_resolve_user_identity=True)\n    >>> s8.log_resolve_user_identity\n    True\n    >>> s9 = Settings()\n    >>> s9.log_detailed_skip_endpoints\n    []\n    >>> s9.log_detailed_sample_rate\n    1.0\n    >>> s9.log_resolve_user_identity\n    False",
   "properties": {
     "app_name": {
-      "default": "MCP_Gateway",
+      "default": "ContextForge",
       "title": "App Name",
       "type": "string"
     },
@@ -417,7 +417,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Map Keycloak groups/roles to Context Forge roles (JSON: {group_or_role: role_name})",
+      "description": "Map Keycloak groups/roles to ContextForge roles (JSON: {group_or_role: role_name})",
       "title": "Sso Keycloak Role Mappings",
       "type": "object"
     },
@@ -431,7 +431,7 @@
         }
       ],
       "default": null,
-      "description": "Default Context Forge role for Keycloak users without role mapping",
+      "description": "Default ContextForge role for Keycloak users without role mapping",
       "title": "Sso Keycloak Default Role"
     },
     "sso_keycloak_resolve_team_scope_to_personal_team": {
@@ -575,7 +575,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Map EntraID groups to Context Forge roles (JSON: {group_id: role_name})",
+      "description": "Map EntraID groups to ContextForge roles (JSON: {group_id: role_name})",
       "title": "Sso Entra Role Mappings",
       "type": "object"
     },
@@ -597,6 +597,27 @@
       "description": "Synchronize role assignments on each login",
       "title": "Sso Entra Sync Roles On Login",
       "type": "boolean"
+    },
+    "sso_entra_graph_api_enabled": {
+      "default": true,
+      "description": "Enable Microsoft Graph fallback for EntraID groups overage claims",
+      "title": "Sso Entra Graph Api Enabled",
+      "type": "boolean"
+    },
+    "sso_entra_graph_api_timeout": {
+      "default": 10,
+      "description": "Timeout in seconds for Microsoft Graph group fallback requests",
+      "maximum": 120,
+      "minimum": 1,
+      "title": "Sso Entra Graph Api Timeout",
+      "type": "integer"
+    },
+    "sso_entra_graph_api_max_groups": {
+      "default": 0,
+      "description": "Maximum groups to keep from Graph fallback (0 = no limit)",
+      "minimum": 0,
+      "title": "Sso Entra Graph Api Max Groups",
+      "type": "integer"
     },
     "sso_generic_enabled": {
       "default": false,
@@ -931,7 +952,7 @@
       "type": "integer"
     },
     "dcr_client_name_template": {
-      "default": "MCP Gateway ({gateway_name})",
+      "default": "ContextForge ({gateway_name})",
       "description": "Template for client_name in DCR requests",
       "title": "Dcr Client Name Template",
       "type": "string"
@@ -1211,7 +1232,7 @@
       "title": "Smtp From Email"
     },
     "smtp_from_name": {
-      "default": "MCP Gateway",
+      "default": "ContextForge",
       "description": "From display name used for auth notifications",
       "title": "Smtp From Name",
       "type": "string"
@@ -1516,7 +1537,7 @@
     },
     "mcpgateway_bootstrap_roles_in_db_enabled": {
       "default": false,
-      "description": "Enable MCP Gateway add additional roles in db",
+      "description": "Enable ContextForge add additional roles in db",
       "title": "Mcpgateway Bootstrap Roles In Db Enabled",
       "type": "boolean"
     },
@@ -1705,7 +1726,7 @@
       "type": "boolean"
     },
     "llmchat_enabled": {
-      "default": false,
+      "default": true,
       "description": "Enable LLM Chat feature",
       "title": "Llmchat Enabled",
       "type": "boolean"
@@ -3400,7 +3421,7 @@
       "type": "boolean"
     },
     "well_known_robots_txt": {
-      "default": "User-agent: *\nDisallow: /\n\n# MCP Gateway is a private API gateway\n# Public crawling is disabled by default",
+      "default": "User-agent: *\nDisallow: /\n\n# ContextForge is a private API gateway\n# Public crawling is disabled by default",
       "title": "Well Known Robots Txt",
       "type": "string"
     },
