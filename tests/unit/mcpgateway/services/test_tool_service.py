@@ -120,7 +120,6 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_scalar_tool.scalars.return_value = mock_scalar_tool
     mock_scalar_tool.all.return_value = [mock_tool] if mock_tool else []
 
-
     test_db.execute = Mock(return_value=mock_scalar_tool)
 
     # Mock db.query() for GlobalConfig cache (Issue #1715)
@@ -2369,10 +2368,13 @@ class TestToolService:
 
             # Return an object whose scalar_one_or_none() returns the real value
             class Result:
+
                 def scalar_one_or_none(self_inner):
                     return value
+
                 def scalars(self_inner):
                     return self_inner
+
                 def all(self_inner):
                     return [value] if value else []
 
@@ -3660,7 +3662,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
+            await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()
@@ -3680,7 +3682,7 @@ class TestToolServiceTokenTeamsFiltering:
         tool_service.convert_tool_to_read = Mock(side_effect=[tool_read_a, tool_read_b])
 
         # Only team_a in token_teams - should only see team_a tools
-        result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
+        await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
 
         assert test_db.execute.called
 
@@ -4883,6 +4885,7 @@ class TestToolServiceHelpers:
             custom_name_slug="custom",
             display_name="Custom Tool",
             gateway_id=None,
+            grpc_service_id=None,
             enabled=True,
             reachable=True,
             tags=None,
@@ -6213,3 +6216,87 @@ class TestInvokeToolDirectProxyViaHeader:
                     {},
                     request_headers=request_headers,
                 )
+
+
+class TestGrpcToolInvocation:
+    """Tests for gRPC tool invocation via invoke_tool."""
+
+    @pytest.fixture
+    def tool_service(self):
+        return ToolService()
+
+    @pytest.fixture
+    def test_db(self):
+        db = MagicMock()
+        db.close = MagicMock()
+        db.commit = MagicMock()
+        return db
+
+    @pytest.fixture
+    def mock_grpc_tool(self):
+        """Create a mock gRPC tool."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "grpc-tool-1"
+        tool.original_name = "test.Svc.DoStuff"
+        tool.url = "localhost:8989"
+        tool.description = "gRPC method test.Svc.DoStuff"
+        tool.original_description = "gRPC method test.Svc.DoStuff"
+        tool.integration_type = "gRPC"
+        tool.request_type = "SSE"
+        tool.headers = {}
+        tool.input_schema = {"type": "object", "properties": {}}
+        tool.output_schema = None
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.gateway_id = None
+        tool.gateway = None
+        tool.grpc_service_id = "grpc-svc-1"
+        tool.annotations = {}
+        tool.name = "test-svc-dostuff"
+        tool.custom_name = "test.Svc.DoStuff"
+        tool.custom_name_slug = "test-svc-dostuff"
+        tool.display_name = "Test Svc Dostuff"
+        tool.enabled = True
+        tool.reachable = True
+        tool.tags = []
+        tool.team_id = None
+        tool.owner_email = "admin@example.com"
+        tool.visibility = "public"
+        tool.team = None
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_success(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """Test successful gRPC tool invocation."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"status": "ok", "value": 42})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {"key": "val"}, request_headers=None)
+
+        assert response.is_error is not True
+        assert "ok" in response.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_error(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """Test gRPC tool invocation that raises an error."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+        assert response.is_error is True
+        assert "gRPC invocation error" in response.content[0].text
+        assert "Connection refused" in response.content[0].text

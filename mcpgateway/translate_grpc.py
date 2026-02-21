@@ -20,6 +20,7 @@ try:
     # Third-Party
     from google.protobuf import descriptor_pool, json_format, message_factory
     from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+    from google.protobuf.message import DecodeError
     import grpc
     from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc  # pylint: disable=no-member
 
@@ -366,6 +367,30 @@ class GrpcEndpoint:
         if self._channel:
             self._channel.close()
             logger.info(f"Closed gRPC connection to {self._target}")
+
+    def load_file_descriptors(self, file_descriptor_protos: List[bytes]) -> None:
+        """Load serialized FileDescriptorProto bytes into the descriptor pool.
+
+        This populates the pool with message type definitions so that
+        invoke() can serialize/deserialize requests without a reflection
+        round-trip.
+
+        Args:
+            file_descriptor_protos: List of raw FileDescriptorProto bytes.
+
+        Raises:
+            ValueError: If unable to parse the protobuf descriptor
+        """
+        for proto_bytes in file_descriptor_protos:
+            fd = FileDescriptorProto()
+            try:
+                fd.ParseFromString(proto_bytes)
+            except DecodeError as err:
+                logger.error("Failed to decode protobuf: %s", proto_bytes[:100])
+                raise ValueError("Unable to parse protobuf descriptor") from err
+
+            # NOTE: Adding a descriptor is a no-op if already added
+            self._pool.Add(fd)
 
     def get_services(self) -> List[str]:
         """Get list of discovered service names.

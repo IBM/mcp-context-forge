@@ -542,6 +542,7 @@ class ToolService:
             "custom_name_slug": tool.custom_name_slug,
             "display_name": tool.display_name,
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
+            "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
@@ -2888,6 +2889,7 @@ class ToolService:
         tool_output_schema = tool_payload.get("output_schema")
         tool_oauth_config = tool_payload.get("oauth_config")
         tool_gateway_id = tool_payload.get("gateway_id")
+        tool_grpc_service_id = tool_payload.get("grpc_service_id")
 
         # Get effective timeout: per-tool timeout_ms (in seconds) or global fallback
         # timeout_ms is stored in milliseconds, convert to seconds
@@ -3816,6 +3818,23 @@ class ToolService:
                         error_message = f"HTTP {http_response.status_code}: {http_response.text}"
                         content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                         tool_result = ToolResult(content=content, is_error=True)
+                elif tool_integration_type == "gRPC" and tool_grpc_service_id:
+                    # gRPC tool invocation using the registered gRPC service
+                    try:
+                        # First-Party
+                        # NOTE: lazy import to avoid circular dependency
+                        from mcpgateway.services.grpc_service import GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
+
+                        grpc_manager = GrpcServiceManager()
+                        with fresh_db_session() as grpc_db:
+                            response = await grpc_manager.invoke_method(grpc_db, tool_grpc_service_id, tool_name_original, arguments or {})
+                        serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
+                        success = True
+                    except Exception as grpc_err:
+                        logger.error(f"gRPC tool invocation failed for {tool_name_original}: {grpc_err}")
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"gRPC invocation error: {grpc_err}")], is_error=True)
+
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
