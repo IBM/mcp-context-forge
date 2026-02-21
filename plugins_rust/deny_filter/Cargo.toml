@@ -1,0 +1,22 @@
+[package]
+name = "deny_filter"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[lib]
+name = "deny_filter"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aho-corasick = "1.1.4"
+daachorse = "1.0.0"
+pyo3 = "0.28.0"
+pyo3-stub-gen = "0.19.0"
+regex = "1.12.3"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
