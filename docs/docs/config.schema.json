@@ -1726,7 +1726,7 @@
       "type": "boolean"
     },
     "llmchat_enabled": {
-      "default": false,
+      "default": true,
       "description": "Enable LLM Chat feature",
       "title": "Llmchat Enabled",
       "type": "boolean"

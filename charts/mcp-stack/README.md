@@ -152,7 +152,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.JSON_SCHEMA_VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.LLMCHAT_CHAT_HISTORY_MAX_MESSAGES | string | `"50"` |  |
 | mcpContextForge.config.LLMCHAT_CHAT_HISTORY_TTL | string | `"3600"` |  |
-| mcpContextForge.config.LLMCHAT_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.LLMCHAT_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.LLMCHAT_SESSION_LOCK_RETRIES | string | `"10"` |  |
 | mcpContextForge.config.LLMCHAT_SESSION_LOCK_TTL | string | `"30"` |  |
 | mcpContextForge.config.LLMCHAT_SESSION_LOCK_WAIT | string | `"0.2"` |  |

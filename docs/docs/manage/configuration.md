@@ -321,7 +321,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
-| `LLMCHAT_ENABLED`             | Enable LLM Chat functionality          | `false` | bool    |
+| `LLMCHAT_ENABLED`             | Enable LLM Chat functionality          | `true` | bool    |
 | `LLM_PROVIDER`                | LLM provider selection                 | `azure_openai` | `azure_openai`, `openai`, `anthropic`, `aws_bedrock`, `ollama` |
 
 **Azure OpenAI Configuration:**

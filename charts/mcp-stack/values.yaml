@@ -310,7 +310,7 @@ mcpContextForge:
     TOOLOPS_ENABLED: "false"            # enable ToolOps feature
 
     # ─ LLM Chat Feature ─
-    LLMCHAT_ENABLED: "false"            # enable LLM Chat feature
+    LLMCHAT_ENABLED: "true"            # enable LLM Chat feature
 
     # ─ LLM Settings (Internal API) ─
     # These settings control the internal LLM API that allows the gateway to
