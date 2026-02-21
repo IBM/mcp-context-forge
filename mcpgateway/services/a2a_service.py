@@ -9,7 +9,8 @@ A2A Agent Service
 
 This module implements A2A (Agent-to-Agent) agent management for the MCP Gateway.
 It handles agent registration, listing, retrieval, updates, activation toggling, deletion,
-and interactions with A2A-compatible agents.
+and interactions with A2A-compatible agents across multiple transports (JSON-RPC, REST,
+gRPC, passthrough).  Includes agent card discovery, task persistence, and message streaming.
 """
 
 # Standard
@@ -79,6 +80,49 @@ A2A_JSONRPC_ERROR_CODES: Dict[int, str] = {
     -32004: "UnsupportedOperationError",
     -32005: "ContentTypeNotSupportedError",
 }
+
+
+# Standard
+import re as _re
+
+# Matches SecurityValidator.IDENTIFIER_PATTERN from mcpgateway/common/validators.py.
+_A2A_IDENTIFIER_RE = _re.compile(r"^[\w\-\.]+$")
+
+
+def _validate_a2a_identifier(value: str, label: str) -> str:
+    """Validate an A2A path segment against the identifier allowlist.
+
+    Rejects values containing ``/``, ``..``, or characters outside the
+    ``[\\w\\-\\.]`` set, preventing path-traversal attacks when the value
+    is interpolated into URLs or gRPC resource names.
+
+    Args:
+        value: The identifier string to validate.
+        label: Human-readable label for error messages (e.g. ``"task_id"``).
+
+    Returns:
+        The validated (stripped) value.
+
+    Raises:
+        A2AAgentError: If the value is empty or contains unsafe characters.
+
+    Examples:
+        >>> _validate_a2a_identifier("abc-123", "task_id")
+        'abc-123'
+        >>> _validate_a2a_identifier("valid.id_01", "task_id")
+        'valid.id_01'
+        >>> try:
+        ...     _validate_a2a_identifier("../../etc", "task_id")
+        ... except A2AAgentError:
+        ...     True
+        True
+    """
+    stripped = value.strip() if value else ""
+    if not stripped:
+        raise A2AAgentError(f"{label} cannot be empty")
+    if not _A2A_IDENTIFIER_RE.match(stripped):
+        raise A2AAgentError(f"{label} contains invalid characters; only alphanumeric, hyphen, underscore, and dot are allowed")
+    return stripped
 
 
 class A2AAgentError(Exception):
@@ -159,6 +203,23 @@ class A2AAgentNameConflictError(A2AAgentError):
         if not is_active:
             message += f" (currently inactive, ID: {agent_id})"
         super().__init__(message)
+
+
+class A2AAgentUpstreamError(A2AAgentError):
+    """Raised when an upstream A2A agent returns an error (HTTP 4xx/5xx, gRPC failure).
+
+    Route handlers should map this to HTTP 502 Bad Gateway to distinguish upstream
+    failures from client-side request errors.
+
+    Examples:
+        >>> try:
+        ...     raise A2AAgentUpstreamError("HTTP 500: Internal Server Error")
+        ... except A2AAgentUpstreamError as e:
+        ...     str(e)
+        'HTTP 500: Internal Server Error'
+        >>> isinstance(A2AAgentUpstreamError("x"), A2AAgentError)
+        True
+    """
 
 
 class A2AAgentService:
@@ -535,7 +596,15 @@ class A2AAgentService:
         rpc_method: str,
         rpc_params: Any,
     ) -> tuple[str, str, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Translate A2A method names to REST endpoints (A2A v0.3)."""
+        """Translate A2A method names to REST endpoints (A2A v0.3).
+
+        Returns:
+            Tuple of (http_method, url, json_body, query_params).
+
+        Raises:
+            A2AAgentError: If the method is unsupported, a required parameter
+                is missing, or an identifier fails validation.
+        """
         params = rpc_params if isinstance(rpc_params, dict) else {}
 
         parsed = urlparse(endpoint_url)
@@ -554,14 +623,18 @@ class A2AAgentService:
                 rest_base = f"{rest_base}/v1"
 
         def _task_id_from(payload: Dict[str, Any]) -> Optional[str]:
-            """Extract task ID from 'id' or 'taskId' fields."""
+            """Extract and validate task ID from 'id' or 'taskId' fields."""
             task_id = payload.get("id") or payload.get("taskId")
-            return str(task_id) if task_id is not None else None
+            if task_id is None:
+                return None
+            return _validate_a2a_identifier(str(task_id), "task_id")
 
         def _config_id_from(payload: Dict[str, Any]) -> Optional[str]:
-            """Extract push notification config ID from payload."""
+            """Extract and validate push notification config ID from payload."""
             cfg_id = payload.get("pushNotificationConfigId") or payload.get("configId")
-            return str(cfg_id) if cfg_id is not None else None
+            if cfg_id is None:
+                return None
+            return _validate_a2a_identifier(str(cfg_id), "config_id")
 
         normalized_method = str(rpc_method or "").strip().lower()
 
@@ -769,49 +842,30 @@ class A2AAgentService:
             ValueError: If invalid configuration or data is provided.
             A2AAgentError: For any other unexpected errors during registration.
 
-        Examples:
-            # TODO
         """
         try:
             agent_data.slug = slugify(agent_data.name)
             # Canonicalize transport type before persistence and invocation routing.
             raw_agent_type = getattr(agent_data, "agent_type", None)
             agent_data.agent_type = normalize_a2a_agent_type(raw_agent_type)
-            # Check for existing server with the same slug within the same team or public scope
+            # Check for existing agent with the same slug within the same team or public scope.
             if visibility.lower() == "public":
-                logger.info(f"visibility.lower(): {visibility.lower()}")
-                logger.info(f"agent_data.name: {agent_data.name}")
-                logger.info(f"agent_data.slug: {agent_data.slug}")
-                # Check for existing public a2a agent with the same slug
+                logger.debug("Checking for existing public agent with slug '%s'", agent_data.slug)
                 existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public"))
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             elif visibility.lower() == "team" and team_id:
-                # Check for existing team a2a agent with the same slug
+                # Check for existing team agent with the same slug
                 existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id))
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
             auth_type = getattr(agent_data, "auth_type", None)
-            # Support multiple custom headers
             auth_value = getattr(agent_data, "auth_value", {})
 
-            # authentication_headers: Optional[Dict[str, str]] = None
-
             if hasattr(agent_data, "auth_headers") and agent_data.auth_headers:
-                # Convert list of {key, value} to dict
                 header_dict = {h["key"]: h["value"] for h in agent_data.auth_headers if h.get("key")}
-                # Keep encoded form for persistence, but pass raw headers for initialization
-                auth_value = encode_auth(header_dict)  # Encode the dict for consistency
-                # authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
-            # elif isinstance(auth_value, str) and auth_value:
-            #    # Decode persisted auth for initialization
-            #    decoded = decode_auth(auth_value)
-            # authentication_headers = {str(k): str(v) for k, v in decoded.items()}
-            else:
-                # authentication_headers = None
-                pass
-                # auth_value = {}
+                auth_value = encode_auth(header_dict)  # Encrypted via encode_auth()
 
             oauth_config = getattr(agent_data, "oauth_config", None)
 
@@ -881,7 +935,7 @@ class A2AAgentService:
                 capabilities=agent_data.capabilities,
                 config=agent_data.config,
                 auth_type=auth_type,
-                auth_value=auth_value,  # This should be encrypted in practice
+                auth_value=auth_value,  # Encrypted via encode_auth() when auth_headers are provided
                 auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
                 tags=agent_data.tags,
@@ -1178,11 +1232,10 @@ class A2AAgentService:
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[A2AAgentRead]:
-        """
-        DEPRECATED: Use list_agents() with user_email parameter instead.
+        """DEPRECATED: Use list_agents() with user_email and token_teams parameters instead.
 
-        This method is maintained for backward compatibility but is no longer used.
-        New code should call list_agents() with user_email, team_id, and visibility parameters.
+        This method is maintained for backward compatibility.
+        New code should call list_agents() with user_email, token_teams, team_id, and visibility parameters.
 
         List A2A agents user has access to with team filtering.
 
@@ -1840,17 +1893,31 @@ class A2AAgentService:
 
     @staticmethod
     def _task_resource_name(request_payload: Dict[str, Any]) -> str:
-        """Get a `tasks/{id}` resource name from the inbound payload."""
+        """Get a ``tasks/{id}`` resource name from the inbound payload.
+
+        If a ``name`` field is supplied and already contains a ``/``
+        separator, each segment is validated individually; otherwise the
+        raw value is treated as a bare task identifier and prefixed with
+        ``tasks/``.
+
+        Raises:
+            A2AAgentError: If no identifier is present or any segment
+                fails the identifier allowlist check.
+        """
         raw_name = request_payload.get("name")
         if isinstance(raw_name, str) and raw_name.strip():
             name = raw_name.strip()
-            return name if "/" in name else f"tasks/{name}"
+            if "/" in name:
+                for segment in name.split("/"):
+                    if segment:
+                        _validate_a2a_identifier(segment, "resource_name_segment")
+                return name
+            return f"tasks/{_validate_a2a_identifier(name, 'task_name')}"
 
         for key in ("id", "taskId", "task_id"):
             task_id = request_payload.get(key)
             if isinstance(task_id, str) and task_id.strip():
-                task_value = task_id.strip()
-                return task_value if "/" in task_value else f"tasks/{task_value}"
+                return f"tasks/{_validate_a2a_identifier(task_id.strip(), 'task_id')}"
 
         raise A2AAgentError("A2A gRPC task operations require either `name` or task id (`id`, `taskId`, `task_id`).")
 
@@ -2019,8 +2086,10 @@ class A2AAgentService:
     def _load_a2a_grpc_modules() -> tuple[Any, Any]:
         """Load A2A protobuf modules with SDK fallback.
 
-        Avoids descriptor-pool collisions when both ContextForge-generated stubs
-        and the official A2A SDK stubs are available in the same Python process.
+        Tries ContextForge-generated stubs first, then falls back to the
+        official A2A SDK stubs.  This order avoids descriptor-pool collisions
+        when both stub packages coexist in the same Python process (the
+        ``TypeError`` for ``a2a.proto`` triggers the fallback).
         """
         try:
             # First-Party
@@ -2266,7 +2335,8 @@ class A2AAgentService:
                     decrypted = decode_auth(encrypted_value)
                     auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                 except Exception:
-                    logger.debug("Failed to decrypt query param '%s' for A2A agent invocation", param_key)
+                    logger.warning("Failed to decrypt query param '%s' for A2A agent invocation — auth may be incomplete", param_key)
+                    raise A2AAgentError(f"Failed to decrypt query param authentication for agent '{agent_name}'")
 
             if auth_query_params_decrypted:
                 agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
@@ -2419,7 +2489,7 @@ class A2AAgentService:
                 jsonrpc_error = self._extract_jsonrpc_error_message(response_payload)
                 if normalized_agent_type == "a2a-jsonrpc" and jsonrpc_error:
                     error_message = sanitize_exception_message(jsonrpc_error, auth_query_params_decrypted)
-                    raise A2AAgentError(error_message)
+                    raise A2AAgentUpstreamError(error_message)
 
                 if normalized_agent_type == "a2a-jsonrpc" and isinstance(response_payload, dict) and "result" in response_payload:
                     response = response_payload["result"]
@@ -2453,7 +2523,7 @@ class A2AAgentService:
                     error_details={"error_type": "A2AHTTPError", "error_message": error_message},
                     metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code},
                 )
-                raise A2AAgentError(error_message)
+                raise A2AAgentUpstreamError(error_message)
 
         except A2AAgentError as known_error:
             error_message = str(known_error)
@@ -2461,7 +2531,7 @@ class A2AAgentService:
         except Exception as e:
             error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
             logger.error("Failed to invoke A2A agent '%s': %s", agent_name, error_message)
-            raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
+            raise A2AAgentUpstreamError(f"Failed to invoke A2A agent: {error_message}")
         finally:
             end_time = datetime.now(timezone.utc)
             response_time = (end_time - start_time).total_seconds()
@@ -2579,7 +2649,8 @@ class A2AAgentService:
                     decrypted = decode_auth(encrypted_value)
                     auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                 except Exception:
-                    logger.debug("Failed to decrypt query param '%s' for A2A stream invocation", param_key)
+                    logger.warning("Failed to decrypt query param '%s' for A2A stream invocation — auth may be incomplete", param_key)
+                    raise A2AAgentError(f"Failed to decrypt query param authentication for agent '{agent_name}'")
 
             if auth_query_params_decrypted:
                 agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
@@ -2608,6 +2679,7 @@ class A2AAgentService:
 
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.url_auth import sanitize_exception_message as _sanitize  # pylint: disable=import-outside-toplevel
 
         def _sse_event(event_type: str, data: Dict[str, Any]) -> bytes:
             """Format a single SSE event as UTF-8 bytes."""
@@ -2650,10 +2722,13 @@ class A2AAgentService:
                     request_payload = rpc_params if isinstance(rpc_params, dict) else {}
                     request = self._build_a2a_grpc_send_message_request(request_payload, a2a_pb2, json_format)
                     stream = stub.SendStreamingMessage(request, metadata=metadata_arg)
-                else:
+                elif grpc_method == "TaskSubscription":
                     request_payload = rpc_params if isinstance(rpc_params, dict) else {}
                     request = a2a_pb2.TaskSubscriptionRequest(name=self._task_resource_name(request_payload))
                     stream = stub.TaskSubscription(request, metadata=metadata_arg)
+                else:
+                    yield _sse_event("error", {"type": "error", "error": f"Unsupported gRPC streaming method: {grpc_method}"})
+                    return
 
                 async for item in stream:
                     event_payload = self._protobuf_to_dict(item)
@@ -2664,7 +2739,7 @@ class A2AAgentService:
                 details = rpc_error.details() if callable(getattr(rpc_error, "details", None)) else str(rpc_error)
                 yield _sse_event("error", {"type": "error", "error": f"A2A gRPC stream failed ({status_name}): {details}"})
             except Exception as e:
-                yield _sse_event("error", {"type": "error", "error": str(e)})
+                yield _sse_event("error", {"type": "error", "error": _sanitize(str(e))})
             finally:
                 if channel is not None:
                     await channel.close()
@@ -2686,7 +2761,8 @@ class A2AAgentService:
                 try:
                     access_token = await OAuthManager().get_access_token(agent_oauth_config)
                 except Exception as e:
-                    yield _sse_event("error", {"type": "error", "error": f"OAuth authentication failed: {e}"})
+                    logger.warning("OAuth authentication failed for SSE stream agent '%s': %s", agent_name, e)
+                    yield _sse_event("error", {"type": "error", "error": f"OAuth authentication failed: {_sanitize(str(e))}"})
                     return
                 headers["Authorization"] = f"Bearer {access_token}"
 
@@ -2700,13 +2776,14 @@ class A2AAgentService:
                 async with client.stream(http_method, url, json=json_body, params=query, headers=headers, timeout=None) as response:
                     if response.status_code < 200 or response.status_code >= 300:
                         raw = await response.aread()
-                        text = raw.decode("utf-8", errors="replace") if raw else ""
-                        yield _sse_event("error", {"type": "error", "error": f"HTTP {response.status_code}: {text}"})
+                        text = raw.decode("utf-8", errors="replace")[:1024] if raw else ""
+                        yield _sse_event("error", {"type": "error", "error": f"HTTP {response.status_code}: {_sanitize(text)}"})
                         return
                     async for chunk in response.aiter_raw():
                         yield chunk
             except Exception as e:
-                yield _sse_event("error", {"type": "error", "error": str(e), "agent": agent_name, "agent_id": agent_id})
+                logger.warning("SSE stream error for agent '%s' (id=%s): %s", agent_name, agent_id, e)
+                yield _sse_event("error", {"type": "error", "error": _sanitize(str(e)), "agent": agent_name})
 
         # Choose stream based on transport.
         if normalized_agent_type == "a2a-grpc":

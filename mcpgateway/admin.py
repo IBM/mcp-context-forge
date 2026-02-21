@@ -78,6 +78,7 @@ from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
+    A2A_AGENT_TYPE_ALIASES,
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
@@ -404,22 +405,8 @@ _A2A_AGENT_TYPE_DISPLAY_LABELS: Dict[str, str] = {
     "custom": "ContextForge Custom Format",
 }
 
-_A2A_AGENT_TYPE_ALIASES: Dict[str, str] = {
-    # Canonical variants
-    "a2a_jsonrpc": "a2a-jsonrpc",
-    "a2a_rest": "a2a-rest",
-    "a2a_grpc": "a2a-grpc",
-    "rest_passthrough": "rest-passthrough",
-    # Legacy values
-    "a2a": "a2a-jsonrpc",
-    "generic": "a2a-jsonrpc",
-    "jsonrpc": "a2a-jsonrpc",
-    "rest": "a2a-rest",
-    "grpc": "a2a-grpc",
-    "passthrough": "rest-passthrough",
-    "openai": "rest-passthrough",
-    "anthropic": "rest-passthrough",
-}
+# Alias mapping imported from schemas.py (single source of truth).
+_A2A_AGENT_TYPE_ALIASES = A2A_AGENT_TYPE_ALIASES
 
 
 def _canonicalize_a2a_agent_type(agent_type: Optional[str]) -> Optional[str]:

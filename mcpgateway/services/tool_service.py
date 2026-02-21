@@ -3722,7 +3722,8 @@ class ToolService:
                                 decrypted = decode_auth(encrypted_value)
                                 auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                             except Exception:
-                                logger.debug("Failed to decrypt query param for key '%s' on A2A tool invocation", param_key)
+                                logger.warning("Failed to decrypt query param for key '%s' on A2A tool invocation — auth may be incomplete", param_key)
+                                raise ToolError(f"Failed to decrypt query param authentication for A2A tool '{a2a_agent_name}'")
                         if auth_query_params_decrypted:
                             endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
 
@@ -4933,7 +4934,8 @@ class ToolService:
                     decrypted = decode_auth(encrypted_value)
                     auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                 except Exception:
-                    logger.debug("Failed to decrypt query param for key '%s' on A2A tool call", param_key)
+                    logger.warning("Failed to decrypt query param for key '%s' on A2A tool call — auth may be incomplete", param_key)
+                    raise ToolError(f"Failed to decrypt query param authentication for A2A agent '{agent.name}'")
 
             if auth_query_params_decrypted:
                 endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
@@ -4967,7 +4969,10 @@ class ToolService:
         if auth_type == "oauth":
             oauth_config = getattr(agent, "oauth_config", None)
             if oauth_config:
-                access_token = await self.oauth_manager.get_access_token(oauth_config)
+                try:
+                    access_token = await self.oauth_manager.get_access_token(oauth_config)
+                except Exception as e:
+                    raise ToolError(f"OAuth authentication failed for A2A agent '{agent.name}': {e}") from e
                 auth_headers["Authorization"] = f"Bearer {access_token}"
 
         headers.update(auth_headers)

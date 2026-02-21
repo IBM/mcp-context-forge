@@ -121,7 +121,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2AAgentUpstreamError
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -3409,6 +3409,8 @@ async def set_a2a_agent_state(
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3476,12 +3478,21 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 def _get_a2a_invoke_context(request: Request, user: Any) -> tuple[str, Optional[str], Optional[List[str]]]:
-    """Build invocation context for A2A call routes."""
+    """Build invocation context (user_id, user_email, token_teams) for A2A call routes.
+
+    Returns:
+        Tuple of ``(user_id, user_email, token_teams)`` where *token_teams*
+        is ``None`` for admin bypass, ``[]`` for public-only, or a list of
+        team IDs.  *user_id* is derived from ``user["id"]``, ``user["sub"]``,
+        or the email when *user* is a dict; otherwise ``str(user)``.
+    """
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
     # Admin bypass only when token has no team restrictions.
@@ -3523,6 +3534,8 @@ async def send_a2a_message(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3557,6 +3570,8 @@ async def stream_a2a_message(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3596,6 +3611,8 @@ async def list_a2a_tasks(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3625,6 +3642,8 @@ async def get_a2a_task(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3656,6 +3675,8 @@ async def cancel_a2a_task(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3692,6 +3713,8 @@ async def subscribe_a2a_task(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3723,6 +3746,8 @@ async def set_a2a_task_push_notification_config(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3761,6 +3786,8 @@ async def list_a2a_task_push_notification_configs(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3792,6 +3819,8 @@ async def get_a2a_task_push_notification_config(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3823,6 +3852,8 @@ async def delete_a2a_task_push_notification_config(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3850,6 +3881,8 @@ async def get_a2a_agent_card(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3898,6 +3931,8 @@ async def invoke_a2a_agent(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -27,7 +27,7 @@ try:
     # Third-Party
     from a2a.grpc import a2a_pb2  # type: ignore
     from a2a.grpc import a2a_pb2_grpc  # type: ignore
-except Exception:
+except (ImportError, RuntimeError, TypeError):
     try:
         from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
         from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2_grpc
