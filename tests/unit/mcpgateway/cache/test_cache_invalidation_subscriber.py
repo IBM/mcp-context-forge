@@ -187,10 +187,10 @@ class TestCacheInvalidationSubscriber:
                 self.unsubscribed = False
                 self.closed = False
 
-            async def subscribe(self, _channel):
+            async def subscribe(self, *channels):
                 self.subscribed = True
 
-            async def unsubscribe(self, _channel):
+            async def unsubscribe(self, *channels):
                 self.unsubscribed = True
 
             async def aclose(self):
@@ -229,7 +229,7 @@ class TestCacheInvalidationSubscriber:
     @pytest.mark.asyncio
     async def test_start_cleanup_on_exception(self, cache_subscriber, monkeypatch):
         class FakePubSub:
-            async def subscribe(self, _channel):
+            async def subscribe(self, *channels):
                 raise RuntimeError("subscribe failed")
 
             async def aclose(self):
@@ -250,7 +250,7 @@ class TestCacheInvalidationSubscriber:
     @pytest.mark.asyncio
     async def test_start_cleanup_on_exception_handles_cleanup_error(self, cache_subscriber, monkeypatch):
         class FakePubSub:
-            async def subscribe(self, _channel):
+            async def subscribe(self, *channels):
                 raise RuntimeError("subscribe failed")
 
             async def aclose(self):
@@ -419,7 +419,7 @@ class TestCacheInvalidationSubscriber:
         cache_subscriber._task = None
 
         class FakePubSub:
-            async def unsubscribe(self, _channel):
+            async def unsubscribe(self, *channels):
                 raise asyncio.TimeoutError()
 
             async def close(self):
@@ -437,7 +437,7 @@ class TestCacheInvalidationSubscriber:
         cache_subscriber._task = None
 
         class FakePubSub:
-            async def unsubscribe(self, _channel):
+            async def unsubscribe(self, *channels):
                 raise RuntimeError("unsubscribe boom")
 
             async def close(self):

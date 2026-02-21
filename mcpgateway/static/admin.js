@@ -22102,7 +22102,7 @@ async function showTeamEditModal(teamId) {
     }
 
     // Construct the full URL - ensure it starts with /
-    const url = (rootPath || "") + "/admin/teams/" + teamId + "/edit";
+    const url = `${rootPath || ""}/admin/teams/${teamId}/edit`;
 
     // Load the team edit form via HTMX
     fetch(url, {
@@ -22763,6 +22763,8 @@ function handleAdminTeamAction(event) {
                 ) {
                     params.set("relationship", currentTeamRelationshipFilter);
                 }
+                // Cache-bust to bypass nginx proxy cache after mutation
+                params.set("_t", Date.now());
                 const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
                 window.htmx.ajax("GET", url, {
                     target: "#unified-teams-list",
@@ -22820,7 +22822,14 @@ function handleAdminUserAction(event) {
         if (detail.refreshUsersList) {
             const usersList = document.getElementById("users-list-container");
             if (usersList && window.htmx) {
-                window.htmx.trigger(usersList, "refreshUsers");
+                // Cache-bust with timestamp to bypass nginx proxy cache after mutation
+                const hxGet = usersList.getAttribute("hx-get") || "";
+                const sep = hxGet.includes("?") ? "&" : "?";
+                const url = `${hxGet}${sep}_t=${Date.now()}`;
+                window.htmx.ajax("GET", url, {
+                    target: "#users-list-container",
+                    swap: "outerHTML",
+                });
             }
         }
     }, delayMs);
@@ -32065,7 +32074,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
         if (Object.keys(memberDataFromDom).length === 0) {
             try {
                 const membersResp = await fetchWithAuth(
-                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
+                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100&_t=${Date.now()}`,
                 );
                 if (membersResp.ok) {
                     const tempDiv = document.createElement("div");
