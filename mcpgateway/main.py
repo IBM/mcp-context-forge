@@ -5,7 +5,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway - Main FastAPI Application.
+ContextForge AI Gateway - Main FastAPI Application.
 
 This module defines the core FastAPI application for the Model Context Protocol (MCP) Gateway.
 It serves as the entry point for handling all HTTP and WebSocket traffic.
@@ -600,7 +600,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
-    logger.info("Starting MCP Gateway services")
+    logger.info("Starting ContextForge services")
 
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
@@ -853,7 +853,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
 
-        logger.info("Shutting down MCP Gateway services")
+        logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
         # Build service list conditionally
         services_to_shutdown: List[Any] = [
@@ -965,7 +965,7 @@ async def setup_passthrough_headers():
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    description="A FastAPI-based MCP Gateway with federation support",
+    description="ContextForge AI Gateway — a unified gateway for Tools, Agents, Models, and APIs with federation support",
     root_path=settings.app_root_path,
     lifespan=lifespan,
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization

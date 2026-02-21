@@ -126,7 +126,7 @@ def _is_secret(key: str) -> bool:
         True
         >>> _is_secret("PASS_PHRASE")
         True
-        >>> # Specific MCP Gateway secrets
+        >>> # Specific ContextForge secrets
         >>> _is_secret("BASIC_AUTH_USER")
         True
         >>> _is_secret("BASIC_AUTH_PASSWORD")
@@ -632,7 +632,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         >>> html = _render_html(payload)
         >>> '<!doctype html>' in html
         True
-        >>> '<h1>MCP Gateway diagnostics</h1>' in html
+        >>> '<h1>ContextForge diagnostics</h1>' in html
         True
         >>> 'test-server' in html
         True
@@ -655,7 +655,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         "th{background:#f7f7f7;width:25%;}"
         "</style>"
     )
-    header = f"<h1>MCP Gateway diagnostics</h1><p>Generated {payload['timestamp']} - Host {payload['host']} - Uptime {payload['uptime_seconds']}s</p>"
+    header = f"<h1>ContextForge diagnostics</h1><p>Generated {payload['timestamp']} - Host {payload['host']} - Uptime {payload['uptime_seconds']}s</p>"
     sections = ""
     for title, key in (
         ("App", "app"),
@@ -704,7 +704,7 @@ def _login_html(next_url: str) -> str:
         True
     """
     return f"""<!doctype html>
-<html><head><meta charset='utf-8'><title>Login - MCP Gateway</title>
+<html><head><meta charset='utf-8'><title>Login - ContextForge</title>
 <style>
 body{{font-family:system-ui,sans-serif;margin:2rem;}}
 form{{max-width:320px;margin:auto;}}

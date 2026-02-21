@@ -566,7 +566,7 @@ Before checking in any code for the project, please lint the code.  This can be 
 make lint-fix
 ```
 
-## End to End LLMGuardPlugin with MCP Gateway
+## End to End LLMGuardPlugin with ContextForge
 
 1. Add a sample prompt in the prompt tab of MCP gateway.
 Set `export PLUGINS_ENABLED=true`

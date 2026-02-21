@@ -1,15 +1,15 @@
 # Proxy Authentication
 
-This guide explains how to configure MCP Gateway to work with authentication proxies like OAuth2 Proxy, Authelia, Cloudflare Access, or enterprise API gateways.
+This guide explains how to configure ContextForge to work with authentication proxies like OAuth2 Proxy, Authelia, Cloudflare Access, or enterprise API gateways.
 
 ## Overview
 
-When MCP Gateway is deployed behind an authentication proxy, you can disable its built-in JWT authentication and trust the proxy to handle user authentication. This is common in enterprise environments where authentication is centralized.
+When ContextForge is deployed behind an authentication proxy, you can disable its built-in JWT authentication and trust the proxy to handle user authentication. This is common in enterprise environments where authentication is centralized.
 
 ## Architecture
 
 ```
-User → Auth Proxy (OAuth/SAML) → MCP Gateway → MCP Servers
+User → Auth Proxy (OAuth/SAML) → ContextForge → MCP Servers
          ↓
     Identity Provider
     (Okta, Auth0, Azure AD)
@@ -26,7 +26,7 @@ To enable proxy authentication, configure these environment variables:
 MCP_CLIENT_AUTH_ENABLED=false
 
 # REQUIRED: Explicitly trust proxy authentication
-# Only set this when MCP Gateway is behind a trusted proxy!
+# Only set this when ContextForge is behind a trusted proxy!
 TRUST_PROXY_AUTH=true
 
 # Header containing the authenticated username from proxy
@@ -39,13 +39,13 @@ AUTH_REQUIRED=true
 
 ### Security Warning
 
-⚠️ **IMPORTANT**: Only disable MCP client authentication when MCP Gateway is deployed behind a trusted authentication proxy. Setting `MCP_CLIENT_AUTH_ENABLED=false` without `TRUST_PROXY_AUTH=true` will log a warning, as this removes a critical security layer.
+⚠️ **IMPORTANT**: Only disable MCP client authentication when ContextForge is deployed behind a trusted authentication proxy. Setting `MCP_CLIENT_AUTH_ENABLED=false` without `TRUST_PROXY_AUTH=true` will log a warning, as this removes a critical security layer.
 
 ## Common Proxy Configurations
 
-### HyprMCP Gateway
+### HyprContextForge
 
-Find the completed guide on how to use the [HyprMCP Gateway](https://github.com/hyprmcp/mcp-gateway) to support DCR and OAuth2 here:
+Find the completed guide on how to use the [HyprContextForge](https://github.com/hyprmcp/mcp-gateway) to support DCR and OAuth2 here:
 [Tutorial: Dynamic Client Registration with HyprMCP](../tutorials/dcr-hyprmcp.md)
 
 
@@ -332,7 +332,7 @@ To migrate from JWT to proxy authentication:
 
 ## Security Best Practices
 
-1. **Never expose MCP Gateway directly** when proxy auth is enabled
+1. **Never expose ContextForge directly** when proxy auth is enabled
 2. **Use TLS** between proxy and gateway
 3. **Validate proxy certificates** in production
 4. **Monitor** authentication logs for anomalies
@@ -391,4 +391,4 @@ services:
       - ./data:/data
 ```
 
-This configuration provides Google OAuth authentication for all MCP Gateway endpoints while maintaining separate admin UI authentication.
+This configuration provides Google OAuth authentication for all ContextForge endpoints while maintaining separate admin UI authentication.

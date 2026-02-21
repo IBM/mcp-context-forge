@@ -1,7 +1,7 @@
-# 🧠 GitHub Copilot + MCP Gateway
+# 🧠 GitHub Copilot + ContextForge
 
 Super-charge Copilot (or any VS Code chat agent that speaks MCP) with tools, prompts and
-resources from **your own MCP Gateway**.
+resources from **your own ContextForge**.
 
 With Copilot → MCP you can:
 
@@ -22,7 +22,7 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 
 * **VS Code ≥ 1.99**
 * `"chat.mcp.enabled": true` in your *settings.json*
-* An MCP Gateway running (`make serve`, Docker, or container image)
+* An ContextForge running (`make serve`, Docker, or container image)
 * A JWT or Basic credentials (`admin` / `changeme` in dev)
 
 ---

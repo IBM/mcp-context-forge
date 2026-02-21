@@ -131,14 +131,14 @@ ARG PYTHON_VERSION=3.12
 # ----------------------------------------------------------------------------
 # OCI image metadata
 # ----------------------------------------------------------------------------
-LABEL maintainer="MCP Context Forge" \
+LABEL maintainer="ContextForge" \
       org.opencontainers.image.title="mcp/mcp-data-analysis-server" \
       org.opencontainers.image.description="MCP Data Analysis Server: Comprehensive data analysis capabilities with pandas, numpy, scipy" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.source="https://github.com/contextforge/mcp-context-forge" \
       org.opencontainers.image.documentation="https://github.com/contextforge/mcp-context-forge/mcp-servers/python/data-analysis-server" \
-      org.opencontainers.image.vendor="MCP Context Forge"
+      org.opencontainers.image.vendor="ContextForge"
 
 # hadolint ignore=DL3041
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \

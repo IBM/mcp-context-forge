@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Export/Import CLI Commands.
-This module provides CLI commands for exporting and importing MCP Gateway configuration.
+This module provides CLI commands for exporting and importing ContextForge configuration.
 It implements the export/import CLI functionality according to the specification including:
 - Complete configuration export with filtering options
 - Configuration import with conflict resolution strategies
@@ -269,7 +269,7 @@ def create_parser() -> argparse.ArgumentParser:
     Returns:
         Configured argument parser
     """
-    parser = argparse.ArgumentParser(prog="mcpgateway", description="MCP Gateway configuration export/import tool")
+    parser = argparse.ArgumentParser(prog="mcpgateway", description="ContextForge configuration export/import tool")
 
     parser.add_argument("--version", "-V", action="version", version=f"mcpgateway {__version__}")
 

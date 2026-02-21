@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 stdio Transport Implementation.
-This module implements standard input/output (stdio) transport for MCP Gateway, enabling
+This module implements standard input/output (stdio) transport for ContextForge, enabling
 communication over stdin/stdout streams. This transport is particularly useful
 for command-line tools, subprocess communication, and scenarios where processes
 need to communicate via standard I/O channels.

@@ -236,7 +236,7 @@ async def run_server(
 def main() -> None:
     """Main entry point for the gRPC plugin server."""
     parser = argparse.ArgumentParser(
-        description="gRPC server for MCP Gateway external plugins",
+        description="gRPC server for ContextForge external plugins",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

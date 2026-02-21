@@ -2,7 +2,7 @@
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : cleanup.sh
 #  Author : Mihai Criveti
-#  Purpose: Prune old or unused GHCR container versions for IBM's MCP Context Forge
+#  Purpose: Prune old or unused GHCR container versions for IBM's ContextForge
 #  Copyright 2025
 #  SPDX-License-Identifier: Apache-2.0
 #

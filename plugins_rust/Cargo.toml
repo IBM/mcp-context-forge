@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 version = "1.0.0-RC-1"
 edition = "2024"
-authors = ["MCP Gateway Contributors"]
+authors = ["ContextForge Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/IBM/mcp-context-forge"
 
@@ -19,7 +19,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "High-performance Rust implementations of MCP Gateway plugins"
+description = "High-performance Rust implementations of ContextForge plugins"
 
 [lib]
 name = "plugins_rust"

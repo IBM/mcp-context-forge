@@ -1,6 +1,6 @@
 # Database Performance Observability Guide
 
-This guide covers how to measure, debug, and optimize database query performance in MCP Gateway.
+This guide covers how to measure, debug, and optimize database query performance in ContextForge.
 
 ## Quick Start
 

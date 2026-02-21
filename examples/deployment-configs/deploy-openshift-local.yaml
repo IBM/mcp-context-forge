@@ -12,7 +12,7 @@ deployment:
   type: kubernetes
   namespace: mcp-gateway-test
 
-# MCP Gateway configuration
+# ContextForge configuration
 gateway:
   # Build gateway from current repository
   repo: https://github.com/terylt/mcp-context-forge.git

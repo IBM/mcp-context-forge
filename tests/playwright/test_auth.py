@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
-Authentication tests for MCP Gateway Admin UI.
+Authentication tests for ContextForge Admin UI.
 """
 
 # Standard
@@ -24,7 +24,7 @@ from .pages.login_page import LoginPage
 
 @pytest.mark.auth
 class TestAuthentication:
-    """Authentication tests for MCP Gateway Admin UI.
+    """Authentication tests for ContextForge Admin UI.
 
     Tests email/password authentication flow for the admin interface.
 

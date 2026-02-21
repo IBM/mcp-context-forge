@@ -1,4 +1,4 @@
-# Prometheus configuration for MCP Gateway stack
+# Prometheus configuration for ContextForge stack
 # See: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
 #
 # Usage: docker compose --profile monitoring up -d
@@ -39,7 +39,7 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
 
-  # MCP Gateway application metrics (FastAPI instrumentation)
+  # ContextForge application metrics (FastAPI instrumentation)
   # Endpoint: /metrics/prometheus (Prometheus format with gzip)
   # Uses DNS discovery to scrape ALL gateway replicas (not just one)
   - job_name: 'mcpgateway'

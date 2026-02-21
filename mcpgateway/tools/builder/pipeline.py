@@ -8,7 +8,7 @@ Abstract base class for MCP Stack deployment implementations.
 
 This module defines the CICDModule interface that all deployment implementations
 must implement. It provides a common API for building, deploying, and managing
-MCP Gateway stacks with external plugin servers.
+ContextForge stacks with external plugin servers.
 
 The base class implements shared functionality (validation) while requiring
 subclasses to implement deployment-specific logic (build, deploy, etc.).

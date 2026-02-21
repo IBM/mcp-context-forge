@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Tests for Organization features (Teams, Tokens) in MCP Gateway Admin UI.
+Tests for Organization features (Teams, Tokens) in ContextForge Admin UI.
 """
 
 # Standard

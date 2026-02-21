@@ -182,7 +182,7 @@ class TestIssue840UserInputForA2AAgentTest:
 
         Current behavior (BUG):
         - JavaScript sends: testPayload = {}
-        - Server uses hardcoded: "Hello from MCP Gateway Admin UI test!"
+        - Server uses hardcoded: "Hello from ContextForge Admin UI test!"
 
         Expected behavior (FIX NEEDED):
         - JavaScript should provide input field for user query
@@ -194,7 +194,7 @@ class TestIssue840UserInputForA2AAgentTest:
         # From admin.py line 13334-13340:
         # test_params = {
         #     "method": "message/send",
-        #     "params": {"message": {..., "text": "Hello from MCP Gateway Admin UI test!"}}
+        #     "params": {"message": {..., "text": "Hello from ContextForge Admin UI test!"}}
         # }
         #
         # The UI should instead:

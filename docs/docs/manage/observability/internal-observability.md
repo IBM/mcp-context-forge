@@ -1,6 +1,6 @@
 # Internal Observability System
 
-MCP Gateway includes a built-in observability system that provides comprehensive performance monitoring, error tracking, and analytics without requiring external observability platforms. All trace data is stored in your database (SQLite/PostgreSQL/MariaDB) and visualized through the Admin UI.
+ContextForge includes a built-in observability system that provides comprehensive performance monitoring, error tracking, and analytics without requiring external observability platforms. All trace data is stored in your database (SQLite/PostgreSQL/MariaDB) and visualized through the Admin UI.
 
 ## Overview
 
@@ -79,7 +79,7 @@ OBSERVABILITY_METRICS_ENABLED=true
 OBSERVABILITY_EVENTS_ENABLED=true
 ```
 
-### 2. Start MCP Gateway
+### 2. Start ContextForge
 
 ```bash
 # With environment variables

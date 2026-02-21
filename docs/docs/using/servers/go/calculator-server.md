@@ -16,7 +16,7 @@ A comprehensive **Go-based MCP server** for mathematical computations, implement
 
 ## Quick Start
 
-### Using with MCP Gateway
+### Using with ContextForge
 
 ```bash
 # Start the calculator server
@@ -28,10 +28,10 @@ go build -o calculator-server ./cmd/server
 ./calculator-server -transport=http -port=8081
 ```
 
-### Integration with MCP Gateway
+### Integration with ContextForge
 
 ```bash
-# Register with MCP Gateway (if using HTTP)
+# Register with ContextForge (if using HTTP)
 curl -X POST http://localhost:4444/servers \
   -H "Content-Type: application/json" \
   -d '{

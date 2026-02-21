@@ -182,7 +182,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Configuration Section** in `.env.example` with documented settings
 * **Elicitation Support (MCP 2025-06-18)** ([#234](https://github.com/IBM/mcp-context-forge/issues/234)) - Elicitation support per MCP 2025-06-18 specification
 * **Admin UI Search for Tools** ([#2076](https://github.com/IBM/mcp-context-forge/issues/2076)) - Search capabilities for tools in admin UI
-* **Unified Search Experience** ([#2109](https://github.com/IBM/mcp-context-forge/issues/2109)) - Unified search experience across MCP Gateway admin UI
+* **Unified Search Experience** ([#2109](https://github.com/IBM/mcp-context-forge/issues/2109)) - Unified search experience across ContextForge admin UI
 * **Dynamic Tools/Resources** ([#2171](https://github.com/IBM/mcp-context-forge/issues/2171)) - Dynamic tools and resources based on user context and server-side signals
 * **Slow Time Server** ([#2783](https://github.com/IBM/mcp-context-forge/issues/2783)) - Configurable-latency MCP server for timeout, resilience, and load testing
 * **Custom Tool Descriptions** ([#2893](https://github.com/IBM/mcp-context-forge/issues/2893)) - Maintain custom and original description for tools
@@ -1277,7 +1277,7 @@ docker compose up -d
 - Closes #1254 - JWT jti mismatch between token and database record
 - Closes #1262 - JWT token follows default variable payload expiry instead of UI
 - Closes #1261 - API Token Expiry Issue: UI Configuration overridden by default env Variable
-- Closes #1111 - Support application/x-www-form-urlencoded Requests in MCP Gateway UI for OAuth2 / Keycloak Integration
+- Closes #1111 - Support application/x-www-form-urlencoded Requests in ContextForge UI for OAuth2 / Keycloak Integration
 - Closes #1094 - Creating an MCP OAUTH2 server fails if using API
 - Closes #1092 - After issue 1078 change, how to add X-Upstream-Authorization header when clicking Authorize in admin UI
 - Closes #1048 - Login issue - Serving over HTTP requires SECURE_COOKIES=false
@@ -1285,7 +1285,7 @@ docker compose up -d
 - Closes #1117 - Login not working with 0.7.0 version
 - Closes #1181 - Secure cookie warnings for HTTP development
 - Closes #1190 - Virtual MCP server requiring OAUTH instead of JWT in 0.7.0
-- Closes #1109 - MCP Gateway UI OAuth2 Integration Fails with Keycloak
+- Closes #1109 - ContextForge UI OAuth2 Integration Fails with Keycloak
 
 **SSO Integration:**
 - Closes #1211 - Microsoft Entra ID Integration Support and Tutorial
@@ -1681,7 +1681,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 
 ### Overview
 
-**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming MCP Gateway from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration. **38 issues resolved**.
+**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming ContextForge from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration. **38 issues resolved**.
 
 **Impact:** Complete architectural transformation enabling secure team collaboration, enterprise SSO integration, and scalable multi-tenant deployments.
 
@@ -1768,7 +1768,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   - All **VARCHAR length issues** resolved for MySQL compatibility
   - **Container support**: MariaDB and MySQL drivers included in all container images
   - **Complete feature parity** with SQLite and PostgreSQL backends
-  - **Production ready**: Supports all MCP Gateway features including federation, caching, and A2A agents
+  - **Production ready**: Supports all ContextForge features including federation, caching, and A2A agents
 
 * **Enhanced JWT Configuration** - Audience, issuer claims, and improved token validation:
   ```bash
@@ -2127,7 +2127,7 @@ This major release focuses on **Security, Scale & Smart Automation** with **118 
 
 ### 🌟 Release Contributors
 
-This release represents a major milestone in MCP Gateway's evolution toward enterprise-grade security, scale, and intelligent automation. With contributions from developers worldwide, 0.6.0 delivers groundbreaking features including a comprehensive plugin framework, A2A agent integration, and advanced observability.
+This release represents a major milestone in ContextForge's evolution toward enterprise-grade security, scale, and intelligent automation. With contributions from developers worldwide, 0.6.0 delivers groundbreaking features including a comprehensive plugin framework, A2A agent integration, and advanced observability.
 
 #### 🏆 Top Contributors in 0.6.0
 - **Mihai Criveti** (@crivetimihai) - Release coordination, A2A architecture, plugin framework, OpenTelemetry integration, and comprehensive testing infrastructure
@@ -2142,7 +2142,7 @@ Welcome to our first-time contributors who joined us in 0.6.0:
 - **Community Contributors** - Various developers contributed to plugin development, testing improvements, and documentation updates
 
 #### 💪 Returning Contributors
-Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+Thank you to our dedicated contributors who continue to strengthen ContextForge:
 
 - **Core Team Members** - Continued contributions to architecture, testing, documentation, and feature development
 - **Community Members** - Ongoing support with bug reports, feature requests, and code improvements
@@ -2247,7 +2247,7 @@ This release focuses on enterprise-grade operability with **45 issues resolved**
   - Resolved Docker container issues (#560)
   - Fixed internal server errors during CRUD operations (#85)
 * **Documentation & API**:
-  - Fixed OpenAPI title from "MCP_Gateway" to "MCP Gateway" (#522)
+  - Fixed OpenAPI title to "ContextForge" (#522)
   - Added mcp-cli documentation (#46)
   - Fixed invalid HTTP request logs (#434)
 * **Code Quality**:
@@ -2307,14 +2307,14 @@ Welcome to our first-time contributors who joined us in 0.5.0:
 - **JimmyLiao** (@jimmyliao) - Fixed STREAMABLEHTTP transport validation
 - **Arnav Bhattacharya** (@arnav264) - Added file header verification script
 - **Guoqiang Ding** (@dgq8211) - Fixed tool parameter type conversion and API docs auth
-- **Pascal Roessner** (@roessner) - Added MCP Gateway Name to tools overview
+- **Pascal Roessner** (@roessner) - Added ContextForge Name to tools overview
 - **Kumar Tiger** (@kumar-tiger) - Fixed duplicate gateway name registration
 - **Shamsul Arefin** (@shams) - Improved JavaScript validation patterns and UUID support
 - **Emmanuel Ferdman** (@emmanuelferdman) - Fixed prompt service test cases
 - **Tomas Pilar** (@thomas7pilar) - Fixed missing ID in gateway response and auth flag issues
 
 #### 💪 Returning Contributors
-Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+Thank you to our dedicated contributors who continue to strengthen ContextForge:
 
 - **Nayana R Gowda** - Fixed redundant conditional expressions and Makefile formatting
 - **Mohan Lakshmaiah** - Improved tool name consistency validation
@@ -2360,7 +2360,7 @@ This release represents a major milestone in code quality, security, and reliabi
   * **Test MCP Server Connectivity Tool** (#181) - Debug and validate gateway connections directly from Admin UI
   * **Persistent Admin UI Filter State** (#177) - Filters and preferences persist across page refreshes
   * **Contextual Hover-Help Tooltips** (#233) - Inline help throughout the UI for better user guidance
-  * **mcp-cli Documentation** (#46) - Comprehensive guide for using MCP Gateway with the official CLI
+  * **mcp-cli Documentation** (#46) - Comprehensive guide for using ContextForge with the official CLI
   * **JSON-RPC Developer Guide** (#19) - Complete curl command examples for API integration
 
 * **Security Enhancements**:
@@ -2467,12 +2467,12 @@ Welcome to our first-time contributors who joined us in 0.4.0:
 - **Jason Frey** (@fryguy9) - Improved GitHub Actions with official IBM Cloud CLI action
 
 #### 💪 Returning Contributors
-Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+Thank you to our dedicated contributors who continue to strengthen ContextForge:
 
 - **Thong Bui** - REST API enhancements including PATCH support and path parameters
 - **Abdul Samad** - Dark mode improvements and UI polish
 
-This release represents a true community effort with contributions from developers around the world. Your dedication to security, code quality, and user experience has made MCP Gateway more robust and enterprise-ready than ever!
+This release represents a true community effort with contributions from developers around the world. Your dedication to security, code quality, and user experience has made ContextForge more robust and enterprise-ready than ever!
 
 ---
 
@@ -2754,7 +2754,7 @@ Welcome aboard-your PRs made 0.2.0 measurably better! 🎉
 
 ### Added
 
-Initial public release of MCP Gateway - a FastAPI-based gateway and federation layer for the Model Context Protocol (MCP). This preview brings a fully-featured core, production-grade deployment assets and an opinionated developer experience.
+Initial public release of ContextForge - a FastAPI-based gateway and federation layer for the Model Context Protocol (MCP). This preview brings a fully-featured core, production-grade deployment assets and an opinionated developer experience.
 
 Setting up GitHub repo, CI/CD with GitHub Actions, templates, `good first issue`, etc.
 

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Observability Service Implementation.
-This module provides OpenTelemetry-style observability for MCP Gateway,
+This module provides OpenTelemetry-style observability for ContextForge,
 capturing traces, spans, events, and metrics for all operations.
 
 It includes:

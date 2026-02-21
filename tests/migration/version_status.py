@@ -13,7 +13,7 @@ from version_config import get_migration_pairs, get_supported_versions, VersionC
 
 
 def main():
-    print("=== MCP Gateway Migration Test Version Status ===")
+    print("=== ContextForge Migration Test Version Status ===")
     print()
 
     # Current configuration

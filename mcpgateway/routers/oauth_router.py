@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-OAuth Router for MCP Gateway.
+OAuth Router for ContextForge.
 
 This module handles OAuth 2.0 Authorization Code flow endpoints including:
 - Initiating OAuth flows

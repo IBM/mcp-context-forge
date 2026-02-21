@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway OPAPluginFilter Plugin - An OPA plugin that enforces rego policies on requests and allows/denies requests as per policies.
+"""ContextForge OPAPluginFilter Plugin - An OPA plugin that enforces rego policies on requests and allows/denies requests as per policies.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

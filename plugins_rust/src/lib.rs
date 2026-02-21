@@ -1,7 +1,7 @@
 // Copyright 2025
 // SPDX-License-Identifier: Apache-2.0
 //
-// Rust-accelerated plugins for MCP Gateway
+// Rust-accelerated plugins for ContextForge
 // Built with PyO3 for seamless Python integration
 
 // Allow non-local definitions for PyO3 macros (known issue with PyO3 0.20.x)
@@ -14,7 +14,7 @@ pub use pii_filter_rust as pii_filter;
 
 /// Python module: plugins_rust
 ///
-/// High-performance Rust implementations of MCP Gateway plugins.
+/// High-performance Rust implementations of ContextForge plugins.
 /// Provides 5-10x speedup over pure Python implementations.
 ///
 /// # Examples
@@ -48,7 +48,7 @@ fn plugins_rust(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add(
         "__doc__",
-        "High-performance Rust implementations of MCP Gateway plugins",
+        "High-performance Rust implementations of ContextForge plugins",
     )?;
 
     Ok(())

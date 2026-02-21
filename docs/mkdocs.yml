@@ -2,9 +2,9 @@
 INHERIT: ./base.yml
 
 # Project Information
-site_name: "MCP Context Forge - Model Context Protocol Gateway"
+site_name: "ContextForge - AI Gateway"
 site_url: "https://pages.github.com/ibm/mcp-context-forge/"
-site_description: "MCP Gateway Documentation"
+site_description: "ContextForge AI Gateway Documentation"
 site_author: "Mihai Criveti"
 
 # Repository Information
@@ -68,8 +68,8 @@ plugins:
     cover: true
     back_cover: false
     #
-    cover_title: MCP Context Forge - MCP Gateway
-    cover_subtitle: MCP Gateway Documentation
+    cover_title: ContextForge AI Gateway
+    cover_subtitle: ContextForge AI Gateway Documentation
     cover_logo: "theme/logo.png"
     #custom_template_path: TEMPLATES PATH
     #

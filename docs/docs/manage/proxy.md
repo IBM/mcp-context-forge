@@ -1,10 +1,10 @@
 # Proxy Authentication
 
-Configure MCP Gateway to work with authentication proxies for enterprise deployments.
+Configure ContextForge to work with authentication proxies for enterprise deployments.
 
 ## Overview
 
-MCP Gateway supports proxy authentication, allowing you to disable built-in JWT authentication and rely on an upstream authentication proxy. This is essential for enterprise deployments where authentication is centralized through OAuth2, SAML, or other identity providers.
+ContextForge supports proxy authentication, allowing you to disable built-in JWT authentication and rely on an upstream authentication proxy. This is essential for enterprise deployments where authentication is centralized through OAuth2, SAML, or other identity providers.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ MCP Gateway supports proxy authentication, allowing you to disable built-in JWT 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Gateway as MCP Gateway
+    participant Gateway as ContextForge
     participant MCP as MCP Server
 
     Client->>Client: Generate JWT Token
@@ -35,7 +35,7 @@ sequenceDiagram
     participant User
     participant Proxy as Auth Proxy
     participant IDP as Identity Provider
-    participant Gateway as MCP Gateway
+    participant Gateway as ContextForge
     participant MCP as MCP Server
 
     User->>Proxy: Request
@@ -61,7 +61,7 @@ sequenceDiagram
 | `AUTH_REQUIRED` | `true` | Controls admin UI authentication (independent of MCP auth) |
 
 !!! warning "Security Notice"
-    Only set `MCP_CLIENT_AUTH_ENABLED=false` when MCP Gateway is deployed behind a trusted authentication proxy. Setting `TRUST_PROXY_AUTH=true` explicitly acknowledges this security requirement.
+    Only set `MCP_CLIENT_AUTH_ENABLED=false` when ContextForge is deployed behind a trusted authentication proxy. Setting `TRUST_PROXY_AUTH=true` explicitly acknowledges this security requirement.
 
 ### Basic Configuration
 
@@ -92,7 +92,7 @@ PLATFORM_ADMIN_PASSWORD=secure-password
 graph LR
     User[User] -->|HTTPS| LB[Load Balancer]
     LB --> OAuth[OAuth2 Proxy]
-    OAuth -->|X-Auth-Request-User| Gateway[MCP Gateway]
+    OAuth -->|X-Auth-Request-User| Gateway[ContextForge]
     Gateway --> MCP1[MCP Server 1]
     Gateway --> MCP2[MCP Server 2]
 
@@ -176,7 +176,7 @@ graph TB
         subgraph "Istio Service Mesh"
             IG[Istio Gateway] --> VS[Virtual Service]
             VS --> AuthZ[Authorization Policy]
-            AuthZ --> Gateway[MCP Gateway Pod]
+            AuthZ --> Gateway[ContextForge Pod]
         end
 
         Gateway --> MCP1[MCP Server Pod 1]
@@ -291,7 +291,7 @@ graph LR
     end
 
     User[User] -->|HTTPS| Plugin
-    Service -->|X-Consumer-Username| Gateway[MCP Gateway]
+    Service -->|X-Consumer-Username| Gateway[ContextForge]
     Gateway --> MCP[MCP Servers]
 
     Plugin -.->|OIDC Flow| IDP[Keycloak/Auth0]
@@ -357,7 +357,7 @@ authorization:
     Remote-Groups: groups
 ```
 
-MCP Gateway configuration:
+ContextForge configuration:
 ```bash
 MCP_CLIENT_AUTH_ENABLED=false
 TRUST_PROXY_AUTH=true
@@ -369,7 +369,7 @@ PROXY_USER_HEADER=Remote-User
 ```mermaid
 graph LR
     User[User] -->|HTTPS| CF[Cloudflare Edge]
-    CF -->|Cf-Access-Jwt-Assertion| Gateway[MCP Gateway]
+    CF -->|Cf-Access-Jwt-Assertion| Gateway[ContextForge]
 
     CF -.->|SAML/OIDC| IDP[Identity Provider]
 
@@ -409,7 +409,7 @@ DEFAULT_PASSTHROUGH_HEADERS='["X-Tenant-Id", "X-Request-Id", "X-Authenticated-Us
 
 ### X-Upstream-Authorization Header
 
-When MCP Gateway uses authentication (JWT/Bearer/Basic/OAuth), clients face an Authorization header conflict when trying to pass different auth to upstream MCP servers.
+When ContextForge uses authentication (JWT/Bearer/Basic/OAuth), clients face an Authorization header conflict when trying to pass different auth to upstream MCP servers.
 
 **Problem**: You need one `Authorization` header for gateway auth and a different one for upstream MCP servers.
 
@@ -418,7 +418,7 @@ When MCP Gateway uses authentication (JWT/Bearer/Basic/OAuth), clients face an A
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Gateway as MCP Gateway
+    participant Gateway as ContextForge
     participant MCP as MCP Server
 
     Client->>Gateway: Authorization: Bearer gateway_token<br/>X-Upstream-Authorization: Bearer upstream_token
@@ -479,7 +479,7 @@ graph TB
     end
 
     subgraph "Private Network"
-        Proxy -->|Internal Only| Gateway[MCP Gateway]
+        Proxy -->|Internal Only| Gateway[ContextForge]
         Gateway --> MCP1[MCP Server 1]
         Gateway --> MCP2[MCP Server 2]
     end
@@ -492,7 +492,7 @@ graph TB
 
 !!! danger "Critical Security Requirements"
 
-    1. **Never expose MCP Gateway directly** to the internet when proxy auth is enabled
+    1. **Never expose ContextForge directly** to the internet when proxy auth is enabled
     2. **Use TLS** for all communication between proxy and gateway
     3. **Implement network policies** to ensure only the proxy can reach the gateway
     4. **Validate proxy certificates** in production environments
@@ -679,14 +679,14 @@ graph LR
 graph LR
     subgraph "With Caching"
         Proxy1[Auth Proxy] --> Cache{Redis Cache}
-        Cache -->|Hit| Gateway1[MCP Gateway]
+        Cache -->|Hit| Gateway1[ContextForge]
         Cache -->|Miss| IDP1[IDP]
         IDP1 --> Cache
     end
 
     subgraph "Without Caching"
         Proxy2[Auth Proxy] --> IDP2[IDP]
-        IDP2 --> Gateway2[MCP Gateway]
+        IDP2 --> Gateway2[ContextForge]
     end
 
     style Cache fill:#9f9,stroke:#333,stroke-width:2px
@@ -718,7 +718,7 @@ SESSION_TTL=3600  # 1 hour
 ```json title="grafana-dashboard.json"
 {
   "dashboard": {
-    "title": "MCP Gateway - Proxy Auth",
+    "title": "ContextForge - Proxy Auth",
     "panels": [
       {
         "title": "Auth Success Rate",

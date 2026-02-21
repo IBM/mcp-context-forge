@@ -1,7 +1,7 @@
-# MCP Gateway Roadmap
+# ContextForge Roadmap
 
 !!! info "Release Overview"
-    This roadmap outlines the planned development milestones for MCP Gateway, organized by release version with completion status and due dates.
+    This roadmap outlines the planned development milestones for ContextForge, organized by release version with completion status and due dates.
 
 
 ## Release Status Summary
@@ -290,12 +290,12 @@
 
 ???+ info "📚 Documentation - Remaining (1)"
 
-    - ⏳ [**#503**](https://github.com/IBM/mcp-context-forge/issues/503) - [DOCS]: Tutorial - OpenWebUI with Ollama, LiteLLM, MCPO, and MCP Gateway deployment
+    - ⏳ [**#503**](https://github.com/IBM/mcp-context-forge/issues/503) - [DOCS]: Tutorial - OpenWebUI with Ollama, LiteLLM, MCPO, and ContextForge deployment
 
 ???+ info "🔧 Chores - Remaining (8)"
 
     - ⏳ [**#250**](https://github.com/IBM/mcp-context-forge/issues/250) - [CHORE]: Implement automatic API documentation generation using mkdocstrings and update Makefile
-    - ⏳ [**#255**](https://github.com/IBM/mcp-context-forge/issues/255) - [CHORE]: Implement comprehensive Playwright test automation for the entire MCP Gateway Admin UI with Makefile targets and GitHub Actions
+    - ⏳ [**#255**](https://github.com/IBM/mcp-context-forge/issues/255) - [CHORE]: Implement comprehensive Playwright test automation for the entire ContextForge Admin UI with Makefile targets and GitHub Actions
     - ⏳ [**#307**](https://github.com/IBM/mcp-context-forge/issues/307) - [CHORE]: GitHub Actions to build docs, with diagrams and test report, and deploy to GitHub Pages using MkDocs on every push to main
     - ⏳ [**#402**](https://github.com/IBM/mcp-context-forge/issues/402) - [CHORE][HELM]: Add post-deploy hook to register Time Server as Gateway
     - ⏳ [**#1340**](https://github.com/IBM/mcp-context-forge/issues/1340) - [CHORE] Proposal: Split Monorepo into Separate Repositories in contextforge-org
@@ -377,7 +377,7 @@
 
     - ⏳ [**#289**](https://github.com/IBM/mcp-context-forge/issues/289) - [PERFORMANCE]: Multi-Layer Caching System (Memory + Redis)
     - ⏳ [**#291**](https://github.com/IBM/mcp-context-forge/issues/291) - [PERFORMANCE]: Comprehensive Scalability & Soak-Test Harness (Long-term Stability & Load) - locust, pytest-benchmark, smocker mocked MCP servers
-    - ⏳ [**#432**](https://github.com/IBM/mcp-context-forge/issues/432) - [PERFORMANCE]: Performance Optimization Implementation and Guide for MCP Gateway (baseline)
+    - ⏳ [**#432**](https://github.com/IBM/mcp-context-forge/issues/432) - [PERFORMANCE]: Performance Optimization Implementation and Guide for ContextForge (baseline)
     - ⏳ [**#1354**](https://github.com/IBM/mcp-context-forge/issues/1354) - [PERFORMANCE][DB]: PostgreSQL database tuning and optimization
     - ⏳ [**#1612**](https://github.com/IBM/mcp-context-forge/issues/1612) - [PERFORMANCE]: Reduce SQLite busy_timeout from 30s to 5s (configurable)
     - ⏳ [**#1825**](https://github.com/IBM/mcp-context-forge/issues/1825) - [PERFORMANCE]: Reduce wrapper CPU overhead (stdin read + task churn)
@@ -674,7 +674,7 @@
     - ⏳ [**#1365**](https://github.com/IBM/mcp-context-forge/issues/1365) - [EPIC][UI]: Unified search and filter - Consistent cross-tab discovery
     - ⏳ [**#2270**](https://github.com/IBM/mcp-context-forge/issues/2270) - [EPIC][TESTING]: Frontend testing and code quality
     - ⏳ [**#2271**](https://github.com/IBM/mcp-context-forge/issues/2271) - [EPIC][BUILD]: Frontend package management with npm
-    - ⏳ [**#2519**](https://github.com/IBM/mcp-context-forge/issues/2519) - [EPIC][TESTING][UI]: Comprehensive Playwright E2E Test Suite for MCP Gateway Admin UI
+    - ⏳ [**#2519**](https://github.com/IBM/mcp-context-forge/issues/2519) - [EPIC][TESTING][UI]: Comprehensive Playwright E2E Test Suite for ContextForge Admin UI
     - ⏳ [**#2553**](https://github.com/IBM/mcp-context-forge/issues/2553) - [EPIC][SECURITY][PLUGINS]: PII Advanced filter (Presidio + pattern library)
     - ⏳ [**#2558**](https://github.com/IBM/mcp-context-forge/issues/2558) - [EPIC][SECURITY]: Subresource Integrity (SRI) for external CDN resources
     - ⏳ [**#2559**](https://github.com/IBM/mcp-context-forge/issues/2559) - [EPIC][SECURITY]: Third-party script isolation and sandboxing
@@ -819,7 +819,7 @@
 
 ???+ info "⚡ Performance - Remaining (2)"
 
-    - ⏳ [**#1874**](https://github.com/IBM/mcp-context-forge/issues/1874) - [PERFORMANCE]: Establish performance baselines for MCP Gateway
+    - ⏳ [**#1874**](https://github.com/IBM/mcp-context-forge/issues/1874) - [PERFORMANCE]: Establish performance baselines for ContextForge
     - ⏳ [**#2996**](https://github.com/IBM/mcp-context-forge/issues/2996) - [RUST]: Rewrite regex_filter plugin in Rust for performance optimization
 
 ???+ info "📚 Documentation - Remaining (3)"
@@ -836,7 +836,7 @@
     - ⏳ [**#259**](https://github.com/IBM/mcp-context-forge/issues/259) - [CHORE]: SAST (Semgrep) and DAST (OWASP ZAP) automated security testing Makefile targets and GitHub Actions
     - ⏳ [**#260**](https://github.com/IBM/mcp-context-forge/issues/260) - [CHORE]: Manual security testing plan and template for release validation and production deployments
     - ⏳ [**#281**](https://github.com/IBM/mcp-context-forge/issues/281) - [CHORE]: Set up contract testing with Pact (pact-python) including Makefile and GitHub Actions targets
-    - ⏳ [**#312**](https://github.com/IBM/mcp-context-forge/issues/312) - [CHORE]: End-to-End MCP Gateway Stack Testing Harness (mcpgateway, translate, wrapper, mcp-servers)
+    - ⏳ [**#312**](https://github.com/IBM/mcp-context-forge/issues/312) - [CHORE]: End-to-End ContextForge Stack Testing Harness (mcpgateway, translate, wrapper, mcp-servers)
     - ⏳ [**#341**](https://github.com/IBM/mcp-context-forge/issues/341) - [CHORE]: Enhance UI security with DOMPurify and content sanitization
     - ⏳ [**#391**](https://github.com/IBM/mcp-context-forge/issues/391) - [CHORE][CICD]: Setup SonarQube quality gate
     - ⏳ [**#1822**](https://github.com/IBM/mcp-context-forge/issues/1822) - [CHORE]: Create docker-compose for comprehensive performance testing
@@ -873,7 +873,7 @@
 
 ???+ check "📋 Epics - Completed (11)"
 
-    - ✅ [**#2109**](https://github.com/IBM/mcp-context-forge/issues/2109) - [EPIC][UI]: Unified search experience for MCP Gateway admin UI
+    - ✅ [**#2109**](https://github.com/IBM/mcp-context-forge/issues/2109) - [EPIC][UI]: Unified search experience for ContextForge admin UI
     - ✅ [**#2387**](https://github.com/IBM/mcp-context-forge/issues/2387) - [EPIC][TESTING][SECURITY]: RBAC automated regression suite (visibility, teams, token scope)
     - ✅ [**#2525**](https://github.com/IBM/mcp-context-forge/issues/2525) - [EPIC][TESTING][PROTOCOL]: MCP 2025-11-25 Protocol Compliance Test Suite
     - ✅ [**#2535**](https://github.com/IBM/mcp-context-forge/issues/2535) - [EPIC][PLUGINS]: External plugin STDIO launch options (cmd/env/cwd)
@@ -916,7 +916,7 @@
     - ✅ [**#2189**](https://github.com/IBM/mcp-context-forge/issues/2189) - [BUG][AUTH]: Multi-team users denied access to non-primary teams and cannot see public resources from other teams
     - ✅ [**#2192**](https://github.com/IBM/mcp-context-forge/issues/2192) - [BUG]: Token scoping
     - ✅ [**#2261**](https://github.com/IBM/mcp-context-forge/issues/2261) - [BUG]: JWT token creation divergence between CLI and API
-    - ✅ [**#2272**](https://github.com/IBM/mcp-context-forge/issues/2272) - [BUG]: Virtual server using an MCP Gateway authenticated with OAUTH2 is loosing tools
+    - ✅ [**#2272**](https://github.com/IBM/mcp-context-forge/issues/2272) - [BUG]: Virtual server using an ContextForge authenticated with OAUTH2 is loosing tools
     - ✅ [**#2273**](https://github.com/IBM/mcp-context-forge/issues/2273) - [BUG][UI]: Saving a virtual server configuration after edit fails
     - ✅ [**#2324**](https://github.com/IBM/mcp-context-forge/issues/2324) - [BUG]: Observability Dark Mode
     - ✅ [**#2329**](https://github.com/IBM/mcp-context-forge/issues/2329) - [BUG]: Tag filter returns 500 Exception for list tools api
@@ -1262,7 +1262,7 @@
     - ✅ [**#1633**](https://github.com/IBM/mcp-context-forge/issues/1633) - [Bug]: External plugin does not start from docker automatically
     - ✅ [**#1643**](https://github.com/IBM/mcp-context-forge/issues/1643) - [Bug]: POST /admin/users not using is_admin flag and creating users as non admin by default
     - ✅ [**#1644**](https://github.com/IBM/mcp-context-forge/issues/1644) - [Bug]: POST /admin/teams/{team_id}/add-member requires teams.write permission eventhough I am owner of team
-    - ✅ [**#1653**](https://github.com/IBM/mcp-context-forge/issues/1653) - [Bug]: Login returns 500 and no token when password change is required (MCP Gateway 1.0.0-BETA-1)
+    - ✅ [**#1653**](https://github.com/IBM/mcp-context-forge/issues/1653) - [Bug]: Login returns 500 and no token when password change is required (ContextForge 1.0.0-BETA-1)
     - ✅ [**#1663**](https://github.com/IBM/mcp-context-forge/issues/1663) - [Bug]: PostgreSQL: User deletion fails with foreign key constraint violation on email_team_member_history
     - ✅ [**#1664**](https://github.com/IBM/mcp-context-forge/issues/1664) - [Bug]: Cannot retrieve tools by gateway_id when total tools exceed 50
     - ✅ [**#1706**](https://github.com/IBM/mcp-context-forge/issues/1706) - DB connection pool exhaustion: sessions held during upstream HTTP calls
@@ -1353,7 +1353,7 @@
 
 ???+ check "📚 Documentation - Completed (1)"
 
-    - ✅ [**#916**](https://github.com/IBM/mcp-context-forge/issues/916) - Document monday.com MCP Server integration with MCP Gateway
+    - ✅ [**#916**](https://github.com/IBM/mcp-context-forge/issues/916) - Document monday.com MCP Server integration with ContextForge
 
 ---
 
@@ -1387,9 +1387,9 @@
     - ✅ [**#1227**](https://github.com/IBM/mcp-context-forge/issues/1227) - [Feature Request]: Run in production environments with stricter security policies.
     - ✅ [**#1253**](https://github.com/IBM/mcp-context-forge/issues/1253) - Add CI/CD Verification for Complete Build Pipeline
     - ✅ [**#1282**](https://github.com/IBM/mcp-context-forge/issues/1282) - [Feature]🔐 Configurable Password Expiration with Forced Password Change on Login
-    - ✅ [**#1364**](https://github.com/IBM/mcp-context-forge/issues/1364) - [Feature Request]: Add Support for Self-Signed Certificates in MCP Gateway
+    - ✅ [**#1364**](https://github.com/IBM/mcp-context-forge/issues/1364) - [Feature Request]: Add Support for Self-Signed Certificates in ContextForge
     - ✅ [**#1387**](https://github.com/IBM/mcp-context-forge/issues/1387) - [Feature Request]: Support One-Time Authentication Mode for WXO Integration
-    - ✅ [**#1392**](https://github.com/IBM/mcp-context-forge/issues/1392) - Feature Request: Allow Multiple MCP Gateway Registrations with the Same Gateway URL
+    - ✅ [**#1392**](https://github.com/IBM/mcp-context-forge/issues/1392) - Feature Request: Allow Multiple ContextForge Registrations with the Same Gateway URL
     - ✅ [**#1399**](https://github.com/IBM/mcp-context-forge/issues/1399) - Coolify Deployment Certificate Issues - Analysis & Resolution
     - ✅ [**#1409**](https://github.com/IBM/mcp-context-forge/issues/1409) - [Feature Request]: Filtering by gateway ID in the List Tools API
     - ✅ [**#1442**](https://github.com/IBM/mcp-context-forge/issues/1442) - [Feature Request]: Modify Tool Tag Structure from Array of Strings to List of Objects
@@ -1420,7 +1420,7 @@
     - ✅ [**#1406**](https://github.com/IBM/mcp-context-forge/issues/1406) - [Bug]: Missing Structured Content for Virtual Server in Streamable HTTP Response
     - ✅ [**#1447**](https://github.com/IBM/mcp-context-forge/issues/1447) - [Bug]: UI bug in the Metrics Tab, The Navigate page for Tools tab bottom starts from page 66 instead of 1
     - ✅ [**#1448**](https://github.com/IBM/mcp-context-forge/issues/1448) - [Bug]: One time auth restricts addition of multiple gateways with same URL since the Auth is None
-    - ✅ [**#1451**](https://github.com/IBM/mcp-context-forge/issues/1451) - [Bug]: Bug in Plugin Tab of Context Forge - Gateway Administration, PIIFilterPlugin is Enabled but doesn't mask email id and Phone number
+    - ✅ [**#1451**](https://github.com/IBM/mcp-context-forge/issues/1451) - [Bug]: Bug in Plugin Tab of ContextForge - Gateway Administration, PIIFilterPlugin is Enabled but doesn't mask email id and Phone number
     - ✅ [**#1452**](https://github.com/IBM/mcp-context-forge/issues/1452) - [Bug]: Issues Identified in MCP Server Admin UI
     - ✅ [**#1453**](https://github.com/IBM/mcp-context-forge/issues/1453) - [Bug]: Gateway creation under team scope returns team id as Null
     - ✅ [**#1462**](https://github.com/IBM/mcp-context-forge/issues/1462) - [Bug]: TARGETPLATFORM argument not always populated depending on container runtime during build
@@ -1488,7 +1488,7 @@
     - ✅ [**#969**](https://github.com/IBM/mcp-context-forge/issues/969) - Backend Multi-Tenancy Issues - Critical bugs and missing features
     - ✅ [**#1020**](https://github.com/IBM/mcp-context-forge/issues/1020) - [Feature] Edit Button Functionality - A2A
     - ✅ [**#1093**](https://github.com/IBM/mcp-context-forge/issues/1093) - [Feature Request]: Role-Based Access Control (RBAC) - support generic oAuth provider or ldap provider
-    - ✅ [**#1111**](https://github.com/IBM/mcp-context-forge/issues/1111) - [Feature Request]: Support application/x-www-form-urlencoded Requests in MCP Gateway UI for OAuth2 / Keycloak Integration
+    - ✅ [**#1111**](https://github.com/IBM/mcp-context-forge/issues/1111) - [Feature Request]: Support application/x-www-form-urlencoded Requests in ContextForge UI for OAuth2 / Keycloak Integration
     - ✅ [**#1137**](https://github.com/IBM/mcp-context-forge/issues/1137) - [Feature Request]: Add missing hooks to OPA plugin
     - ✅ [**#1197**](https://github.com/IBM/mcp-context-forge/issues/1197) - [Feature]: Support Bundle Generation - Automated Diagnostics Collection
     - ✅ [**#1200**](https://github.com/IBM/mcp-context-forge/issues/1200) - [Feature Request]: In built MCP client - LLM Chat service for virtual servers with agentic capabilities and MCP Enabled Tool Orchestration
@@ -1551,7 +1551,7 @@
 
     - ✅ [**#1178**](https://github.com/IBM/mcp-context-forge/issues/1178) - [Bug]: The header in UI overlaps with all the modals
     - ✅ [**#1117**](https://github.com/IBM/mcp-context-forge/issues/1117) - [Bug]:Login not working with 0.7.0 version
-    - ✅ [**#1109**](https://github.com/IBM/mcp-context-forge/issues/1109) - [Bug]:MCP Gateway UI OAuth2 Integration Fails with Keycloak Due to Missing x-www-form-urlencoded Support
+    - ✅ [**#1109**](https://github.com/IBM/mcp-context-forge/issues/1109) - [Bug]:ContextForge UI OAuth2 Integration Fails with Keycloak Due to Missing x-www-form-urlencoded Support
     - ✅ [**#1104**](https://github.com/IBM/mcp-context-forge/issues/1104) - [Bug]: X-Upstream-Authorization Header Not Working When Auth Type is None
     - ✅ [**#1101**](https://github.com/IBM/mcp-context-forge/issues/1101) - [Bug]:login issue
     - ✅ [**#1078**](https://github.com/IBM/mcp-context-forge/issues/1078) - [Bug]: OAuth Token Multi-Tenancy Support: User-Specific Token Handling Required
@@ -1636,7 +1636,7 @@
     - ✅ [**#989**](https://github.com/IBM/mcp-context-forge/issues/989) - [Feature Request]: Sample MCP Server - Python PowerPoint Editor (python-pptx)
     - ✅ [**#986**](https://github.com/IBM/mcp-context-forge/issues/986) - Plugin Request: Implement Argument Normalizer Plugin (Native)
     - ✅ [**#928**](https://github.com/IBM/mcp-context-forge/issues/928) - Migrate container base images from UBI9 to UBI10 and Python from 3.11 to 3.12
-    - ✅ [**#925**](https://github.com/IBM/mcp-context-forge/issues/925) - Add MySQL database support to MCP Gateway
+    - ✅ [**#925**](https://github.com/IBM/mcp-context-forge/issues/925) - Add MySQL database support to ContextForge
     - ✅ [**#860**](https://github.com/IBM/mcp-context-forge/issues/860) - [EPIC]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping
     - ✅ [**#859**](https://github.com/IBM/mcp-context-forge/issues/859) - [Feature Request]: Authentication & Authorization - IBM Security Verify Enterprise SSO Integration (Depends on #220)
     - ✅ [**#846**](https://github.com/IBM/mcp-context-forge/issues/846) - [Bug]: Editing server converts hex UUID to hyphenated UUID format, lacks error handling
@@ -1702,7 +1702,7 @@
     - ✅ [**#404**](https://github.com/IBM/mcp-context-forge/issues/404) - [Feature Request]: Add resources and prompts/prompt templates to time server
     - ✅ [**#380**](https://github.com/IBM/mcp-context-forge/issues/380) - [Feature Request]: REST Endpoints for Go fast-time-server
     - ✅ [**#368**](https://github.com/IBM/mcp-context-forge/issues/368) - [Feature Request]: Enhance Metrics Tab UI with Virtual Servers and Top 5 Performance Tables
-    - ✅ [**#364**](https://github.com/IBM/mcp-context-forge/issues/364) - [Feature Request]: Add Log File Support to MCP Gateway
+    - ✅ [**#364**](https://github.com/IBM/mcp-context-forge/issues/364) - [Feature Request]: Add Log File Support to ContextForge
     - ✅ [**#344**](https://github.com/IBM/mcp-context-forge/issues/344) - [CHORE]: Implement additional security headers and CORS configuration
     - ✅ [**#320**](https://github.com/IBM/mcp-context-forge/issues/320) - [Feature Request]: Update Streamable HTTP to fully support Virtual Servers
     - ✅ [**#319**](https://github.com/IBM/mcp-context-forge/issues/319) - [Feature Request]: AI Middleware Integration / Plugin Framework for extensible gateway capabilities
@@ -1847,7 +1847,7 @@
     - ✅ [**#476**](https://github.com/IBM/mcp-context-forge/issues/476) - [Bug]:UI Does Not Show Error for Duplicate Server Name
     - ✅ [**#472**](https://github.com/IBM/mcp-context-forge/issues/472) - [Bug]: auth_username and auth_password not getting set in GET /gateways/<gateway_id> API
     - ✅ [**#471**](https://github.com/IBM/mcp-context-forge/issues/471) - [Bug]: _populate_auth not working
-    - ✅ [**#424**](https://github.com/IBM/mcp-context-forge/issues/424) - [Bug]: MCP Gateway Doesn't Detect HTTPS/TLS Context or respect X-Forwarded-Proto when using Federation
+    - ✅ [**#424**](https://github.com/IBM/mcp-context-forge/issues/424) - [Bug]: ContextForge Doesn't Detect HTTPS/TLS Context or respect X-Forwarded-Proto when using Federation
     - ✅ [**#419**](https://github.com/IBM/mcp-context-forge/issues/419) - [Bug]: Remove unused lock_file_path from config.py (trips up bandit)
     - ✅ [**#416**](https://github.com/IBM/mcp-context-forge/issues/416) - [Bug]: Achieve 100% bandit lint for version.py (remove git command from version.py, tests and UI and rely on semantic version only)
     - ✅ [**#412**](https://github.com/IBM/mcp-context-forge/issues/412) - [Bug]: Replace assert statements with explicit error handling in translate.py and fix bandit lint issues
@@ -1891,9 +1891,9 @@
 
 ???+ check "📚 Completed Documentation (3)"
 
-    - ✅ [**#522**](https://github.com/IBM/mcp-context-forge/issues/522) - [Docs]: OpenAPI title is MCP_Gateway instead of MCP Gateway
+    - ✅ [**#522**](https://github.com/IBM/mcp-context-forge/issues/522) - [Docs]: Fix OpenAPI title to use ContextForge
     - ✅ [**#376**](https://github.com/IBM/mcp-context-forge/issues/376) - [Docs]: Document Security Policy in GitHub Pages and Link Roadmap on Homepage
-    - ✅ [**#46**](https://github.com/IBM/mcp-context-forge/issues/46) - [Docs]: Add documentation for using mcp-cli with MCP Gateway
+    - ✅ [**#46**](https://github.com/IBM/mcp-context-forge/issues/46) - [Docs]: Add documentation for using mcp-cli with ContextForge
 
 ---
 
@@ -1941,7 +1941,7 @@
 ???+ check "✨ Completed Features (3)"
 
     - ✅ [**#125**](https://github.com/IBM/mcp-context-forge/issues/125) - [Feature Request]: Add Streamable HTTP MCP servers to Gateway
-    - ✅ [**#109**](https://github.com/IBM/mcp-context-forge/issues/109) - [Feature Request]: Implement Streamable HTTP Transport for Client Connections to MCP Gateway
+    - ✅ [**#109**](https://github.com/IBM/mcp-context-forge/issues/109) - [Feature Request]: Implement Streamable HTTP Transport for Client Connections to ContextForge
     - ✅ [**#25**](https://github.com/IBM/mcp-context-forge/issues/25) - [Feature]: Add "Version and Environment Info" tab to Admin UI
 
 ???+ check "🐛 Completed Bugs (2)"

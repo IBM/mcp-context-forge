@@ -18,7 +18,7 @@ APP_MODULE=${APP_MODULE:-mcpgateway.main:app}
 
 # Help message
 show_help() {
-    echo "MCP Gateway Runner"
+    echo "ContextForge Runner"
     echo "==================="
     echo ""
     echo "Usage: $0 [options]"
@@ -103,7 +103,7 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "Creating default $ENV_FILE..."
     cat > "$ENV_FILE" << EOL
 # Basic Settings
-APP_NAME=MCP_Gateway
+APP_NAME=ContextForge
 HOST=${HOST}
 PORT=${PORT}
 DATABASE_URL=sqlite:///./mcp.db
@@ -174,7 +174,7 @@ fi
 
 # Check if running in development mode
 if [ "$RELOAD" = "true" ]; then
-    echo "Starting MCP Gateway in development mode..."
+    echo "Starting ContextForge in development mode..."
     echo "Running: uvicorn $APP_MODULE --host $HOST --port $PORT --reload $LOG_CONFIG"
     exec uvicorn $APP_MODULE \
         --host "$HOST" \
@@ -182,7 +182,7 @@ if [ "$RELOAD" = "true" ]; then
         --reload \
         $LOG_CONFIG
 else
-    echo "Starting MCP Gateway in production mode..."
+    echo "Starting ContextForge in production mode..."
     echo "Running: uvicorn $APP_MODULE --host $HOST --port $PORT --workers $WORKERS $LOG_CONFIG"
     exec uvicorn $APP_MODULE \
         --host "$HOST" \

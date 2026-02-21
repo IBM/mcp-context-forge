@@ -2,15 +2,15 @@
 
 ## Overview
 
-MCP Gateway now supports custom PostgreSQL schema configuration via the `search_path` parameter. This feature addresses [Issue #1535](https://github.com/IBM/mcp-context-forge/issues/1535) and enables deployment in enterprise PostgreSQL environments where access to the `public` schema is restricted.
+ContextForge now supports custom PostgreSQL schema configuration via the `search_path` parameter. This feature addresses [Issue #1535](https://github.com/IBM/mcp-context-forge/issues/1535) and enables deployment in enterprise PostgreSQL environments where access to the `public` schema is restricted.
 
 ## Problem Statement
 
-Enterprise PostgreSQL environments often restrict access to the `public` schema for security reasons. Previously, MCP Gateway could only use the default `public` schema, preventing deployment in such environments without database-level workarounds.
+Enterprise PostgreSQL environments often restrict access to the `public` schema for security reasons. Previously, ContextForge could only use the default `public` schema, preventing deployment in such environments without database-level workarounds.
 
 ## Solution
 
-Users can now specify a custom PostgreSQL schema by including the `options` query parameter in the `DATABASE_URL` environment variable. The schema must exist before deploying MCP Gateway.
+Users can now specify a custom PostgreSQL schema by including the `options` query parameter in the `DATABASE_URL` environment variable. The schema must exist before deploying ContextForge.
 
 ## Configuration
 
@@ -87,7 +87,7 @@ spec:
 
 ### 1. Create the Schema
 
-The custom schema must exist before deploying MCP Gateway. Connect to your PostgreSQL database and run:
+The custom schema must exist before deploying ContextForge. Connect to your PostgreSQL database and run:
 
 ```sql
 -- Create the schema
@@ -126,7 +126,7 @@ If you're migrating an existing deployment from the `public` schema to a custom 
 
 1. Create the new schema
 2. Update `DATABASE_URL` with the new schema
-3. Deploy MCP Gateway (it will create tables in the new schema)
+3. Deploy ContextForge (it will create tables in the new schema)
 4. Migrate data from old schema if needed
 
 ### Option 2: Schema Migration
@@ -151,7 +151,7 @@ BEGIN
     END LOOP;
 END $$;
 
--- 3. Update DATABASE_URL and restart MCP Gateway
+-- 3. Update DATABASE_URL and restart ContextForge
 ```
 
 ## Troubleshooting

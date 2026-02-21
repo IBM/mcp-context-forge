@@ -1,4 +1,4 @@
-# CrewAI Integration with MCP Gateway
+# CrewAI Integration with ContextForge
 
 CrewAI is a multi-agent orchestration framework that enables AI agents to collaborate on complex tasks. Integrating CrewAI with the Model Context Protocol (MCP) allows agents to dynamically discover and utilize tools hosted on MCP servers, enhancing their capabilities and flexibility.
 

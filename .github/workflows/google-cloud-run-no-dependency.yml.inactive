@@ -1,5 +1,5 @@
 # ===============================================================
-# ☁️  MCP Gateway ▸ Build, Cache & Deploy to Google Cloud Run
+# ☁️  ContextForge ▸ Build, Cache & Deploy to Google Cloud Run
 # ===============================================================
 # Maintainer: Mihai Criveti
 # Status: Inactive
@@ -19,7 +19,7 @@
 #    gcloud artifacts repositories create mcpgateway \
 #      --repository-format=docker \
 #      --location=us-central1 \
-#      --description="MCP Gateway Docker images"
+#      --description="ContextForge Docker images"
 # 4. Create a service account with required permissions:
 #      - Cloud Run Developer (only on mcpgateway service)
 #      - Artifact Registry Writer (only on mcpgateway repository)
@@ -85,7 +85,7 @@
 #  │ BASIC_AUTH_USER            │ Username for HTTP Basic Authentication                          │
 #  │                            │ Example: "admin"                                                │
 #  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
-#  │ CACHE_TYPE                 │ Cache backend type for MCP Gateway                              │
+#  │ CACHE_TYPE                 │ Cache backend type for ContextForge                              │
 #  │                            │ Example: "redis" (or "memory" for development)                  │
 #  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
 #  │ HOST                       │ IP address to bind the service to (required for containers)     │

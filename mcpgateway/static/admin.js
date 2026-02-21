@@ -19636,7 +19636,7 @@ async function fetchToolsForGateway(gatewayId, gatewayName) {
 // Expose fetch tools function to global scope
 window.fetchToolsForGateway = fetchToolsForGateway;
 
-console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
+console.log("🛡️ ContextForge AI Gateway admin.js initialized");
 
 // ===================================================================
 // BULK IMPORT TOOLS — MODAL WIRING
@@ -20720,7 +20720,7 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
         }
         if (queryInput) {
             // Reset to default value
-            queryInput.value = "Hello from MCP Gateway Admin UI test!";
+            queryInput.value = "Hello from ContextForge Admin UI test!";
         }
         if (resultDiv) {
             resultDiv.classList.add("hidden");
@@ -20777,7 +20777,7 @@ async function handleA2ATestSubmit(e) {
         const agentId = safeGetElement("a2a-test-agent-id")?.value;
         const query =
             safeGetElement("a2a-test-query")?.value ||
-            "Hello from MCP Gateway Admin UI test!";
+            "Hello from ContextForge Admin UI test!";
 
         if (!agentId) {
             throw new Error("Agent ID is missing");

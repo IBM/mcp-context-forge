@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Authentication verification utilities for MCP Gateway.
+Authentication verification utilities for ContextForge.
 This module provides JWT and Basic authentication verification functions
 for securing API endpoints. It supports authentication via Authorization
 headers and cookies.

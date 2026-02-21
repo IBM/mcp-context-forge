@@ -243,13 +243,13 @@ Extract all text content from a document.
 
 ## Integration
 
-### With MCP Gateway
+### With ContextForge
 
 ```bash
 # Start the DOCX server via HTTP
 make serve-http
 
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:8000/gateways \
   -H "Content-Type: application/json" \
   -d '{

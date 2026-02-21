@@ -1,4 +1,4 @@
-# LangChain Integration with MCP Gateway
+# LangChain Integration with ContextForge
 
 LangChain is a framework for developing applications powered by language models. Integrating LangChain with the Model Context Protocol (MCP) allows agents to utilize tools defined across one or more MCP servers, enabling seamless interaction with external data sources and services.
 
@@ -22,9 +22,9 @@ pip install langchain-mcp-adapters
 
 ---
 
-## 🔗 Connecting to MCP Gateway
+## 🔗 Connecting to ContextForge
 
-Here's how to set up a connection to your MCP Gateway:
+Here's how to set up a connection to your ContextForge:
 
 ```python
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -40,7 +40,7 @@ client = MultiServerMCPClient(
 )
 ```
 
-Replace `"http://localhost:4444/mcp"` with the URL of your MCP Gateway.
+Replace `"http://localhost:4444/mcp"` with the URL of your ContextForge.
 
 ---
 

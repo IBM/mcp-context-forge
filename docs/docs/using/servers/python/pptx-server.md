@@ -51,10 +51,10 @@ make serve-combined
 make serve-http-only
 ```
 
-### Integration with MCP Gateway
+### Integration with ContextForge
 
 ```bash
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:4444/servers \
   -H "Content-Type: application/json" \
   -d '{

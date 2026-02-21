@@ -1,10 +1,10 @@
-# Securing MCP Gateway
+# Securing ContextForge
 
-This guide provides essential security configurations and best practices for deploying MCP Gateway in production environments.
+This guide provides essential security configurations and best practices for deploying ContextForge in production environments.
 
 ## ⚠️ Critical Security Notice
 
-**MCP Gateway is currently in beta (v1.0.0-RC-1)** and requires careful security configuration for production use:
+**ContextForge is currently in beta (v1.0.0-RC-1)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
 - Expect **breaking changes** between versions until 1.0 release
@@ -80,7 +80,7 @@ The platform admin user (`PLATFORM_ADMIN_EMAIL`) is automatically created during
 
 #### JWT Security Configuration
 
-MCP Gateway supports both symmetric (HMAC) and asymmetric (RSA/ECDSA) JWT algorithms. **Asymmetric algorithms are strongly recommended for production** due to enhanced security properties.
+ContextForge supports both symmetric (HMAC) and asymmetric (RSA/ECDSA) JWT algorithms. **Asymmetric algorithms are strongly recommended for production** due to enhanced security properties.
 
 ##### Production JWT Security (Recommended)
 
@@ -178,7 +178,7 @@ volumes:
 
 #### Environment Isolation
 
-When deploying MCP Gateway across multiple environments (DEV, UAT, PROD), you must configure unique JWT settings per environment to prevent tokens from one environment being accepted in another.
+When deploying ContextForge across multiple environments (DEV, UAT, PROD), you must configure unique JWT settings per environment to prevent tokens from one environment being accepted in another.
 
 **Required per-environment configuration:**
 
@@ -276,7 +276,7 @@ python3 -m mcpgateway.utils.create_jwt_token \
 
 ### 4. Token Lifecycle Management
 
-MCP Gateway provides token lifecycle controls including revocation and validation requirements.
+ContextForge provides token lifecycle controls including revocation and validation requirements.
 
 #### Token Revocation
 
@@ -326,7 +326,7 @@ For deployments using an authentication proxy:
 TRUST_PROXY_AUTH=true
 PROXY_USER_HEADER=X-Forwarded-User    # Header containing authenticated username
 
-# Important: Only enable when MCP Gateway is behind a trusted proxy
+# Important: Only enable when ContextForge is behind a trusted proxy
 # that properly sets and validates this header
 ```
 
@@ -423,7 +423,7 @@ Before connecting any MCP server:
 
 ### 14. Integration Security
 
-MCP Gateway should be integrated with:
+ContextForge should be integrated with:
 
 - [ ] API Gateway for auth and rate limiting
 - [ ] Web Application Firewall (WAF)
@@ -457,7 +457,7 @@ Security considerations:
 
 ### 16. Downstream Application Security
 
-Applications consuming MCP Gateway data must:
+Applications consuming ContextForge data must:
 
 - [ ] Validate all inputs from the gateway
 - [ ] Implement context-appropriate sanitization
@@ -497,7 +497,7 @@ LOG_TO_FILE=false            # Disable file logging unless required
 LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
 ```
 
-> **Rate limiting:** MCP Gateway does not ship a built-in global rate limiter. Enforce
+> **Rate limiting:** ContextForge does not ship a built-in global rate limiter. Enforce
 > request throttling at an upstream ingress (NGINX, Envoy, API gateway) before traffic
 > reaches the service.
 
@@ -515,7 +515,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
                                                           ▼
                                                  ┌─────────────────┐
                                                  │                 │
-                                                 │  MCP Gateway    │
+                                                 │  ContextForge    │
                                                  │  (Internal)     │
                                                  └────────┬────────┘
                                                           │
@@ -582,4 +582,4 @@ make docker-prod
 make security-report
 ```
 
-Remember: **Security is a shared responsibility**. MCP Gateway provides *some* security controls, but you must properly configure and integrate it within a comprehensive security architecture.
+Remember: **Security is a shared responsibility**. ContextForge provides *some* security controls, but you must properly configure and integrate it within a comprehensive security architecture.

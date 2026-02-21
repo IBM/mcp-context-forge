@@ -4,5 +4,5 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Playwright UI tests for MCP Context Forge.
+Playwright UI tests for ContextForge.
 """

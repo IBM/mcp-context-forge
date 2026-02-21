@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Madhav Kandukuri
 
-SecurityValidator for MCP Gateway
+SecurityValidator for ContextForge
 This module defines the `SecurityValidator` class, which provides centralized, configurable
 validation logic for user-generated content in MCP-based applications.
 

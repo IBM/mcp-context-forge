@@ -1,7 +1,7 @@
 # HTTPX Client Benchmarks
 
 Benchmark suite for testing HTTPX client performance patterns, connection pooling,
-and optimal configuration for high-concurrency MCP Gateway deployments.
+and optimal configuration for high-concurrency ContextForge deployments.
 
 ## Overview
 
@@ -168,7 +168,7 @@ Based on extensive benchmarking:
 
 ## Recommended Configuration
 
-Based on benchmarks, for MCP Gateway:
+Based on benchmarks, for ContextForge:
 
 ```bash
 # Optimal for high-throughput
@@ -215,7 +215,7 @@ Ensure your test server is running:
 # Start fast-time-server
 ./fast-time-server -transport=dual -port 8101
 
-# Or start MCP Gateway
+# Or start ContextForge
 make dev
 ```
 

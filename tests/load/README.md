@@ -1,6 +1,6 @@
 # Load Testing Framework
 
-Production-scale load testing and database population system for MCP Gateway with realistic data generation, comprehensive metrics, and validation.
+Production-scale load testing and database population system for ContextForge with realistic data generation, comprehensive metrics, and validation.
 
 ## Quick Start
 

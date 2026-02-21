@@ -4,7 +4,7 @@
 name = "secrets_detection"
 version = "1.0.0-BETA-2"
 edition = "2024"
-authors = ["MCP Gateway Contributors"]
+authors = ["ContextForge Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/IBM/mcp-context-forge"
 description = "Secret detection plugin"

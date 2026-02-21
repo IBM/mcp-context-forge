@@ -78,7 +78,7 @@ class ExportValidationError(ExportError):
 
 
 class ExportService:
-    """Service for exporting MCP Gateway configuration and data.
+    """Service for exporting ContextForge configuration and data.
 
     This service provides comprehensive export functionality including:
     - Collection of all entity types (tools, gateways, servers, prompts, resources, roots)

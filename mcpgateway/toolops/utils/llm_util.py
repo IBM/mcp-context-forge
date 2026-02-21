@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
-MCP Gateway - Main module for using and supporting MCP-CF LLM providers in toolops modules.
+ContextForge - Main module for using and supporting MCP-CF LLM providers in toolops modules.
 
 This module defines the utility funtions to use MCP-CF supported LLM providers in toolops.
 """

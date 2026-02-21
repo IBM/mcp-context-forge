@@ -23,7 +23,7 @@ deployment:
     domain: apps-crc.testing  # Optional, auto-detected if omitted
     tls_termination: edge
 
-# MCP Gateway configuration
+# ContextForge configuration
 gateway:
   # Build gateway from current repository
   repo: https://github.com/terylt/mcp-context-forge.git

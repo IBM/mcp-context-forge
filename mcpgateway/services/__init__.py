@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Services Package.
-Exposes core MCP Gateway services:
+Exposes core ContextForge services:
 - Tool management
 - Resource handling
 - Prompt templates

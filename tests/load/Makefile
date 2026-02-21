@@ -7,7 +7,7 @@
 
 # Default target
 help:
-	@echo "MCP Gateway Load Testing Framework"
+	@echo "ContextForge Load Testing Framework"
 	@echo "==================================="
 	@echo ""
 	@echo "Installation:"

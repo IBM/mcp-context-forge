@@ -1,7 +1,7 @@
 {
   "metadata": {
     "version": "0.5.0",
-    "description": "Sample test data for MCP Gateway v0.5.0",
+    "description": "Sample test data for ContextForge v0.5.0",
     "created_by": "migration_test_suite",
     "total_records": 12
   },
@@ -143,7 +143,7 @@
       {
         "name": "greeting_prompt_v050",
         "description": "Simple greeting prompt for testing",
-        "template": "Hello {{name}}, welcome to MCP Gateway v0.5.0! How can I help you with {{task}}?",
+        "template": "Hello {{name}}, welcome to ContextForge v0.5.0! How can I help you with {{task}}?",
         "annotations": {
           "category": "greeting",
           "variables": "2",

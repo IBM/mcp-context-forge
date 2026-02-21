@@ -5,8 +5,8 @@ build-backend = "maturin"
 [project]
 name = "mcpgateway-rust"
 version = "1.0.0-RC-1"
-description = "Rust-accelerated plugins for MCP Gateway"
-authors = [{name = "MCP Gateway Contributors"}]
+description = "Rust-accelerated plugins for ContextForge"
+authors = [{name = "ContextForge Contributors"}]
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 classifiers = [

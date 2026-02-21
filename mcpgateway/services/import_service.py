@@ -156,7 +156,7 @@ class ImportStatus:
 
 
 class ImportService:
-    """Service for importing MCP Gateway configuration and data.
+    """Service for importing ContextForge configuration and data.
 
     This service provides comprehensive import functionality including:
     - Import file validation and schema compliance

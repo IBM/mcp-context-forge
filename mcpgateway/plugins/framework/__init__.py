@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
 Services Package.
-Exposes core MCP Gateway plugin components:
+Exposes core ContextForge plugin components:
 - Context
 - Manager
 - Payloads

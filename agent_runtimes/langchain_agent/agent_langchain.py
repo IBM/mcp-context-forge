@@ -178,7 +178,7 @@ class MCPTool(BaseTool):
 
 
 class LangchainMCPAgent:
-    """Langchain agent that integrates with MCP Gateway"""
+    """Langchain agent that integrates with ContextForge"""
 
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -212,7 +212,7 @@ class LangchainMCPAgent:
                 await self._load_allowlisted_tools()
             else:
                 # Auto-discover from gateway
-                logger.info("Auto-discovering tools from MCP Gateway")
+                logger.info("Auto-discovering tools from ContextForge")
                 await self._load_mcp_tools()
 
             # Create the agent
@@ -250,17 +250,17 @@ class LangchainMCPAgent:
             raise
 
     async def _load_mcp_tools(self):
-        """Load tools from MCP Gateway"""
+        """Load tools from ContextForge"""
         try:
             # Add debug info about the connection
-            logger.info(f"Connecting to MCP Gateway at: {self.mcp_client.base_url}")
+            logger.info(f"Connecting to ContextForge at: {self.mcp_client.base_url}")
             logger.info(f"Using token: {'Yes' if self.mcp_client.token else 'No'}")
 
             tool_defs = self.mcp_client.list_tools()
-            logger.info(f"Found {len(tool_defs)} tools from MCP Gateway")
+            logger.info(f"Found {len(tool_defs)} tools from ContextForge")
 
             if len(tool_defs) == 0:
-                logger.warning("No tools found from MCP Gateway. Check if:")
+                logger.warning("No tools found from ContextForge. Check if:")
                 logger.warning("  1. Gateway is running on the expected URL")
                 logger.warning("  2. Authentication token is valid")
                 logger.warning("  3. Gateway has tools configured")
@@ -318,7 +318,7 @@ Always strive to be helpful, accurate, and honest in your responses."""
             return False
 
     async def test_gateway_connection(self) -> bool:
-        """Test connection to MCP Gateway"""
+        """Test connection to ContextForge"""
         try:
             # Try to list tools as a connectivity test
             tools = self.mcp_client.list_tools()

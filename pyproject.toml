@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mcp-contextforge-gateway"
 version = "1.0.0-RC-1"
-description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
+description = "ContextForge AI Gateway — a unified gateway for Tools, Agents, Models, and APIs built with FastAPI. Supports MCP federation, A2A agents, LLM proxy, rate limiting, auth, observability, virtual servers, and plugin extensibility."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
   "json-rpc","sse","websocket","federation","security","authentication"

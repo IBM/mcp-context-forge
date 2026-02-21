@@ -1,6 +1,6 @@
 # Phoenix Integration Guide
 
-[Arize Phoenix](https://github.com/Arize-ai/phoenix) provides AI/LLM-focused observability for MCP Gateway, offering specialized features for monitoring AI-powered applications.
+[Arize Phoenix](https://github.com/Arize-ai/phoenix) provides AI/LLM-focused observability for ContextForge, offering specialized features for monitoring AI-powered applications.
 
 ## Why Phoenix?
 
@@ -21,7 +21,7 @@ Phoenix is optimized for AI/LLM workloads with features like:
 git clone https://github.com/IBM/mcp-context-forge
 cd mcp-context-forge
 
-# Start Phoenix with MCP Gateway
+# Start Phoenix with ContextForge
 docker-compose -f docker-compose.yml \
                -f docker-compose.with-phoenix.yml up -d
 
@@ -43,13 +43,13 @@ docker run -d \
   -v phoenix-data:/phoenix/data \
   arizephoenix/phoenix:latest
 
-# Configure MCP Gateway
+# Configure ContextForge
 export OTEL_ENABLE_OBSERVABILITY=true
 export OTEL_TRACES_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 export OTEL_SERVICE_NAME=mcp-gateway
 
-# Start MCP Gateway
+# Start ContextForge
 mcpgateway
 ```
 
@@ -61,7 +61,7 @@ For production deployments, use [Phoenix Cloud](https://app.phoenix.arize.com):
 # Get your API key from Phoenix Cloud
 export PHOENIX_API_KEY=your-api-key
 
-# Configure MCP Gateway for Phoenix Cloud
+# Configure ContextForge for Phoenix Cloud
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://app.phoenix.arize.com
 export OTEL_EXPORTER_OTLP_HEADERS="api-key=$PHOENIX_API_KEY"
 export OTEL_EXPORTER_OTLP_INSECURE=false
@@ -149,7 +149,7 @@ evaluator = llm_eval.LLMEvaluator(
     eval_type="relevance"
 )
 
-# Traces from MCP Gateway will be evaluated
+# Traces from ContextForge will be evaluated
 evaluator.evaluate(
     trace_dataset=phoenix.get_traces(),
     eval_name="response_quality"
@@ -337,7 +337,7 @@ Configure alerts in Phoenix Cloud:
    telnet localhost 4317
    ```
 
-3. Check MCP Gateway logs:
+3. Check ContextForge logs:
    ```bash
    docker logs mcpgateway | grep -i phoenix
    ```

@@ -4,10 +4,10 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Pagination Utilities for MCP Gateway.
+Pagination Utilities for ContextForge.
 
 This module provides utilities for implementing efficient pagination
-across all MCP Gateway endpoints, supporting both offset-based and
+across all ContextForge endpoints, supporting both offset-based and
 cursor-based pagination strategies.
 
 Features:

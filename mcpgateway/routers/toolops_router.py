@@ -82,7 +82,7 @@ async def generate_testcases_for_tool(
     the user is authenticated before proceeding.
 
     Args:
-        tool_id: Tool ID in context forge.
+        tool_id: Tool ID in ContextForge.
         number_of_test_cases: Number of test cases to generate for the given tools (optional)
         number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
         mode: Three supported modes - 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status
@@ -118,7 +118,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
 
     Args:
         tool_nl_test_input: NL test case format input to run test cases with agent , it contains\
-            - tool_id: Tool ID in context forge\
+            - tool_id: Tool ID in ContextForge\
             - tool_nl_test_cases: List of natural language test cases (utteances) for testing MCP tool with the agent
         db: DB session to connect with database
 

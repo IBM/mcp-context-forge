@@ -31,7 +31,7 @@ We needed to decide whether to:
 
 ## Decision
 
-We will **embed proxy and gateway capabilities directly into the ContextForge application** with support for optional service mesh composition when needed.
+We will **embed proxy and gateway capabilities directly into ContextForge application** with support for optional service mesh composition when needed.
 
 **Built-in capabilities:**
 

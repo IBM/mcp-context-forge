@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Locust load testing scenarios for MCP Gateway.
+"""Locust load testing scenarios for ContextForge.
 
-This module provides comprehensive load testing for MCP Gateway using Locust.
+This module provides comprehensive load testing for ContextForge using Locust.
 It includes multiple user types simulating different usage patterns.
 
 Usage:
@@ -1673,7 +1673,7 @@ class FastTestEchoUser(BaseUser):
         "Echo echo echo",
         "The quick brown fox jumps over the lazy dog",
         "Lorem ipsum dolor sit amet",
-        "MCP Gateway load test message",
+        "ContextForge load test message",
     ]
 
     def _rpc_request(self, payload: dict, name: str):

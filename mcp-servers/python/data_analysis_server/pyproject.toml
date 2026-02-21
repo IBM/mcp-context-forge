@@ -3,7 +3,7 @@ name = "data-analysis-server"
 version = "0.1.0"
 description = "MCP server for comprehensive data analysis capabilities"
 authors = [
-    {name = "MCP Context Forge", email = "noreply@example.com"}
+    {name = "ContextForge", email = "noreply@example.com"}
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"

@@ -26,7 +26,7 @@ resource "kubernetes_secret" "mcpgw" {
 resource "kubernetes_config_map" "mcpgw_env" {
   metadata { name = "mcpgateway-env" }
   data = {
-    APP_NAME  = "MCP Gateway"
+    APP_NAME  = "ContextForge"
     LOG_LEVEL = "INFO"
   }
 }
