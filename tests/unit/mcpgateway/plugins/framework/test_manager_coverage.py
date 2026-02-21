@@ -169,55 +169,148 @@ class TestInvokeHookForPlugin:
 class TestExecuteWithTimeout:
     @pytest.mark.asyncio
     async def test_with_trace_id(self):
-        executor = PluginExecutor(timeout=30)
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.return_value = "span-123"
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
         hook_ref = _make_hook_ref()
         context = PluginContext(global_context=GlobalContext(request_id="1"))
         payload = MagicMock(spec=PluginPayload)
 
-        mock_db = MagicMock()
-        mock_service = MagicMock()
-        mock_service.start_span.return_value = "span-123"
-        mock_trace = MagicMock()
-        mock_trace.get.return_value = "trace-abc"
-
-        with patch("mcpgateway.services.observability_service.current_trace_id", mock_trace), \
-             patch("mcpgateway.db.SessionLocal", return_value=mock_db), \
-             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service):
+        token = current_trace_id.set("trace-abc")
+        try:
             result = await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
 
         assert result.continue_processing is True
-        mock_service.start_span.assert_called_once()
-        mock_service.end_span.assert_called_once()
-        mock_db.close.assert_called_once()
+        mock_provider.start_span.assert_called_once()
+        mock_provider.end_span.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_trace(self):
-        executor = PluginExecutor(timeout=30)
+        mock_provider = MagicMock()
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
         hook_ref = _make_hook_ref()
         context = PluginContext(global_context=GlobalContext(request_id="1"))
         payload = MagicMock(spec=PluginPayload)
 
-        mock_trace = MagicMock()
-        mock_trace.get.return_value = None
+        # current_trace_id defaults to None, so no tracing should occur
+        result = await executor._execute_with_timeout(hook_ref, payload, context)
 
-        with patch("mcpgateway.services.observability_service.current_trace_id", mock_trace), \
-             patch("mcpgateway.db.SessionLocal"), \
-             patch("mcpgateway.services.observability_service.ObservabilityService"):
+        assert result.continue_processing is True
+        mock_provider.start_span.assert_not_called()
+        mock_provider.end_span.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_observability_provider_failure(self):
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.side_effect = Exception("provider fail")
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
+        hook_ref = _make_hook_ref()
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        token = current_trace_id.set("trace-abc")
+        try:
             result = await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
 
+        # Should still succeed despite provider failure
         assert result.continue_processing is True
 
     @pytest.mark.asyncio
-    async def test_observability_import_failure(self):
-        executor = PluginExecutor(timeout=30)
+    async def test_error_path_ends_span_with_error(self):
+        """When plugin execution raises, end_span is called with status='error'."""
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.return_value = "span-err"
+
+        class FailingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                raise RuntimeError("boom")
+
+        plugin = FailingPlugin(_make_config())
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        token = current_trace_id.set("trace-err")
+        try:
+            with pytest.raises(RuntimeError, match="boom"):
+                await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
+
+        mock_provider.start_span.assert_called_once()
+        mock_provider.end_span.assert_called_once_with(span_id="span-err", status="error")
+
+    @pytest.mark.asyncio
+    async def test_error_path_end_span_also_fails(self):
+        """When plugin raises AND end_span also raises, the original error propagates."""
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.return_value = "span-double-err"
+        mock_provider.end_span.side_effect = Exception("end_span also broke")
+
+        class FailingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                raise RuntimeError("plugin boom")
+
+        plugin = FailingPlugin(_make_config())
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        token = current_trace_id.set("trace-double-err")
+        try:
+            with pytest.raises(RuntimeError, match="plugin boom"):
+                await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
+
+        # end_span was attempted despite the error
+        mock_provider.end_span.assert_called_once_with(span_id="span-double-err", status="error")
+
+    @pytest.mark.asyncio
+    async def test_end_span_failure_on_success_path(self):
+        """When end_span raises after successful execution, the result is still returned."""
+        from mcpgateway.plugins.framework.observability import current_trace_id
+
+        mock_provider = MagicMock()
+        mock_provider.start_span.return_value = "span-ok"
+        mock_provider.end_span.side_effect = Exception("end_span broke")
+
+        executor = PluginExecutor(timeout=30, observability=mock_provider)
         hook_ref = _make_hook_ref()
         context = PluginContext(global_context=GlobalContext(request_id="1"))
         payload = MagicMock(spec=PluginPayload)
 
-        with patch("mcpgateway.db.SessionLocal", side_effect=Exception("import fail")):
+        token = current_trace_id.set("trace-ok")
+        try:
             result = await executor._execute_with_timeout(hook_ref, payload, context)
+        finally:
+            current_trace_id.reset(token)
 
+        # Plugin result is returned despite end_span failure
         assert result.continue_processing is True
+        mock_provider.start_span.assert_called_once()
+        mock_provider.end_span.assert_called_once()
 
 
 # ===========================================================================
