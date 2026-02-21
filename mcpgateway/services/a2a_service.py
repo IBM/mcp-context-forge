@@ -28,6 +28,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -145,12 +146,14 @@ class A2AAgentNameConflictError(A2AAgentError):
         super().__init__(message)
 
 
-class A2AAgentService:
+class A2AAgentService(BaseService):
     """Service for managing A2A agents in the gateway.
 
     Provides methods to create, list, retrieve, update, set state, and delete agent records.
     Also supports interactions with A2A-compatible agents.
     """
+
+    _visibility_model_cls = DbA2AAgent
 
     def __init__(self) -> None:
         """Initialize a new A2AAgentService instance."""
@@ -219,12 +222,12 @@ class A2AAgentService:
         - token_teams is None: Admin bypass (unrestricted access)
         - public visibility: Always allowed
         - team visibility: Allowed if agent.team_id in token_teams
-        - private visibility: Allowed if owner, BUT NOT for public-only tokens
+        - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
 
         Args:
             agent: The agent to check access for
             user_email: User's email for owner matching
-            token_teams: Teams from JWT. None = admin, [] = public-only (no owner access)
+            token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access)
 
         Returns:
             True if access allowed, False otherwise.
@@ -236,69 +239,18 @@ class A2AAgentService:
         if agent.visibility == "public":
             return True
 
-        if agent.visibility == "team" and token_teams:
+        # Public-only tokens (explicit token_teams=[]) can only see public resources
+        if not token_teams:
+            return False
+
+        if agent.visibility == "team":
             return agent.team_id in token_teams
 
-        # Private visibility: owner can access, BUT NOT for public-only tokens
-        # Public-only tokens (empty teams array) should NOT get owner access
-        is_public_only_token = len(token_teams) == 0
-        if agent.visibility == "private" and user_email and not is_public_only_token:
+        # Authenticated users can access their own private agents
+        if agent.visibility == "private" and user_email:
             return agent.owner_email == user_email
 
         return False
-
-    def _apply_visibility_filter(
-        self,
-        query,
-        user_email: Optional[str],
-        token_teams: List[str],
-        team_id: Optional[str] = None,
-    ) -> Any:
-        """Apply visibility-based access control to query.
-
-        Access rules (matching tools/resources/prompts):
-        - public: visible to all
-        - team: visible to team members (token_teams contains team_id)
-        - private: visible only to owner, BUT NOT for public-only tokens
-
-        Args:
-            query: SQLAlchemy query to filter
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. [] = public-only (no owner access)
-            team_id: Optional specific team filter
-
-        Returns:
-            Filtered query
-        """
-        # Check if this is a public-only token (empty teams array)
-        # Public-only tokens can ONLY see public resources - no owner access
-        is_public_only_token = len(token_teams) == 0
-
-        if team_id:
-            # User requesting specific team - verify access
-            if team_id not in token_teams:
-                # Return query that matches nothing (will return empty result)
-                return query.where(False)
-
-            access_conditions = [
-                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
-            ]
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
-            return query.where(or_(*access_conditions))
-
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbA2AAgent.visibility == "public"]
-
-        # Only include owner access for non-public-only tokens with user_email
-        if not is_public_only_token and user_email:
-            access_conditions.append(DbA2AAgent.owner_email == user_email)
-
-        if token_teams:
-            access_conditions.append(and_(DbA2AAgent.team_id.in_(token_teams), DbA2AAgent.visibility.in_(["team", "public"])))
-
-        return query.where(or_(*access_conditions))
 
     async def register_agent(
         self,
@@ -633,24 +585,8 @@ class A2AAgentService:
         if not include_inactive:
             query = query.where(DbA2AAgent.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public agents
-        if user_email or token_teams is not None:
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            # Default is public-only access (empty teams) when no teams are available.
-            effective_teams: List[str] = []
-            if token_teams is not None:
-                effective_teams = token_teams
-            elif user_email:
-                # Look up user's teams from DB (for admin UI / first-party access)
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                effective_teams = [team.id for team in user_teams]
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
-
-        # IMPORTANT: Apply visibility filter AFTER access control
-        # This allows users to further filter by visibility within their allowed access
         if visibility:
             query = query.where(DbA2AAgent.visibility == visibility)
 

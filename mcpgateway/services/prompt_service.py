@@ -43,6 +43,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -171,7 +172,7 @@ class PromptLockConflictError(PromptError):
     """
 
 
-class PromptService:
+class PromptService(BaseService):
     """Service for managing prompt templates.
 
     Handles:
@@ -181,6 +182,8 @@ class PromptService:
     - Resource embedding
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbPrompt
 
     def __init__(self) -> None:
         """
@@ -1038,48 +1041,10 @@ class PromptService:
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public prompts
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public prompts + team prompts (+ owner prompts if not public-only token)
-                access_conditions = [
-                    DbPrompt.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbPrompt.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbPrompt.visibility == visibility)
+        if visibility:
+            query = query.where(DbPrompt.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -1408,8 +1373,8 @@ class PromptService:
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own prompts
-        if prompt_owner_email and prompt_owner_email == user_email:
+        # Owner can access their own private prompts
+        if visibility == "private" and prompt_owner_email and prompt_owner_email == user_email:
             return True
 
         # Team prompts: check team membership (matches list_prompts behavior)

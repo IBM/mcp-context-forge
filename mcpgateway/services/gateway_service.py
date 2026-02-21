@@ -93,6 +93,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -328,7 +329,7 @@ class OAuthToolValidationError(GatewayConnectionError):
     """Raised when tool validation fails during OAuth-driven fetch."""
 
 
-class GatewayService:  # pylint: disable=too-many-instance-attributes
+class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
     """Service for managing federated gateways.
 
     Handles:
@@ -337,6 +338,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
     - Federation events
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbGateway
 
     def __init__(self) -> None:
         """Initialize the gateway service.
@@ -1557,54 +1560,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not include_inactive:
             query = query.where(DbGateway.enabled)
 
-        # SECURITY: Apply token-based access control based on normalized token_teams
-        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
-        # - token_teams is []: public-only access (missing teams or explicit empty)
-        # - token_teams is [...]: access to specified teams + public + user's own
-        if token_teams is not None:
-            if len(token_teams) == 0:
-                # Public-only token: only access public gateways
-                query = query.where(DbGateway.visibility == "public")
-            else:
-                # Team-scoped token: public gateways + gateways in allowed teams + user's own
-                access_conditions = [
-                    DbGateway.visibility == "public",
-                    and_(DbGateway.team_id.in_(token_teams), DbGateway.visibility.in_(["team", "public"])),
-                ]
-                if user_email:
-                    access_conditions.append(and_(DbGateway.owner_email == user_email, DbGateway.visibility == "private"))
-                query = query.where(or_(*access_conditions))
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            if visibility:
-                query = query.where(DbGateway.visibility == visibility)
-
-        # Apply team-based access control if user_email is provided (and no token_teams filtering)
-        elif user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
-                    and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
-                ]
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: user's gateways + public gateways + team gateways
-                access_conditions = [
-                    DbGateway.owner_email == user_email,
-                    DbGateway.visibility == "public",
-                ]
-                if team_ids:
-                    access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbGateway.visibility == visibility)
+        if visibility:
+            query = query.where(DbGateway.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:

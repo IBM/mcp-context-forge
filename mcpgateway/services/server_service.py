@@ -37,6 +37,7 @@ from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
@@ -131,12 +132,14 @@ class ServerNameConflictError(ServerError):
         super().__init__(message)
 
 
-class ServerService:
+class ServerService(BaseService):
     """Service for managing MCP Servers in the catalog.
 
     Provides methods to create, list, retrieve, update, set state, and delete server records.
     Also supports event notifications for changes in server data.
     """
+
+    _visibility_model_cls = DbServer
 
     def __init__(self) -> None:
         """Initialize a new ServerService instance.
@@ -790,54 +793,10 @@ class ServerService:
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
-        # SECURITY: Apply token-based access control based on normalized token_teams
-        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
-        # - token_teams is []: public-only access (missing teams or explicit empty)
-        # - token_teams is [...]: access to specified teams + public + user's own
-        if token_teams is not None:
-            if len(token_teams) == 0:
-                # Public-only token: only access public servers
-                query = query.where(DbServer.visibility == "public")
-            else:
-                # Team-scoped token: public servers + servers in allowed teams + user's own
-                access_conditions = [
-                    DbServer.visibility == "public",
-                    and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])),
-                ]
-                if user_email:
-                    access_conditions.append(and_(DbServer.owner_email == user_email, DbServer.visibility == "private"))
-                query = query.where(or_(*access_conditions))
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            if visibility:
-                query = query.where(DbServer.visibility == visibility)
-
-        # Apply team-based access control if user_email is provided (and no token_teams filtering)
-        elif user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
-                    and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
-                ]
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: user's servers + public servers + team servers
-                access_conditions = [
-                    DbServer.owner_email == user_email,
-                    DbServer.visibility == "public",
-                ]
-                if team_ids:
-                    access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbServer.visibility == visibility)
+        if visibility:
+            query = query.where(DbServer.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:

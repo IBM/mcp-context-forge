@@ -57,6 +57,7 @@ from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -153,7 +154,7 @@ class ResourceLockConflictError(ResourceError):
     """
 
 
-class ResourceService:
+class ResourceService(BaseService):
     """Service for managing resources.
 
     Handles:
@@ -163,6 +164,8 @@ class ResourceService:
     - Content type detection
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbResource
 
     def __init__(self) -> None:
         """Initialize the resource service."""
@@ -892,8 +895,8 @@ class ResourceService:
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own resources
-        if resource_owner_email and resource_owner_email == user_email:
+        # Owner can access their own private resources
+        if visibility == "private" and resource_owner_email and resource_owner_email == user_email:
             return True
 
         # Team resources: check team membership (matches list_resources behavior)
@@ -1003,54 +1006,10 @@ class ResourceService:
         if not include_inactive:
             query = query.where(DbResource.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                # First-Party
-                from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
-
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)  # No access to this team
-
-                access_conditions = [
-                    and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public resources + team resources (+ owner resources if not public-only token)
-                access_conditions = [
-                    DbResource.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbResource.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-
-                query = query.where(or_(*access_conditions))
-
-            # Apply visibility filter if specified
-            if visibility:
-                query = query.where(DbResource.visibility == visibility)
+        if visibility:
+            query = query.where(DbResource.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:

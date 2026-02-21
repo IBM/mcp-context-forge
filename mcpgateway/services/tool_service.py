@@ -71,6 +71,7 @@ from mcpgateway.plugins.framework import (
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -399,7 +400,7 @@ class ToolTimeoutError(ToolInvocationError):
     """
 
 
-class ToolService:
+class ToolService(BaseService):
     """Service for managing and invoking tools.
 
     Handles:
@@ -409,6 +410,8 @@ class ToolService:
     - Event notifications.
     - Active/inactive tool management.
     """
+
+    _visibility_model_cls = DbTool
 
     def __init__(self) -> None:
         """Initialize the tool service.
@@ -658,8 +661,8 @@ class ToolService:
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own tools
-        if tool_owner_email and tool_owner_email == user_email:
+        # Owner can access their own private tools
+        if visibility == "private" and tool_owner_email and tool_owner_email == user_email:
             return True
 
         # Team tools: check team membership (matches list_tools behavior)
@@ -1800,48 +1803,10 @@ class ToolService:
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbTool.enabled)
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public tools
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public tools + team tools (+ owner tools if not public-only token)
-                access_conditions = [
-                    DbTool.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbTool.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbTool.visibility == visibility)
+        if visibility:
+            query = query.where(DbTool.visibility == visibility)
 
         # Add gateway_id filtering if provided
         if gateway_id:

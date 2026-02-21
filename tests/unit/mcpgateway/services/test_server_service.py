@@ -2396,11 +2396,35 @@ class TestListServersTokenAccess:
         assert result == ["converted"]
 
     @pytest.mark.asyncio
+    async def test_team_scoped_token_owner_clause_is_private_only(self, server_service, test_db):
+        """Scoped tokens must not use owner_email as a blanket bypass for non-private visibility."""
+        with (
+            patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.hash_filters = MagicMock(return_value="test-hash")
+            mock_cache_fn.return_value = mock_cache
+            mock_paginate.return_value = ([], None)
+            test_db.commit = Mock()
+
+            await server_service.list_servers(
+                test_db,
+                token_teams=["team-1"],
+                user_email="user@test.com",
+            )
+
+        query_arg = mock_paginate.await_args.kwargs["query"]
+        compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+        assert "servers.owner_email = 'user@test.com' AND servers.visibility = 'private'" in compiled
+
+    @pytest.mark.asyncio
     async def test_user_email_specific_team_no_access(self, server_service, test_db):
         """User requesting specific team they don't belong to gets empty result."""
         with (
             patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
-            patch("mcpgateway.services.server_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
         ):
             mock_cache = AsyncMock()
             mock_cache.get = AsyncMock(return_value=None)
@@ -2425,7 +2449,7 @@ class TestListServersTokenAccess:
         with (
             patch.object(server_service, "convert_server_to_read", return_value="converted"),
             patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
-            patch("mcpgateway.services.server_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
             patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
         ):
             mock_cache = AsyncMock()
@@ -2453,7 +2477,7 @@ class TestListServersTokenAccess:
         with (
             patch.object(server_service, "convert_server_to_read", return_value="converted"),
             patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
-            patch("mcpgateway.services.server_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
             patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
         ):
             mock_cache = AsyncMock()
