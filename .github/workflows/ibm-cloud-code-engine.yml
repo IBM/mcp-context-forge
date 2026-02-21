@@ -9,16 +9,21 @@
 #   - Creates / updates an **IBM Cloud Code Engine** app   🚀
 #
 # ---------------------------------------------------------------
-# Required repository **secret**
+# Required repository **secrets** (environment: production)
 # ---------------------------------------------------------------
-#  ┌────────────────────┬──────────────────────────────────────┐
-#  │ Secret name        │ Example value                        │
-#  ├────────────────────┼──────────────────────────────────────┤
-#  │ IBM_CLOUD_API_KEY  │ abcdef-1234567890abcdef-1234567890   │
-#  └────────────────────┴──────────────────────────────────────┘
+#  ┌──────────────────────────────────┬────────────────────────┐
+#  │ Secret name                      │ Purpose                │
+#  ├──────────────────────────────────┼────────────────────────┤
+#  │ IBM_CLOUD_API_KEY                │ IBM Cloud IAM API key  │
+#  │ CF_JWT_SECRET_KEY                │ JWT signing key        │
+#  │ CF_BASIC_AUTH_PASSWORD           │ Admin UI password      │
+#  │ CF_AUTH_ENCRYPTION_SECRET        │ Stored-secret cipher   │
+#  │ CF_PLATFORM_ADMIN_PASSWORD       │ Bootstrap admin pass   │
+#  │ CF_DEFAULT_USER_PASSWORD         │ Default user pass      │
+#  └──────────────────────────────────┴────────────────────────┘
 #
 # ---------------------------------------------------------------
-# Required repository **variables**
+# Required repository **variables** (environment: production)
 # ---------------------------------------------------------------
 #  ┌────────────────────────────┬──────────────────────────────┐
 #  │ Variable name              │ Example value                │
@@ -31,14 +36,12 @@
 #  │ CODE_ENGINE_REGISTRY_SECRET│ my-registry-secret           │
 #  │ CODE_ENGINE_PORT           │ "4444"                       │
 #  └────────────────────────────┴──────────────────────────────┘
-# * Note: CODE_ENGINE_REGISTRY_SECRET is the name of the secret,
-#         not the secret value.
+# * Note: CODE_ENGINE_REGISTRY_SECRET is the name of the CE
+#         registry pull secret, not the secret value itself.
 # Triggers:
 #   - Every push to `main`
-#   - Expects a secret called `mcpgateway-dev` in Code Engine. Ex:
-#      ibmcloud ce secret create \
-#        --name mcpgateway-dev \
-#        --from-env-file .env
+#   - Syncs the Code Engine secret `mcpgateway-dev` from
+#     `.env.example` + GitHub Secrets (merge; never logged).
 # ---------------------------------------------------------------
 
 name: Deploy to IBM Code Engine
@@ -92,13 +95,46 @@ jobs:
         uses: actions/checkout@v5
 
       # -----------------------------------------------------------
-      # 1️⃣  Set up Docker Buildx
+      # 1️⃣  Validate required secrets & variables
+      # -----------------------------------------------------------
+      - name: ✅  Validate configuration
+        env:
+          CF_IBM_CLOUD_API_KEY: ${{ secrets.IBM_CLOUD_API_KEY }}
+          CF_JWT_SECRET_KEY: ${{ secrets.CF_JWT_SECRET_KEY }}
+          CF_BASIC_AUTH_PASSWORD: ${{ secrets.CF_BASIC_AUTH_PASSWORD }}
+          CF_AUTH_ENCRYPTION_SECRET: ${{ secrets.CF_AUTH_ENCRYPTION_SECRET }}
+          CF_PLATFORM_ADMIN_PASSWORD: ${{ secrets.CF_PLATFORM_ADMIN_PASSWORD }}
+          CF_DEFAULT_USER_PASSWORD: ${{ secrets.CF_DEFAULT_USER_PASSWORD }}
+        run: |
+          missing=()
+          for var in CF_IBM_CLOUD_API_KEY CF_JWT_SECRET_KEY CF_BASIC_AUTH_PASSWORD \
+                     CF_AUTH_ENCRYPTION_SECRET CF_PLATFORM_ADMIN_PASSWORD \
+                     CF_DEFAULT_USER_PASSWORD; do
+            if [ -z "${!var}" ]; then
+              missing+=("$var")
+            fi
+          done
+          for var in IBM_CLOUD_REGION REGISTRY_HOSTNAME ICR_NAMESPACE \
+                     IMAGE_NAME CODE_ENGINE_APP_NAME CODE_ENGINE_PROJECT \
+                     CODE_ENGINE_REGISTRY_SECRET PORT; do
+            if [ -z "${!var}" ]; then
+              missing+=("$var")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Required secrets/variables are empty or unconfigured: ${missing[*]}"
+            exit 1
+          fi
+          echo "All required secrets and variables are present."
+
+      # -----------------------------------------------------------
+      # 2️⃣  Set up Docker Buildx
       # -----------------------------------------------------------
       - name: 🛠️  Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.11.1
 
       # -----------------------------------------------------------
-      # 2️⃣  Restore BuildKit layer cache
+      # 3️⃣  Restore BuildKit layer cache
       # -----------------------------------------------------------
       - name: 🔄  Restore BuildKit cache
         uses: actions/cache@v4
@@ -108,7 +144,7 @@ jobs:
           restore-keys: ${{ runner.os }}-buildx-
 
       # -----------------------------------------------------------
-      # 3️⃣  Install IBM Cloud CLI + plugins & login
+      # 4️⃣  Install IBM Cloud CLI + plugins & login
       # -----------------------------------------------------------
       - name: 🧰  Install IBM Cloud CLI
         uses: IBM/actions-ibmcloud-cli@v1
@@ -118,7 +154,7 @@ jobs:
           plugins: container-registry, code-engine
 
       # -----------------------------------------------------------
-      # 4️⃣  Authenticate to IBM Cloud Code Engine project
+      # 5️⃣  Authenticate to IBM Cloud Code Engine project
       # -----------------------------------------------------------
       - name: 🔐  IBM Cloud Code Engine login
         run: |
@@ -127,7 +163,7 @@ jobs:
           ibmcloud ce project select --name "$CODE_ENGINE_PROJECT"
 
       # -----------------------------------------------------------
-      # 5️⃣  Build & tag image (cache-aware, amd64 platform)
+      # 6️⃣  Build & tag image (cache-aware, amd64 platform)
       # -----------------------------------------------------------
       - name: 🏗️  Build Docker image (with cache)
         run: |
@@ -141,14 +177,79 @@ jobs:
             .
 
       # -----------------------------------------------------------
-      # 6️⃣  Push image to IBM Container Registry
+      # 7️⃣  Push image to IBM Container Registry
       # -----------------------------------------------------------
       - name: 📤  Push image to ICR
         run: |
           docker push "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG"
 
       # -----------------------------------------------------------
-      # 7️⃣  Deploy (create or update) Code Engine application
+      # 8️⃣  Build .env from template + GitHub Secrets, sync to CE
+      # -----------------------------------------------------------
+      - name: 🔑  Sync Code Engine secrets
+        env:
+          CF_JWT_SECRET_KEY: ${{ secrets.CF_JWT_SECRET_KEY }}
+          CF_BASIC_AUTH_PASSWORD: ${{ secrets.CF_BASIC_AUTH_PASSWORD }}
+          CF_AUTH_ENCRYPTION_SECRET: ${{ secrets.CF_AUTH_ENCRYPTION_SECRET }}
+          CF_PLATFORM_ADMIN_PASSWORD: ${{ secrets.CF_PLATFORM_ADMIN_PASSWORD }}
+          CF_DEFAULT_USER_PASSWORD: ${{ secrets.CF_DEFAULT_USER_PASSWORD }}
+        run: |
+          # Ensure .env.deploy is removed on exit (success or failure)
+          trap 'rm -f .env.deploy' EXIT
+
+          # Build .env from .env.example, replacing secret placeholders.
+          # Uses Python to avoid shell quoting issues (sed delimiter
+          # collisions with |, &, \) and grep exit-code edge cases.
+          python3 -c "
+          import os, sys
+          replacements = {
+              'JWT_SECRET_KEY': os.environ['CF_JWT_SECRET_KEY'],
+              'BASIC_AUTH_PASSWORD': os.environ['CF_BASIC_AUTH_PASSWORD'],
+              'AUTH_ENCRYPTION_SECRET': os.environ['CF_AUTH_ENCRYPTION_SECRET'],
+              'PLATFORM_ADMIN_PASSWORD': os.environ['CF_PLATFORM_ADMIN_PASSWORD'],
+              'DEFAULT_USER_PASSWORD': os.environ['CF_DEFAULT_USER_PASSWORD'],
+          }
+          replaced = set()
+          with open('.env.example') as f:
+              lines = f.readlines()
+          with open('.env.deploy', 'w') as out:
+              for line in lines:
+                  stripped = line.lstrip()
+                  if '=' in stripped and not stripped.startswith('#'):
+                      key = stripped.split('=', 1)[0]
+                      if key in replacements:
+                          val = replacements[key]
+                          if '\n' in val or '\r' in val:
+                              print(f'::error::Secret for {key} contains embedded newlines')
+                              raise SystemExit(1)
+                          out.write(f'{key}={val}\n')
+                          replaced.add(key)
+                          continue
+                  out.write(line)
+          missing = set(replacements) - replaced
+          if missing:
+              print(f'::error::Keys not found in .env.example: {missing}')
+              print('Hint: check that .env.example uses KEY=value format (no spaces around =)')
+              sys.exit(1)
+          "
+
+          echo "✅ Generated .env.deploy from template + GitHub Secrets"
+
+          # Update the secret if it exists, otherwise create it.
+          # 'secret update --from-env-file' merges keys (does not prune
+          # removed keys), so stale keys may linger if .env.example drops
+          # a variable. This is benign (unused env vars) and far safer
+          # than delete+create which leaves no secret if create fails.
+          if ibmcloud ce secret get --name mcpgateway-dev > /dev/null 2>&1; then
+            ibmcloud ce secret update --name mcpgateway-dev --from-env-file .env.deploy
+          else
+            ibmcloud ce secret create --name mcpgateway-dev --format generic --from-env-file .env.deploy
+          fi
+
+          echo "✅ Code Engine secret 'mcpgateway-dev' synced"
+
+      # -----------------------------------------------------------
+      # 9️⃣  Deploy (create or update) Code Engine application
       # -----------------------------------------------------------
       - name: 🚀  Deploy to Code Engine
         run: |
@@ -172,7 +273,7 @@ jobs:
           fi
 
       # -----------------------------------------------------------
-      # 8️⃣  Show deployment status
+      # 🔟  Show deployment status
       # -----------------------------------------------------------
       - name: 📈  Display deployment status
         run: ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME"
