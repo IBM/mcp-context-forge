@@ -33,7 +33,7 @@ from mcpgateway.plugins.framework.errors import convert_exception_to_error, Plug
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
 from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 from mcpgateway.plugins.framework.models import MCPClientTLSConfig, PluginConfig, PluginContext, PluginErrorModel, PluginPayload, PluginResult, TransportType
-from mcpgateway.plugins.framework.settings import settings
+from mcpgateway.plugins.framework.settings import get_http_client_settings
 
 logger = logging.getLogger(__name__)
 
@@ -277,14 +277,15 @@ class ExternalPlugin(Plugin):
                 kwargs["transport"] = httpx.AsyncHTTPTransport(uds=uds_path)
             if headers:
                 kwargs["headers"] = headers
+            http_settings = get_http_client_settings()
             kwargs["timeout"] = (
                 timeout
                 if timeout
                 else httpx.Timeout(
-                    connect=settings.httpx_connect_timeout,
-                    read=settings.httpx_read_timeout,
-                    write=settings.httpx_write_timeout,
-                    pool=settings.httpx_pool_timeout,
+                    connect=http_settings.httpx_connect_timeout,
+                    read=http_settings.httpx_read_timeout,
+                    write=http_settings.httpx_write_timeout,
+                    pool=http_settings.httpx_pool_timeout,
                 )
             )
             if auth is not None:
@@ -292,14 +293,14 @@ class ExternalPlugin(Plugin):
 
             # Add connection pool limits
             kwargs["limits"] = httpx.Limits(
-                max_connections=settings.httpx_max_connections,
-                max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                keepalive_expiry=settings.httpx_keepalive_expiry,
+                max_connections=http_settings.httpx_max_connections,
+                max_keepalive_connections=http_settings.httpx_max_keepalive_connections,
+                keepalive_expiry=http_settings.httpx_keepalive_expiry,
             )
 
             if not tls_config:
                 # Use skip_ssl_verify setting when no custom TLS config
-                kwargs["verify"] = not settings.skip_ssl_verify
+                kwargs["verify"] = not http_settings.skip_ssl_verify
                 return httpx.AsyncClient(**kwargs)
 
             # Create SSL context using the utility function
@@ -333,7 +334,7 @@ class ExternalPlugin(Plugin):
                 )
                 return
             except Exception as e:
-                logger.warning(f"Connection attempt {attempt + 1}/{max_retries} failed: {e}")
+                logger.warning("Connection attempt %d/%d failed: %s", attempt + 1, max_retries, e)
                 if attempt == max_retries - 1:
                     # Final attempt failed
                     target = f"{uri} (uds={uds_path})" if uds_path else uri
@@ -341,9 +342,10 @@ class ExternalPlugin(Plugin):
                     logger.error(error_msg)
                     raise PluginError(error=PluginErrorModel(message=error_msg, plugin_name=self.name))
                 await self.shutdown()
+                self._exit_stack = AsyncExitStack()
                 # Wait before retry
                 delay = base_delay * (2**attempt)
-                logger.info(f"Retrying in {delay}s...")
+                logger.info("Retrying in %ss...", delay)
                 await asyncio.sleep(delay)
 
     async def invoke_hook(self, hook_type: str, payload: PluginPayload, context: PluginContext) -> PluginResult:

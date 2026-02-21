@@ -11,6 +11,7 @@ Shared fixtures for plugin framework tests.
 import pytest
 
 # First-Party
+import mcpgateway.plugins.framework as fw
 from mcpgateway.plugins.framework.manager import PluginManager
 
 
@@ -18,5 +19,7 @@ from mcpgateway.plugins.framework.manager import PluginManager
 def reset_plugin_manager_state():
     """Ensure PluginManager shared state is reset between tests."""
     PluginManager.reset()
+    fw._plugin_manager = None
     yield
     PluginManager.reset()
+    fw._plugin_manager = None

@@ -44,7 +44,29 @@ class StructuredData(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-def coerce_nested(v: Any) -> Any:
+def coerce_messages(v: Any) -> Any:
+    """Convert nested dicts in a messages list to objects with attribute access.
+
+    Shared validator logic for agent payload ``messages`` fields.
+    When deserializing from JSON, messages arrive as plain dicts.  This
+    converts each dict to a :class:`StructuredData` so plugin code like
+    ``payload.messages[0].content.text`` works regardless of the transport.
+
+    Args:
+        v: The raw value for the ``messages`` field.
+
+    Returns:
+        The coerced list with attribute access on each element.
+    """
+    if isinstance(v, list):
+        return [coerce_nested(item) if isinstance(item, dict) else item for item in v]
+    return v
+
+
+_COERCE_MAX_DEPTH = 20
+
+
+def coerce_nested(v: Any, *, _depth: int = 0) -> Any:
     """Recursively convert dicts to :class:`StructuredData` for attribute access.
 
     Already-constructed Pydantic models (e.g. a real ``PromptResult``
@@ -52,6 +74,7 @@ def coerce_nested(v: Any) -> Any:
 
     Args:
         v: Value to coerce — dict, list, or scalar.
+        _depth: Internal recursion depth counter (do not set manually).
 
     Returns:
         A ``StructuredData`` (for dicts), a list of coerced items, or
@@ -67,12 +90,14 @@ def coerce_nested(v: Any) -> Any:
         >>> coerce_nested(Existing()) is not None
         True
     """
+    if _depth >= _COERCE_MAX_DEPTH:
+        return v
     if isinstance(v, BaseModel):
         return v
     if isinstance(v, dict):
-        return StructuredData(**{k: coerce_nested(val) for k, val in v.items()})
+        return StructuredData(**{k: coerce_nested(val, _depth=_depth + 1) for k, val in v.items()})
     if isinstance(v, list):
-        return [coerce_nested(item) for item in v]
+        return [coerce_nested(item, _depth=_depth + 1) for item in v]
     return v
 
 

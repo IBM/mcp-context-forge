@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 # Third-Party
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework.hooks.policies import apply_policy, DefaultHookPolicy, HookPayloadPolicy
@@ -23,7 +23,7 @@ class SamplePayload(PluginPayload):
     """Test payload with writable and non-writable fields."""
 
     name: str
-    args: dict = {}
+    args: dict = Field(default_factory=dict)
     secret: str = "original"
 
 
@@ -144,6 +144,10 @@ class TestConcreteGatewayPolicies:
             "resource_post_fetch",
             "agent_pre_invoke",
             "agent_post_invoke",
+            "http_pre_request",
+            "http_post_request",
+            "http_auth_resolve_user",
+            "http_auth_check_permission",
         }
         assert set(HOOK_PAYLOAD_POLICIES.keys()) == expected_hooks
 
@@ -160,6 +164,53 @@ class TestConcreteGatewayPolicies:
 
         policy = HOOK_PAYLOAD_POLICIES["tool_post_invoke"]
         assert policy.writable_fields == frozenset({"result"})
+
+    def test_agent_pre_invoke_includes_agent_id(self):
+        from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
+
+        policy = HOOK_PAYLOAD_POLICIES["agent_pre_invoke"]
+        assert "agent_id" in policy.writable_fields, "agent_id must be writable for agent-routing plugins"
+
+
+class TestAgentMessageCoercion:
+    """Tests for _coerce_messages field validator on agent payloads."""
+
+    def test_pre_invoke_dict_messages_coerced(self):
+        from mcpgateway.plugins.framework.hooks.agents import AgentPreInvokePayload
+        from mcpgateway.plugins.framework.utils import StructuredData
+
+        payload = AgentPreInvokePayload(
+            agent_id="agent-1",
+            messages=[{"role": "user", "content": {"type": "text", "text": "hello"}}],
+        )
+        assert isinstance(payload.messages[0], StructuredData)
+        assert payload.messages[0].role == "user"
+        assert payload.messages[0].content.text == "hello"
+
+    def test_post_invoke_dict_messages_coerced(self):
+        from mcpgateway.plugins.framework.hooks.agents import AgentPostInvokePayload
+        from mcpgateway.plugins.framework.utils import StructuredData
+
+        payload = AgentPostInvokePayload(
+            agent_id="agent-1",
+            messages=[{"role": "assistant", "content": {"type": "text", "text": "world"}}],
+        )
+        assert isinstance(payload.messages[0], StructuredData)
+        assert payload.messages[0].content.text == "world"
+
+    def test_real_message_objects_pass_through(self):
+        from mcpgateway.common.models import Message, Role, TextContent
+        from mcpgateway.plugins.framework.hooks.agents import AgentPreInvokePayload
+
+        msg = Message(role=Role.USER, content=TextContent(type="text", text="hi"))
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[msg])
+        assert payload.messages[0] is msg
+
+    def test_empty_messages_list(self):
+        from mcpgateway.plugins.framework.hooks.agents import AgentPreInvokePayload
+
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[])
+        assert payload.messages == []
 
 
 class TestProtocolConformance:
@@ -252,7 +303,10 @@ class TestExecutorPolicyEnforcement:
         global_ctx = GlobalContext(request_id="1")
 
         result, _ = await executor.execute(
-            [hook_ref], payload, global_ctx, hook_type="test_hook",
+            [hook_ref],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
         )
         assert result.modified_payload is not None
         assert result.modified_payload.name == "new"
@@ -277,14 +331,16 @@ class TestExecutorPolicyEnforcement:
         # No policies passed — default deny should reject all
         with patch("mcpgateway.plugins.framework.manager.settings") as mock_settings:
             mock_settings.default_hook_policy = "deny"
-            mock_settings.max_payload_size_bytes = 1048576
             executor = PluginExecutor(hook_policies={})
 
         payload = SamplePayload(name="old", secret="original")
         global_ctx = GlobalContext(request_id="1")
 
         result, _ = await executor.execute(
-            [hook_ref], payload, global_ctx, hook_type="test_hook",
+            [hook_ref],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
         )
         # With deny policy, modifications should be rejected — modified_payload is None
         assert result.modified_payload is None
@@ -313,10 +369,366 @@ class TestExecutorPolicyEnforcement:
         global_ctx = GlobalContext(request_id="1")
 
         result, _ = await executor.execute(
-            [hook_ref], payload, global_ctx, hook_type="test_hook",
+            [hook_ref],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
         )
         # apply_policy returns None because no writable fields changed — so modified_payload stays None
         assert result.modified_payload is None
+
+    @pytest.mark.asyncio
+    async def test_in_place_nested_mutation_caught_by_policy(self):
+        """Plugins that mutate nested dicts in place should not bypass policy filtering."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class InPlaceMutatingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                # Mutate the nested dict in place — bypasses frozen=True
+                # because Pydantic's frozen only protects top-level assignment.
+                payload.args["injected"] = "evil"
+                # Also mutate 'secret' (non-writable) via in-place nested trick
+                # and return the mutated payload as modified_payload.
+                return PluginResult(
+                    continue_processing=True,
+                    modified_payload=payload.model_copy(update={"secret": "hacked", "args": {**payload.args, "injected": "evil"}}),
+                )
+
+        config = PluginConfig(name="mutator", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        plugin = InPlaceMutatingPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        # Only 'name' is writable — 'args' and 'secret' should be rejected
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"name"}))}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="old", args={"key": "value"}, secret="original")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [hook_ref],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
+        )
+        # The snapshot preserves the original args, so the in-place
+        # mutation and 'secret' change are both caught by the policy diff
+        # and rejected.  No writable field ('name') was changed, so
+        # modified_payload should be None.
+        assert result.modified_payload is None
+
+    @pytest.mark.asyncio
+    async def test_enforce_early_return_uses_policy_filtered_payload(self):
+        """When an ENFORCE plugin short-circuits after a prior plugin made
+        policy-approved modifications, the early return must carry those
+        filtered modifications via current_payload — not the raw result."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginMode, PluginResult
+
+        class ModifyingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                modified = payload.model_copy(update={"name": "filtered", "secret": "hacked"})
+                return PluginResult(continue_processing=True, modified_payload=modified)
+
+        class BlockingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                return PluginResult(continue_processing=False)
+
+        modify_config = PluginConfig(name="modifier", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        modify_plugin = ModifyingPlugin(modify_config)
+        modify_ref = PluginRef(modify_plugin)
+        modify_hook = HookRef("test_hook", modify_ref)
+
+        block_config = PluginConfig(name="blocker", kind="test.Plugin", version="1.0", hooks=["test_hook"], mode=PluginMode.ENFORCE)
+        block_plugin = BlockingPlugin(block_config)
+        block_ref = PluginRef(block_plugin)
+        block_hook = HookRef("test_hook", block_ref)
+
+        # Only 'name' is writable
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"name"}))}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="old", secret="original")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [modify_hook, block_hook],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
+        )
+        assert result.continue_processing is False
+        # The first plugin's writable modification must survive via current_payload
+        assert result.modified_payload is not None
+        assert result.modified_payload.name == "filtered"  # writable — accepted
+        assert result.modified_payload.secret == "original"  # non-writable — filtered
+        assert result.violation is None
+
+    @pytest.mark.asyncio
+    async def test_enforce_early_return_carries_metadata(self):
+        """The early-return path must carry accumulated metadata from earlier
+        plugins, consistent with the normal return path."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginMode, PluginResult
+
+        class MetadataPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                return PluginResult(continue_processing=True, metadata={"source": "plugin_a"})
+
+        class BlockingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                return PluginResult(continue_processing=False)
+
+        meta_config = PluginConfig(name="meta", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        meta_plugin = MetadataPlugin(meta_config)
+        meta_ref = PluginRef(meta_plugin)
+        meta_hook = HookRef("test_hook", meta_ref)
+
+        block_config = PluginConfig(name="blocker", kind="test.Plugin", version="1.0", hooks=["test_hook"], mode=PluginMode.ENFORCE)
+        block_plugin = BlockingPlugin(block_config)
+        block_ref = PluginRef(block_plugin)
+        block_hook = HookRef("test_hook", block_ref)
+
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"name"}))}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="old")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [meta_hook, block_hook],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
+        )
+        assert result.continue_processing is False
+        assert result.metadata == {"source": "plugin_a"}
+
+    @pytest.mark.asyncio
+    async def test_enforce_early_return_deny_default_rejects_all(self):
+        """When default=deny and an ENFORCE plugin short-circuits with modifications,
+        all modifications must be rejected (modified_payload=None)."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginMode, PluginResult
+
+        class BlockingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                modified = payload.model_copy(update={"name": "new"})
+                return PluginResult(continue_processing=False, modified_payload=modified)
+
+        config = PluginConfig(name="blocker", kind="test.Plugin", version="1.0", hooks=["test_hook"], mode=PluginMode.ENFORCE)
+        plugin = BlockingPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        # No policies, default deny
+        with patch("mcpgateway.plugins.framework.manager.settings") as mock_settings:
+            mock_settings.default_hook_policy = "deny"
+            executor = PluginExecutor(hook_policies={})
+
+        payload = SamplePayload(name="old", secret="original")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [hook_ref],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
+        )
+        assert result.continue_processing is False
+        assert result.modified_payload is None  # all modifications rejected
+
+
+class TestCrossTypePolicyHandling:
+    """Tests for cross-type payload results (e.g. HTTP hooks)."""
+
+    @pytest.mark.asyncio
+    async def test_cross_type_result_accepted_when_policy_exists(self):
+        """When modified_payload is a different type from the input, the policy's
+        presence authorises the hook and the result is accepted directly."""
+        from pydantic import BaseModel
+
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class DifferentResult(BaseModel):
+            granted: bool = True
+            reason: str = "ok"
+
+        class CrossTypePlugin(Plugin):
+            async def test_hook(self, payload, context):
+                return PluginResult(continue_processing=True, modified_payload=DifferentResult())
+
+        config = PluginConfig(name="cross", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        plugin = CrossTypePlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"granted", "reason"}))}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="old")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute([hook_ref], payload, global_ctx, hook_type="test_hook")
+        assert result.modified_payload is not None
+        assert result.modified_payload.granted is True
+
+    @pytest.mark.asyncio
+    async def test_cross_type_dict_result_accepted_when_policy_exists(self):
+        """dict results (e.g. http_auth_resolve_user) are accepted when a policy exists."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class DictResultPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                return PluginResult(continue_processing=True, modified_payload={"email": "user@example.com"})
+
+        config = PluginConfig(name="auth", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        plugin = DictResultPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset())}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="old")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute([hook_ref], payload, global_ctx, hook_type="test_hook")
+        assert result.modified_payload == {"email": "user@example.com"}
+
+    @pytest.mark.asyncio
+    async def test_deny_default_snapshots_payload_for_in_place_isolation(self):
+        """When default=deny, in-place nested mutations must not persist on the live payload."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class InPlaceMutator(Plugin):
+            async def no_policy_hook(self, payload, context):
+                payload.args["injected"] = "evil"
+                return PluginResult(continue_processing=True, modified_payload=None)
+
+        config = PluginConfig(name="mutator", kind="test.Plugin", version="1.0", hooks=["no_policy_hook"])
+        plugin = InPlaceMutator(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("no_policy_hook", ref)
+
+        # No policy for this hook, default=deny
+        with patch("mcpgateway.plugins.framework.manager.settings") as mock_settings:
+            mock_settings.default_hook_policy = "deny"
+            executor = PluginExecutor(hook_policies={})
+
+        payload = SamplePayload(name="old", args={"key": "value"})
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute([hook_ref], payload, global_ctx, hook_type="no_policy_hook")
+        # The plugin mutated args in-place, but the deep-copy snapshot means
+        # the original payload passed to the next plugin (or returned) is clean
+        assert result.modified_payload is None, "deny-default should reject all modifications"
+        assert payload.args == {"key": "value"}, "Original payload must not be mutated"
+
+
+class TestBorgPolicyBackfill:
+    """Tests for PluginManager Borg pattern policy injection."""
+
+    def test_get_plugin_manager_injects_policies(self, monkeypatch, tmp_path):
+        """Verify get_plugin_manager() always injects hook policies."""
+        import mcpgateway.plugins.framework as fw
+        from mcpgateway.plugins.framework.settings import settings as plugin_settings
+
+        config_file = tmp_path / "plugins.yaml"
+        config_file.write_text("plugin_settings:\n  plugin_timeout: 30\nplugin_dirs: []\nplugins: []\n")
+
+        monkeypatch.setenv("PLUGINS_ENABLED", "true")
+        monkeypatch.setenv("PLUGINS_CONFIG_FILE", str(config_file))
+
+        # Reset singleton state
+        fw.PluginManager.reset()
+        fw._plugin_manager = None
+        plugin_settings.cache_clear()
+
+        pm = fw.get_plugin_manager()
+        assert pm is not None
+        assert pm._executor.hook_policies, "get_plugin_manager() should inject hook policies"
+
+        # Verify known policy keys are present
+        assert "tool_pre_invoke" in pm._executor.hook_policies
+        assert "prompt_post_fetch" in pm._executor.hook_policies
+
+    def test_service_via_get_plugin_manager_has_policies(self, monkeypatch, tmp_path):
+        """Verify that services using get_plugin_manager() get policies regardless of creation order."""
+        import mcpgateway.plugins.framework as fw
+        from mcpgateway.plugins.framework.settings import settings as plugin_settings
+
+        config_file = tmp_path / "plugins.yaml"
+        config_file.write_text("plugin_settings:\n  plugin_timeout: 30\nplugin_dirs: []\nplugins: []\n")
+
+        monkeypatch.setenv("PLUGINS_ENABLED", "true")
+        monkeypatch.setenv("PLUGINS_CONFIG_FILE", str(config_file))
+
+        # Reset state
+        fw.PluginManager.reset()
+        fw._plugin_manager = None
+        plugin_settings.cache_clear()
+
+        # Simulate service creating manager via get_plugin_manager
+        pm1 = fw.get_plugin_manager()
+
+        # Simulate another access (e.g. from another service)
+        pm2 = fw.get_plugin_manager()
+
+        # Both should share the same executor with policies
+        assert pm1 is pm2
+        assert pm1._executor.hook_policies
+
+    @pytest.mark.asyncio
+    async def test_policy_enforcement_through_manager(self, monkeypatch, tmp_path):
+        """Integration test: policies enforced through PluginManager.execute flow."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class InjectPlugin(Plugin):
+            async def tool_pre_invoke(self, payload, context):
+                modified = payload.model_copy(update={"name": "injected", "args": {"injected": "true"}, "secret": "hacked"})
+                return PluginResult(continue_processing=True, modified_payload=modified)
+
+        # Set up executor with tool_pre_invoke policy
+        policies = {
+            "tool_pre_invoke": HookPayloadPolicy(writable_fields=frozenset({"name", "args"})),
+        }
+        executor = PluginExecutor(hook_policies=policies)
+
+        config = PluginConfig(name="injector", kind="test.Plugin", version="1.0", hooks=["tool_pre_invoke"])
+        plugin = InjectPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("tool_pre_invoke", ref)
+
+        payload = SamplePayload(name="original", args={}, secret="safe")
+        global_ctx = GlobalContext(request_id="test-1")
+
+        result, _ = await executor.execute(
+            [hook_ref],
+            payload,
+            global_ctx,
+            hook_type="tool_pre_invoke",
+        )
+
+        assert result.modified_payload is not None
+        assert result.modified_payload.name == "injected"
+        assert result.modified_payload.args == {"injected": "true"}
+        assert result.modified_payload.secret == "safe"  # Policy filtered this out
 
 
 class TestFrameworkImportIsolation:
@@ -326,7 +738,12 @@ class TestFrameworkImportIsolation:
         import ast
         from pathlib import Path
 
-        framework_dir = Path(__file__).resolve().parents[5] / "mcpgateway" / "plugins" / "framework"
+        # Walk up to repo root (where pyproject.toml lives) instead of hardcoding parent depth.
+        _here = Path(__file__).resolve().parent
+        repo_root = _here
+        while not (repo_root / "pyproject.toml").exists() and repo_root != repo_root.parent:
+            repo_root = repo_root.parent
+        framework_dir = repo_root / "mcpgateway" / "plugins" / "framework"
         violations = []
 
         for py_file in framework_dir.rglob("*.py"):

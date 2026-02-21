@@ -287,6 +287,14 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 ---
 
+## [Unreleased]
+
+### Deprecated
+
+* `PLUGIN_CONFIG_FILE` (legacy plugin config path key) is deprecated in favor of `PLUGINS_CONFIG_FILE`.
+* Runtime now logs a deprecation warning when `PLUGIN_CONFIG_FILE` is configured.
+* Planned removal target: `v1.2.0`.
+
 ## [1.0.0-RC1] - 2026-02-17 - Security Hardening, Enterprise Controls & Quality
 
 ### Overview

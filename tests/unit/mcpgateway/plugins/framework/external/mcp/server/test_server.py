@@ -54,16 +54,20 @@ class TestExternalPluginServerInit:
         assert server._config is not None
         assert server._plugin_manager is not None
 
-    def test_init_with_env_var(self):
+    def test_init_with_env_var(self, monkeypatch):
         """Test initialization using PLUGINS_CONFIG_PATH environment variable."""
-        os.environ["PLUGINS_CONFIG_PATH"] = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
-        try:
-            server = ExternalPluginServer()
-            assert server._config_path == "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
-            assert server._config is not None
-        finally:
-            if "PLUGINS_CONFIG_PATH" in os.environ:
-                del os.environ["PLUGINS_CONFIG_PATH"]
+        monkeypatch.setenv("PLUGINS_CONFIG_PATH", "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+        server = ExternalPluginServer()
+        assert server._config_path == "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+        assert server._config is not None
+
+    def test_init_with_env_var_ignores_unrelated_invalid_plugin_fields(self, monkeypatch):
+        """Initialization should not fail on unrelated invalid plugin env variables."""
+        monkeypatch.setenv("PLUGINS_CONFIG_PATH", "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
+        server = ExternalPluginServer()
+        assert server._config_path == "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+        assert server._config is not None
 
     def test_init_with_default_path(self):
         """Test initialization with default config path."""

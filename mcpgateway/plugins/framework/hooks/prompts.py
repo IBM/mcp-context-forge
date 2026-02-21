@@ -18,6 +18,8 @@ from pydantic import Field, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
+from mcpgateway.plugins.framework.protocols import PromptResultLike  # noqa: F401  # pylint: disable=unused-import
+from mcpgateway.plugins.framework.utils import coerce_nested
 
 
 class PromptHookType(str, Enum):
@@ -89,7 +91,7 @@ class PromptPosthookPayload(PluginPayload):
     """
 
     prompt_id: str
-    result: Any
+    result: Any  # Satisfies PromptResultLike protocol (messages, description attributes)
 
     @field_validator("result", mode="before")
     @classmethod
@@ -109,9 +111,6 @@ class PromptPosthookPayload(PluginPayload):
             The coerced value with attribute access, or the original value.
         """
         if isinstance(v, dict):
-            # First-Party
-            from mcpgateway.plugins.framework.utils import coerce_nested  # pylint: disable=import-outside-toplevel
-
             return coerce_nested(v)
         return v
 

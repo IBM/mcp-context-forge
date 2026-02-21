@@ -9,7 +9,6 @@ Tests for external client on stdio.
 
 # Standard
 import asyncio
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -273,11 +272,59 @@ async def test_run_stdio_transport(monkeypatch):
     monkeypatch.setattr(runtime, "FastMCP", DummyFastMCP)
     monkeypatch.setenv("PLUGINS_TRANSPORT", "stdio")
 
-    await runtime.run()
+    try:
+        await runtime.run()
+    finally:
+        runtime.SERVER = None
 
     assert created["ran_stdio"]
     assert created["shutdown"]
-    runtime.SERVER = None
+
+
+@pytest.mark.asyncio
+async def test_run_stdio_transport_ignores_malformed_server_port(monkeypatch):
+    created = {}
+
+    class DummyServer:
+        async def initialize(self):
+            return True
+
+        async def shutdown(self):
+            created["shutdown"] = True
+
+        def get_server_config(self):
+            return None
+
+    class DummyFastMCP:
+        def __init__(self, *args, **kwargs):
+            created["mcp"] = self
+
+        def tool(self, name):
+            def decorator(fn):
+                created.setdefault("tools", []).append(name)
+                return fn
+
+            return decorator
+
+        async def run_stdio_async(self):
+            created["ran_stdio"] = True
+
+    from mcpgateway.plugins.framework.settings import settings
+
+    settings.cache_clear()
+    monkeypatch.setattr(runtime, "ExternalPluginServer", lambda: DummyServer())
+    monkeypatch.setattr(runtime, "FastMCP", DummyFastMCP)
+    monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
+    monkeypatch.setenv("PLUGINS_TRANSPORT", "stdio")
+
+    try:
+        await runtime.run()
+    finally:
+        settings.cache_clear()
+        runtime.SERVER = None
+
+    assert created["ran_stdio"]
+    assert created["shutdown"]
 
 
 @pytest.mark.asyncio
@@ -312,8 +359,10 @@ async def test_run_http_transport(monkeypatch):
     monkeypatch.setattr(runtime, "SSLCapableFastMCP", DummyMCP)
     monkeypatch.setenv("PLUGINS_TRANSPORT", "http")
 
-    await runtime.run()
+    try:
+        await runtime.run()
+    finally:
+        runtime.SERVER = None
 
     assert created["ran_http"]
     assert created["shutdown"]
-    runtime.SERVER = None

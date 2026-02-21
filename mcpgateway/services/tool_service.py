@@ -58,6 +58,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import (
+    get_plugin_manager,
     GlobalContext,
     HttpHeaderPayload,
     PluginContextTable,
@@ -562,7 +563,7 @@ class ToolService:
         """
         self._event_service = EventService(channel_name="mcpgateway:tool_events")
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
-        self._plugin_manager: PluginManager | None = PluginManager(settings.plugins.config_file) if settings.plugins.enabled else None
+        self._plugin_manager: PluginManager | None = get_plugin_manager()
         self.oauth_manager = OAuthManager(
             request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),

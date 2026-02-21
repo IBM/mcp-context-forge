@@ -21,8 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 
 # First-Party
 from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
-from mcpgateway.plugins.framework.settings import settings
-from mcpgateway.plugins.framework.validators import SecurityValidator
+from mcpgateway.plugins.framework.settings import get_client_mtls_settings, get_grpc_client_mtls_settings, get_grpc_server_settings, get_mcp_server_settings, get_transport_settings
+from mcpgateway.plugins.framework.validators import validate_plugin_url
 
 T = TypeVar("T")
 
@@ -316,7 +316,7 @@ class MCPClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPClientTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_client_mtls_settings()
         data: dict[str, Any] = {}
 
         if s.client_mtls_certfile:
@@ -354,7 +354,7 @@ class MCPServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPServerTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_mcp_server_settings()
         data: dict[str, Any] = {}
 
         if s.server_ssl_keyfile:
@@ -451,7 +451,7 @@ class MCPServerConfig(BaseModel):
         Returns:
             MCPServerConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_mcp_server_settings()
         data: dict[str, Any] = {}
 
         if s.server_host:
@@ -511,7 +511,7 @@ class MCPClientConfig(BaseModel):
             The validated URL or None if none is set.
         """
         if url:
-            result = SecurityValidator.validate_url(url)
+            result = validate_plugin_url(url)
             return result
         return url
 
@@ -701,7 +701,7 @@ class GRPCClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCClientTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_grpc_client_mtls_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_client_mtls_certfile:
@@ -756,7 +756,7 @@ class GRPCServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCServerTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_grpc_server_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_server_ssl_keyfile:
@@ -990,7 +990,7 @@ class GRPCServerConfig(BaseModel):
         Returns:
             GRPCServerConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_grpc_server_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_server_host:
@@ -1076,7 +1076,7 @@ class UnixSocketServerConfig(BaseModel):
         Returns:
             UnixSocketServerConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_transport_settings()
         data: dict[str, Any] = {}
 
         if s.unix_socket_path:

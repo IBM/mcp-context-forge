@@ -398,6 +398,58 @@ def test_orjson_response_render():
     assert parsed == {"status": "ok", "count": 42}
 
 
+def test_coerce_nested_depth_limit():
+    """Test coerce_nested stops recursing at _COERCE_MAX_DEPTH."""
+    from mcpgateway.plugins.framework.utils import StructuredData, _COERCE_MAX_DEPTH, coerce_nested
+
+    # Build a dict nested deeper than the limit
+    deeply = {"leaf": True}
+    for _ in range(_COERCE_MAX_DEPTH + 5):
+        deeply = {"child": deeply}
+
+    result = coerce_nested(deeply)
+    # Walk down to _COERCE_MAX_DEPTH — each level should be StructuredData
+    node = result
+    for _ in range(_COERCE_MAX_DEPTH):
+        assert isinstance(node, StructuredData)
+        node = node.child
+
+    # Beyond the limit, the value is left as a plain dict
+    assert isinstance(node, dict)
+
+
+def test_coerce_messages_converts_dicts():
+    """Test coerce_messages converts list of dicts to StructuredData."""
+    from mcpgateway.plugins.framework.utils import StructuredData, coerce_messages
+
+    msgs = [{"role": "user", "content": {"type": "text", "text": "hi"}}]
+    result = coerce_messages(msgs)
+    assert isinstance(result, list)
+    assert isinstance(result[0], StructuredData)
+    assert result[0].role == "user"
+    assert result[0].content.text == "hi"
+
+
+def test_coerce_messages_passes_non_list():
+    """Test coerce_messages returns non-list values unchanged."""
+    from mcpgateway.plugins.framework.utils import coerce_messages
+
+    assert coerce_messages("hello") == "hello"
+    assert coerce_messages(42) == 42
+    assert coerce_messages(None) is None
+
+
+def test_coerce_messages_preserves_non_dict_items():
+    """Test coerce_messages skips non-dict items in the list."""
+    from mcpgateway.plugins.framework.utils import StructuredData, coerce_messages
+
+    msgs = [{"role": "user"}, "plain_string", 42]
+    result = coerce_messages(msgs)
+    assert isinstance(result[0], StructuredData)
+    assert result[1] == "plain_string"
+    assert result[2] == 42
+
+
 def test_orjson_response_render_non_str_keys():
     """Test ORJSONResponse handles non-string keys."""
     from mcpgateway.plugins.framework.utils import ORJSONResponse

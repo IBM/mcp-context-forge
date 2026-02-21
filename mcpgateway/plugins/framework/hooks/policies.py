@@ -19,10 +19,13 @@ Examples:
 # Standard
 from dataclasses import dataclass
 from enum import Enum
+import logging
 from typing import Any, Optional
 
 # Third-Party
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class DefaultHookPolicy(str, Enum):
@@ -101,9 +104,16 @@ def apply_policy(
         's'
     """
     updates: dict[str, Any] = {}
-    for field in policy.writable_fields:
+    rejected: list[str] = []
+    for field in type(modified).model_fields:
         old_val = getattr(original, field, _SENTINEL)
         new_val = getattr(modified, field, _SENTINEL)
-        if new_val is not _SENTINEL and new_val != old_val:
+        if new_val is _SENTINEL or new_val == old_val:
+            continue
+        if field in policy.writable_fields:
             updates[field] = new_val
+        else:
+            rejected.append(field)
+    if rejected:
+        logger.warning("Policy rejected modifications to non-writable fields: %s", rejected)
     return original.model_copy(update=updates) if updates else None

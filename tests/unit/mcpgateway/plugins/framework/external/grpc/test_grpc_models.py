@@ -333,7 +333,7 @@ class TestGRPCServerConfig:
             "PLUGINS_GRPC_SERVER_PORT": "invalid",
         }
         with patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises((ValueError, Exception)):
+            with pytest.raises(ValueError):
                 GRPCServerConfig.from_env()
 
 

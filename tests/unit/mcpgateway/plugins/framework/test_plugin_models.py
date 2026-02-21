@@ -61,7 +61,7 @@ def test_client_tls_from_env(monkeypatch, tmp_path):
 
 def test_server_tls_from_env_invalid_cert_reqs(monkeypatch):
     monkeypatch.setenv("PLUGINS_SERVER_SSL_CERT_REQS", "not-an-int")
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValueError):
         MCPServerTLSConfig.from_env()
 
 
@@ -92,7 +92,7 @@ def test_server_config_tls_with_uds_raises(tmp_path):
 
 def test_server_config_from_env_invalid_port(monkeypatch):
     monkeypatch.setenv("PLUGINS_SERVER_PORT", "bad")
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValueError):
         MCPServerConfig.from_env()
 
 

@@ -2087,7 +2087,7 @@ class SessionManagerWrapper:
                     json_body["params"]["server_id"] = server_id
                     # Re-serialize body with injected server_id
                     body = orjson.dumps(json_body)
-                    logger.debug(f"[HTTP_AFFINITY_FORWARDED] Injected server_id {server_id} into /rpc params")
+                    logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
                 async with httpx.AsyncClient() as client:
                     rpc_headers = {

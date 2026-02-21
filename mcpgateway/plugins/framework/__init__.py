@@ -97,6 +97,7 @@ def get_plugin_manager(observability: Optional[ObservabilityProvider] = None) ->
 
             _plugin_manager = PluginManager(
                 settings.config_file,
+                timeout=settings.plugin_timeout,
                 observability=observability,
                 hook_policies=HOOK_PAYLOAD_POLICIES,
             )

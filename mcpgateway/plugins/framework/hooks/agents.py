@@ -14,11 +14,13 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from pydantic import Field
+from pydantic import Field, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
 from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
+from mcpgateway.plugins.framework.protocols import MessageLike  # noqa: F401  # pylint: disable=unused-import
+from mcpgateway.plugins.framework.utils import coerce_messages
 
 
 class AgentHookType(str, Enum):
@@ -66,12 +68,25 @@ class AgentPreInvokePayload(PluginPayload):
     """
 
     agent_id: str
-    messages: List[Any]
+    messages: List[Any]  # Elements satisfy MessageLike protocol (role, content attributes)
     tools: Optional[List[str]] = None
     headers: Optional[HttpHeaderPayload] = None
     model: Optional[str] = None
     system_prompt: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _coerce_messages(cls, v: Any) -> Any:
+        """Convert nested dicts in messages list to objects with attribute access.
+
+        Args:
+            v: The raw messages value to coerce.
+
+        Returns:
+            The coerced messages list.
+        """
+        return coerce_messages(v)
 
 
 class AgentPostInvokePayload(PluginPayload):
@@ -93,8 +108,21 @@ class AgentPostInvokePayload(PluginPayload):
     """
 
     agent_id: str
-    messages: List[Any]
+    messages: List[Any]  # Elements satisfy MessageLike protocol (role, content attributes)
     tool_calls: Optional[List[Dict[str, Any]]] = None
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _coerce_messages(cls, v: Any) -> Any:
+        """Convert nested dicts in messages list to objects with attribute access.
+
+        Args:
+            v: The raw messages value to coerce.
+
+        Returns:
+            The coerced messages list.
+        """
+        return coerce_messages(v)
 
 
 AgentPreInvokeResult = PluginResult[AgentPreInvokePayload]
