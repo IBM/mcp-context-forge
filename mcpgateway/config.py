@@ -90,6 +90,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
+        "MCPGATEWAY_COMPLIANCE_FRAMEWORKS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -134,6 +135,7 @@ UI_HIDABLE_SECTIONS = frozenset(
         "logs",
         "version-info",
         "maintenance",
+        "compliance",
         "teams",
         "users",
         "agents",
@@ -151,6 +153,15 @@ UI_HIDE_SECTION_ALIASES = {
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
+
+# Compliance reporting controls
+COMPLIANCE_FRAMEWORKS = frozenset({"soc2", "gdpr", "hipaa", "iso27001"})
+COMPLIANCE_FRAMEWORK_ALIASES = {
+    "soc-2": "soc2",
+    "iso-27001": "iso27001",
+    "iso_27001": "iso27001",
+}
+DEFAULT_COMPLIANCE_FRAMEWORKS = ["soc2", "gdpr", "hipaa", "iso27001"]
 
 
 class Settings(BaseSettings):
@@ -560,6 +571,24 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+    mcpgateway_compliance_enabled: bool = Field(
+        default=False,
+        description="Enable /api/compliance endpoints and Admin UI Compliance section",
+    )
+    mcpgateway_compliance_frameworks: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_COMPLIANCE_FRAMEWORKS),
+        description="Compliance frameworks used in scoring/export summaries (CSV/JSON): soc2, gdpr, hipaa, iso27001",
+    )
+    mcpgateway_compliance_report_schedule: Literal["disabled", "daily", "weekly", "monthly"] = Field(
+        default="disabled",
+        description="Schedule hint for external compliance report generation automation (not a built-in scheduler)",
+    )
+    mcpgateway_compliance_max_export_rows: int = Field(
+        default=5000,
+        ge=100,
+        le=50000,
+        description="Hard cap (100-50000) for compliance evidence export rows per request",
+    )
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
@@ -567,7 +596,7 @@ class Settings(BaseSettings):
         description=(
             "CSV/JSON list of UI sections to hide. "
             "Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, "
-            "metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
+            "metrics, plugins, export-import, logs, version-info, maintenance, compliance, teams, users, agents, tokens, settings"
         ),
     )
     mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
@@ -1811,6 +1840,7 @@ Disallow: /
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
         "insecure_queryparam_auth_allowed_hosts",
+        "mcpgateway_compliance_frameworks",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
         mode="before",
@@ -1903,6 +1933,35 @@ Disallow: /
                 normalized.append(candidate)
 
         return normalized
+
+    @field_validator("mcpgateway_compliance_frameworks", mode="after")
+    @classmethod
+    def _validate_compliance_frameworks(cls, value: list[str]) -> list[str]:
+        """Normalize and filter configured compliance frameworks.
+
+        Args:
+            value: Framework identifiers supplied via configuration.
+
+        Returns:
+            list[str]: Unique supported framework identifiers. Falls back to
+                defaults when none of the configured values are valid.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            candidate = str(item).strip().lower()
+            if not candidate:
+                continue
+            candidate = COMPLIANCE_FRAMEWORK_ALIASES.get(candidate, candidate)
+            if candidate not in COMPLIANCE_FRAMEWORKS:
+                logger.warning("Ignoring invalid MCPGATEWAY_COMPLIANCE_FRAMEWORKS item: %s", item)
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+        return normalized or list(DEFAULT_COMPLIANCE_FRAMEWORKS)
 
     @property
     def api_key(self) -> str:

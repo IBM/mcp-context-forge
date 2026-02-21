@@ -3087,9 +3087,8 @@ flake8:                             ## 🐍  flake8 checks
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PYLINTHOME=\"$(CURDIR)/.pylint-cache\" UV_CACHE_DIR=\"$(CURDIR)/.uv-cache\" \
-		uv run --active pylint -j 0 --fail-on E --fail-under 10 $(TARGET)"
+	@PYLINTHOME="$(CURDIR)/.pylint-cache" \
+		$(VENV_DIR)/bin/pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present

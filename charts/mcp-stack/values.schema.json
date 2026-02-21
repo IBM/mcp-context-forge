@@ -636,7 +636,7 @@
             },
             "MCPGATEWAY_UI_HIDE_SECTIONS": {
               "type": "string",
-              "description": "CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings)",
+              "description": "CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, compliance, teams, users, agents, tokens, settings)",
               "default": ""
             },
             "MCPGATEWAY_UI_HIDE_HEADER_ITEMS": {
@@ -649,6 +649,28 @@
               "enum": ["true", "false"],
               "description": "Enable admin API endpoints",
               "default": "true"
+            },
+            "MCPGATEWAY_COMPLIANCE_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable /api/compliance endpoints and Admin -> Compliance UI section",
+              "default": "false"
+            },
+            "MCPGATEWAY_COMPLIANCE_FRAMEWORKS": {
+              "type": "string",
+              "description": "CSV/JSON list of compliance frameworks used in scoring (soc2, gdpr, hipaa, iso27001)",
+              "default": "soc2,gdpr,hipaa,iso27001"
+            },
+            "MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE": {
+              "type": "string",
+              "enum": ["disabled", "daily", "weekly", "monthly"],
+              "description": "Schedule hint for external compliance report automation (not a built-in scheduler)",
+              "default": "disabled"
+            },
+            "MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS": {
+              "type": "string",
+              "description": "Hard cap (100-50000) on compliance evidence export rows per request",
+              "default": "5000"
             },
             "ENVIRONMENT": {
               "type": "string",
