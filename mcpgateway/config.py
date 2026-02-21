@@ -702,7 +702,7 @@ class Settings(BaseSettings):
     min_password_length: int = 12
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
-    llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
+    llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
 
     # database-backed polling settings for session message delivery
