@@ -4121,10 +4121,8 @@ class TestExportImportEndpoints:
         import mcpgateway.main as main_mod
 
         with pytest.raises(HTTPException) as excinfo:
-            # NOTE: main.py raises HTTPException(400) for invalid strategies, but
-            # immediately wraps it in the outer Exception handler (500).
             await main_mod.import_configuration.__wrapped__(import_data={}, conflict_strategy="invalid", db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 500
+        assert excinfo.value.status_code == 400
         assert "Invalid conflict strategy" in str(excinfo.value.detail)
 
     async def test_import_configuration_success(self):
@@ -4148,7 +4146,7 @@ class TestExportImportEndpoints:
         svc.import_configuration = AsyncMock(return_value=request_import_status)
         monkeypatch.setattr(main_mod, "import_service", svc)
 
-        # Cover username=None branch by bypassing wrapper and using non-dict user.
+        # Cover username=None branch by using non-dict user
         result = await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user="basic-user")
         assert result["status"] == "ok"
 
@@ -4171,6 +4169,8 @@ class TestExportImportEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
+
+
 
 
 class TestMessageEndpointElicitation:

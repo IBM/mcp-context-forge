@@ -7018,10 +7018,10 @@ async def export_selective_configuration(
 @require_permission("admin.import")
 async def import_configuration(
     import_data: Dict[str, Any] = Body(...),
-    conflict_strategy: str = "update",
-    dry_run: bool = False,
-    rekey_secret: Optional[str] = None,
-    selected_entities: Optional[Dict[str, List[str]]] = None,
+    conflict_strategy: str = Body("update"),
+    dry_run: bool = Body(False),
+    rekey_secret: Optional[str] = Body(None),
+    selected_entities: Optional[Dict[str, List[str]]] = Body(None),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -7067,6 +7067,9 @@ async def import_configuration(
 
         return import_status.to_dict()
 
+    except HTTPException:
+        # Re-raise HTTPException as-is (includes our validation errors)
+        raise
     except ImportValidationError as e:
         logger.error(f"Import validation failed for user {user}: {str(e)}")
         raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
