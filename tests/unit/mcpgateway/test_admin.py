@@ -615,6 +615,57 @@ class TestAdminServerRoutes:
         assert server_create.oauth_enabled is False
         assert server_create.oauth_config is None
 
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_credentials_location(self, mock_register_server, mock_request, mock_db):
+        """Test adding server with OAuth credentials location specified."""
+        # 1. Setup mock form data including oauth_credentials_location
+        form_data = FakeForm({
+            "name": "Test Server OAuth Location",
+            "oauth_enabled": "on",
+            "oauth_authorization_server": "https://auth.example.com",
+            "oauth_credentials_location": "header"
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # 2. Call admin_add_server
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        # 3. Verify response
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        # 4. Verify register_server was called with correct oauth_config
+        mock_register_server.assert_called_once()
+        call_args = mock_register_server.call_args
+        server_create = call_args[0][1] # second arg is server object
+
+        assert server_create.oauth_enabled == True
+        assert server_create.oauth_config is not None
+        assert server_create.oauth_config.get("authorization_servers") == ["https://auth.example.com"]
+        assert server_create.oauth_config.get("credentials_location") == "header"
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_credentials_location_invalid(self, mock_register_server, mock_request, mock_db):
+        """Test adding server with invalid OAuth credentials location (should be ignored)."""
+        form_data = FakeForm({
+            "name": "Test Server Invalid OAuth Location",
+            "oauth_enabled": "on",
+            "oauth_authorization_server": "https://auth.example.com",
+            "oauth_credentials_location": "invalid_value"
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+
+        mock_register_server.assert_called_once()
+        server_create = mock_register_server.call_args[0][1]
+
+        # Verify key is NOT present (so it defaults to body in manager)
+        assert server_create.oauth_config is not None
+        assert "credentials_location" not in server_create.oauth_config
+
     async def test_admin_add_server_missing_required_field_returns_422(self, mock_request, mock_db):
         """Cover the KeyError handler in admin_add_server."""
         mock_request.form = AsyncMock(return_value=FakeForm({"description": "no name"}))
@@ -4542,6 +4593,117 @@ class TestOAuthFunctionality:
         assert gateway_create.oauth_config is None
 
     @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_oauth_credentials_location(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with OAuth credentials location (header/body/invalid)."""
+        # Case 1: Header
+        form_data_header = FakeForm({
+            "name": "OAuth_Gateway_Header",
+            "url": "https://example.com",
+            # Basic OAuth fields to trigger assembly
+            "oauth_grant_type": "client_credentials",
+            "oauth_issuer": "https://auth.example.com",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "s",
+            "oauth_token_url": "https://auth.example.com/token",
+            "oauth_authorization_url": "https://auth.example.com/auth",
+            "oauth_credentials_location": "header"
+        })
+        mock_request.form = AsyncMock(return_value=form_data_header)
+
+        # Mock dependencies (TeamService, MetadataCapture, Encryption)
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_enc,
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta
+        ):
+            mock_enc.return_value.encrypt_secret_async = AsyncMock(return_value="enc")
+            mock_meta.return_value = {
+                "created_by": "test",
+                "created_from_ip": "127.0.0.1",
+                "created_via": "web",
+                "created_user_agent": "test-agent"
+            }
+
+            await admin_add_gateway(mock_request, mock_db, user={"email": "u", "db": mock_db})
+
+            # Verify "header" saved
+            assert mock_register_gateway.called
+            gw_create = mock_register_gateway.call_args[0][1]
+            assert gw_create.oauth_config["credentials_location"] == "header"
+
+        # Case 2: Body
+        mock_register_gateway.reset_mock()
+        form_data_body = FakeForm({
+            "name": "OAuth_Gateway_Body",
+            "url": "https://example.com",
+            "oauth_grant_type": "client_credentials",
+            "oauth_issuer": "https://auth.example.com",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "s",
+            "oauth_token_url": "https://auth.example.com/token",
+            "oauth_authorization_url": "https://auth.example.com/auth",
+            "oauth_credentials_location": "body"
+        })
+        mock_request.form = AsyncMock(return_value=form_data_body)
+
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_enc,
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta
+        ):
+            mock_enc.return_value.encrypt_secret_async = AsyncMock(return_value="enc")
+            mock_meta.return_value = {
+                "created_by": "test",
+                "created_from_ip": "127.0.0.1",
+                "created_via": "web",
+                "created_user_agent": "test-agent"
+            }
+
+            await admin_add_gateway(mock_request, mock_db, user={"email": "u", "db": mock_db})
+
+            # Verify "body" saved
+            assert mock_register_gateway.called
+            gw_create = mock_register_gateway.call_args[0][1]
+            assert gw_create.oauth_config["credentials_location"] == "body"
+
+        # Case 3: Invalid/Unset (defaults to omitted, which manager treats as body)
+        mock_register_gateway.reset_mock()
+        form_data_invalid = FakeForm({
+            "name": "OAuth_Gateway_Invalid",
+            "url": "https://example.com",
+            "oauth_grant_type": "client_credentials",
+            "oauth_issuer": "https://auth.example.com",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "s",
+            "oauth_token_url": "https://auth.example.com/token",
+            "oauth_authorization_url": "https://auth.example.com/auth",
+            "oauth_credentials_location": "invalid_value"
+        })
+        mock_request.form = AsyncMock(return_value=form_data_invalid)
+
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_enc,
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta
+        ):
+            mock_enc.return_value.encrypt_secret_async = AsyncMock(return_value="enc")
+            mock_meta.return_value = {
+                "created_by": "test",
+                "created_from_ip": "127.0.0.1",
+                "created_via": "web",
+                "created_user_agent": "test-agent"
+            }
+
+            await admin_add_gateway(mock_request, mock_db, user={"email": "u", "db": mock_db})
+
+            # Verify key NOT present
+            gw_create = mock_register_gateway.call_args[0][1]
+            assert "credentials_location" not in gw_create.oauth_config
+
+    @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_config_none_string(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with oauth_config as 'None' string."""
         form_data = FakeForm({"name": "No_OAuth_Gateway", "url": "https://example.com", "oauth_config": "None"})
@@ -4817,6 +4979,7 @@ class TestOAuthFunctionality:
                 "oauth_username": "u",
                 "oauth_password": "p",
                 "oauth_scopes": "a, b c",
+                "oauth_credentials_location": "header",
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
@@ -4840,6 +5003,7 @@ class TestOAuthFunctionality:
             gateway_update = mock_update_gateway.call_args.args[2]
             assert gateway_update.oauth_config["client_secret"] == "enc-secret"
             assert gateway_update.oauth_config["scopes"] == ["a", "b", "c"]
+            assert gateway_update.oauth_config["credentials_location"] == "header"
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):

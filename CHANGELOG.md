@@ -369,6 +369,11 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Password Reset & Recovery Guide** ([#2543](https://github.com/IBM/mcp-context-forge/issues/2543)) - Administrator password reset and recovery guide
 * **CONTRIBUTING.md Link Fix** ([#2817](https://github.com/IBM/mcp-context-forge/issues/2817)) - Fixed broken CONTRIBUTING.md link for file header management
 
+#### OAuth Client Authentication Handling
+* Added support for sending client credentials either in the request body (default behavior) or in the HTTP headers for the **Client Credentials** and **Password** grant types.
+* Configuration exposed via a UI dropdown selector
+* Enables compliance with environments enforcing strict security policies for sensitive credentials
+* Other OAuth grant types are not affected
 ---
 
 ## [1.0.0-BETA-2] - 2026-01-20 - Performance, Scale & Reliability
