@@ -1,0 +1,51 @@
+# docker-compose.ldap.yml
+#
+# LDAP profile overrides for local development/testing with OpenLDAP.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap up -d
+#   docker compose -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap down
+#
+# After startup, seed data with:
+#   docker cp infra/ldap/seed.ldif ldap:/seed.ldif
+#   docker exec ldap ldapadd -x -D "cn=admin,dc=example,dc=org" -w admin -f /seed.ldif
+#
+# Verify with:
+#   docker exec ldap ldapsearch -x -H ldap://localhost:389 -D "cn=admin,dc=example,dc=org" -w admin -b "dc=example,dc=org" "(uid=*)"
+#
+# Admin UI:
+#   phpLDAPadmin: http://localhost:8380 (login: cn=admin,dc=example,dc=org / admin)
+
+services:
+  gateway:
+    depends_on:
+      ldap:
+        condition: service_healthy
+    environment:
+      # Enable LDAP authentication
+      - LDAP_ENABLED=true
+      - LDAP_URI=ldap://ldap:389
+      - LDAP_BASE_DN=dc=example,dc=org
+      - LDAP_BIND_DN=cn=admin,dc=example,dc=org
+      - LDAP_BIND_PASSWORD=admin
+      - LDAP_USER_SEARCH_BASE=ou=Users
+      - LDAP_USER_SEARCH_FILTER=(uid={username})
+      - LDAP_USER_EMAIL_ATTRIBUTE=mail
+      - LDAP_USER_NAME_ATTRIBUTE=cn
+      - LDAP_USER_UID_ATTRIBUTE=uid
+      - LDAP_GROUP_SEARCH_BASE=ou=Groups
+      - LDAP_GROUP_SEARCH_FILTER=(objectClass=groupOfNames)
+      - LDAP_GROUP_MEMBER_ATTRIBUTE=member
+      - LDAP_GROUP_NAME_ATTRIBUTE=cn
+      - LDAP_USE_SSL=false
+      - LDAP_START_TLS=false
+      - LDAP_TLS_VALIDATE=false
+      - LDAP_AUTO_CREATE_USERS=true
+      - LDAP_AUTO_CREATE_TEAMS=true
+      # Map LDAP groups to gateway roles
+      - 'LDAP_ROLE_MAPPINGS={"admins":"platform_admin","data-science":"developer","finance":"viewer"}'
+      - LDAP_DEFAULT_ROLE=viewer
+      # Enable periodic directory sync
+      - LDAP_SYNC_ENABLED=true
+      - LDAP_SYNC_INTERVAL_MINUTES=60
+      - LDAP_SYNC_DELETE_ORPHANS=false

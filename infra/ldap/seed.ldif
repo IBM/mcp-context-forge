@@ -1,0 +1,98 @@
+# seed.ldif - Demo data for OpenLDAP development/testing
+#
+# Usage:
+#   docker cp infra/ldap/seed.ldif ldap:/seed.ldif
+#   docker exec ldap ldapadd -x -D "cn=admin,dc=example,dc=org" -w admin -f /seed.ldif
+#
+# Verify:
+#   docker exec ldap ldapsearch -x -H ldap://localhost:389 \
+#     -D "cn=admin,dc=example,dc=org" -w admin \
+#     -b "dc=example,dc=org" "(uid=*)" uid cn mail
+
+# ──────────────────────────────────────────────────────────────────
+# Organizational Units
+# ──────────────────────────────────────────────────────────────────
+
+dn: ou=Users,dc=example,dc=org
+objectClass: organizationalUnit
+ou: Users
+
+dn: ou=Groups,dc=example,dc=org
+objectClass: organizationalUnit
+ou: Groups
+
+# ──────────────────────────────────────────────────────────────────
+# Users
+# ──────────────────────────────────────────────────────────────────
+
+dn: uid=alice,ou=Users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: alice
+sn: Liddell
+cn: Alice Liddell
+mail: alice@example.org
+userPassword: password
+
+dn: uid=bob,ou=Users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: bob
+sn: Builder
+cn: Bob Builder
+mail: bob@example.org
+userPassword: password
+
+dn: uid=charlie,ou=Users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: charlie
+sn: Chaplin
+cn: Charlie Chaplin
+mail: charlie@example.org
+userPassword: password
+
+dn: uid=diana,ou=Users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: diana
+sn: Prince
+cn: Diana Prince
+mail: diana@example.org
+userPassword: password
+
+dn: uid=eve,ou=Users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: eve
+sn: Torres
+cn: Eve Torres
+mail: eve@example.org
+userPassword: password
+
+# ──────────────────────────────────────────────────────────────────
+# Groups (groupOfNames requires at least one member)
+# ──────────────────────────────────────────────────────────────────
+
+dn: cn=admins,ou=Groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: admins
+description: Platform administrators
+member: uid=alice,ou=Users,dc=example,dc=org
+
+dn: cn=data-science,ou=Groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: data-science
+description: Data science team
+member: uid=alice,ou=Users,dc=example,dc=org
+member: uid=bob,ou=Users,dc=example,dc=org
+member: uid=eve,ou=Users,dc=example,dc=org
+
+dn: cn=finance,ou=Groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: finance
+description: Finance department
+member: uid=charlie,ou=Users,dc=example,dc=org
+member: uid=diana,ou=Users,dc=example,dc=org
+
+dn: cn=engineering,ou=Groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: engineering
+description: Engineering team
+member: uid=bob,ou=Users,dc=example,dc=org
+member: uid=eve,ou=Users,dc=example,dc=org

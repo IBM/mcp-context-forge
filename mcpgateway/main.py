@@ -597,6 +597,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_stop_event: Optional[asyncio.Event] = None
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
+    ldap_sync_task: Optional[asyncio.Task] = None
+    ldap_sync_stop_event: Optional[asyncio.Event] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -814,6 +816,44 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         elif settings.metrics_aggregation_enabled:
             logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
 
+        # Start LDAP directory sync background task if enabled
+        ldap_sync_task: Optional[asyncio.Task] = None
+        ldap_sync_stop_event: Optional[asyncio.Event] = None
+        if settings.ldap_enabled and settings.ldap_sync_enabled:
+            try:
+                # First-Party
+                from mcpgateway.services.ldap_service import LdapService  # pylint: disable=import-outside-toplevel
+
+                ldap_sync_stop_event = asyncio.Event()
+                interval_secs = settings.ldap_sync_interval_minutes * 60
+
+                async def _ldap_sync_loop():
+                    """Periodic LDAP directory sync loop."""
+                    try:
+                        while not ldap_sync_stop_event.is_set():
+                            try:
+                                db = SessionLocal()
+                                try:
+                                    svc = LdapService(db)
+                                    result = await svc.sync_directory()
+                                    logger.info("LDAP sync: %d users, %d groups, %d errors", result.users_synced, result.groups_synced, len(result.errors))
+                                finally:
+                                    db.close()
+                            except Exception as sync_err:
+                                logger.warning("LDAP sync iteration failed: %s", sync_err)
+                            try:
+                                await asyncio.wait_for(ldap_sync_stop_event.wait(), timeout=interval_secs)
+                            except asyncio.TimeoutError:
+                                continue
+                    except asyncio.CancelledError:
+                        logger.debug("LDAP sync loop cancelled")
+                        raise
+
+                ldap_sync_task = asyncio.create_task(_ldap_sync_loop())
+                logger.info("LDAP directory sync started (interval: %d minutes)", settings.ldap_sync_interval_minutes)
+            except ImportError as e:
+                logger.error("LDAP sync not available: %s", e)
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
@@ -827,6 +867,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         raise
     finally:
+        # Stop LDAP sync loop
+        if ldap_sync_stop_event is not None:
+            ldap_sync_stop_event.set()
+        if ldap_sync_task is not None:
+            ldap_sync_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await ldap_sync_task
+
         if aggregation_stop_event is not None:
             aggregation_stop_event.set()
         for task in (aggregation_backfill_task, aggregation_loop_task):
@@ -7224,6 +7272,19 @@ if settings.email_auth_enabled:
                 logger.error(f"SSO router not available: {e}")
         else:
             logger.info("SSO router not included - SSO authentication disabled")
+
+        # Include LDAP router if enabled
+        if settings.ldap_enabled:
+            try:
+                # First-Party
+                from mcpgateway.routers.ldap_auth import ldap_router
+
+                app.include_router(ldap_router, tags=["LDAP Authentication"])
+                logger.info("LDAP router included - LDAP authentication enabled")
+            except ImportError as e:
+                logger.error(f"LDAP router not available: {e}")
+        else:
+            logger.info("LDAP router not included - LDAP authentication disabled")
     except ImportError as e:
         logger.error(f"Authentication routers not available: {e}")
 else:
