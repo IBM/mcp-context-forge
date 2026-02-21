@@ -809,7 +809,7 @@ async def accept_team_invitation(token: str, current_user: dict = Depends(get_cu
         logger.error(f"Invitation acceptance failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error accepting invitation {token}: {e}")
+        logger.error("Error accepting invitation: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to accept invitation")
 
 

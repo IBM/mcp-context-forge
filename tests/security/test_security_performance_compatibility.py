@@ -11,6 +11,7 @@ of the security implementation.
 """
 
 # Standard
+import logging
 import re
 import time
 from unittest.mock import patch
@@ -30,6 +31,24 @@ class TestPerformanceImpact:
 
     def test_middleware_overhead_minimal(self):
         """Test security middleware has minimal performance overhead."""
+        def _measure_average_request_time(client: TestClient, endpoint: str, iterations: int, warmup: int = 20) -> float:
+            # Warmup reduces one-time startup variance from skewing the ratio.
+            for _ in range(warmup):
+                response = client.get(endpoint)
+                assert response.status_code == 200
+
+            start_time = time.perf_counter()
+            for _ in range(iterations):
+                response = client.get(endpoint)
+                assert response.status_code == 200
+            elapsed = time.perf_counter() - start_time
+            return elapsed / iterations
+
+        # Avoid noisy httpx INFO request logs affecting timing assertions.
+        httpx_logger = logging.getLogger("httpx")
+        previous_httpx_level = httpx_logger.level
+        httpx_logger.setLevel(logging.WARNING)
+
         # App without security middleware
         app_no_security = FastAPI()
 
@@ -45,28 +64,23 @@ class TestPerformanceImpact:
         def test_endpoint():
             return {"message": "test"}
 
-        # Measure performance
-        iterations = 100
+        try:
+            # Measure performance
+            iterations = 200
 
-        # Time without security
-        client_no_security = TestClient(app_no_security)
-        start_time = time.perf_counter()
-        for i in range(iterations):
-            response = client_no_security.get("/test")
-            assert response.status_code == 200
-        time_without_security = time.perf_counter() - start_time
+            # Time without security
+            client_no_security = TestClient(app_no_security)
+            time_without_security = _measure_average_request_time(client_no_security, "/test", iterations)
 
-        # Time with security
-        client_with_security = TestClient(app_with_security)
-        start_time = time.perf_counter()
-        for i in range(iterations):
-            response = client_with_security.get("/test")
-            assert response.status_code == 200
-        time_with_security = time.perf_counter() - start_time
+            # Time with security
+            client_with_security = TestClient(app_with_security)
+            time_with_security = _measure_average_request_time(client_with_security, "/test", iterations)
 
-        # Security overhead should be reasonable (< 3x increase)
-        overhead_ratio = time_with_security / time_without_security
-        assert overhead_ratio < 3, f"Security middleware overhead too high: {overhead_ratio}x"
+            # Security overhead should be reasonable (< 3x increase)
+            overhead_ratio = time_with_security / time_without_security
+            assert overhead_ratio < 3, f"Security middleware overhead too high: {overhead_ratio}x"
+        finally:
+            httpx_logger.setLevel(previous_httpx_level)
 
     def test_memory_usage_stable(self):
         """Test security middleware doesn't cause memory leaks."""
