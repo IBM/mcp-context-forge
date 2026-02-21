@@ -103,7 +103,7 @@ def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -
 def _submit_login_and_wait(page: Page, login_page, email: str, password: str) -> Optional[int]:
     """Submit login form and return the POST response status code."""
     try:
-        with page.expect_response(lambda resp: "/admin/login" in resp.url and resp.request.method == "POST", timeout=10000) as response_info:
+        with page.expect_response(lambda resp: ("/ui/login" in resp.url or "/admin/login" in resp.url) and resp.request.method == "POST", timeout=10000) as response_info:
             login_page.submit_login(email, password)
         return response_info.value.status
     except PlaywrightTimeoutError:
@@ -147,8 +147,8 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     # Create LoginPage instance
     login_page = LoginPage(page, base_url)
 
-    # Go directly to admin
-    page.goto("/admin", wait_until="domcontentloaded")
+    # Go directly to admin (will redirect to /ui via legacy redirect)
+    page.goto("/ui", wait_until="domcontentloaded")
 
     # Handle password change requirement
     if login_page.is_on_change_password_page():
@@ -185,20 +185,20 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             if DISABLE_JWT_FALLBACK:
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
             _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
+            page.goto("/ui/", wait_until="domcontentloaded")
             _wait_for_admin_transition(page)
 
     # Verify we're on the admin page
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    expect(page).to_have_url(re.compile(r".*/(admin|ui)(?!/login).*"))
 
     # Wait for the application shell to load
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
     except PlaywrightTimeoutError:
-        if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
+        if ("/ui/login" in page.url or "/admin/login" in page.url) and not DISABLE_JWT_FALLBACK:
             # Recovery path for intermittent auth redirects during shell load.
             _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
+            page.goto("/ui/", wait_until="domcontentloaded")
             _wait_for_admin_transition(page)
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
             return

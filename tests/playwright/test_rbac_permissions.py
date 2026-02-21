@@ -93,7 +93,7 @@ def _inject_jwt_cookie(page: Page, email: str, is_admin: bool = False, teams: Op
 
 def _wait_for_admin_shell(page: Page, timeout: int = 60000, team_id: Optional[str] = None) -> None:
     """Navigate to admin and wait for the application shell to load."""
-    url = f"/admin?team_id={team_id}" if team_id else "/admin"
+    url = f"/ui?team_id={team_id}" if team_id else "/ui"
     page.goto(url)
     page.wait_for_load_state("domcontentloaded")
     try:
@@ -113,7 +113,7 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000, team_id: Optional[st
 def _navigate_to_gateways(page: Page, team_id: Optional[str] = None) -> GatewaysPage:
     """Navigate to the gateways tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#gateways")
+        page.goto(f"/ui?team_id={team_id}#gateways")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -128,7 +128,7 @@ def _navigate_to_gateways(page: Page, team_id: Optional[str] = None) -> Gateways
 def _navigate_to_servers(page: Page, team_id: Optional[str] = None) -> ServersPage:
     """Navigate to the servers tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#catalog")
+        page.goto(f"/ui?team_id={team_id}#catalog")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -151,14 +151,14 @@ def _submit_gateway_form_and_get_status(gw_page: GatewaysPage, name: str, url: s
     gw_page.fill_gateway_form(name=name, url=url, description="RBAC test gateway", tags="rbac,test", transport="SSE")
     try:
         with gw_page.page.expect_response(
-            lambda r: "/admin/gateways" in r.url and r.request.method == "POST",
+            lambda r: "/ui/gateways" in r.url and r.request.method == "POST",
             timeout=120000,
         ) as resp_info:
             gw_page.click_locator(gw_page.add_gateway_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
         # If no POST response intercepted, check if we were redirected to login (auth failure)
-        if "/admin/login" in gw_page.page.url:
+        if "/ui/login" in gw_page.page.url:
             return 401
         return 0
 
@@ -172,13 +172,13 @@ def _submit_server_form_and_get_status(srv_page: ServersPage, name: str) -> int:
     srv_page.fill_server_form(name=name, description="RBAC test server")
     try:
         with srv_page.page.expect_response(
-            lambda r: "/admin/servers" in r.url and r.request.method == "POST",
+            lambda r: "/ui/servers" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             srv_page.click_locator(srv_page.add_server_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in srv_page.page.url:
+        if "/ui/login" in srv_page.page.url:
             return 401
         return 0
 
@@ -671,7 +671,7 @@ class TestRBACRestAPI:
 def _navigate_to_tools(page: Page, team_id: Optional[str] = None) -> ToolsPage:
     """Navigate to the tools tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#tools")
+        page.goto(f"/ui?team_id={team_id}#tools")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -686,7 +686,7 @@ def _navigate_to_tools(page: Page, team_id: Optional[str] = None) -> ToolsPage:
 def _navigate_to_resources(page: Page, team_id: Optional[str] = None) -> ResourcesPage:
     """Navigate to the resources tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#resources")
+        page.goto(f"/ui?team_id={team_id}#resources")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -701,7 +701,7 @@ def _navigate_to_resources(page: Page, team_id: Optional[str] = None) -> Resourc
 def _navigate_to_prompts(page: Page, team_id: Optional[str] = None) -> PromptsPage:
     """Navigate to the prompts tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#prompts")
+        page.goto(f"/ui?team_id={team_id}#prompts")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -730,13 +730,13 @@ def _submit_tool_form_and_get_status(tools_page: ToolsPage, name: str) -> int:
     tools_page.fill_tool_form(name=name, url="https://example.com/api/tool", description="RBAC test tool", integration_type="REST")
     try:
         with tools_page.page.expect_response(
-            lambda r: "/admin/tools" in r.url and r.request.method == "POST",
+            lambda r: "/ui/tools" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             tools_page.click_locator(tools_page.add_tool_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in tools_page.page.url:
+        if "/ui/login" in tools_page.page.url:
             return 401
         return 0
 
@@ -751,13 +751,13 @@ def _submit_resource_form_and_get_status(res_page: ResourcesPage, name: str) -> 
     res_page.fill_resource_form(uri=f"file:///rbac-test/{name}", name=name, mime_type="text/plain", description="RBAC test resource")
     try:
         with res_page.page.expect_response(
-            lambda r: "/admin/resources" in r.url and r.request.method == "POST",
+            lambda r: "/ui/resources" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             res_page.click_locator(res_page.add_resource_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in res_page.page.url:
+        if "/ui/login" in res_page.page.url:
             return 401
         return 0
 
@@ -775,13 +775,13 @@ def _submit_prompt_form_and_get_status(pr_page: PromptsPage, name: str) -> int:
     pr_page.fill_locator(pr_page.prompt_description_input, "RBAC test prompt")
     try:
         with pr_page.page.expect_response(
-            lambda r: "/admin/prompts" in r.url and r.request.method == "POST",
+            lambda r: "/ui/prompts" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             pr_page.click_locator(pr_page.add_prompt_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in pr_page.page.url:
+        if "/ui/login" in pr_page.page.url:
             return 401
         return 0
 
@@ -976,7 +976,7 @@ class TestRBACTeamManagement:
         try:
             # POST /admin/teams/{team_id}/add-member requires teams.manage_members
             resp = ctx.post(
-                f"/admin/teams/{team_id}/add-member",
+                f"/ui/teams/{team_id}/add-member",
                 data={"email": "nobody@test.example.com", "role": "member"},
             )
             assert resp.status == 403, f"Viewer should be denied adding team members but got status={resp.status}"
@@ -999,7 +999,7 @@ class TestRBACTeamManagement:
         )
         try:
             # GET /admin/teams/{team_id}/members/add requires teams.manage_members
-            resp = ctx.get(f"/admin/teams/{team_id}/members/add")
+            resp = ctx.get(f"/ui/teams/{team_id}/members/add")
             assert resp.status != 401, f"Team admin authentication failed (status={resp.status})"
             body = resp.text()
             if resp.status == 403:

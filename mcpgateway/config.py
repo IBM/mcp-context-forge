@@ -560,6 +560,21 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+    mcpgateway_ui_base_path: str = Field(
+        default="/ui",
+        description=(
+            "Base URL path for the Admin UI. Default changed from /admin to /ui in v1.0 "
+            "since all authenticated users can access it, not just administrators. "
+            "Must start with / and not end with /. Cannot be empty or just /."
+        ),
+    )
+    mcpgateway_ui_legacy_redirect: bool = Field(
+        default=True,
+        description=(
+            "Enable backward-compatible 301 redirect from /admin/* to the configured UI base path. "
+            "Set to false to return 404 for /admin paths after migration is complete."
+        ),
+    )
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
@@ -1848,6 +1863,68 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    # Reserved API route prefixes that cannot be used as UI base path
+    _RESERVED_API_PREFIXES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "/tools",
+            "/servers",
+            "/gateways",
+            "/prompts",
+            "/resources",
+            "/roots",
+            "/mcp",
+            "/a2a",
+            "/health",
+            "/ready",
+            "/metrics",
+            "/static",
+            "/docs",
+            "/openapi",
+            "/redoc",
+            "/well-known",
+            "/oauth",
+            "/sso",
+            "/auth",
+            "/api",
+            "/v1",
+            "/v2",
+        }
+    )
+
+    @field_validator("mcpgateway_ui_base_path", mode="after")
+    @classmethod
+    def _validate_ui_base_path(cls, value: str) -> str:
+        """Validate the UI base path format and prevent collisions with API routes.
+
+        Args:
+            value: The UI base path to validate.
+
+        Returns:
+            str: The validated base path.
+
+        Raises:
+            ValueError: If the path format is invalid or collides with API routes.
+        """
+        # Must start with /
+        if not value.startswith("/"):
+            raise ValueError(f"MCPGATEWAY_UI_BASE_PATH must start with '/'. Got: {value!r}")
+
+        # Must not end with / (except for "/" itself which is invalid anyway)
+        if len(value) > 1 and value.endswith("/"):
+            raise ValueError(f"MCPGATEWAY_UI_BASE_PATH must not end with '/'. Got: {value!r}")
+
+        # Must not be empty or just /
+        if value == "/" or not value.strip("/"):
+            raise ValueError("MCPGATEWAY_UI_BASE_PATH cannot be empty or just '/'. This would conflict with the API root.")
+
+        # Check for reserved API route collisions
+        value_lower = value.lower()
+        for reserved in cls._RESERVED_API_PREFIXES:
+            if value_lower == reserved or value_lower.startswith(f"{reserved}/"):
+                raise ValueError(f"MCPGATEWAY_UI_BASE_PATH '{value}' conflicts with reserved API route '{reserved}'.")
+
+        return value
 
     @field_validator("mcpgateway_ui_hide_sections", mode="after")
     @classmethod

@@ -1680,10 +1680,10 @@ class TestRootPath:
         # UI should be disabled in test settings
         response = await client.get("/", follow_redirects=False)
 
-        # Could be either API info (200) or redirect to admin (303)
+        # Could be either API info (200) or redirect to UI (303)
         if response.status_code == 303:
             # UI is enabled, check redirect
-            assert "/admin" in response.headers.get("location", "")
+            assert "/ui" in response.headers.get("location", "")
         else:
             # UI is disabled, check API info
             assert response.status_code == 200
@@ -1831,7 +1831,7 @@ class TestErrorHandling:
         response = await client.get("/", follow_redirects=False)
         if response.status_code == 303:
             # UI is enabled, check redirect
-            assert "/admin" in response.headers.get("location", "")
+            assert "/ui" in response.headers.get("location", "")
         else:
             # UI is disabled, check API info
             assert response.status_code == 200

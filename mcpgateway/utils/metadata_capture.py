@@ -19,7 +19,7 @@ Examples:
     >>> request.client.host = "192.168.1.1"
     >>> request.headers = {"user-agent": "test/1.0"}
     >>> request.url = SimpleNamespace()
-    >>> request.url.path = "/admin/tools"
+    >>> request.url.path = "/ui/tools"  # UI base path is /ui by default
     >>> # Metadata capture during entity creation
     >>> metadata = MetadataCapture.extract_creation_metadata(request, user="admin")
     >>> metadata["created_by"]
@@ -33,6 +33,9 @@ from typing import Dict, Optional
 
 # Third-Party
 from fastapi import Request
+
+# First-Party
+from mcpgateway.config import settings
 
 
 class MetadataCapture:
@@ -56,7 +59,7 @@ class MetadataCapture:
             >>> mock_request.client.host = "192.168.1.100"
             >>> mock_request.headers = {"user-agent": "Mozilla/5.0"}
             >>> mock_request.url = SimpleNamespace()
-            >>> mock_request.url.path = "/admin/tools"
+            >>> mock_request.url.path = "/ui/tools"  # UI base path is /ui by default
             >>> context = MetadataCapture.extract_request_context(mock_request)
             >>> context["from_ip"]
             '192.168.1.100'
@@ -81,7 +84,9 @@ class MetadataCapture:
         via = "api"  # default
         if hasattr(request, "url") and hasattr(request.url, "path"):
             path = str(request.url.path)
-            if "/admin/" in path:
+            # Check if path is under the configurable UI base path
+            ui_base = settings.mcpgateway_ui_base_path
+            if f"{ui_base}/" in path or path == ui_base:
                 via = "ui"
 
         return {
@@ -187,7 +192,7 @@ class MetadataCapture:
             >>> mock_request.client.host = "172.16.0.1"
             >>> mock_request.headers = {"user-agent": "HTTPie/2.4.0"}
             >>> mock_request.url = SimpleNamespace()
-            >>> mock_request.url.path = "/admin/tools/123/edit"
+            >>> mock_request.url.path = "/ui/tools/123/edit"  # UI base path is /ui by default
             >>> metadata = MetadataCapture.extract_modification_metadata(mock_request, "alice", 2)
             >>> metadata["modified_by"]
             'alice'

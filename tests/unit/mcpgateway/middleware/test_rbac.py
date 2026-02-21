@@ -1175,6 +1175,7 @@ async def test_no_token_auth_disabled_platform_admin():
     mock_settings.mcp_client_auth_enabled = True
     mock_settings.auth_required = False
     mock_settings.platform_admin_email = "admin@platform.com"
+    mock_settings.mcpgateway_ui_base_path = "/ui"  # Required for `in referer` string check
 
     with patch("mcpgateway.middleware.rbac.settings", mock_settings):
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)

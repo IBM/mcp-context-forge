@@ -57,7 +57,7 @@
               {% if tool.enabled %}
               <form
                 method="POST"
-                action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
+                action="{{ root_path }}{{ ui_base_path }}/tools/{{ tool.id }}/state"
                 class="contents"
                 onsubmit="return handleToggleSubmit(event, 'tools')"
               >
@@ -73,7 +73,7 @@
               {% else %}
               <form
                 method="POST"
-                action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
+                action="{{ root_path }}{{ ui_base_path }}/tools/{{ tool.id }}/state"
                 class="contents"
                 onsubmit="return handleToggleSubmit(event, 'tools')"
               >
@@ -90,7 +90,7 @@
 
               <form
                 method="POST"
-                action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
+                action="{{ root_path }}{{ ui_base_path }}/tools/{{ tool.id }}/delete"
                 class="contents"
                 onsubmit="return handleDeleteSubmit(event, 'tool', '{{ tool.name }}', 'tools')"
               >

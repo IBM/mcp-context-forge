@@ -1436,31 +1436,51 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
 class AdminAuthMiddleware(BaseHTTPMiddleware):
     """
-    Middleware to protect Admin UI routes (/admin/*) requiring admin privileges.
+    Middleware to protect Admin UI routes requiring auth privileges.
 
+    The UI base path is configurable via MCPGATEWAY_UI_BASE_PATH (default: /ui).
     Exempts login-related paths and static assets:
-    - /admin/login - login page
-    - /admin/logout - logout action
-    - /admin/forgot-password - self-service password reset request page
-    - /admin/reset-password/* - self-service password reset completion page
-    - /admin/static/* - static assets
+    - {ui_base_path}/login - login page
+    - {ui_base_path}/logout - logout action
+    - {ui_base_path}/forgot-password - self-service password reset request page
+    - {ui_base_path}/reset-password/* - self-service password reset completion page
+    - {ui_base_path}/static/* - static assets
 
-    All other /admin/* routes require the user to be authenticated AND be an admin.
-    Non-admin authenticated users receive a 403 Forbidden response.
+    All other UI routes require the user to be authenticated.
+    Non-authenticated users are redirected to login.
 
     Note: This middleware respects the auth_required setting. When auth_required=False
     (typically in test environments), the middleware allows requests to pass through
     and relies on endpoint-level authentication which can be mocked in tests.
     """
 
-    # Public paths under /admin that do not require prior authentication.
-    EXEMPT_PATHS = [
-        "/admin/login",
-        "/admin/logout",
-        "/admin/forgot-password",
-        "/admin/reset-password",
-        "/admin/static",
-    ]
+    # UI base path from settings (default /ui, changed from /admin in v1.0)
+    UI_BASE_PATH = settings.mcpgateway_ui_base_path
+
+    # Public paths under UI base path that do not require prior authentication.
+    # Compute dynamically at dispatch time so tests can override `UI_BASE_PATH`.
+    EXEMPT_PATHS = None
+    _EXEMPT_UI_BASE = None
+    _EXEMPT_CACHE = None
+
+    @classmethod
+    def get_exempt_paths(cls) -> list:
+        """Return cached exempt paths; rebuild if UI base changed.
+
+        Returns:
+            list: A list of exempt path prefixes (strings) under the UI base path.
+        """
+        ui_base = getattr(cls, "UI_BASE_PATH", settings.mcpgateway_ui_base_path)
+        if cls._EXEMPT_CACHE is None or cls._EXEMPT_UI_BASE != ui_base:
+            cls._EXEMPT_UI_BASE = ui_base
+            cls._EXEMPT_CACHE = [
+                f"{ui_base}/login",
+                f"{ui_base}/logout",
+                f"{ui_base}/forgot-password",
+                f"{ui_base}/reset-password",
+                f"{ui_base}/static",
+            ]
+        return cls._EXEMPT_CACHE
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -1476,10 +1496,11 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             Response with HX-Redirect for HTMX requests, RedirectResponse for HTML requests, ORJSONResponse for API requests.
         """
+        ui_base_path = settings.mcpgateway_ui_base_path
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
-            login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
+            login_url = f"{root_path}{ui_base_path}/login" if root_path else f"{ui_base_path}/login"
             if error_param:
                 login_url = f"{login_url}?error={error_param}"
             if is_htmx:
@@ -1489,7 +1510,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):  # pylint: disable=too-many-return-statements
         """
-        Check admin privileges for admin routes.
+        Check auth privileges for UI routes.
 
         Args:
             request (Request): The incoming HTTP request.
@@ -1498,7 +1519,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             Response: Either the standard route response or a 401/403 error response.
         """
-        # Skip admin auth check if auth is not required (e.g., test environments)
+        # Skip auth check if auth is not required (e.g., test environments)
         # This allows tests to mock authentication at the dependency level
         if not settings.auth_required:
             return await call_next(request)
@@ -1512,18 +1533,21 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if this is an admin route
-        is_admin_route = scope_path.startswith("/admin")
+        # Check if this is a UI route (using configurable base path)
+        is_ui_route = scope_path.startswith(self.UI_BASE_PATH)
 
-        if not is_admin_route:
+        if not is_ui_route:
             return await call_next(request)
 
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        exempt_paths = self.get_exempt_paths() or []
+        if isinstance(exempt_paths, str):
+            exempt_paths = [exempt_paths]
+        is_exempt = any(scope_path.startswith(p) for p in exempt_paths)
         if is_exempt:
             return await call_next(request)
 
-        # For protected admin routes, verify admin status
+        # For protected UI routes, verify auth status
         try:
             token = request.headers.get("Authorization")
             cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
@@ -1951,6 +1975,9 @@ def decode_html_entities(value: str) -> str:
 
 
 jinja_env.filters["decode_html"] = decode_html_entities
+
+# Add global template variables accessible in all templates
+jinja_env.globals["ui_base_path"] = settings.mcpgateway_ui_base_path
 
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
@@ -7154,6 +7181,7 @@ app.include_router(resource_router)
 app.include_router(prompt_router)
 app.include_router(gateway_router)
 app.include_router(root_router)
+app.include_router(well_known_router)
 app.include_router(utility_router)
 app.include_router(server_router)
 app.include_router(server_well_known_router, prefix="/servers")
@@ -7308,7 +7336,7 @@ if settings.llmchat_enabled:
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"])
+        app.include_router(llm_admin_router, prefix=f"{settings.mcpgateway_ui_base_path}/llm", tags=["LLM Admin"])
         logger.info("LLM configuration, proxy, and admin routers included")
     except ImportError as e:
         logger.debug(f"LLM routers not available: {e}")
@@ -7375,23 +7403,25 @@ if UI_ENABLED:
             exc,
         )
 
-    # Redirect root path to admin UI
+    # Redirect root path to UI
     @app.get("/")
     async def root_redirect():
         """
-        Redirects the root path ("/") to "/admin/".
+        Redirects the root path ("/") to the configured UI base path.
 
+        The UI base path is configurable via MCPGATEWAY_UI_BASE_PATH (default: /ui).
         Logs a debug message before redirecting.
 
         Returns:
-            RedirectResponse: Redirects to /admin/.
+            RedirectResponse: Redirects to the UI base path.
 
         Raises:
             HTTPException: If there is an error during redirection.
         """
-        logger.debug("Redirecting root path to /admin/")
+        ui_base_path = settings.mcpgateway_ui_base_path
+        logger.debug("Redirecting root path to %s/", ui_base_path)
         root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin/", status_code=303)
+        return RedirectResponse(f"{root_path}{ui_base_path}/", status_code=303)
         # return RedirectResponse(request.url_for("admin_home"))
 
     # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
@@ -7404,6 +7434,43 @@ if UI_ENABLED:
         """
         root_path = settings.app_root_path
         return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
+
+    # Backward compatibility redirect from /admin/* to configured UI base path
+    # This can be disabled via MCPGATEWAY_UI_LEGACY_REDIRECT=false after migration
+    # Use middleware to preserve HTTP methods (308) and catch non-GET requests.
+    if settings.mcpgateway_ui_legacy_redirect and settings.mcpgateway_ui_base_path != "/admin":
+
+        @app.middleware("http")
+        async def legacy_admin_redirect(request: Request, call_next):
+            """Redirect legacy /admin paths to the configured UI base path.
+
+            Uses 308 to preserve the original HTTP method (POST/PUT/DELETE).
+
+            Args:
+                request (Request): The incoming HTTP request.
+                call_next (Callable): The function to call the next middleware or endpoint.
+
+            Returns:
+                Response: `RedirectResponse` when redirecting legacy `/admin` paths,
+                otherwise the result of `call_next(request)`.
+            """
+            # Normalize path from request (root_path handled elsewhere)
+            req_path = request.url.path
+            # Allow admin API well-known status to be handled by router (don't redirect)
+            if req_path.startswith("/admin/well-known"):
+                return await call_next(request)
+
+            if req_path.startswith("/admin"):
+                ui_base_path = settings.mcpgateway_ui_base_path
+                root_path = settings.app_root_path
+                new_path = req_path.replace("/admin", ui_base_path, 1)
+                new_url = f"{root_path}{new_path}" if root_path else new_path
+                logger.warning("Deprecated: /admin is now %s. Redirecting %s to %s", ui_base_path, req_path, new_url)
+                # Preserve original HTTP method for non-GET requests using 308.
+                # Use 301 for GET to retain previous behavior expected by many clients/tests.
+                redirect_status = 301 if request.method in ("GET", "HEAD") else 308
+                return RedirectResponse(url=new_url, status_code=redirect_status)
+            return await call_next(request)
 
 else:
     # If UI is disabled, provide API info at root

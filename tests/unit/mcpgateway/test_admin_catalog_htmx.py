@@ -9,6 +9,11 @@ Uses TestClient with proper auth mocking via module-level fixture.
 """
 
 # Standard
+import os
+
+# Set UI base path to /ui before importing mcpgateway modules
+os.environ["MCPGATEWAY_UI_BASE_PATH"] = "/ui"
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -117,7 +122,7 @@ def test_register_catalog_server_htmx_success(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/test-server/register",
+            "/ui/mcp-registry/test-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -145,7 +150,7 @@ def test_register_catalog_server_htmx_oauth(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/oauth-server/register",
+            "/ui/mcp-registry/oauth-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -174,7 +179,7 @@ def test_register_catalog_server_htmx_error(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/failed-server/register",
+            "/ui/mcp-registry/failed-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -200,7 +205,7 @@ def test_register_catalog_server_json_response(client):
          patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
 
-        response = client.post("/admin/mcp-registry/test-server/register")
+        response = client.post("/ui/mcp-registry/test-server/register")
 
     assert response.status_code == 200
     data = response.json()
@@ -225,7 +230,7 @@ def test_register_catalog_server_htmx_with_api_key(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/api-server/register",
+            "/ui/mcp-registry/api-server/register",
             headers={"HX-Request": "true"},
             json={"server_id": "api-server", "name": "API Server", "api_key": "secret-key"},
         )
@@ -252,7 +257,7 @@ def test_register_catalog_server_htmx_error_escaping(client):
         mock_settings.app_root_path = ""
 
         response = client.post(
-            "/admin/mcp-registry/failed-server/register",
+            "/ui/mcp-registry/failed-server/register",
             headers={"HX-Request": "true"},
         )
 
@@ -276,15 +281,16 @@ def test_register_catalog_server_htmx_retry_button_attributes(client):
          patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = "/api"
+        mock_settings.mcpgateway_ui_base_path = "/ui"
 
         response = client.post(
-            "/admin/mcp-registry/timeout-server/register",
+            "/ui/mcp-registry/timeout-server/register",
             headers={"HX-Request": "true"},
         )
 
     assert response.status_code == 200
     html_content = response.text
-    assert 'hx-post="/api/admin/mcp-registry/timeout-server/register"' in html_content
+    assert 'hx-post="/api/ui/mcp-registry/timeout-server/register"' in html_content
     assert 'hx-target="#timeout-server-button-container"' in html_content
     assert 'hx-swap="innerHTML"' in html_content
     assert 'hx-disabled-elt="this"' in html_content

@@ -96,7 +96,7 @@
           id="category-filter"
           name="category"
           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          hx-get="{{ root_path }}/admin/mcp-registry/partial"
+          hx-get="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial"
           hx-trigger="change"
           hx-target="#mcp-registry-servers"
           hx-include="[name='auth_type'],[name='search']"
@@ -117,7 +117,7 @@
           id="auth-filter"
           name="auth_type"
           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          hx-get="{{ root_path }}/admin/mcp-registry/partial"
+          hx-get="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial"
           hx-trigger="change"
           hx-target="#mcp-registry-servers"
           hx-include="[name='category'],[name='search']"
@@ -141,7 +141,7 @@
           placeholder="Search servers via tags..."
           value="{{ filter_params.search or '' }}"
           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          hx-get="{{ root_path }}/admin/mcp-registry/partial"
+          hx-get="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial"
           hx-trigger="keyup changed delay:500ms"
           hx-target="#mcp-registry-servers"
           hx-include="[name='category'],[name='auth_type']"
@@ -318,8 +318,8 @@
     <!-- First Page -->
     {% if page > 1 %}
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      href="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -328,8 +328,8 @@
     </a>
     <!-- Previous Page -->
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      href="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -359,8 +359,8 @@
     <!-- Next Page -->
     {% if page < total_pages %}
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      href="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -369,8 +369,8 @@
     </a>
     <!-- Last Page -->
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      href="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}{{ ui_base_path }}/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -521,7 +521,7 @@
         <button
           id="{{ server.id }}-register-btn"
           class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-          hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
+          hx-post="{{ root_path }}{{ ui_base_path }}/mcp-registry/{{ server.id }}/register"
           hx-target="#{{ server.id }}-button-container"
           hx-swap="innerHTML"
           hx-disabled-elt="this"

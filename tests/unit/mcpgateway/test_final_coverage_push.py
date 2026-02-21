@@ -8,6 +8,11 @@ Final push to reach 75% coverage.
 """
 
 # Standard
+import os
+
+# Set UI base path to /ui before importing mcpgateway modules
+os.environ["MCPGATEWAY_UI_BASE_PATH"] = "/ui"
+
 import json
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -99,18 +104,22 @@ def test_content_types():
     assert resource.mime_type == "application/json"
     assert resource.text == "Sample content"
 
+
 def test_content_type_model_form_urlencoded():
     """
     Test that the system can parse/accept application/x-www-form-urlencoded.
     """
     from fastapi.testclient import TestClient
     from mcpgateway.main import app
+    from mcpgateway.config import settings
 
     client = TestClient(app)
     data = {"type": "text", "text": "Form encoded content"}
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    response = client.post("/admin/tools", data=data, headers=headers)
+    # Use the configured UI base path (default: /ui)
+    response = client.post(f"{settings.mcpgateway_ui_base_path}/tools", data=data, headers=headers)
     assert response.status_code in [200, 201, 400, 401, 415, 422]
+
 
 def test_base_model_with_config_dict():
     """Test BaseModelWithConfigDict functionality."""

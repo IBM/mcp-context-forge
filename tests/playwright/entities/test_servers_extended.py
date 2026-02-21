@@ -38,7 +38,7 @@ class TestServersExtended:
         servers_page.fill_server_form(name=server_name, icon="https://example.com/icon.png", description="A complete test server with all fields", tags="test,automation,qa,extended")
 
         # Submit and verify
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST") as response_info:
             servers_page.submit_server_form()
 
         response = response_info.value
@@ -59,7 +59,7 @@ class TestServersExtended:
         servers_page.navigate_to_servers_tab()
         server_name = f"public-server-{uuid.uuid4().hex[:8]}"
 
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST") as response_info:
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", visibility="public")
 
         response = response_info.value
@@ -82,7 +82,7 @@ class TestServersExtended:
         servers_page.navigate_to_servers_tab()
         server_name = f"team-server-{uuid.uuid4().hex[:8]}"
 
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST") as response_info:
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", visibility="team")
 
         response = response_info.value
@@ -105,7 +105,7 @@ class TestServersExtended:
         servers_page.navigate_to_servers_tab()
         server_name = f"private-server-{uuid.uuid4().hex[:8]}"
 
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST") as response_info:
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", visibility="private")
 
         response = response_info.value
@@ -200,7 +200,7 @@ class TestServersExtended:
         server_name = f"tagged-server-{uuid.uuid4().hex[:8]}"
         tags = "production,api,v2,critical"
 
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", tags=tags)
 
         # Verify server was created with tags
@@ -436,7 +436,7 @@ class TestServersExtended:
         server_name = f"view-test-server-{uuid.uuid4().hex[:8]}"
 
         # Create test server
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for view button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
@@ -483,7 +483,7 @@ class TestServersExtended:
         server_name = f"edit-test-server-{uuid.uuid4().hex[:8]}"
 
         # Create test server
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for edit button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
@@ -535,7 +535,7 @@ class TestServersExtended:
         server_name = f"export-test-server-{uuid.uuid4().hex[:8]}"
 
         # Create test server
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for export button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
@@ -576,7 +576,7 @@ class TestServersExtended:
         server_name = f"deactivate-test-server-{uuid.uuid4().hex[:8]}"
 
         # Create test server
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for deactivate button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
@@ -623,7 +623,7 @@ class TestServersExtended:
         server_name = f"delete-ui-test-server-{uuid.uuid4().hex[:8]}"
 
         # Create test server
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
+        with servers_page.page.expect_response(lambda response: "/ui/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for UI delete button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
