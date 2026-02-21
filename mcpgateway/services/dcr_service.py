@@ -16,6 +16,7 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 # Third-Party
 import httpx
@@ -93,7 +94,14 @@ class DcrService:
                 return cached_entry["metadata"]
 
         # Try RFC 8414 path first
-        rfc8414_url = f"{normalized_issuer}/.well-known/oauth-authorization-server"
+        # Per RFC 8414 Section 3.1: "the well-known URI is formed by inserting the
+        # well-known URI string... between the host component and any existing path
+        # component of the issuer's identifier".
+        # See: https://datatracker.ietf.org/doc/html/rfc8414#section-3.1
+        parsed = urlparse(normalized_issuer)
+        rfc8414_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server"
+        if parsed.path:
+            rfc8414_url += parsed.path
 
         try:
             client = await self._get_client()

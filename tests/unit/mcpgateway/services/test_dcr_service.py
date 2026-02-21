@@ -244,6 +244,37 @@ class TestDiscoverASMetadata:
             with pytest.raises(DcrError, match="issuer mismatch"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_rfc8414_path_construction(self):
+        """Test correct RFC 8414 URL construction for issuers with path components.
+
+        Per RFC 8414 Section 3.1, the well-known suffix MUST be inserted between
+        the host and the path.
+        """
+        # Clear cache
+        from mcpgateway.services.dcr_service import _metadata_cache
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+
+        # Issuer with a path
+        issuer = "https://as.example.com/tenant1"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": issuer})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            await dcr_service.discover_as_metadata(issuer)
+
+            # Verify the discovery URL was constructed correctly (suffix between host and path)
+            call_url = mock_client.get.call_args_list[0][0][0]
+            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            assert call_url == expected_url
+
 
 class TestRegisterClient:
     """Test client registration (RFC 7591)."""
