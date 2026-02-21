@@ -2605,6 +2605,16 @@ images:
 # help: linting-security-checkov     - Run Checkov IaC security scan
 # help: linting-security-kube-linter - Run kube-linter against Kubernetes/Helm manifests
 # help: linting-security-trufflehog  - Run TruffleHog filesystem secret scan
+# help: linting-security-secrets-diff - Scan only git diff for newly introduced secrets (gitleaks)
+# help: linting-security-extra       - Run additional pass-only quality/security gates
+# help: linting-security-extra-hadolint - Run strict hadolint checks (error threshold)
+# help: linting-security-extra-pip-check - Validate Python environment dependencies
+# help: linting-security-pip-audit-advisory - Dependency CVE scan (non-blocking/advisory)
+# help: linting-security-pip-audit-enforce  - Dependency CVE scan (blocking/strict)
+# help: linting-workflow-zizmor-changed - Security lint only changed GitHub workflow files
+# help: linting-typing-mypy-report   - Run mypy telemetry and record error counts (non-blocking)
+# help: linting-typing-pyrefly-report - Run pyrefly telemetry and record error counts (non-blocking)
+# help: linting-typing-telemetry     - Run both typing telemetry checks (non-blocking)
 # help: linting-coverage-diff-cover  - Run diff-cover against changed lines
 # help: linting-full                 - Run passing linting gates used by CI
 
@@ -2643,7 +2653,11 @@ FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
 	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
 	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
 	linting-go-gosec linting-go-govulncheck \
-	linting-security-checkov linting-security-kube-linter linting-security-trufflehog \
+	linting-security-checkov linting-security-kube-linter linting-security-trufflehog linting-security-secrets-diff \
+	linting-security-pip-audit-advisory linting-security-pip-audit-enforce \
+	linting-security-extra linting-security-extra-hadolint linting-security-extra-pip-check \
+	linting-workflow-zizmor-changed \
+	linting-typing-mypy-report linting-typing-pyrefly-report linting-typing-telemetry \
 	linting-coverage-diff-cover linting-full
 
 
@@ -2806,9 +2820,21 @@ LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
 LINT_TRUFFLEHOG_TARGET ?= mcpgateway tests docs charts deployment mcp-servers a2a-agents
 LINT_TRUFFLEHOG_VERSION ?= v3.93.3
 LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
+LINT_HADOLINT_TARGETS ?= Containerfile Containerfile.lite Containerfile.scratch
+LINT_GITLEAKS_VERSION ?= v8.24.2
+LINT_GITLEAKS_BIN ?= $(LINT_GO_ROOT)/bin/gitleaks
+LINT_SECRETS_BASE ?= HEAD
+LINT_SECRETS_HEAD ?= WORKTREE
+LINT_ZIZMOR_CHANGED_BASE ?= HEAD
+LINT_ZIZMOR_CHANGED_HEAD ?= WORKTREE
+LINT_TYPING_REPORT_DIR ?= $(LINT_TMP_ROOT)/typing
+PIP_AUDIT_CACHE_DIR ?= $(CURDIR)/.cache/pip-audit
+PIP_AUDIT_IGNORE_IDS ?=
 
 # Passing gates only (used by CI workflow linting-full)
 LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-reviewdog linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-gosec linting-go-govulncheck
+# Additional pass-only security gates (used by CI workflow linting-security-extra)
+LINTING_SECURITY_EXTRA_TARGETS := linting-security-extra-hadolint linting-security-extra-pip-check
 
 # Tools requiring auth/login (e.g. safety, OSSF scorecard) are intentionally excluded.
 
@@ -3040,8 +3066,156 @@ linting-security-trufflehog:         ## 🔑  Secret scanning with TruffleHog
 			'^z_.*,cover$$' > "$$exclude_file"; \
 		'$(LINT_GO_ROOT)/bin/trufflehog' filesystem --fail --exclude-paths "$$exclude_file" $(LINT_TRUFFLEHOG_TARGET)
 
+linting-security-secrets-diff:       ## 🔐  Scan git diff only for newly introduced secrets (gitleaks)
+	@echo "🔐 gitleaks diff scan ($(LINT_SECRETS_BASE)..$(LINT_SECRETS_HEAD))..."
+	@command -v curl >/dev/null 2>&1 || { echo "❌ curl not found"; exit 1; }
+	@command -v tar >/dev/null 2>&1 || { echo "❌ tar not found"; exit 1; }
+	@command -v git >/dev/null 2>&1 || { echo "❌ git not found"; exit 1; }
+	@version='$(LINT_GITLEAKS_VERSION)'; \
+	version_no_v="$${version#v}"; \
+	os="$$(uname -s | tr '[:upper:]' '[:lower:]')"; \
+	arch="$$(uname -m)"; \
+	case "$$arch" in \
+		x86_64) arch='x64' ;; \
+		aarch64|arm64) arch='arm64' ;; \
+		*) echo "❌ Unsupported architecture: $$arch"; exit 1 ;; \
+	esac; \
+	asset="gitleaks_$${version_no_v}_$${os}_$${arch}.tar.gz"; \
+	url="https://github.com/gitleaks/gitleaks/releases/download/$${version}/$${asset}"; \
+	mkdir -p '$(LINT_GO_ROOT)/bin' '$(LINT_TMP_ROOT)'; \
+	if [ ! -x '$(LINT_GITLEAKS_BIN)' ]; then \
+		curl -fsSL "$$url" -o '$(LINT_TMP_ROOT)/gitleaks.tar.gz'; \
+		tar -xzf '$(LINT_TMP_ROOT)/gitleaks.tar.gz' -C '$(LINT_GO_ROOT)/bin' gitleaks; \
+		chmod +x '$(LINT_GITLEAKS_BIN)'; \
+	fi; \
+	base_ref='$(LINT_SECRETS_BASE)'; \
+	head_ref='$(LINT_SECRETS_HEAD)'; \
+	if [ "$$head_ref" = 'WORKTREE' ]; then \
+		if git diff --quiet "$$base_ref"; then \
+			echo 'ℹ️  No local changes to scan'; \
+			exit 0; \
+		fi; \
+		git diff --no-color --unified=0 "$$base_ref" | '$(LINT_GITLEAKS_BIN)' detect --pipe --no-banner --redact=100; \
+	else \
+		if git diff --quiet "$$base_ref" "$$head_ref"; then \
+			echo 'ℹ️  No diff to scan'; \
+			exit 0; \
+		fi; \
+		git diff --no-color --unified=0 "$$base_ref" "$$head_ref" | '$(LINT_GITLEAKS_BIN)' detect --pipe --no-banner --redact=100; \
+	fi
+
+linting-security-pip-audit-advisory: ## 🔎  Dependency CVE scan (advisory / non-blocking)
+	@echo "🔎 pip-audit advisory scan..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv install-dev
+	@mkdir -p "$(PIP_AUDIT_CACHE_DIR)"
+	@source '$(VENV_DIR)/bin/activate'; \
+	uv pip install -q pip-audit; \
+	PIP_AUDIT_CACHE_DIR='$(PIP_AUDIT_CACHE_DIR)' \
+	XDG_CACHE_HOME='$(PIP_AUDIT_CACHE_DIR)' \
+		pip-audit || true
+
+linting-security-pip-audit-enforce:  ## 🚨  Dependency CVE scan (strict / blocking)
+	@echo "🚨 pip-audit strict scan..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv install-dev
+	@mkdir -p "$(PIP_AUDIT_CACHE_DIR)"
+	@source '$(VENV_DIR)/bin/activate'; \
+	uv pip install -q pip-audit; \
+	ignore_flags=(); \
+	if [ -n '$(PIP_AUDIT_IGNORE_IDS)' ]; then \
+		while IFS= read -r vuln; do \
+			[ -n "$$vuln" ] || continue; \
+			ignore_flags+=("--ignore-vuln" "$$vuln"); \
+		done < <(printf '%s\n' '$(PIP_AUDIT_IGNORE_IDS)' | tr ',' '\n'); \
+	fi; \
+	PIP_AUDIT_CACHE_DIR='$(PIP_AUDIT_CACHE_DIR)' \
+	XDG_CACHE_HOME='$(PIP_AUDIT_CACHE_DIR)' \
+		pip-audit --strict "$${ignore_flags[@]}"
+
+linting-workflow-zizmor-changed:     ## 🔐  Zizmor only on changed workflow files
+	@echo "🔐 zizmor scan of changed workflow files ($(LINT_ZIZMOR_CHANGED_BASE)..$(LINT_ZIZMOR_CHANGED_HEAD))..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check zizmor
+	@base_ref='$(LINT_ZIZMOR_CHANGED_BASE)'; \
+	head_ref='$(LINT_ZIZMOR_CHANGED_HEAD)'; \
+	if [ "$$head_ref" = 'WORKTREE' ]; then \
+		tracked_files="$$(git diff --name-only "$$base_ref" -- .github/workflows | rg '^\.github/workflows/.*\.yml$$' || true)"; \
+		untracked_files="$$(git ls-files --others --exclude-standard -- .github/workflows | rg '^\.github/workflows/.*\.yml$$' || true)"; \
+		files="$$(printf '%s\n%s\n' "$$tracked_files" "$$untracked_files" | awk 'NF' | sort -u)"; \
+	else \
+		files="$$(git diff --name-only "$$base_ref" "$$head_ref" -- .github/workflows | rg '^\.github/workflows/.*\.yml$$' || true)"; \
+	fi; \
+	if [ -z "$$files" ]; then \
+		echo 'ℹ️  No changed workflow files to scan'; \
+		exit 0; \
+	fi; \
+	echo "$$files"; \
+	'$(LINT_PY_VENV)/bin/zizmor' $$files
+
+linting-typing-mypy-report:          ## 🏷️  Mypy telemetry (non-blocking, writes report)
+	@echo "🏷️ mypy telemetry..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv install-dev
+	@mkdir -p "$(LINT_TYPING_REPORT_DIR)"
+	@out='$(LINT_TYPING_REPORT_DIR)/mypy-report.txt'; \
+	set +e; \
+	'$(VENV_DIR)/bin/mypy' mcpgateway >"$$out" 2>&1; \
+	status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ]; then \
+		count=0; \
+	else \
+		count="$$(grep -Eo '^Found [0-9]+ errors' "$$out" | awk '{print $$2}' | tail -1)"; \
+		if [ -z "$$count" ]; then count="$$(grep -c ': error:' "$$out" || true)"; fi; \
+	fi; \
+	printf 'mypy_errors=%s\n' "$$count" | tee '$(LINT_TYPING_REPORT_DIR)/mypy.count'; \
+	echo "📄 mypy report: $$out"
+
+linting-typing-pyrefly-report:       ## 🧠  Pyrefly telemetry (non-blocking, writes report)
+	@echo "🧠 pyrefly telemetry..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv install-dev
+	@mkdir -p "$(LINT_TYPING_REPORT_DIR)"
+	@out='$(LINT_TYPING_REPORT_DIR)/pyrefly-report.txt'; \
+	set +e; \
+	'$(VENV_DIR)/bin/pyrefly' check mcpgateway >"$$out" 2>&1; \
+	status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ]; then \
+		count=0; \
+	else \
+		count="$$(grep -Eo 'INFO [0-9]+ errors' "$$out" | awk '{print $$2}' | tail -1)"; \
+		if [ -z "$$count" ]; then count="$$(grep -c '^ERROR ' "$$out" || true)"; fi; \
+	fi; \
+	printf 'pyrefly_errors=%s\n' "$$count" | tee '$(LINT_TYPING_REPORT_DIR)/pyrefly.count'; \
+	echo "📄 pyrefly report: $$out"
+
+linting-typing-telemetry: linting-typing-mypy-report linting-typing-pyrefly-report ## 📊 Typing telemetry (non-blocking)
+	@echo "📊 typing telemetry summary:"
+	@cat "$(LINT_TYPING_REPORT_DIR)/mypy.count" "$(LINT_TYPING_REPORT_DIR)/pyrefly.count"
+
 linting-coverage-diff-cover:         ## 📊  Changed-lines coverage gate
 	@$(MAKE) --no-print-directory diff-cover
+
+linting-security-extra-hadolint:     ## 🐳  Strict hadolint checks (error threshold)
+	@echo "🐳 hadolint (error threshold) on $(LINT_HADOLINT_TARGETS)..."
+	@command -v hadolint >/dev/null 2>&1 || { echo "❌ hadolint not found"; exit 1; }
+	@found=0; \
+	for f in $(LINT_HADOLINT_TARGETS); do \
+		if [ -f "$$f" ]; then \
+			echo "-> hadolint $$f"; \
+			hadolint --failure-threshold error "$$f"; \
+			found=1; \
+		fi; \
+	done; \
+	if [ "$$found" -eq 0 ]; then \
+		echo "ℹ️  No hadolint targets found"; \
+	fi
+
+linting-security-extra-pip-check:    ## 📦  Validate Python dependency resolution
+	@echo "📦 pip check in $(VENV_DIR)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv install-dev
+	@"$(VENV_DIR)/bin/pip" check
+
+linting-security-extra: $(LINTING_SECURITY_EXTRA_TARGETS) ## ✅ Additional pass-only security gates
+	@echo "✅ linting-security-extra passed"
 
 linting-full: $(LINTING_FULL_TARGETS) ## ✅ Passing lint gates for CI
 	@echo "✅ linting-full passed"

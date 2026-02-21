@@ -1,0 +1,47 @@
+name: linting-security-extra
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  linting-security-extra:
+    name: linting-security-extra
+    runs-on: ubuntu-latest
+    env:
+      VENV_DIR: .venv
+      VENVS_DIR: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6.0.0
+
+      - name: Install project dev dependencies
+        run: make --no-print-directory venv install-dev
+
+      - name: Install hadolint
+        run: |
+          HADOLINT_VERSION="v2.12.0"
+          HADOLINT_BIN="$RUNNER_TEMP/hadolint"
+          curl -sSL "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64" -o "$HADOLINT_BIN"
+          chmod +x "$HADOLINT_BIN"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Run extra pass-only security gates
+        run: make --no-print-directory linting-security-extra

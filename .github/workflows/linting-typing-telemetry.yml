@@ -1,0 +1,46 @@
+name: linting-typing-telemetry
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  linting-typing-telemetry:
+    name: linting-typing-telemetry
+    runs-on: ubuntu-latest
+    env:
+      VENV_DIR: .venv
+      VENVS_DIR: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6.0.0
+
+      - name: Install project dev dependencies
+        run: make --no-print-directory venv install-dev
+
+      - name: Run typing telemetry
+        run: make --no-print-directory linting-typing-telemetry
+
+      - name: Upload typing telemetry reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: typing-telemetry-reports
+          path: /tmp/mcp-context-forge-lint/typing
+          if-no-files-found: error
