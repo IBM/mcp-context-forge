@@ -37,10 +37,12 @@ RUN opa version
 
 USER 1001
 
+# explicitly install the gateway from source before the plugin install:
+RUN pip install --no-cache-dir uv && python -m uv pip install "mcp-contextforge-gateway @ git+https://github.com/IBM/mcp-context-forge.git@main"
 
 # Install plugin package
 COPY . .
-RUN pip install --no-cache-dir uv && python -m uv pip install .
+RUN python -m uv pip install .
 
 # Make default cache directory writable
 RUN mkdir -p -m 0776 ${HOME}/.cache
