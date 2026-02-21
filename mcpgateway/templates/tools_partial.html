@@ -134,7 +134,7 @@
           refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}
         </td>
         <td class="px-2 py-4 whitespace-normal break-words">
-          {% if tool.annotations %} {% if tool.annotations.title %}
+          {% if tool.annotations %} {% if tool.annotations.readOnlyHint %}
           <span
             class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1"
             >📖</span
