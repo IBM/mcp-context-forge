@@ -22,7 +22,7 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 
 * **VS Code ≥ 1.99**
 * `"chat.mcp.enabled": true` in your *settings.json*
-* An ContextForge running (`make serve`, Docker, or container image)
+* ContextForge running (`make serve`, Docker, or container image)
 * A JWT or Basic credentials (`admin` / `changeme` in dev)
 
 ---

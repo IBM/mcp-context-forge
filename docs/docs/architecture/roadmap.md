@@ -916,7 +916,7 @@
     - ✅ [**#2189**](https://github.com/IBM/mcp-context-forge/issues/2189) - [BUG][AUTH]: Multi-team users denied access to non-primary teams and cannot see public resources from other teams
     - ✅ [**#2192**](https://github.com/IBM/mcp-context-forge/issues/2192) - [BUG]: Token scoping
     - ✅ [**#2261**](https://github.com/IBM/mcp-context-forge/issues/2261) - [BUG]: JWT token creation divergence between CLI and API
-    - ✅ [**#2272**](https://github.com/IBM/mcp-context-forge/issues/2272) - [BUG]: Virtual server using an ContextForge authenticated with OAUTH2 is loosing tools
+    - ✅ [**#2272**](https://github.com/IBM/mcp-context-forge/issues/2272) - [BUG]: Virtual server using an MCP Gateway authenticated with OAUTH2 is loosing tools
     - ✅ [**#2273**](https://github.com/IBM/mcp-context-forge/issues/2273) - [BUG][UI]: Saving a virtual server configuration after edit fails
     - ✅ [**#2324**](https://github.com/IBM/mcp-context-forge/issues/2324) - [BUG]: Observability Dark Mode
     - ✅ [**#2329**](https://github.com/IBM/mcp-context-forge/issues/2329) - [BUG]: Tag filter returns 500 Exception for list tools api
