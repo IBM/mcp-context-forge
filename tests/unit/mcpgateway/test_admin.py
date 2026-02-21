@@ -2626,7 +2626,7 @@ class TestAdminMetricsRoutes:
         mock_server_top.return_value = []
         mock_prompt_top.return_value = []
 
-        result = await get_aggregated_metrics(mock_db, _user={"email": "test-user@example.com", "db": mock_db})
+        result = await get_aggregated_metrics(mock_db, current_user_ctx={"email": "test-user@example.com", "db": mock_db})
 
         assert result["tools"].total_executions == 0
         assert result["resources"].total_executions == 100
@@ -3938,7 +3938,7 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = mock_config
 
         # First-Party
-        result = await get_global_passthrough_headers(db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await get_global_passthrough_headers(db=mock_db, current_user_ctx={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, GlobalConfigRead)
         assert result.passthrough_headers == ["X-Custom-Header", "X-Auth-Token"]
@@ -3950,7 +3950,7 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = None
 
         # First-Party
-        result = await get_global_passthrough_headers(db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await get_global_passthrough_headers(db=mock_db, current_user_ctx={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, GlobalConfigRead)
         assert result.passthrough_headers == []
@@ -3964,7 +3964,7 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-New-Header"])
 
         # First-Party
-        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, current_user_ctx={"email": "test-user", "db": mock_db})
 
         # Should create new config
         mock_db.add.assert_called_once()
@@ -3983,7 +3983,7 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-Updated-Header"])
 
         # First-Party
-        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, current_user_ctx={"email": "test-user", "db": mock_db})
 
         # Should update existing config
         assert mock_config.passthrough_headers == ["X-Updated-Header"]
@@ -4001,7 +4001,7 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, current_user_ctx={"email": "test-user", "db": mock_db})
 
         assert excinfo.value.status_code == 409
         assert "Passthrough headers conflict" in str(excinfo.value.detail)
@@ -4017,7 +4017,7 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, current_user_ctx={"email": "test-user", "db": mock_db})
 
         assert excinfo.value.status_code == 422
         assert "Invalid passthrough headers format" in str(excinfo.value.detail)
@@ -4033,7 +4033,7 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, current_user_ctx={"email": "test-user", "db": mock_db})
 
         assert excinfo.value.status_code == 500
         assert "Custom error" in str(excinfo.value.detail)
@@ -5903,7 +5903,7 @@ async def test_admin_get_team_edit_success(monkeypatch, mock_request, mock_db, a
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
-    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, current_user_ctx={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Edit Team" in response.body.decode()
 
@@ -7097,7 +7097,7 @@ async def test_admin_get_user_edit_success(monkeypatch, mock_request, mock_db, a
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Edit User" in response.body.decode()
 
@@ -7124,7 +7124,7 @@ async def test_admin_update_user_password_mismatch(monkeypatch, mock_db, allow_p
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=True))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user("a%40example.com", request=request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "Passwords do not match" in response.body.decode()
 
@@ -7140,7 +7140,7 @@ async def test_admin_update_user_last_admin_block(monkeypatch, mock_db, allow_pe
     auth_service.is_last_active_admin = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user("a%40example.com", request=request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "last remaining admin" in response.body.decode()
 
@@ -7158,7 +7158,7 @@ async def test_admin_update_user_success(monkeypatch, mock_db, allow_permission)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
     monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (True, ""))
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user("a%40example.com", request=request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 200
     assert response.headers.get("HX-Trigger") is not None
 
@@ -7836,7 +7836,7 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
 
 @pytest.mark.asyncio
 async def test_get_configuration_settings_masks_sensitive(mock_db, allow_permission):
-    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_configuration_settings(_db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert "Basic Settings" in result["groups"]
     assert result["groups"]["Authentication & Security"]["basic_auth_password"] == settings.masked_auth_value
 
@@ -9992,7 +9992,7 @@ class TestAdminAdditionalCoverage:
     async def test_admin_get_user_edit_disabled_and_not_found(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Cover disabled email auth and user-not-found branches."""
         monkeypatch.setattr(settings, "email_auth_enabled", False)
-        response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
         assert response.status_code == 403
 
         monkeypatch.setattr(settings, "email_auth_enabled", True)
@@ -10000,7 +10000,7 @@ class TestAdminAdditionalCoverage:
         auth_service.get_user_by_email = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-        response = await admin_get_user_edit("missing%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_user_edit("missing%40example.com", mock_request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
         assert response.status_code == 404
 
     async def test_admin_list_a2a_agents_enabled(self, monkeypatch, mock_db):
@@ -10299,24 +10299,24 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
     cache.stats.return_value = {"hits": 1}
     monkeypatch.setattr("mcpgateway.admin.global_config_cache", cache)
 
-    result = await _unwrap(invalidate_passthrough_headers_cache)(_user={"email": "user@example.com", "db": mock_db})
+    result = await _unwrap(invalidate_passthrough_headers_cache)(current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert result["status"] == "invalidated"
     assert result["cache_stats"]["hits"] == 1
     assert cache.invalidate.called
 
-    stats = await _unwrap(get_passthrough_headers_cache_stats)(_user={"email": "user@example.com", "db": mock_db})
+    stats = await _unwrap(get_passthrough_headers_cache_stats)(current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert stats["hits"] == 1
 
     a2a_cache = MagicMock()
     a2a_cache.stats.return_value = {"hits": 2}
     monkeypatch.setattr("mcpgateway.admin.a2a_stats_cache", a2a_cache)
 
-    result = await _unwrap(invalidate_a2a_stats_cache)(_user={"email": "user@example.com", "db": mock_db})
+    result = await _unwrap(invalidate_a2a_stats_cache)(current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert result["status"] == "invalidated"
     assert result["cache_stats"]["hits"] == 2
     assert a2a_cache.invalidate.called
 
-    stats = await _unwrap(get_a2a_stats_cache_stats)(_user={"email": "user@example.com", "db": mock_db})
+    stats = await _unwrap(get_a2a_stats_cache_stats)(current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert stats["hits"] == 2
 
 
@@ -10326,19 +10326,19 @@ async def test_get_mcp_session_pool_metrics_paths(monkeypatch, mock_db, allow_pe
     request.client = SimpleNamespace(host="10.0.0.1")
 
     monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(request=request, current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert result["enabled"] is False
 
     monkeypatch.setattr(settings, "mcp_session_pool_enabled", True)
     pool = MagicMock()
     pool.get_metrics.return_value = {"hits": 1, "misses": 0}
     monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: pool)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(request=request, current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert result["enabled"] is True
     assert result["hits"] == 1
 
     monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: (_ for _ in ()).throw(RuntimeError("not ready")))
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(request=request, current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert result["enabled"] is True
     assert result["message"] == "Pool not yet initialized"
 
@@ -10955,7 +10955,7 @@ async def test_admin_get_user_edit_with_password_requirements(monkeypatch, mock_
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Password Requirements" in response.body.decode()
 
@@ -11215,7 +11215,7 @@ async def test_catalog_partial(monkeypatch, mock_request, mock_db):
     mock_get_catalog = AsyncMock(side_effect=[response_page, response_all])
     monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", mock_get_catalog)
 
-    response = await catalog_partial(mock_request, category="Dev", auth_type="api_key", search=None, page=1, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    response = await catalog_partial(mock_request, category="Dev", auth_type="api_key", search=None, page=1, db=mock_db, current_user_ctx={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     stats = template_call[0][2]["stats"]
@@ -11262,7 +11262,7 @@ async def test_get_observability_traces_with_filters(monkeypatch, mock_request, 
         name_search="trace",
         attribute_search="attr",
         tool_name="tool",
-        _user={"email": "admin@example.com", "db": mock_db},
+        current_user_ctx={"email": "admin@example.com", "db": mock_db},
     )
 
     assert isinstance(response, HTMLResponse)
@@ -11285,7 +11285,7 @@ async def test_get_top_slow_endpoints(monkeypatch, mock_db):
     mock_db.query.return_value = _mock_top_query_result(row)
     monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_db]))
 
-    result = await get_top_slow_endpoints(request=MagicMock(), hours=1, limit=5, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_top_slow_endpoints(request=MagicMock(), hours=1, limit=5, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert result["endpoints"][0]["avg_duration_ms"] == 12.34
 
 
@@ -11295,7 +11295,7 @@ async def test_get_top_volume_endpoints(monkeypatch, mock_db):
     mock_db.query.return_value = _mock_top_query_result(row)
     monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_db]))
 
-    result = await get_top_volume_endpoints(request=MagicMock(), hours=1, limit=5, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_top_volume_endpoints(request=MagicMock(), hours=1, limit=5, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert result["endpoints"][0]["avg_duration_ms"] == 0
 
 
@@ -11305,7 +11305,7 @@ async def test_get_top_error_endpoints(monkeypatch, mock_db):
     mock_db.query.return_value = _mock_top_query_result(row)
     monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_db]))
 
-    result = await get_top_error_endpoints(request=MagicMock(), hours=1, limit=5, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_top_error_endpoints(request=MagicMock(), hours=1, limit=5, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert result["endpoints"][0]["error_rate"] == 50.0
 
 
@@ -11853,7 +11853,7 @@ async def test_get_gateways_section_exception_returns_500(monkeypatch, mock_db, 
 async def test_get_performance_stats_paths(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "mcpgateway_performance_tracking", False)
     mock_request.headers = {"hx-request": "true"}
-    response = await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await get_performance_stats(mock_request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
 
     monkeypatch.setattr(settings, "mcpgateway_performance_tracking", True)
@@ -11871,11 +11871,11 @@ async def test_get_performance_stats_paths(monkeypatch, mock_request, mock_db, a
     monkeypatch.setattr("mcpgateway.admin.get_performance_service", lambda db: service)
 
     mock_request.headers = {"hx-request": "true"}
-    response = await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await get_performance_stats(mock_request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
 
     mock_request.headers = {}
-    response = await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await get_performance_stats(mock_request, db=mock_db, current_user_ctx={"email": "admin@example.com", "db": mock_db})
     assert response.media_type == "application/json"
 
 
@@ -12618,13 +12618,13 @@ async def test_get_performance_endpoints(monkeypatch, allow_permission):
     user = {"email": "u@example.com", "db": db}
     request = MagicMock(spec=Request)
 
-    result = await get_tool_performance(request=request, hours=24, limit=5, _user=user)
+    result = await get_tool_performance(request=request, hours=24, limit=5, current_user_ctx=user)
     assert result["tools"]
 
-    result = await get_prompt_performance(request=request, hours=24, limit=5, _user=user)
+    result = await get_prompt_performance(request=request, hours=24, limit=5, current_user_ctx=user)
     assert result["prompts"]
 
-    result = await get_resource_performance(request=request, hours=24, limit=5, _user=user)
+    result = await get_resource_performance(request=request, hours=24, limit=5, current_user_ctx=user)
     assert result["resources"]
 
 
