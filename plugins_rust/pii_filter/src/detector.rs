@@ -59,7 +59,7 @@ pub struct Detection {
 ///
 /// # Example (Python)
 /// ```python
-/// from plugins_rust import PIIDetectorRust
+/// from pii_filter_rust import PIIDetectorRust
 ///
 /// config = {"detect_ssn": True, "detect_email": True}
 /// detector = PIIDetectorRust(config)
@@ -98,7 +98,7 @@ impl PIIDetectorRust {
     /// * `detect_aws_keys` (bool): Detect AWS access keys
     /// * `detect_api_keys` (bool): Detect API keys
     /// * `default_mask_strategy` (str): "redact", "partial", "hash", "tokenize", "remove"
-    /// * `redaction_text` (str): Text to use for redaction (default: "[REDACTED]")
+    /// * `redaction_text` (str): Text to use for redaction (default: "\[REDACTED\]")
     /// * `block_on_detection` (bool): Whether to block on detection
     /// * `whitelist_patterns` (list[str]): Regex patterns to exclude from detection
     #[new]
@@ -408,7 +408,7 @@ impl PIIDetectorRust {
         Ok(rust_detections)
     }
 
-    /// Convert Python list to Vec<Detection>
+    /// Convert Python list to `Vec<Detection>`
     fn py_list_to_detections(&self, py_list: &Bound<'_, PyAny>) -> PyResult<Vec<Detection>> {
         let mut detections = Vec::new();
 
@@ -476,6 +476,7 @@ impl PIIDetectorRust {
     fn str_to_pii_type(&self, s: &str) -> Result<PIIType, ()> {
         match s {
             "ssn" => Ok(PIIType::Ssn),
+            "bsn" => Ok(PIIType::Bsn),
             "credit_card" => Ok(PIIType::CreditCard),
             "email" => Ok(PIIType::Email),
             "phone" => Ok(PIIType::Phone),

@@ -12,6 +12,8 @@ A native plugin for MCP Gateway that performs regex-based search and replace ope
 - **Regex Support**: Full regex pattern matching and replacement
 - **Multiple Patterns**: Configure multiple search/replace pairs
 - **Chain Transformations**: Apply replacements in sequence
+- **Dual Implementation**: Python and Rust implementations with consistent behavior
+- **Pattern Validation**: Validates regex patterns at configuration time
 
 ## Installation
 
@@ -184,12 +186,82 @@ async def test_search_replace():
     assert result.modified_payload.args["message"] == "bar is bar"
 ```
 
+## Regex Pattern Compatibility
+
+### Python vs Rust Regex Differences
+
+This plugin has both Python and Rust implementations. While most regex patterns work identically in both, there are some differences to be aware of:
+
+#### ✅ Compatible Patterns (Work in Both)
+
+- Basic patterns: `hello`, `\d+`, `\w+`
+- Character classes: `[a-z]`, `[0-9]`
+- Quantifiers: `*`, `+`, `?`, `{n,m}`
+- Anchors: `^`, `$`, `\b`
+- Groups: `(...)`, `(?:...)`
+- Alternation: `|`
+- Lookahead: `(?=...)`, `(?!...)`
+- Case-insensitive: `(?i)pattern`
+
+#### ⚠️ Potentially Incompatible Patterns
+
+| Feature | Python | Rust | Recommendation |
+|---------|--------|------|----------------|
+| Named groups | `(?P<name>...)` | `(?<name>...)` | Use non-capturing groups `(?:...)` |
+| Lookbehind | `(?<=...)`, `(?<!...)` | Limited support | Avoid or test thoroughly |
+| Backreferences | `\1`, `\g<1>` | `$1` in replacement | Use simple patterns |
+| Unicode categories | `\p{L}` | Different syntax | Test with both implementations |
+
+### Pattern Validation
+
+The plugin validates all regex patterns at initialization time:
+
+```python
+# ✅ Valid - will initialize successfully
+config = {
+    "words": [
+        {"search": r"\bword\b", "replace": "replacement"},
+        {"search": r"\d{3}-\d{2}-\d{4}", "replace": "XXX-XX-XXXX"}
+    ]
+}
+
+# ❌ Invalid - will raise ValueError
+config = {
+    "words": [
+        {"search": "[invalid(", "replace": "replacement"}  # Unclosed bracket
+    ]
+}
+```
+
+### Compatibility Warnings
+
+The Python implementation detects potentially incompatible patterns and logs warnings:
+
+```python
+# This will log a warning about Python-specific syntax
+config = {
+    "words": [
+        {"search": r"(?P<name>\w+)", "replace": "REDACTED"}
+    ]
+}
+# Warning: Pattern 0 '(?P<name>\w+)': Uses Python-specific named groups...
+```
+
+### Best Practices
+
+1. **Test with both implementations** if using advanced regex features
+2. **Use simple, portable patterns** when possible
+3. **Avoid Python-specific syntax** like `(?P<name>...)`
+4. **Check logs for warnings** about potential incompatibilities
+5. **Run tests** with both Python and Rust to ensure consistency
+
 ## Performance Considerations
 
 - Patterns are compiled once during initialization
 - Regex complexity affects performance
 - Consider priority when chaining with other plugins
 - Use specific prompt conditions to limit scope
+- Rust implementation provides 2-10x performance improvement for large payloads
 
 ## Common Use Cases
 

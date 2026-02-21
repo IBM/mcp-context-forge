@@ -1,13 +1,13 @@
-# Makefile for Secrets Detection Plugin (Rust)
-# Copyright 2025
+# Makefile for Regex Filter Plugin (Rust)
+# Copyright 2026
 # SPDX-License-Identifier: Apache-2.0
 #
-# Plugin-specific operations for secrets_detection
+# Plugin-specific operations for regex_filter
 #
 # Quick commands:
-#   make install      - Build & install secrets_detection plugin
-#   make test         - Test secrets_detection plugin
-#   make bench        - Benchmark secrets_detection plugin
+#   make install      - Build & install regex_filter plugin
+#   make test         - Test regex_filter plugin
+#   make bench        - Benchmark regex_filter plugin
 #   make compare      - Run Python vs Rust performance comparison
 
 .PHONY: help build dev test clean check lint fmt bench audit doc install compare verify test-integration bench-compare test-all build-target
@@ -23,7 +23,7 @@ RED := \033[0;31m
 NC := \033[0m # No Color
 
 help: ## Show this help message
-	@echo "$(BLUE)Secrets Detection Plugin Makefile$(NC)"
+	@echo "$(BLUE)Regex Filter Plugin Makefile$(NC)"
 	@echo ""
 	@echo "$(GREEN)Available targets:$(NC)"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-20s$(NC) %s\n", $$1, $$2}'
@@ -36,7 +36,7 @@ help: ## Show this help message
 
 # Build targets
 build: ## Build plugin in release mode
-	@echo "$(GREEN)Building secrets_detection plugin...$(NC)"
+	@echo "$(GREEN)Building regex_filter plugin...$(NC)"
 	maturin build --release
 
 build-target: ## Build for specific target (use TARGET=...)
@@ -46,24 +46,24 @@ build-target: ## Build for specific target (use TARGET=...)
 
 
 install: ## Build and install plugin (uses maturin develop)
-	@echo "$(GREEN)Installing secrets_detection plugin...$(NC)"
+	@echo "$(GREEN)Installing regex_filter plugin...$(NC)"
 	maturin develop --release
 	@echo "$(GREEN)Verifying installation...$(NC)"
-	@python -c "import secret_detection; print('✓ secret_detection installed'); print('✓ Module:', secret_detection.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
+	@python -c "import regex_filter; print('✓ regex_filter installed'); print('✓ Module:', regex_filter.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
 	@echo "$(GREEN)Installation verified successfully!$(NC)"
 
 # Testing targets
 test: ## Run Rust tests for plugin
-	@echo "$(GREEN)Running secrets_detection tests...$(NC)"
+	@echo "$(GREEN)Running regex_filter tests...$(NC)"
 	cargo test
 
 test-verbose: ## Run plugin tests (verbose)
-	@echo "$(GREEN)Running secrets_detection tests (verbose)...$(NC)"
+	@echo "$(GREEN)Running regex_filter tests (verbose)...$(NC)"
 	cargo test --verbose
 
 test-python: ## Run Python unit tests for plugin (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd ../.. && pytest tests -k secrets_detection -v
+	cd ../.. && pytest tests -k regex_filter -v
 
 fmt: ## Format code with rustfmt
 	@echo "$(GREEN)Formatting code...$(NC)"
@@ -84,8 +84,8 @@ check-all: ## Run all checks (format, lint, test)
 	@$(MAKE) --no-print-directory test
 
 verify: ## Verify plugin installation
-	@echo "$(GREEN)Verifying secret_detection installation...$(NC)"
-	@python3 -c "import secret_detection; print('✅ secret_detection available')" || echo "⚠️  secret_detection not installed"
+	@echo "$(GREEN)Verifying regex_filter installation...$(NC)"
+	@python3 -c "import regex_filter; print('✅ regex_filter available')" || echo "⚠️  regex_filter not installed"
 
 test-integration: ## Run integration tests
 	@echo "$(GREEN)Running integration tests...$(NC)"
@@ -93,7 +93,7 @@ test-integration: ## Run integration tests
 
 # Benchmarking targets
 bench: ## Run Rust benchmarks for plugin
-	@echo "$(GREEN)Running secrets_detection benchmarks...$(NC)"
+	@echo "$(GREEN)Running regex_filter benchmarks...$(NC)"
 	cargo bench
 
 bench-compare: ## Alias for compare
@@ -133,7 +133,7 @@ test-all: install ## Run all tests: cargo test, integration tests, and performan
 	cargo test
 	@echo ""
 	@echo "$(GREEN)Step 3/4: Running Python tests...$(NC)"
-	cd ../.. && pytest tests -k secrets_detection -v
+	cd ../.. && pytest tests -k regex_filter -v
 	@echo ""
 	@echo "$(BLUE)✓ All tests completed successfully!$(NC)"
 
@@ -143,10 +143,10 @@ test-differential: install ## Install plugin and run Python vs Rust comparison
 	@$(MAKE) --no-print-directory install
 	@echo ""
 	@echo "$(YELLOW)Verifying fresh installation...$(NC)"
-	@python -c "import secret_detection; import os; import time; stat = os.stat(secret_detection.__file__); age = time.time() - stat.st_mtime; print(f'✓ Installation age: {age:.1f} seconds'); assert age < 60, f'Installation too old ({age:.1f}s), rebuild required'" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
+	@python -c "import regex_filter; import os; import time; stat = os.stat(regex_filter.__file__); age = time.time() - stat.st_mtime; print(f'✓ Installation age: {age:.1f} seconds'); assert age < 60, f'Installation too old ({age:.1f}s), rebuild required'" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
 	@echo ""
 	@echo "$(YELLOW)Running comparison script...$(NC)"
-	cd ../.. && pytest -k test_secrets_detection_differential
+	cd ../.. && pytest -k test_regex_filter_differential
 
 # Security and audit targets
 audit: ## Run security audit with cargo-audit
@@ -196,7 +196,7 @@ info: ## Show build information
 	@echo "  Python version:  $$(python --version)"
 	@echo ""
 	@echo "$(BLUE)Plugin Information:$(NC)"
-	@echo "  Name:    secrets_detection"
+	@echo "  Name:    regex_filter"
 	@echo "  Version: $$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
 	@echo "  License: Apache-2.0"
 

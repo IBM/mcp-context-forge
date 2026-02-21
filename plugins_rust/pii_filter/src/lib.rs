@@ -8,9 +8,18 @@
 // - Copy-on-write strings for zero-copy operations
 // - Zero-copy JSON traversal with serde_json
 
+use pyo3::prelude::*;
+
 pub mod config;
 pub mod detector;
 pub mod masking;
 pub mod patterns;
 
 pub use detector::PIIDetectorRust;
+
+/// Python module definition
+#[pymodule]
+fn pii_filter_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PIIDetectorRust>()?;
+    Ok(())
+}

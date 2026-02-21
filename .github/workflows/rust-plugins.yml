@@ -19,7 +19,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Rust unit tests and linting
+  # Rust unit tests and linting (all plugins in one job per OS)
   rust-tests:
     name: Rust Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -27,7 +27,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable]
 
     steps:
       - uses: actions/checkout@v4
@@ -53,25 +52,15 @@ jobs:
       - name: Cache Cargo build
         uses: actions/cache@v4
         with:
-          path: plugins_rust/target
+          path: plugins_rust/*/target
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check formatting
-        working-directory: plugins_rust
-        run: make fmt-check
+      - name: Run all checks for plugins
+        run: make rust-check
 
-      - name: Run Clippy
-        working-directory: plugins_rust
-        run: make clippy
-
-      - name: Run Rust tests
-        working-directory: plugins_rust
-        run: make test-verbose
-
-
-  # Build wheels for multiple platforms (native builds)
+  # Build wheels for multiple platforms (all plugins in one job per OS)
   build-wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -92,67 +81,16 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Build wheels
-        working-directory: plugins_rust
-        run: maturin build --release --out dist
+      - name: Build wheels for all plugins
+        run: make rust-build-wheels
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
-          path: plugins_rust/dist/*.whl
+          path: plugins_rust/*/dist/*.whl
 
-
-  # Python integration tests with Rust extensions
-  python-integration:
-    name: Python Integration Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    needs: build-wheels
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install Rust stable
-        run: rustup default stable
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: "0.9.2"
-
-      - name: Install maturin as CLI tool
-        run: uv tool install maturin
-
-      - name: Create virtual environment
-        run: uv venv
-
-      - name: Install dependencies
-        run: |
-          uv pip install pytest pytest-cov pydantic
-
-      - name: Build and install Rust extension
-        working-directory: plugins_rust
-        run: make dev
-
-      - name: Run Python unit tests (Rust)
-        working-directory: plugins_rust
-        run: uv run make test-python
-
-      - name: Run differential tests
-        working-directory: plugins_rust
-        run: uv run make test-differential
-
-  # Security audit
+  # Security audit (all plugins in one job)
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -166,11 +104,42 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
 
-      - name: Run security audit
-        working-directory: plugins_rust
-        run: make audit
+      - name: Run security audit on all plugins
+        run: make rust-audit
 
-  # Coverage report
+  # Benchmark tests (verify benchmarks compile and run)
+  benchmark-tests:
+    name: Benchmark Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: plugins_rust/*/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run benchmarks for all plugins
+        run: make rust-bench
+
+  # Coverage report (all plugins in one job)
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
@@ -204,22 +173,17 @@ jobs:
           uv pip install pytest pytest-cov pydantic
           cargo install cargo-tarpaulin
 
-      - name: Build Rust extension
-        working-directory: plugins_rust
-        run: make dev
-
-      - name: Run coverage
-        working-directory: plugins_rust
-        run: uv run make coverage
+      - name: Run coverage for all plugins
+        run: make rust-coverage
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ./plugins_rust/coverage/cobertura.xml
-          flags: rust
-          name: rust-coverage
+          files: ./plugins_rust/*/coverage/cobertura.xml
+          flags: rust-plugins
+          name: rust-plugins-coverage
 
-  # Build documentation
+  # Build documentation (all plugins in one job)
   documentation:
     name: Build Documentation
     runs-on: ubuntu-latest
@@ -230,23 +194,23 @@ jobs:
       - name: Install Rust stable
         run: rustup default stable
 
-      - name: Build Rust docs
-        working-directory: plugins_rust
-        run: make doc
+      - name: Build Rust docs for all plugins
+        run: make rust-doc
 
       - name: Upload documentation
         uses: actions/upload-artifact@v4
         with:
           name: rust-docs
-          path: plugins_rust/target/doc
+          path: plugins_rust/*/target/doc
 
-  # Release build (only on tags)
+  # Release build (only on tags, all plugins per OS)
   release:
-    name: Release Build
+    name: Release Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [rust-tests, python-integration]
+    needs: rust-tests
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
@@ -264,19 +228,17 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Build release wheels
-        working-directory: plugins_rust
-        run: maturin build --release --out dist
+      - name: Build and publish release wheels
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          make rust-release
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            make rust-release-publish
+          fi
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-wheels-${{ matrix.os }}
-          path: plugins_rust/dist/*.whl
-
-      - name: Publish to PyPI (if tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        working-directory: plugins_rust
-        run: maturin publish --username __token__ --password $MATURIN_PYPI_TOKEN
+          path: plugins_rust/*/dist/*.whl
