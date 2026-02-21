@@ -100,15 +100,41 @@ class AuthCache:
     - User data (email, is_admin, is_active, etc.)
     - Personal team ID for the user
     - Token revocation status
+    - Team memberships and roles
 
     Cache lookup checks L1 (in-memory) first for lowest latency, then L2
     (Redis) for distributed consistency. Redis hits are written through
     to L1 for subsequent requests.
 
+    TTL Design Rationale (Auth Hot Path):
+        user_ttl (60s): Balances performance with freshness for user data.
+            - Staleness window: Up to 60 seconds for user attribute changes
+            - Acceptable for most use cases (email, is_admin, is_active)
+            - Cache invalidation on user updates reduces actual staleness
+            - Consider 30s for high-security environments
+
+        revocation_ttl (30s): Shorter TTL for security-critical revocation data.
+            - Staleness window: Up to 30 seconds for token revocation
+            - Limits exposure window for revoked tokens
+            - Balances security with performance (revocation checks are frequent)
+            - Cache invalidation on revocation reduces actual staleness to ~0s
+
+        team_ttl (60s): Team membership and role data.
+            - Staleness window: Up to 60 seconds for team changes
+            - Cache invalidation on membership changes reduces actual staleness
+            - Acceptable for authorization decisions in most scenarios
+
+    Staleness Mitigation:
+        - Proactive cache invalidation on all mutations (user update, team change, etc.)
+        - Actual staleness is typically <1s due to invalidation
+        - TTL acts as safety net for missed invalidations or distributed cache lag
+        - Redis pub/sub propagates invalidations across workers
+
     Attributes:
         user_ttl: TTL in seconds for user data cache (default: 60)
         revocation_ttl: TTL in seconds for revocation cache (default: 30)
         team_ttl: TTL in seconds for team cache (default: 60)
+        role_ttl: TTL in seconds for role cache (default: 60)
 
     Examples:
         >>> cache = AuthCache(user_ttl=60, revocation_ttl=30)
@@ -129,11 +155,19 @@ class AuthCache:
         """Initialize the auth cache.
 
         Args:
-            user_ttl: TTL for user data cache in seconds (default: from settings or 60)
-            revocation_ttl: TTL for revocation cache in seconds (default: from settings or 30)
-            team_ttl: TTL for team cache in seconds (default: from settings or 60)
-            role_ttl: TTL for role cache in seconds (default: from settings or 60)
-            enabled: Whether caching is enabled (default: from settings or True)
+            user_ttl: TTL for user data cache in seconds (default: from settings or 60).
+                Recommended: 30-60s for auth hot path. Shorter TTL (30s) for high-security
+                environments where user attribute changes must propagate quickly.
+            revocation_ttl: TTL for revocation cache in seconds (default: from settings or 30).
+                Recommended: 30s to limit exposure window for revoked tokens. This is the
+                maximum time a revoked token could still be accepted (actual staleness is
+                typically <1s due to proactive cache invalidation).
+            team_ttl: TTL for team cache in seconds (default: from settings or 60).
+                Recommended: 60s for team membership and role data. Cache invalidation on
+                membership changes keeps actual staleness low.
+            role_ttl: TTL for role cache in seconds (default: from settings or 60).
+                Recommended: 60s for RBAC role assignments.
+            enabled: Whether caching is enabled (default: from settings or True).
 
         Examples:
             >>> cache = AuthCache(user_ttl=120, revocation_ttl=30)
@@ -669,8 +703,8 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_team_roles failed: {e}")
 
-    async def get_user_teams(self, cache_key: str) -> Optional[List[str]]:
-        """Get cached team IDs for a user.
+    async def get_user_teams(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
+        """Get cached team objects for a user.
 
         The cache_key should be in the format "email:include_personal" to
         distinguish between calls with different include_personal flags.
@@ -678,7 +712,7 @@ class AuthCache:
         Returns:
             - None: Cache miss (caller should query DB)
             - Empty list: User has no teams (cached result)
-            - List of team IDs: Cached team IDs
+            - List of team dicts: Cached team objects
 
         Args:
             cache_key: Cache key in format "email:include_personal"
@@ -711,16 +745,16 @@ class AuthCache:
                     # Third-Party
                     import orjson  # pylint: disable=import-outside-toplevel
 
-                    team_ids = orjson.loads(data)
+                    teams = orjson.loads(data)
 
                     # Write-through: populate L1 from Redis hit
                     with self._lock:
                         self._teams_list_cache[cache_key] = CacheEntry(
-                            value=team_ids,
+                            value=teams,
                             expiry=time.time() + self._teams_list_ttl,
                         )
 
-                    return team_ids
+                    return teams
                 self._redis_miss_count += 1
             except Exception as e:
                 logger.warning(f"AuthCache Redis get_user_teams failed: {e}")
@@ -728,17 +762,17 @@ class AuthCache:
         self._miss_count += 1
         return None
 
-    async def set_user_teams(self, cache_key: str, team_ids: List[str]) -> None:
-        """Store team IDs for a user in cache.
+    async def set_user_teams(self, cache_key: str, teams: List[Dict[str, Any]]) -> None:
+        """Store team objects for a user in cache.
 
         Args:
             cache_key: Cache key in format "email:include_personal"
-            team_ids: List of team IDs the user belongs to
+            teams: List of team dicts to cache
 
         Examples:
             >>> import asyncio
             >>> cache = AuthCache()
-            >>> asyncio.run(cache.set_user_teams("test@example.com:True", ["team-1", "team-2"]))
+            >>> asyncio.run(cache.set_user_teams("test@example.com:True", [{"id": "team-1", "name": "Team 1"}]))
         """
         if not self._enabled or not self._teams_list_enabled:
             return
@@ -751,14 +785,14 @@ class AuthCache:
                 import orjson  # pylint: disable=import-outside-toplevel
 
                 redis_key = self._get_redis_key("teams", cache_key)
-                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(team_ids))
+                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(teams))
             except Exception as e:
                 logger.warning(f"AuthCache Redis set_user_teams failed: {e}")
 
         # Store in in-memory cache
         with self._lock:
             self._teams_list_cache[cache_key] = CacheEntry(
-                value=team_ids,
+                value=teams,
                 expiry=time.time() + self._teams_list_ttl,
             )
 
@@ -769,7 +803,7 @@ class AuthCache:
         delete team, approve join request).
 
         This invalidates both include_personal=True and include_personal=False
-        cache entries for the user.
+        cache entries for the user, including all versioned variants (v1:, v2:, etc.).
 
         Args:
             email: User email whose teams cache should be invalidated
@@ -781,9 +815,10 @@ class AuthCache:
         """
         logger.debug(f"AuthCache: Invalidating teams list cache for {email}")
 
-        # Clear in-memory cache entries for this user (both True and False variants)
+        # Clear in-memory cache entries for this user (both True and False variants, all versions)
+        # Matches: {email}:True, {email}:False, v1:{email}:True, v1:{email}:False, etc.
         with self._lock:
-            keys_to_remove = [k for k in self._teams_list_cache if k.startswith(f"{email}:")]
+            keys_to_remove = [k for k in self._teams_list_cache if f"{email}:" in k]
             for key in keys_to_remove:
                 self._teams_list_cache.pop(key, None)
 
@@ -791,10 +826,12 @@ class AuthCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                # Delete both variants
+                # Delete both variants (unversioned and v1 versioned)
                 await redis.delete(
                     self._get_redis_key("teams", f"{email}:True"),
                     self._get_redis_key("teams", f"{email}:False"),
+                    self._get_redis_key("teams", f"v1:{email}:True"),
+                    self._get_redis_key("teams", f"v1:{email}:False"),
                 )
                 # Publish invalidation for other workers
                 await redis.publish("mcpgw:auth:invalidate", f"teams:{email}")

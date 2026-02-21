@@ -20,7 +20,7 @@ Examples:
 # Standard
 import asyncio
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-Party
@@ -33,6 +33,7 @@ from mcpgateway.cache.admin_stats_cache import admin_stats_cache
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.schemas import CachedTeamData
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -491,6 +492,14 @@ class TeamManagementService:
             team.updated_at = utc_now()
             self.db.commit()
 
+            # Invalidate cache for all team members since team properties changed
+            try:
+                memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
+                for membership in memberships:
+                    self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate caches on team update: {cache_error}")
+
             logger.info(f"Updated team {team_id} by {updated_by}")
             return True
 
@@ -886,40 +895,70 @@ class TeamManagementService:
             logger.error(f"Failed to get member {user_email} in team {team_id}: {e}")
             return None
 
-    async def get_user_teams(self, user_email: str, include_personal: bool = True) -> List[EmailTeam]:
+    async def get_user_teams(self, user_email: str, include_personal: bool = True) -> Union[List[EmailTeam], List[CachedTeamData]]:
         """Get all teams a user belongs to.
 
         Uses caching to reduce database queries (called 20+ times per request).
         Cache can be disabled via AUTH_CACHE_TEAMS_ENABLED=false.
+
+        IMPORTANT: When returning from cache, this method returns List[CachedTeamData]
+        (Pydantic models) instead of List[EmailTeam] (SQLAlchemy ORM objects).
+        This prevents DetachedInstanceError when callers attempt to access relationships
+        or perform session operations on cached objects.
+
+        Callers should treat cached results as read-only data and avoid:
+        - Accessing relationships (e.g., team.members)
+        - Database operations (db.add(), db.merge(), db.commit())
+        - Modifying and persisting changes
+
+        If you need full ORM functionality, disable caching or refetch from database.
+
+        Cache Versioning:
+            The cache key includes a version prefix (v1:) to handle schema changes.
+            If CachedTeamData schema changes (new required fields, etc.), increment
+            the version to auto-invalidate stale cache entries.
 
         Args:
             user_email: Email of the user
             include_personal: Whether to include personal teams
 
         Returns:
-            List[EmailTeam]: List of teams the user belongs to
+            Union[List[EmailTeam], List[CachedTeamData]]: List of teams the user belongs to.
+                Returns EmailTeam objects from database or CachedTeamData from cache.
 
         Examples:
             User dashboard showing team memberships.
         """
         # Check cache first
+        # Cache key includes version prefix to handle schema changes
+        # Increment version (v1 -> v2) when CachedTeamData schema changes
         cache = self._get_auth_cache()
-        cache_key = f"{user_email}:{include_personal}"
+        cache_key = f"v1:{user_email}:{include_personal}"
 
         if cache:
-            cached_team_ids = await cache.get_user_teams(cache_key)
-            if cached_team_ids is not None:
-                if not cached_team_ids:  # Empty list = user has no teams
+            cached_teams = await cache.get_user_teams(cache_key)
+            if cached_teams is not None:
+                if not cached_teams:  # Empty list = user has no teams
                     return []
-                # Fetch full team objects by IDs (fast indexed lookup)
+                # Return Pydantic models from cached dicts (read-only, not attached to session)
                 try:
-                    teams = self.db.query(EmailTeam).filter(EmailTeam.id.in_(cached_team_ids), EmailTeam.is_active.is_(True)).all()
-                    self.db.commit()  # Release transaction to avoid idle-in-transaction
+                    teams = []
+                    for team in cached_teams:
+                        # Auto-adapt to model changes: reconstruct datetime fields
+                        team_data = team.copy()
+                        for key, value in team_data.items():
+                            if key in ("created_at", "updated_at") and isinstance(value, str):
+                                # Parse ISO format datetime (includes timezone info from isoformat())
+                                dt = datetime.fromisoformat(value)
+                                # Ensure timezone-aware (UTC) to match DB model
+                                if dt.tzinfo is None:
+                                    dt = dt.replace(tzinfo=timezone.utc)
+                                team_data[key] = dt
+                        teams.append(CachedTeamData(**team_data))
                     return teams
                 except Exception as e:
-                    self.db.rollback()
-                    logger.warning(f"Failed to fetch teams by IDs from cache: {e}")
-                    # Fall through to full query
+                    logger.warning(f"Failed to reconstruct teams from cache: {e}")
+                    # Fall through to DB query
 
         # Cache miss or caching disabled - do full query
         try:
@@ -931,10 +970,20 @@ class TeamManagementService:
             teams = query.all()
             self.db.commit()  # Release transaction to avoid idle-in-transaction
 
-            # Update cache with team IDs
+            # Update cache with serialized team objects
             if cache:
-                team_ids = [t.id for t in teams]
-                await cache.set_user_teams(cache_key, team_ids)
+                # Auto-adapt to model changes: serialize all columns
+                team_dicts = []
+                for team in teams:
+                    team_dict = {c.name: getattr(team, c.name) for c in EmailTeam.__table__.columns}
+                    # Handle datetime serialization
+                    for key, value in team_dict.items():
+                        if isinstance(value, datetime):
+                            team_dict[key] = value.isoformat()
+                        elif hasattr(value, "__str__"):  # Convert UUID, etc. to string
+                            team_dict[key] = str(value)
+                    team_dicts.append(team_dict)
+                await cache.set_user_teams(cache_key, team_dicts)
 
             return teams
 
