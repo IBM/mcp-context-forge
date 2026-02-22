@@ -384,6 +384,7 @@ def test_x_frame_options_none_value_returns_none():
     s = Settings(x_frame_options=None, _env_file=None)
     assert s.x_frame_options is None
 
+
 # --------------------------------------------------------------------------- #
 #                      parse_allowed_roots                                     #
 # --------------------------------------------------------------------------- #
@@ -1065,3 +1066,15 @@ def test_direct_proxy_timeout_default_30():
     """mcpgateway_direct_proxy_timeout should default to 30."""
     s = Settings(_env_file=None)
     assert s.mcpgateway_direct_proxy_timeout == 30
+
+
+def test_ws_relay_feature_default_false():
+    """mcpgateway_ws_relay_enabled should default to False."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_ws_relay_enabled is False
+
+
+def test_reverse_proxy_feature_default_false():
+    """mcpgateway_reverse_proxy_enabled should default to False."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_reverse_proxy_enabled is False

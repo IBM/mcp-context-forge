@@ -118,7 +118,29 @@ class TestMCPTransportAuthMatrix:
     def test_websocket_auth_handshake_behavior(self):
         ws_path = "/ws"
         unauth_url = _ws_url(ws_path)
+        relay_enabled = settings.mcpgateway_ws_relay_enabled
         auth_is_enforced = settings.mcp_client_auth_enabled or settings.auth_required
+
+        # /ws relay is feature-flagged and disabled by default in secure deployments.
+        if not relay_enabled:
+            auth_url = f"{unauth_url}?token={_make_admin_jwt()}"
+            blocked = False
+            try:
+                with connect(auth_url, open_timeout=5, close_timeout=2) as websocket:
+                    try:
+                        websocket.recv(timeout=2)
+                    except ConnectionClosed as close_error:
+                        blocked = close_error.code == 1008
+            except InvalidStatus as status_error:
+                status_code = status_error.response.status_code
+                if status_code == 404:
+                    pytest.skip("WebSocket endpoint unavailable in this environment")
+                blocked = status_code >= 400
+            except OSError as exc:
+                pytest.skip(f"WebSocket endpoint unavailable: {exc}")
+
+            assert blocked, "WebSocket relay should reject connections when MCPGATEWAY_WS_RELAY_ENABLED=false"
+            return
 
         if auth_is_enforced:
             blocked = False

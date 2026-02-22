@@ -72,7 +72,7 @@ For production deployments, always include JTI in issued tokens to enable proper
 - **Hashed personal and team tokens.** `TokenCatalogService` stores only SHA-256 hashes (`token_hash`) of issued tokens (`EmailApiToken`) and keeps the raw secret in memory just long enough to present it once.
 - **Fine-grained scopes.** Tokens can be confined to a server, a permission list, IP CIDRs, and time-of-day or usage quotas via `TokenScope`.
 - **Usage analytics.** Every request records method, endpoint, IP, user-agent, latency, and block reason in `TokenUsageLog`, supporting anomaly detection.
-- **Immediate revocation.** `TokenRevocation` entries are enforced before gateway execution, guaranteeing revoked tokens cannot be replayed.
+- **Immediate revocation (normal path).** `TokenRevocation` entries are enforced before gateway execution; when the revocation store is unavailable, auth paths currently fail open to preserve availability.
 
 ### OAuth & SSO Federation
 

@@ -58,6 +58,33 @@ class TestTokenScopingMiddleware:
             assert await middleware._extract_token_scopes(request) == payload
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("scheme", ["bearer", "BEARER", "BeArEr"])
+    async def test_extract_token_scopes_accepts_case_insensitive_bearer(self, middleware, scheme):
+        """Bearer scheme should be parsed case-insensitively."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": f"{scheme} test-token"}
+
+        payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
+
+    @pytest.mark.asyncio
+    async def test_extract_token_scopes_rejects_empty_bearer_token(self, middleware):
+        """Bearer authorization with an empty token should be rejected."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": "Bearer "}
+
+        assert await middleware._extract_token_scopes(request) is None
+
+    @pytest.mark.asyncio
+    async def test_extract_token_scopes_rejects_non_bearer_scheme(self, middleware):
+        """Non-bearer auth schemes must not be treated as JWT bearer tokens."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": "Basic abc123"}
+
+        assert await middleware._extract_token_scopes(request) is None
+
+    @pytest.mark.asyncio
     async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
         """Test that /admin is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
         mock_request.url.path = "/admin/users"
@@ -234,9 +261,22 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/tools/", "GET", [Permissions.TOOLS_READ]) == True
         assert middleware._check_permission_restrictions("/tools/abc", "GET", [Permissions.TOOLS_READ]) == True
 
-    def test_permission_restrictions_default_allow_for_unmatched_path(self, middleware):
-        """Unmatched paths should default-allow when permissions list is non-empty."""
-        assert middleware._check_permission_restrictions("/unmatched/path", "GET", [Permissions.TOOLS_READ]) is True
+    def test_permission_restrictions_default_deny_for_unmatched_path(self, middleware):
+        """Unmatched paths should default-deny when permissions list is non-empty."""
+        assert middleware._check_permission_restrictions("/unmatched/path", "GET", [Permissions.TOOLS_READ]) is False
+
+    def test_permission_restrictions_unmatched_path_public_token(self, middleware):
+        """Unmatched paths should still allow empty permissions (public token behavior)."""
+        assert middleware._check_permission_restrictions("/unmatched/path", "GET", []) is True
+
+    def test_permission_restrictions_rpc_denied_for_scoped_token(self, middleware):
+        """Scoped tokens should not access /rpc directly without explicit mapping."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.RESOURCES_READ]) is False
+
+    def test_permission_restrictions_server_mcp_requires_servers_use(self, middleware):
+        """Server MCP endpoint should require servers.use permission."""
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is False
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
 
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""
@@ -659,6 +699,24 @@ class TestTokenScopingMiddleware:
         # Test wrong permissions are rejected
         assert middleware._check_permission_restrictions("/gateways", "GET", [Permissions.TOOLS_READ]) is False
         assert middleware._check_permission_restrictions("/gateways", "POST", [Permissions.GATEWAYS_READ]) is False
+
+    @pytest.mark.asyncio
+    async def test_token_permission_patterns(self, middleware):
+        """Test that token endpoints enforce the expected token permissions."""
+        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_READ]) is True
+        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_CREATE]) is False
+
+        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_REVOKE]) is True
+        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_UPDATE]) is False
 
     @pytest.mark.asyncio
     async def test_private_visibility_requires_owner(self, middleware):

@@ -12,6 +12,7 @@ Handles provider management, OAuth flows, and user authentication.
 from __future__ import annotations
 
 # Standard
+import asyncio
 import base64
 from dataclasses import dataclass
 from datetime import timedelta
@@ -19,10 +20,12 @@ import hashlib
 import logging
 import secrets
 import string
+from time import monotonic
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
 # Third-Party
+import jwt
 import orjson
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
@@ -61,6 +64,10 @@ class SSOService:
         >>> callable(service.list_enabled_providers)
         True
     """
+
+    _OIDC_METADATA_CACHE_TTL_SECONDS = 300
+    _oidc_config_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+    _jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
 
     def __init__(self, db: Session):
         """Initialize SSO service with database session.
@@ -141,6 +148,131 @@ class SSOService:
 
         except (ValueError, orjson.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"Failed to decode JWT claims: {e}")
+            return None
+
+    async def _get_oidc_provider_metadata(self, issuer: str) -> Optional[Dict[str, Any]]:
+        """Discover and cache OIDC provider metadata.
+
+        Args:
+            issuer: OIDC issuer URL.
+
+        Returns:
+            Provider metadata dict from discovery endpoint, or None on failure.
+        """
+        normalized_issuer = issuer.rstrip("/")
+        cached = self._oidc_config_cache.get(normalized_issuer)
+        if cached is not None:
+            cached_at, cached_metadata = cached
+            if monotonic() - cached_at < self._OIDC_METADATA_CACHE_TTL_SECONDS:
+                return cached_metadata
+            self._oidc_config_cache.pop(normalized_issuer, None)
+
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        discovery_url = f"{normalized_issuer}/.well-known/openid-configuration"
+        try:
+            client = await get_http_client()
+            response = await client.get(discovery_url, timeout=settings.oauth_request_timeout)
+            if response.status_code != 200:
+                logger.warning("OIDC discovery failed for issuer %s with HTTP %s", normalized_issuer, response.status_code)
+                return None
+
+            metadata = response.json()
+            if not isinstance(metadata, dict):
+                logger.warning("OIDC discovery response for issuer %s is not a JSON object", normalized_issuer)
+                return None
+            self._oidc_config_cache[normalized_issuer] = (monotonic(), metadata)
+            return metadata
+        except Exception as exc:
+            logger.warning("OIDC discovery request failed for issuer %s: %s", normalized_issuer, exc)
+            return None
+
+    async def _resolve_oidc_issuer_and_jwks(self, provider: SSOProvider) -> Tuple[Optional[str], Optional[str]]:
+        """Resolve issuer and JWKS URI for an OIDC provider.
+
+        Args:
+            provider: SSO provider configuration.
+
+        Returns:
+            Tuple of (issuer, jwks_uri), each optional when unavailable.
+        """
+        issuer = provider.issuer.strip() if isinstance(provider.issuer, str) and provider.issuer.strip() else None
+        jwks_uri = provider.jwks_uri.strip() if isinstance(provider.jwks_uri, str) and provider.jwks_uri.strip() else None
+
+        if issuer and not jwks_uri:
+            metadata = await self._get_oidc_provider_metadata(issuer)
+            if metadata:
+                discovered_jwks = metadata.get("jwks_uri")
+                discovered_issuer = metadata.get("issuer")
+                if isinstance(discovered_jwks, str) and discovered_jwks.strip():
+                    jwks_uri = discovered_jwks.strip()
+                if isinstance(discovered_issuer, str) and discovered_issuer.strip():
+                    issuer = discovered_issuer.strip()
+
+        return issuer, jwks_uri
+
+    def _get_jwks_client(self, jwks_uri: str) -> jwt.PyJWKClient:
+        """Get or create a cached PyJWKClient instance.
+
+        Args:
+            jwks_uri: JWKS endpoint URL.
+
+        Returns:
+            Cached or newly created `PyJWKClient`.
+        """
+        if jwks_uri not in self._jwks_client_cache:
+            self._jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
+        return self._jwks_client_cache[jwks_uri]
+
+    async def _verify_oidc_id_token(self, provider: SSOProvider, id_token: str, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Verify OIDC ID token signature and claims.
+
+        Args:
+            provider: SSO provider configuration.
+            id_token: Raw OIDC ID token string.
+            expected_nonce: Expected nonce from auth session, when available.
+
+        Returns:
+            Verified token claims when validation succeeds, otherwise None.
+        """
+        if provider.provider_type != "oidc":
+            return None
+
+        issuer, jwks_uri = await self._resolve_oidc_issuer_and_jwks(provider)
+        if not jwks_uri:
+            logger.warning("Skipping id_token claim usage for provider %s: missing jwks_uri", provider.id)
+            return None
+
+        try:
+            jwks_client = self._get_jwks_client(jwks_uri)
+            signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, id_token)
+
+            decode_kwargs: Dict[str, Any] = {
+                "key": signing_key.key,
+                "algorithms": ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "EdDSA"],
+                "audience": provider.client_id,
+                "options": {
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                    "verify_aud": True,
+                    "verify_iss": bool(issuer),
+                },
+            }
+            if issuer:
+                decode_kwargs["issuer"] = issuer
+
+            claims = await asyncio.to_thread(jwt.decode, id_token, **decode_kwargs)
+            if expected_nonce is not None and claims.get("nonce") != expected_nonce:
+                logger.warning("OIDC id_token nonce validation failed for provider %s", provider.id)
+                return None
+            return claims
+        except jwt.PyJWTError as exc:
+            logger.warning("OIDC id_token verification failed for provider %s: %s", provider.id, exc)
+            return None
+        except Exception as exc:
+            logger.warning("Unexpected OIDC id_token verification error for provider %s: %s", provider.id, exc)
             return None
 
     def _resolve_entra_graph_fallback_settings(self, provider_metadata: Optional[Dict[str, Any]]) -> Tuple[bool, int, int]:
@@ -559,12 +691,12 @@ class SSOService:
             >>> svc = SSOService(MagicMock())
             >>> # Mock DB auth session lookup
             >>> provider = SimpleNamespace(id='github', is_enabled=True, provider_type='oauth2')
-            >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False)
+            >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False, nonce=None)
             >>> svc.db.execute.return_value.scalar_one_or_none.return_value = auth_session
             >>> # Patch token exchange and user info retrieval
             >>> async def _ex(p, sess, c):
             ...     return {'access_token': 'tok', 'id_token': 'id_tok'}
-            >>> async def _ui(p, access, token_data=None):
+            >>> async def _ui(p, access, token_data=None, expected_nonce=None):
             ...     return {'email': 'user@example.com'}
             >>> svc._exchange_code_for_tokens = _ex
             >>> svc._get_user_info = _ui
@@ -641,9 +773,26 @@ class SSOService:
                 logger.error(f"Failed to exchange code for tokens for provider {provider_id}")
                 return None
             logger.info(f"Token exchange successful for provider {provider_id}")
+            callback_nonce = getattr(auth_session, "nonce", None)
+
+            # For OIDC providers, verify id_token before any claim extraction.
+            if provider.provider_type == "oidc":
+                if callback_nonce is None:
+                    logger.error("OAuth callback: missing nonce for OIDC provider %s.", provider_id)
+                    return None
+                id_token = token_data.get("id_token")
+                if not isinstance(id_token, str):
+                    logger.error("OAuth callback: missing id_token for OIDC provider %s.", provider_id)
+                    return None
+                verified_claims = await self._verify_oidc_id_token(provider, id_token, expected_nonce=callback_nonce)
+                if verified_claims is None:
+                    logger.error(f"id_token verification failed for provider {provider_id}")
+                    return None
+                token_data = dict(token_data)
+                token_data["_verified_id_token_claims"] = verified_claims
 
             # Get user info from provider (pass full token_data for id_token parsing)
-            user_info = await self._get_user_info(provider, token_data["access_token"], token_data)
+            user_info = await self._get_user_info(provider, token_data["access_token"], token_data, expected_nonce=callback_nonce)
             if not user_info:
                 logger.error(f"Failed to get user info for provider {provider_id}")
                 return None
@@ -694,13 +843,14 @@ class SSOService:
 
         return None
 
-    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get user information from provider using access token.
 
         Args:
             provider: SSO provider configuration
             access_token: OAuth access token
             token_data: Optional full token response containing id_token for OIDC providers
+            expected_nonce: Nonce bound to the current auth session for OIDC id_token verification
 
         Returns:
             User info dict or None if failed
@@ -709,9 +859,18 @@ class SSOService:
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
+        verified_id_token_claims: Optional[Dict[str, Any]] = None
+        if token_data and isinstance(token_data.get("_verified_id_token_claims"), dict):
+            verified_id_token_claims = token_data.get("_verified_id_token_claims")
+        elif provider.provider_type == "oidc" and token_data and isinstance(token_data.get("id_token"), str):
+            if expected_nonce is None:
+                logger.warning("Skipping OIDC id_token fallback verification for provider %s because expected nonce is unavailable.", provider.id)
+            else:
+                verified_id_token_claims = await self._verify_oidc_id_token(provider, token_data["id_token"], expected_nonce=expected_nonce)
+
         keycloak_id_token_claims: Optional[Dict[str, Any]] = None
-        if provider.id == "keycloak" and token_data and "id_token" in token_data:
-            keycloak_id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+        if provider.id == "keycloak" and verified_id_token_claims:
+            keycloak_id_token_claims = verified_id_token_claims
 
         response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
 
@@ -735,8 +894,8 @@ class SSOService:
             # For Entra ID, extract groups/roles from id_token since userinfo doesn't include them
             # Microsoft's /oidc/userinfo endpoint only returns basic claims (sub, name, email, picture)
             # Groups and roles are included in the id_token when configured in Azure Portal
-            if provider.id == "entra" and token_data and "id_token" in token_data:
-                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+            if provider.id == "entra" and verified_id_token_claims:
+                id_token_claims = verified_id_token_claims
                 if id_token_claims:
                     entra_groups_from_graph: Optional[List[str]] = None
                     # Detect group overage - when user has too many groups (>200), EntraID can return

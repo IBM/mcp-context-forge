@@ -1275,7 +1275,7 @@ class TestOAuthRouterAdditionalCoverage:
         # First-Party
         from mcpgateway.routers.oauth_router import list_registered_oauth_clients
 
-        result = await list_registered_oauth_clients(current_user={"email": "admin"}, db=mock_db)
+        result = await list_registered_oauth_clients(current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert result["total"] == 1
         assert result["clients"][0]["gateway_id"] == "g1"
@@ -1288,7 +1288,7 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import list_registered_oauth_clients
 
         with pytest.raises(HTTPException) as exc_info:
-            await list_registered_oauth_clients(current_user={"email": "admin"}, db=mock_db)
+            await list_registered_oauth_clients(current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 500
 
@@ -1312,7 +1312,7 @@ class TestOAuthRouterAdditionalCoverage:
 
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
-        result = await get_registered_client_for_gateway("gateway123", {"email": "admin"}, mock_db)
+        result = await get_registered_client_for_gateway("gateway123", {"email": "admin", "is_admin": True}, mock_db)
 
         assert result["id"] == "c1"
         assert result["gateway_id"] == "g1"
@@ -1327,7 +1327,7 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", {"email": "admin"}, mock_db)
+            await get_registered_client_for_gateway("gateway123", {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 404
 
@@ -1338,7 +1338,7 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", {"email": "admin"}, mock_db)
+            await get_registered_client_for_gateway("gateway123", {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 500
 
@@ -1353,7 +1353,7 @@ class TestOAuthRouterAdditionalCoverage:
         # First-Party
         from mcpgateway.routers.oauth_router import delete_registered_client
 
-        result = await delete_registered_client("c1", {"email": "admin"}, mock_db)
+        result = await delete_registered_client("c1", {"email": "admin", "is_admin": True}, mock_db)
 
         assert result["success"] is True
         mock_db.delete.assert_called_once_with(client)
@@ -1366,7 +1366,7 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import delete_registered_client
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("missing", {"email": "admin"}, mock_db)
+            await delete_registered_client("missing", {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 404
 
@@ -1382,7 +1382,23 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import delete_registered_client
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("c1", {"email": "admin"}, mock_db)
+            await delete_registered_client("c1", {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 500
         mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_registered_oauth_client_endpoints_require_admin(self, mock_db):
+        from mcpgateway.routers.oauth_router import delete_registered_client, get_registered_client_for_gateway, list_registered_oauth_clients
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(current_user={"email": "user@example.com", "is_admin": False}, db=mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gateway123", {"email": "user@example.com", "is_admin": False}, mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("client123", {"email": "user@example.com", "is_admin": False}, mock_db)
+        assert exc_info.value.status_code == 403

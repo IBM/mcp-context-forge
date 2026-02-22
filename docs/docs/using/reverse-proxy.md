@@ -199,6 +199,11 @@ spec:
 
 The remote gateway must have the reverse proxy endpoints enabled:
 
+```bash
+# Required on the gateway
+MCPGATEWAY_REVERSE_PROXY_ENABLED=true
+```
+
 ### 1. WebSocket Endpoint
 
 The gateway exposes `/reverse-proxy/ws` for WebSocket connections:

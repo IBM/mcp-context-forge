@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -183,16 +183,32 @@ class CancellationService:
 
         return True
 
-    async def register_run(self, run_id: str, name: Optional[str] = None, cancel_callback: Optional[CancelCallback] = None) -> None:
+    async def register_run(
+        self,
+        run_id: str,
+        name: Optional[str] = None,
+        cancel_callback: Optional[CancelCallback] = None,
+        owner_email: Optional[str] = None,
+        owner_team_ids: Optional[List[str]] = None,
+    ) -> None:
         """Register a run for future cancellation.
 
         Args:
             run_id: Unique run identifier (string)
             name: Optional friendly name for debugging/observability
             cancel_callback: Optional async callback called when a cancel is requested
+            owner_email: Optional email of the user who started the run
+            owner_team_ids: Optional list of token team IDs associated with the run owner
         """
         async with self._lock:
-            self._runs[run_id] = {"name": name, "registered_at": time.time(), "cancel_callback": cancel_callback, "cancelled": False}
+            self._runs[run_id] = {
+                "name": name,
+                "registered_at": time.time(),
+                "cancel_callback": cancel_callback,
+                "cancelled": False,
+                "owner_email": owner_email,
+                "owner_team_ids": owner_team_ids or [],
+            }
             logger.info("Registered run %s (%s)", run_id, name)
 
     async def unregister_run(self, run_id: str) -> None:

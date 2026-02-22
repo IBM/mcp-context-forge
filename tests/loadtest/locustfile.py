@@ -170,6 +170,10 @@ A2A_IDS: list[str] = []
 # test agents and cascading RPC tool call failures.
 A2A_TESTING_ENABLED: bool = False
 
+# Endpoint availability discovered from OpenAPI at test start.
+# Used to make feature-flagged endpoint checks conditional.
+AVAILABLE_PATHS: set[str] = set()
+
 # Names/URIs for RPC calls (tools/call uses name, resources/read uses uri, etc.)
 TOOL_NAMES: list[str] = []
 RESOURCE_URIS: list[str] = []
@@ -243,6 +247,19 @@ def _fetch_json(url: str, headers: dict[str, str], timeout: float = 30.0) -> tup
         return (0, None)
 
 
+def _is_endpoint_available(path: str) -> bool | None:
+    """Return endpoint availability from OpenAPI discovery cache.
+
+    Returns:
+        True: Path is present in OpenAPI
+        False: Path is absent in OpenAPI
+        None: OpenAPI discovery unavailable
+    """
+    if not AVAILABLE_PATHS:
+        return None
+    return path in AVAILABLE_PATHS
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
     """Fetch existing entity IDs for use in tests.
@@ -256,6 +273,15 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
     headers = _get_auth_headers()
 
     try:
+        # Discover available endpoints once to align checks with feature flags.
+        status, data = _fetch_json(f"{host}/openapi.json", headers)
+        if status == 200 and isinstance(data, dict):
+            paths = data.get("paths", {})
+            if isinstance(paths, dict):
+                AVAILABLE_PATHS.clear()
+                AVAILABLE_PATHS.update(str(path) for path in paths.keys())
+                logger.info(f"Discovered {len(AVAILABLE_PATHS)} OpenAPI paths")
+
         # Fetch tools
         # API returns {"tools": [...], "nextCursor": ...} or list for legacy
         status, data = _fetch_json(f"{host}/tools", headers)
@@ -2770,6 +2796,13 @@ class ReverseProxyUser(BaseUser):
             name="/reverse-proxy/sessions",
             catch_response=True,
         ) as response:
+            # Feature-flagged endpoint: when reverse-proxy is disabled, OpenAPI omits
+            # this route and runtime returns 404 by design.
+            if response.status_code == 404:
+                available = _is_endpoint_available("/reverse-proxy/sessions")
+                if available is False:
+                    response.success()
+                    return
             # 200=Success, 401=Unauthorized, 403=Forbidden
             self._validate_json_response(response, allowed_codes=[200, 401, 403])
 
@@ -3925,8 +3958,7 @@ class ProtocolExtendedUser(BaseUser):
     def protocol_notifications(self):
         """POST /protocol/notifications - Send protocol notification."""
         payload = {
-            "method": "notifications/cancelled",
-            "params": {"requestId": str(uuid.uuid4())},
+            "method": "notifications/initialized",
         }
         with self.client.post(
             "/protocol/notifications",
@@ -3935,7 +3967,7 @@ class ProtocolExtendedUser(BaseUser):
             name="/protocol/notifications",
             catch_response=True,
         ) as response:
-            # Returns null/200 on success
+            # Initialized notification should consistently return 200.
             self._validate_status(response)
 
     @task(2)
@@ -3979,8 +4011,7 @@ class ProtocolExtendedUser(BaseUser):
     def gateway_notifications(self):
         """POST /notifications - Send gateway notification."""
         payload = {
-            "method": "notifications/cancelled",
-            "params": {"requestId": str(uuid.uuid4())},
+            "method": "notifications/initialized",
         }
         with self.client.post(
             "/notifications",
@@ -6409,7 +6440,14 @@ class LLMCRUDUser(BaseUser):
                     provider_id = data.get("id") or data.get("name") or provider_name
                     # GET provider details
                     time.sleep(0.05)
-                    self.client.get(f"/llm/providers/{provider_id}", headers=self.auth_headers, name="/llm/providers/[id]")
+                    with self.client.get(
+                        f"/llm/providers/{provider_id}",
+                        headers=self.auth_headers,
+                        name="/llm/providers/[id]",
+                        catch_response=True,
+                    ) as provider_get_resp:
+                        # Concurrent CRUD can legitimately delete the provider between requests.
+                        self._validate_status(provider_get_resp, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
                     # PATCH provider
                     time.sleep(0.05)
                     with self.client.patch(
@@ -6519,7 +6557,13 @@ class LLMCRUDUser(BaseUser):
                     provider = random.choice(providers)
                     pid = provider.get("id")
                     if pid:
-                        self.client.get(f"/llm/providers/{pid}", headers=self.auth_headers, name="/llm/providers/[id]")
+                        with self.client.get(
+                            f"/llm/providers/{pid}",
+                            headers=self.auth_headers,
+                            name="/llm/providers/[id]",
+                            catch_response=True,
+                        ) as provider_get_resp:
+                            self._validate_status(provider_get_resp, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             except Exception:
                 response.success()
@@ -8299,7 +8343,7 @@ class AdminUsersOpsUser(BaseUser):
                     self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Update
                 time.sleep(0.05)
-                with self.client.post(f"/admin/users/{email}/update", data=f"full_name=Updated+Load+Test", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/users/[email]/update", catch_response=True) as r:
+                with self.client.post(f"/admin/users/{email}/update", data="full_name=Updated+Load+Test", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/users/[email]/update", catch_response=True) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Delete
                 time.sleep(0.05)

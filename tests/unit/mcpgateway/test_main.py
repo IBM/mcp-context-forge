@@ -597,13 +597,49 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
-    @patch("mcpgateway.main.logging_service.notify")
-    def test_handle_notification_cancelled(self, mock_notify, test_client, auth_headers):
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
         """Test handling request cancelled notification."""
+        mock_get_context.return_value = ("test_user@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "test_user@example.com", "owner_team_ids": []}
         req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
         response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
         assert response.status_code == 200
-        mock_notify.assert_called_once()
+        mock_cancel_run.assert_awaited_once_with("123", reason=None)
+        mock_notify.assert_awaited_once()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled_denied_for_non_owner(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """Test cancellation notification denied for non-owner/non-admin users."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "owner@example.com", "owner_team_ids": []}
+        req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
+        response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+        mock_cancel_run.assert_not_awaited()
+        mock_notify.assert_not_awaited()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_alias_cancelled_enforces_authorization(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """The /notifications alias must enforce the same cancellation authorization rules."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "owner@example.com", "owner_team_ids": []}
+        req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
+        response = test_client.post("/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+        mock_cancel_run.assert_not_awaited()
+        mock_notify.assert_not_awaited()
 
     @patch("mcpgateway.main.logging_service.notify")
     def test_handle_notification_message(self, mock_notify, test_client, auth_headers):
@@ -1806,9 +1842,11 @@ class TestRPCEndpoints:
         assert body["roots"][0]["uri"] == "root://1"
 
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
-    def test_rpc_notification_cancelled(self, mock_cancel_run, mock_notify, test_client, auth_headers):
+    def test_rpc_notification_cancelled(self, mock_cancel_run, mock_get_status, mock_notify, test_client, auth_headers):
         """Test notifications/cancelled JSON-RPC method."""
+        mock_get_status.return_value = {"owner_email": "test_user@example.com", "owner_team_ids": []}
         req = {
             "jsonrpc": "2.0",
             "id": "test-id",
@@ -1999,6 +2037,14 @@ class TestRPCEndpoints:
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
 
+    @pytest.fixture(autouse=True)
+    def enable_ws_relay(self, monkeypatch):
+        """Enable WebSocket relay feature for realtime endpoint tests."""
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
+
     @patch("mcpgateway.main.settings")
     @patch("mcpgateway.main.ResilientHttpClient")  # stub network calls
     def test_websocket_endpoint(self, mock_client, mock_settings, test_client):
@@ -2096,8 +2142,9 @@ class TestRealtimeEndpoints:
         monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
         monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
         monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
         monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
-        monkeypatch.setattr(mcpgateway_main, "verify_jwt_token", AsyncMock(return_value=None))
+        monkeypatch.setattr(mcpgateway_main, "_authenticate_websocket_user", AsyncMock(return_value=("test-jwt-token", None)))
 
         # Create mock websocket with token in query params
         websocket = AsyncMock()
@@ -2149,7 +2196,9 @@ class TestRealtimeEndpoints:
         monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
         monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
         monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
         monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
+        monkeypatch.setattr(mcpgateway_main, "_authenticate_websocket_user", AsyncMock(return_value=(None, "proxy-user@example.com")))
 
         # Create mock websocket with proxy user header
         # Note: Use exact case matching settings.proxy_user_header since we're using a plain dict

@@ -47,6 +47,7 @@ from fastapi.exception_handlers import request_validation_exception_handler as f
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -79,7 +80,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -149,7 +150,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -437,6 +438,41 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
         is_admin = False
 
     return user_email, token_teams, is_admin
+
+
+async def _authorize_run_cancellation(request: Request, user, request_id: str, *, as_jsonrpc_error: bool) -> None:
+    """Authorize a notifications/cancelled request for a specific run id.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        request_id: Run/request identifier to cancel.
+        as_jsonrpc_error: Raise ``JSONRPCError`` when True, otherwise ``HTTPException``.
+
+    Raises:
+        JSONRPCError: When ``as_jsonrpc_error`` is True and cancellation is not authorized.
+        HTTPException: When ``as_jsonrpc_error`` is False and cancellation is not authorized.
+    """
+    requester_email, requester_token_teams, requester_is_admin = _get_rpc_filter_context(request, user)
+    requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
+    run_status = await cancellation_service.get_status(request_id)
+
+    unauthorized = False
+    if run_status is None:
+        # Default deny for non-admin users when run is not known on this worker.
+        # Session-affinity clients should route cancellation to the worker that owns the run.
+        unauthorized = not requester_is_admin
+    else:
+        run_owner_email = run_status.get("owner_email")
+        run_owner_team_ids = run_status.get("owner_team_ids") or []
+        requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
+        requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
+        unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
+
+    if unauthorized:
+        if as_jsonrpc_error:
+            raise JSONRPCError(-32003, "Not authorized to cancel this run", {"requestId": request_id})
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to cancel this run")
 
 
 # Initialize cache
@@ -2376,6 +2412,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         logger.info(f"Request cancelled: {request_id}, reason: {reason}")
         # Attempt local cancellation per MCP spec
         if request_id is not None:
+            await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=False)
             await cancellation_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":
@@ -5997,6 +6034,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            run_owner_email = auth_user_email
+            run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
                 # auth_token_teams stays None (unrestricted)
@@ -6025,7 +6064,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     tool_task.cancel()
 
             if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                await cancellation_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
+                await cancellation_service.register_run(
+                    run_id,
+                    name=f"tool:{name}",
+                    cancel_callback=cancel_tool_task,
+                    owner_email=run_owner_email,
+                    owner_team_ids=run_owner_team_ids,
+                )
 
             try:
                 # Check if cancelled before execution (only if feature enabled)
@@ -6128,6 +6173,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             logger.info(f"Request cancelled: {request_id}, reason: {reason}")
             # Attempt local cancellation per MCP spec
             if request_id is not None:
+                await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=True)
                 await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
@@ -6311,6 +6357,93 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         }
 
 
+_WS_RELAY_REQUIRED_PERMISSIONS = [
+    "tools.read",
+    "tools.execute",
+    "resources.read",
+    "prompts.read",
+    "servers.use",
+    "a2a.read",
+]
+
+
+def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
+    """Extract bearer token from WebSocket query params or headers.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        Bearer token value when present, otherwise None.
+    """
+    return extract_websocket_bearer_token(
+        getattr(websocket, "query_params", {}),
+        getattr(websocket, "headers", {}),
+        query_param_warning="WebSocket authentication token passed via query parameter",
+    )
+
+
+async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[str], Optional[str]]:
+    """Authenticate and authorize a WebSocket relay connection.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        A tuple of `(auth_token, proxy_user)` where each value may be None.
+
+    Raises:
+        HTTPException: If authentication fails or required permissions are missing.
+    """
+    auth_required = settings.mcp_client_auth_enabled or settings.auth_required
+    auth_token = _get_websocket_bearer_token(websocket)
+    proxy_user: Optional[str] = None
+    user_context: Optional[dict[str, Any]] = None
+
+    # JWT authentication path
+    if auth_token:
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
+        try:
+            user = await get_current_user(credentials, request=websocket)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed") from exc
+        user_context = {
+            "email": user.email,
+            "full_name": user.full_name,
+            "is_admin": user.is_admin,
+            "ip_address": websocket.client.host if websocket.client else None,
+            "user_agent": websocket.headers.get("user-agent"),
+            "team_id": getattr(websocket.state, "team_id", None),
+            "token_teams": getattr(websocket.state, "token_teams", None),
+            "token_use": getattr(websocket.state, "token_use", None),
+        }
+    # Proxy authentication path (only valid when MCP client auth is disabled)
+    elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+        proxy_user = websocket.headers.get(settings.proxy_user_header)
+        if proxy_user:
+            user_context = {
+                "email": proxy_user,
+                "full_name": proxy_user,
+                "is_admin": False,
+                "ip_address": websocket.client.host if websocket.client else None,
+                "user_agent": websocket.headers.get("user-agent"),
+            }
+        elif auth_required:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    elif auth_required:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    # RBAC gate: require at least one MCP interaction permission before allowing WS relay access
+    if user_context:
+        checker = PermissionChecker(user_context)
+        if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    return auth_token, proxy_user
+
+
 @utility_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -6322,40 +6455,16 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection instance.
     """
-    # Track auth credentials to forward to /rpc
-    auth_token: Optional[str] = None
-    proxy_user: Optional[str] = None
-
     try:
-        # Authenticate WebSocket connection
-        if settings.mcp_client_auth_enabled or settings.auth_required:
-            # Extract auth from query params or headers
-            # Try to get token from query parameter
-            if "token" in websocket.query_params:
-                auth_token = websocket.query_params["token"]
-            # Try to get token from Authorization header
-            elif "authorization" in websocket.headers:
-                auth_header = websocket.headers["authorization"]
-                if auth_header.startswith("Bearer "):
-                    auth_token = auth_header[7:]
+        if not settings.mcpgateway_ws_relay_enabled:
+            await websocket.close(code=1008, reason="WebSocket relay is disabled")
+            return
 
-            # Check for proxy auth if MCP client auth is disabled
-            if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
-                proxy_user = websocket.headers.get(settings.proxy_user_header)
-                if not proxy_user and not auth_token:
-                    await websocket.close(code=1008, reason="Authentication required")
-                    return
-            elif settings.auth_required and not auth_token:
-                await websocket.close(code=1008, reason="Authentication required")
-                return
-
-            # Verify JWT token if provided and MCP client auth is enabled
-            if auth_token and settings.mcp_client_auth_enabled:
-                try:
-                    await verify_jwt_token(auth_token)
-                except Exception:
-                    await websocket.close(code=1008, reason="Invalid authentication")
-                    return
+        try:
+            auth_token, proxy_user = await _authenticate_websocket_user(websocket)
+        except HTTPException as e:
+            await websocket.close(code=1008, reason=str(e.detail))
+            return
 
         await websocket.accept()
         while True:
@@ -7279,14 +7388,17 @@ except ImportError:
     logger.debug("OAuth router not available")
 
 # Include reverse proxy router if enabled
-try:
-    # First-Party
-    from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
+if settings.mcpgateway_reverse_proxy_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
 
-    app.include_router(reverse_proxy_router)
-    logger.info("Reverse proxy router included")
-except ImportError:
-    logger.debug("Reverse proxy router not available")
+        app.include_router(reverse_proxy_router)
+        logger.info("Reverse proxy router included")
+    except ImportError:
+        logger.debug("Reverse proxy router not available")
+else:
+    logger.info("Reverse proxy router not included - feature disabled")
 
 # Include LLMChat router
 if settings.llmchat_enabled:

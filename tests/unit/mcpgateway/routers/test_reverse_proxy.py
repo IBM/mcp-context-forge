@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import orjson
 
 # Third-Party
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 import pytest
 
@@ -45,6 +45,8 @@ def mock_websocket():
     ws.receive_text = AsyncMock()
     ws.close = AsyncMock()
     ws.headers = {"X-Session-ID": "test-session-123"}
+    ws.query_params = {}
+    ws.client = Mock(host="127.0.0.1")
     return ws
 
 
@@ -521,9 +523,13 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+            with (
+                patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db,
+                patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user,
+                patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=True),
+            ):
                 mock_get_db.return_value = Mock()
-                mock_verify.return_value = {"sub": "test-user", "email": "test@example.com"}
+                mock_get_user.return_value = Mock(email="test@example.com", full_name="Test User", is_admin=False)
 
                 try:
                     await websocket_endpoint(mock_websocket, Mock())
@@ -548,9 +554,13 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+            with (
+                patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db,
+                patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user,
+                patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=True),
+            ):
                 mock_get_db.return_value = Mock()
-                mock_verify.return_value = {"sub": "test-user", "email": "test@example.com"}
+                mock_get_user.return_value = Mock(email="test@example.com", full_name="Test User", is_admin=False)
 
                 try:
                     await websocket_endpoint(mock_websocket, Mock())
@@ -575,7 +585,10 @@ class TestWebSocketAuthentication:
             mock_settings.trust_proxy_auth = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
 
-            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
+            with (
+                patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db,
+                patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=True),
+            ):
                 mock_get_db.return_value = Mock()
 
                 try:
@@ -876,6 +889,46 @@ class TestIntegration:
 class TestGetUserFromCredentials:
     """Test _get_user_from_credentials function."""
 
+    def test_get_websocket_bearer_token_accepts_lowercase_scheme(self):
+        """Reverse-proxy WebSocket token parser should accept lowercase bearer scheme."""
+        # First-Party
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "bearer lower-case-token"}
+
+        assert rp._get_websocket_bearer_token(websocket) == "lower-case-token"
+
+    @pytest.mark.asyncio
+    async def test_authenticate_reverse_proxy_websocket_denies_without_permissions(self):
+        """Authenticated users without server-management permissions should be rejected."""
+        # First-Party
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "Bearer valid-token"}
+        websocket.client = Mock(host="127.0.0.1")
+        websocket.state = Mock(team_id=None, token_teams=None, token_use=None)
+
+        mock_user = Mock(email="user@example.com", full_name="Test User", is_admin=False)
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings,
+            patch("mcpgateway.routers.reverse_proxy.get_current_user", new=AsyncMock(return_value=mock_user)),
+            patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=False),
+        ):
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = True
+            mock_settings.trust_proxy_auth = False
+
+            with pytest.raises(HTTPException) as exc_info:
+                await rp._authenticate_reverse_proxy_websocket(websocket)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Insufficient permissions"
+
     def test_dict_with_sub(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
         user, is_admin = _get_user_from_credentials({"sub": "user@test.com", "is_admin": False})
@@ -976,8 +1029,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = HTTPException(status_code=401, detail="Invalid token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -996,8 +1049,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = ValueError("Malformed token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = ValueError("Malformed token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1017,8 +1070,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = HTTPException(status_code=401, detail="Invalid token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1037,8 +1090,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = ValueError("Bad token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = ValueError("Bad token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1155,7 +1208,7 @@ class TestWebSocketTokenMissingSubject:
 
     @pytest.mark.asyncio
     async def test_bearer_token_missing_subject(self, mock_websocket):
-        """Bearer token verified but has no sub or email → ValueError caught."""
+        """Bearer token auth failure is rejected."""
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         mock_websocket.headers = {"Authorization": "Bearer valid-token"}
@@ -1166,8 +1219,8 @@ class TestWebSocketTokenMissingSubject:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.return_value = {"iss": "test", "iat": 123}  # No sub or email
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1175,7 +1228,7 @@ class TestWebSocketTokenMissingSubject:
 
     @pytest.mark.asyncio
     async def test_query_token_missing_subject(self, mock_websocket):
-        """Query token verified but has no sub or email → ValueError caught."""
+        """Query token auth failure is rejected."""
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         mock_websocket.headers = {}
@@ -1186,8 +1239,8 @@ class TestWebSocketTokenMissingSubject:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.return_value = {"iss": "test", "iat": 123}  # No sub or email
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()

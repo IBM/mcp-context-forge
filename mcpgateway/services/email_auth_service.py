@@ -42,7 +42,22 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, PasswordResetToken, utc_now
+from mcpgateway.db import (
+    EmailAuthEvent,
+    EmailTeam,
+    EmailTeamInvitation,
+    EmailTeamJoinRequest,
+    EmailTeamMember,
+    EmailTeamMemberHistory,
+    EmailUser,
+    PasswordResetToken,
+    PendingUserApproval,
+    Role,
+    SSOAuthSession,
+    TokenRevocation,
+    UserRole,
+    utc_now,
+)
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.email_notification_service import AuthEmailNotificationService
@@ -1709,6 +1724,27 @@ class EmailAuthService:
                 await self.role_service.delete_all_user_roles(email)
             except Exception as e:
                 logger.warning(f"Failed to delete role assignments for {email}: {e}")
+
+            # Reassign non-null audit FKs to another user so deleting this user does not
+            # break referential integrity for historical records.
+            replacement_row = self.db.query(EmailUser.email).filter(EmailUser.email != email).order_by(EmailUser.is_admin.desc(), EmailUser.created_at.asc()).first()
+            replacement_email = replacement_row[0] if replacement_row else None
+
+            if replacement_email:
+                self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.invited_by == email).update({EmailTeamInvitation.invited_by: replacement_email}, synchronize_session=False)
+                self.db.query(Role).filter(Role.created_by == email).update({Role.created_by: replacement_email}, synchronize_session=False)
+                self.db.query(UserRole).filter(UserRole.granted_by == email).update({UserRole.granted_by: replacement_email}, synchronize_session=False)
+                self.db.query(TokenRevocation).filter(TokenRevocation.revoked_by == email).update({TokenRevocation.revoked_by: replacement_email}, synchronize_session=False)
+
+            # Nullify nullable actor references.
+            self.db.query(EmailTeamMember).filter(EmailTeamMember.invited_by == email).update({EmailTeamMember.invited_by: None}, synchronize_session=False)
+            self.db.query(EmailTeamMemberHistory).filter(EmailTeamMemberHistory.action_by == email).update({EmailTeamMemberHistory.action_by: None}, synchronize_session=False)
+            self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.reviewed_by == email).update({EmailTeamJoinRequest.reviewed_by: None}, synchronize_session=False)
+            self.db.query(PendingUserApproval).filter(PendingUserApproval.approved_by == email).update({PendingUserApproval.approved_by: None}, synchronize_session=False)
+            self.db.query(SSOAuthSession).filter(SSOAuthSession.user_email == email).update({SSOAuthSession.user_email: None}, synchronize_session=False)
+
+            # Remove rows where this user is the primary subject.
+            self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.user_email == email).delete(synchronize_session=False)
 
             # Delete related auth events
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)

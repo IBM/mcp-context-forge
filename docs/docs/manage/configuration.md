@@ -574,6 +574,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_GENERIC_TOKEN_URL`             | Token endpoint URL                               | (none)                     | string  |
 | `SSO_GENERIC_USERINFO_URL`          | Userinfo endpoint URL                            | (none)                     | string  |
 | `SSO_GENERIC_ISSUER`                | OIDC issuer URL                                  | (none)                     | string  |
+| `SSO_GENERIC_JWKS_URI`             | JWKS endpoint URL for id_token signature verification | (auto-discovered)     | string  |
 | `SSO_GENERIC_SCOPE`                 | OAuth scopes (space-separated)                   | `openid profile email`     | string  |
 
 **Okta OIDC:**
@@ -666,9 +667,10 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 | Setting                     | Description                                                      | Default | Options |
 | --------------------------- | ---------------------------------------------------------------- | ------- | ------- |
 | `SSRF_PROTECTION_ENABLED`   | Master switch for SSRF protection                                | `true`  | bool    |
-| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `true`  | bool    |
-| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `true`  | bool    |
-| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `false` | bool    |
+| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `false` | bool    |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `false` | bool    |
+| `SSRF_ALLOWED_NETWORKS`     | Optional private CIDR allowlist when private networks are blocked | `[]`  | JSON array |
+| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `true`  | bool    |
 | `SSRF_BLOCKED_NETWORKS`     | CIDR ranges always blocked (cloud metadata by default)          | See below | JSON array |
 | `SSRF_BLOCKED_HOSTS`        | Hostnames always blocked (case-insensitive)                     | See below | JSON array |
 
@@ -688,24 +690,24 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 !!! note "DNS Resolution Behavior"
     The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
 
-    - **DNS fail-open** (default): Unresolvable hostnames are allowed (hostname blocklist still applies)
-    - **DNS fail-closed** (`SSRF_DNS_FAIL_CLOSED=true`): Unresolvable hostnames are rejected
-
-    For maximum security, enable `SSRF_DNS_FAIL_CLOSED=true` in production. Note that DNS rebinding attacks (where DNS changes between validation and connection) require additional mitigations like a dedicated SSRF proxy.
+    - **DNS fail-closed** (default): Unresolvable hostnames are rejected
+    - **DNS fail-open** (`SSRF_DNS_FAIL_CLOSED=false`): Unresolvable hostnames are allowed (hostname blocklist still applies)
 
 !!! tip "Configuration Modes"
-    **Development/Internal Mode** (default): Localhost and private networks allowed, only cloud metadata blocked.
-    ```bash
-    SSRF_PROTECTION_ENABLED=true
-    SSRF_ALLOW_LOCALHOST=true
-    SSRF_ALLOW_PRIVATE_NETWORKS=true
-    ```
-
-    **Strict Production Mode** (external endpoints only):
+    **Strict Mode (default)**: External endpoints only.
     ```bash
     SSRF_PROTECTION_ENABLED=true
     SSRF_ALLOW_LOCALHOST=false
     SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_DNS_FAIL_CLOSED=true
+    ```
+
+    **Controlled Internal Access** (explicit CIDR exceptions):
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=false
+    SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_ALLOWED_NETWORKS='["10.20.0.0/16","192.168.50.0/24"]'
     ```
 
     **Custom Blocked Networks** (add additional ranges):
@@ -713,6 +715,11 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
     SSRF_BLOCKED_NETWORKS='["169.254.169.254/32","169.254.0.0/16","100.64.0.0/10"]'
     ```
     The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
+
+!!! note "Local Development Defaults"
+    The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
+    (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
+    Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
 
 ### Ed25519 Certificate Signing
 
@@ -845,12 +852,16 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                   | Description                        | Default | Options                         |
 | ------------------------- | ---------------------------------- | ------- | ------------------------------- |
 | `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
+| `MCPGATEWAY_WS_RELAY_ENABLED` | Enable `/ws` JSON-RPC WebSocket relay | `false` | bool                       |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | Enable `/reverse-proxy/*` endpoints | `false` | bool                     |
 | `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
 | `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
 | `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
 | `SSE_KEEPALIVE_INTERVAL`  | SSE keepalive interval (secs)      | `30`    | int > 0                         |
 | `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
 | `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
+
+`MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
 ### Federation
 

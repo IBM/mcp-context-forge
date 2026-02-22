@@ -45,7 +45,7 @@ import os
 import tempfile
 import time
 from typing import AsyncGenerator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from unittest.mock import patch as mock_patch
 
 # Third-Party
@@ -87,11 +87,14 @@ else:
     settings.jwt_secret_key = JWT_SECRET
 
 
-def generate_test_jwt():
+def generate_test_jwt(*, is_admin: bool = False, teams=None):
+    if teams is None:
+        teams = []
     payload = {
         "sub": "test_user",
         "exp": int(time.time()) + 3600,
-        "teams": [],  # Empty teams list allows access to public resources and own private resources
+        "teams": teams,
+        "is_admin": is_admin,
     }
     secret = settings.jwt_secret_key
     if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
@@ -456,9 +459,16 @@ class TestProtocolAPIs:
         response = await client.post("/protocol/notifications", json={"method": "notifications/initialized"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
-    async def test_notifications_cancelled(self, client: AsyncClient):
-        """Test POST /protocol/notifications - request cancelled."""
+    async def test_notifications_cancelled_denied_for_unknown_run(self, client: AsyncClient):
+        """Test POST /protocol/notifications - unknown run is denied for non-admin token."""
         response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+
+    async def test_notifications_cancelled_allowed_for_owner(self, client: AsyncClient):
+        """Test POST /protocol/notifications - owner can cancel."""
+        with patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"owner_email": "testuser@example.com", "owner_team_ids": []})):
+            response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
     async def test_notifications_message(self, client: AsyncClient):
