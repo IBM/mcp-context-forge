@@ -220,6 +220,54 @@ async def test_require_auth_missing_token(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_require_auth_rejects_revoked_token(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+    monkeypatch.setattr(
+        vc,
+        "verify_credentials_cached",
+        AsyncMock(return_value={"sub": "user@example.com", "jti": "jti-1", "token": "token"}),
+    )
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: True)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=True))
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Token has been revoked"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_rejects_inactive_user(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+    monkeypatch.setattr(
+        vc,
+        "verify_credentials_cached",
+        AsyncMock(return_value={"sub": "user@example.com", "jti": "jti-1", "token": "token"}),
+    )
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=False))
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Account disabled"
+
+
+@pytest.mark.asyncio
 async def test_require_auth_manual_cookie_overrides_header(monkeypatch):
     """Manual cookie reading should take precedence over the Authorization header."""
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
