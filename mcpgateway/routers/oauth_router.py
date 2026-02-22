@@ -70,6 +70,20 @@ def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) ->
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
+def _require_admin_user(current_user: EmailUserResponse) -> None:
+    """Require admin context for DCR management endpoints.
+
+    Args:
+        current_user: Authenticated user context from RBAC dependency.
+
+    Raises:
+        HTTPException: If requester is not an admin user.
+    """
+    is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
+
 @oauth_router.get("/authorize/{gateway_id}")
 async def initiate_oauth_flow(
     gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
@@ -718,6 +732,8 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
     Raises:
         HTTPException: If user lacks permissions or database error occurs
     """
+    _require_admin_user(current_user)
+
     try:
         # First-Party
         from mcpgateway.db import RegisteredOAuthClient
@@ -770,6 +786,8 @@ async def get_registered_client_for_gateway(
     Raises:
         HTTPException: If gateway or registered client not found
     """
+    _require_admin_user(current_user)
+
     try:
         # First-Party
         from mcpgateway.db import RegisteredOAuthClient
@@ -821,6 +839,8 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     Raises:
         HTTPException: If client not found or deletion fails
     """
+    _require_admin_user(current_user)
+
     try:
         # First-Party
         from mcpgateway.db import RegisteredOAuthClient
