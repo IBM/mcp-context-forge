@@ -554,7 +554,10 @@ async def _assert_session_owner_or_admin(request: Request, user, session_id: str
     """
     session_owner = await session_registry.get_session_owner(session_id)
     if not session_owner:
-        raise HTTPException(status_code=404, detail="Session not found")
+        session_exists = await session_registry.session_exists(session_id)
+        if session_exists is False:
+            raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=403, detail="Session owner metadata unavailable")
 
     requester_email, requester_is_admin = _get_request_identity(request, user)
     if requester_is_admin:
@@ -5894,12 +5897,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             requester_email, requester_is_admin = _get_request_identity(request, user)
 
             if init_session_id:
-                existing_owner = await session_registry.get_session_owner(init_session_id)
-                if existing_owner and not requester_is_admin and requester_email != existing_owner:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
+                effective_owner = await session_registry.claim_session_owner(init_session_id, requester_email)
+                if effective_owner is None:
+                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership unavailable.", {"method": method, "session_id": init_session_id})
 
-                if not existing_owner and requester_email:
-                    await session_registry.set_session_owner(init_session_id, requester_email)
+                if effective_owner and not requester_is_admin and requester_email != effective_owner:
+                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
 
             # Pass server_id to advertise OAuth capability if configured per RFC 9728
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)

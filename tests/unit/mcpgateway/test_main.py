@@ -2162,6 +2162,28 @@ class TestRealtimeEndpoints:
             response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
         assert response.status_code == 403
 
+    def test_message_endpoint_rejects_unknown_owner_metadata(self, test_client, auth_headers):
+        """Message endpoint should fail closed when owner metadata cannot be verified."""
+        message = {"type": "test", "data": "hello"}
+        with (
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.session_registry.session_exists", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Session owner metadata unavailable"
+
+    def test_server_message_endpoint_rejects_unknown_owner_metadata(self, test_client, auth_headers):
+        """Server message endpoint should fail closed when owner metadata is unknown."""
+        message = {"type": "test", "data": "hello"}
+        with (
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.session_registry.session_exists", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.post("/servers/test-server/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Session owner metadata unavailable"
+
     @pytest.mark.asyncio
     async def test_websocket_forwards_auth_token_to_rpc(self, monkeypatch):
         """Test that WebSocket forwards JWT token to /rpc endpoint.

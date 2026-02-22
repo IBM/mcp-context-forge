@@ -2558,6 +2558,38 @@ class TestSessionOwnerTracking:
         owner = await registry.get_session_owner("owner-2")
         assert owner is None
 
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_memory_backend_returns_existing_owner(self, registry):
+        tr = FakeSSETransport("owner-3")
+        await registry.add_session("owner-3", tr)
+
+        first = await registry.claim_session_owner("owner-3", "first@example.com")
+        second = await registry.claim_session_owner("owner-3", "second@example.com")
+
+        assert first == "first@example.com"
+        assert second == "first@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_memory_backend_is_atomic_under_concurrency(self, registry):
+        tr = FakeSSETransport("owner-4")
+        await registry.add_session("owner-4", tr)
+
+        first_task = asyncio.create_task(registry.claim_session_owner("owner-4", "first@example.com"))
+        second_task = asyncio.create_task(registry.claim_session_owner("owner-4", "second@example.com"))
+
+        first_result, second_result = await asyncio.gather(first_task, second_task)
+
+        assert first_result == second_result
+        assert first_result in {"first@example.com", "second@example.com"}
+
+    @pytest.mark.asyncio
+    async def test_session_exists_memory_backend(self, registry):
+        assert await registry.session_exists("missing-session") is False
+
+        tr = FakeSSETransport("owner-5")
+        await registry.add_session("owner-5", tr)
+        assert await registry.session_exists("owner-5") is True
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

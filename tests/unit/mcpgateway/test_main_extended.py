@@ -4113,7 +4113,7 @@ class TestRpcHandling:
         assert result["result"] == {}
 
     async def test_handle_rpc_initialize_registers_session_owner_success_and_failure(self, monkeypatch):
-        """Cover initialize ownership registration paths."""
+        """Cover initialize ownership claim paths."""
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
         payload = {"jsonrpc": "2.0", "id": "aff-init", "method": "initialize", "params": {"session_id": "init-1"}}
         request = self._make_request(payload)
@@ -4122,8 +4122,7 @@ class TestRpcHandling:
         init_result = MagicMock()
         init_result.model_dump.return_value = {"capabilities": {}}
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))
-        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
-        monkeypatch.setattr("mcpgateway.main.session_registry.set_session_owner", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
 
         pool = MagicMock()
         pool.register_pool_session_owner = AsyncMock(return_value=None)
@@ -4142,7 +4141,7 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "aff-init-deny", "method": "initialize", "params": {"session_id": "init-1"}}
         request = self._make_request(payload)
 
-        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="other@example.com"))
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="other@example.com"))
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=MagicMock()))
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -4155,14 +4154,24 @@ class TestRpcHandling:
 
         init_result = MagicMock()
         init_result.model_dump.return_value = {"capabilities": {}}
-        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value=None))
-        set_owner = AsyncMock(return_value=None)
-        monkeypatch.setattr("mcpgateway.main.session_registry.set_session_owner", set_owner)
+        claim_owner = AsyncMock(return_value="user@example.com")
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", claim_owner)
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["result"]["capabilities"] == {}
-        set_owner.assert_awaited_once_with("init-2", "user@example.com")
+        claim_owner.assert_awaited_once_with("init-2", "user@example.com")
+
+    async def test_handle_rpc_initialize_rejects_when_owner_claim_unavailable(self, monkeypatch):
+        payload = {"jsonrpc": "2.0", "id": "aff-init-unavailable", "method": "initialize", "params": {"session_id": "init-3"}}
+        request = self._make_request(payload)
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=MagicMock()))
+
+        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32003
+        assert "ownership unavailable" in result["error"]["message"].lower()
 
     async def test_handle_rpc_list_tools_legacy_token_teams_none_becomes_public_only(self):
         """Cover legacy list_tools branch when token_teams is explicitly None for non-admin."""
@@ -4590,6 +4599,19 @@ class TestMessageEndpointElicitation:
         with pytest.raises(HTTPException) as excinfo:
             await message_endpoint(request, "server-1", user={"email": "user@example.com"})
         assert excinfo.value.status_code == 403
+
+    async def test_message_endpoint_rejects_unknown_owner_metadata(self, monkeypatch):
+        request = MagicMock(spec=Request)
+        request.query_params = {"session_id": "session-1"}
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.main.session_registry.session_exists", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.main._read_request_json", AsyncMock(return_value={"hello": "world"}))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == "Session owner metadata unavailable"
 
 
 class TestRemainingCoverageGaps:

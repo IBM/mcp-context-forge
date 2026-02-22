@@ -779,6 +779,149 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error setting owner for session {session_id}: {e}")
 
+    async def claim_session_owner(self, session_id: str, owner_email: str) -> Optional[str]:
+        """Atomically claim ownership for a session and return the effective owner.
+
+        This method provides compare-and-set semantics:
+        - If a session owner already exists, return the existing owner.
+        - If no owner exists, claim ownership for ``owner_email``.
+
+        Args:
+            session_id: Session identifier to claim.
+            owner_email: Requesting owner email.
+
+        Returns:
+            Effective owner email after the claim operation, or ``None`` if owner
+            metadata could not be verified due to backend availability issues.
+        """
+        if self._backend == "none":
+            return owner_email
+
+        # Fast local cache path.
+        cached_owner = self._session_owners.get(session_id)
+        if cached_owner:
+            return cached_owner
+
+        if self._backend == "memory":
+            async with self._lock:
+                existing_owner = self._session_owners.get(session_id)
+                if existing_owner:
+                    return existing_owner
+                self._session_owners[session_id] = owner_email
+                return owner_email
+
+        if self._backend == "redis":
+            if not self._redis:
+                logger.warning("Redis client not initialized, using local session owner claim for %s", session_id)
+                async with self._lock:
+                    existing_owner = self._session_owners.get(session_id)
+                    if existing_owner:
+                        return existing_owner
+                    self._session_owners[session_id] = owner_email
+                    return owner_email
+
+            owner_key = self._session_owner_key(session_id)
+            try:
+                claimed = await self._redis.set(owner_key, owner_email, ex=self._session_ttl, nx=True)
+                if claimed:
+                    self._session_owners[session_id] = owner_email
+                    return owner_email
+
+                owner_raw = await self._redis.get(owner_key)
+                if owner_raw is not None:
+                    existing_owner = owner_raw.decode() if isinstance(owner_raw, bytes) else str(owner_raw)
+                    if existing_owner:
+                        self._session_owners[session_id] = existing_owner
+                        return existing_owner
+
+                # Handle key expiry/race window by retrying once.
+                claimed_retry = await self._redis.set(owner_key, owner_email, ex=self._session_ttl, nx=True)
+                if claimed_retry:
+                    self._session_owners[session_id] = owner_email
+                    return owner_email
+
+                owner_raw = await self._redis.get(owner_key)
+                if owner_raw is None:
+                    return None
+                existing_owner = owner_raw.decode() if isinstance(owner_raw, bytes) else str(owner_raw)
+                if existing_owner:
+                    self._session_owners[session_id] = existing_owner
+                    return existing_owner
+                return None
+            except Exception as e:
+                logger.error("Redis error claiming owner for session %s: %s", session_id, e)
+                return None
+
+        if self._backend == "database":
+            try:
+
+                def _db_claim_owner() -> Optional[str]:
+                    """Claim owner in DB with optimistic compare-and-set retries.
+
+                    Returns:
+                        Effective owner email or ``None`` when claim cannot be verified.
+                    """
+                    db_session = next(get_db())
+                    try:
+                        for _attempt in range(3):
+                            record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                            if not record:
+                                owner_payload = {"owner_email": owner_email}
+                                new_record = SessionRecord(session_id=session_id, data=orjson.dumps(owner_payload).decode())
+                                db_session.add(new_record)
+                                try:
+                                    db_session.commit()
+                                    return owner_email
+                                except Exception:
+                                    db_session.rollback()
+                                    # Another writer may have inserted concurrently. Retry.
+                                    continue
+
+                            record_data: Dict[str, Any] = {}
+                            if record.data:
+                                try:
+                                    parsed = orjson.loads(record.data)
+                                    if isinstance(parsed, dict):
+                                        record_data = parsed
+                                except Exception:
+                                    record_data = {}
+
+                            existing_owner = record_data.get("owner_email")
+                            if isinstance(existing_owner, str) and existing_owner:
+                                return existing_owner
+
+                            current_data = record.data
+                            updated_data = dict(record_data)
+                            updated_data["owner_email"] = owner_email
+                            serialized = orjson.dumps(updated_data).decode()
+
+                            update_query = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id)
+                            if current_data is None:
+                                update_query = update_query.filter(SessionRecord.data.is_(None))
+                            else:
+                                update_query = update_query.filter(SessionRecord.data == current_data)
+
+                            updated_rows = update_query.update({"data": serialized}, synchronize_session=False)
+                            if updated_rows == 1:
+                                db_session.commit()
+                                return owner_email
+
+                            db_session.rollback()
+
+                        return None
+                    finally:
+                        db_session.close()
+
+                claimed_owner = await asyncio.to_thread(_db_claim_owner)
+                if claimed_owner:
+                    self._session_owners[session_id] = claimed_owner
+                return claimed_owner
+            except Exception as e:
+                logger.error("Database error claiming owner for session %s: %s", session_id, e)
+                return None
+
+        return None
+
     async def get_session_owner(self, session_id: str) -> Optional[str]:
         """Get owner email for a session.
 
@@ -839,6 +982,58 @@ class SessionRegistry(SessionBackend):
                 return None
 
         return None
+
+    async def session_exists(self, session_id: str) -> Optional[bool]:
+        """Return whether a session marker exists.
+
+        Args:
+            session_id: Session identifier to resolve.
+
+        Returns:
+            ``True`` when session exists, ``False`` when session does not exist,
+            and ``None`` when existence cannot be verified due to backend errors.
+        """
+        if self._backend == "none":
+            return False
+
+        async with self._lock:
+            if session_id in self._sessions:
+                return True
+
+        if self._backend == "memory":
+            return False
+
+        if self._backend == "redis":
+            if not self._redis:
+                return None
+            try:
+                return bool(await self._redis.exists(f"mcp:session:{session_id}"))
+            except Exception as e:
+                logger.error("Redis error checking existence for session %s: %s", session_id, e)
+                return None
+
+        if self._backend == "database":
+            try:
+
+                def _db_exists() -> bool:
+                    """Check whether a session record exists in the database backend.
+
+                    Returns:
+                        ``True`` when a matching session record exists.
+                    """
+                    db_session = next(get_db())
+                    try:
+                        record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                        return record is not None
+                    finally:
+                        db_session.close()
+
+                return await asyncio.to_thread(_db_exists)
+            except Exception as e:
+                logger.error("Database error checking existence for session %s: %s", session_id, e)
+                return None
+
+        return False
 
     async def get_session(self, session_id: str) -> Any:
         """Get session transport by ID.

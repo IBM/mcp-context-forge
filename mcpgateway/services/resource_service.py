@@ -903,6 +903,9 @@ class ResourceService:
             if token_teams is not None:
                 team_ids = token_teams
             else:
+                if db is None:
+                    logger.warning("Missing database session for team-scoped resource access check")
+                    return False
                 # First-Party
                 from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
