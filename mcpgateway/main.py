@@ -440,6 +440,79 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
     return user_email, token_teams, is_admin
 
 
+def _has_verified_jwt_payload(request: Request) -> bool:
+    """Return whether request has a verified JWT payload cached in request.state."""
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    return bool(cached and isinstance(cached, tuple) and len(cached) == 2 and cached[1])
+
+
+def _get_request_identity(request: Request, user) -> tuple[str, bool]:
+    """Return requester email and admin state honoring scoped-token admin semantics."""
+    user_email, _token_teams, token_is_admin = _get_rpc_filter_context(request, user)
+    resolved_email = user_email or get_user_email(user)
+
+    # If a JWT payload exists, respect token-derived admin semantics (including
+    # public-only admin tokens where bypass is intentionally disabled).
+    if _has_verified_jwt_payload(request):
+        return resolved_email, token_is_admin
+
+    fallback_is_admin = False
+    if hasattr(user, "is_admin"):
+        fallback_is_admin = bool(getattr(user, "is_admin", False))
+    elif isinstance(user, dict):
+        fallback_is_admin = bool(user.get("is_admin", False) or user.get("user", {}).get("is_admin", False))
+
+    return resolved_email, token_is_admin or fallback_is_admin
+
+
+def _get_scoped_resource_access_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]]]:
+    """Resolve user_email/token_teams context with secure admin/public-only semantics."""
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    # Non-JWT admin contexts (for example basic-auth development mode) should
+    # keep unrestricted access semantics.
+    if not _has_verified_jwt_payload(request):
+        _requester_email, fallback_admin = _get_request_identity(request, user)
+        if fallback_admin:
+            return None, None
+
+    if is_admin and token_teams is None:
+        return None, None
+    if token_teams is None:
+        return user_email, []
+    return user_email, token_teams
+
+
+def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
+    """Build PermissionChecker user payload for method-level RPC permission checks."""
+    permission_user = dict(user) if isinstance(user, dict) else {"email": get_user_email(user)}
+    if not permission_user.get("email"):
+        permission_user["email"] = get_user_email(user)
+    permission_user["db"] = db
+    return permission_user
+
+
+async def _ensure_rpc_permission(user, db: Session, permission: str, method: str) -> None:
+    """Require a specific RPC permission for a method branch."""
+    checker = PermissionChecker(_build_rpc_permission_user(user, db))
+    if not await checker.has_permission(permission):
+        raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+
+
+async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
+    """Ensure session operations are limited to the owner unless requester is admin."""
+    session_owner = await session_registry.get_session_owner(session_id)
+    if not session_owner:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    requester_email, requester_is_admin = _get_request_identity(request, user)
+    if requester_is_admin:
+        return
+    if requester_email and requester_email == session_owner:
+        return
+    raise HTTPException(status_code=403, detail="Session access denied")
+
+
 async def _authorize_run_cancellation(request: Request, user, request_id: str, *, as_jsonrpc_error: bool) -> None:
     """Authorize a notifications/cancelled request for a specific run id.
 
@@ -2850,6 +2923,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
+        await session_registry.set_session_owner(transport.session_id, get_user_email(user))
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         # MUST be computed BEFORE create_sse_response to avoid race condition (Finding 1)
@@ -2948,6 +3022,8 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+
+        await _assert_session_owner_or_admin(request, user, session_id)
 
         message = await _read_request_json(request)
 
@@ -4522,7 +4598,7 @@ async def delete_resource(
 
 @resource_router.post("/subscribe")
 @require_permission("resources.read")
-async def subscribe_resource(user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(request: Request, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
@@ -4533,7 +4609,8 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
         StreamingResponse: A streaming response with event updates.
     """
     logger.debug(f"User {user} is subscribing to resource")
-    return StreamingResponse(resource_service.subscribe_events(), media_type="text/event-stream")
+    user_email, token_teams = _get_scoped_resource_access_context(request, user)
+    return StreamingResponse(resource_service.subscribe_events(user_email=user_email, token_teams=token_teams), media_type="text/event-stream")
 
 
 ###############
@@ -5457,6 +5534,7 @@ async def refresh_gateway_tools(
 ##############
 @root_router.get("", response_model=List[Root])
 @root_router.get("/", response_model=List[Root])
+@require_permission("admin.system_config")
 async def list_roots(
     user=Depends(get_current_user_with_permissions),
 ) -> List[Root]:
@@ -5761,6 +5839,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
             init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
+            requester_email, requester_is_admin = _get_request_identity(request, user)
+
+            if init_session_id:
+                existing_owner = await session_registry.get_session_owner(init_session_id)
+                if existing_owner and not requester_is_admin and requester_email != existing_owner:
+                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
+
+                if not existing_owner and requester_email:
+                    await session_registry.set_session_owner(init_session_id, requester_email)
+
             # Pass server_id to advertise OAuth capability if configured per RFC 9728
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
             if hasattr(result, "model_dump"):
@@ -5877,6 +5965,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if next_cursor:
                 result["nextCursor"] = next_cursor
         elif method == "list_roots":
+            await _ensure_rpc_permission(user, db, "admin.system_config", method)
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
@@ -5947,10 +6036,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             uri = params.get("uri")
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            access_user_email, access_token_teams = _get_scoped_resource_access_context(request, user)
             # Get user email for subscriber ID
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
-            await resource_service.subscribe_resource(db, subscription)
+            try:
+                await resource_service.subscribe_resource(db, subscription, user_email=access_user_email, token_teams=access_token_teams)
+            except PermissionError:
+                raise JSONRPCError(-32003, "Insufficient permissions for resource subscription", {"uri": uri})
             db.commit()
             db.close()
             result = {}
@@ -6154,6 +6247,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
         elif method == "roots/list":
             # MCP spec-compliant method name
+            await _ensure_rpc_permission(user, db, "admin.system_config", method)
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
@@ -6286,13 +6380,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "logging/setLevel":
             # MCP spec-compliant logging endpoint
-            permission_user = dict(user) if isinstance(user, dict) else {"email": get_user_email(user)}
-            if not permission_user.get("email"):
-                permission_user["email"] = get_user_email(user)
-            permission_user["db"] = db
-            checker = PermissionChecker(permission_user)
-            if not await checker.has_permission("admin.system_config"):
-                raise JSONRPCError(-32003, "Insufficient permissions. Required: admin.system_config", {"method": method})
+            await _ensure_rpc_permission(user, db, "admin.system_config", method)
             level = LogLevel(params.get("level"))
             await logging_service.set_level(level)
             result = {}
@@ -6375,7 +6463,7 @@ _WS_RELAY_REQUIRED_PERMISSIONS = [
 
 
 def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
-    """Extract bearer token from WebSocket query params or headers.
+    """Extract bearer token from WebSocket Authorization headers.
 
     Args:
         websocket: Incoming WebSocket connection.
@@ -6545,6 +6633,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
+        await session_registry.set_session_owner(transport.session_id, get_user_email(user))
 
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
@@ -6642,6 +6731,8 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+
+        await _assert_session_owner_or_admin(request, user, session_id)
 
         message = await _read_request_json(request)
 

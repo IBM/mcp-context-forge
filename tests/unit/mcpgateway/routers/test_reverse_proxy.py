@@ -540,8 +540,8 @@ class TestWebSocketAuthentication:
         mock_websocket.accept.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_websocket_accepts_with_valid_query_token(self, mock_websocket):
-        """Test WebSocket accepts connection with valid JWT token from query params."""
+    async def test_websocket_rejects_query_token_auth(self, mock_websocket):
+        """Query-string bearer tokens must be rejected for reverse-proxy WebSocket auth."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}  # No Authorization header
         mock_websocket.query_params = {"token": "valid-token"}
         mock_websocket.receive_text.side_effect = asyncio.CancelledError()
@@ -567,7 +567,8 @@ class TestWebSocketAuthentication:
                 except asyncio.CancelledError:
                     pass
 
-        mock_websocket.accept.assert_called_once()
+        mock_websocket.accept.assert_not_called()
+        mock_websocket.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_websocket_accepts_proxy_auth(self, mock_websocket):
@@ -899,6 +900,16 @@ class TestGetUserFromCredentials:
         websocket.headers = {"authorization": "bearer lower-case-token"}
 
         assert rp._get_websocket_bearer_token(websocket) == "lower-case-token"
+
+    def test_get_websocket_bearer_token_ignores_query_token(self):
+        """Reverse-proxy WebSocket token parser should ignore query-string tokens."""
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {"token": "legacy-token"}
+        websocket.headers = {}
+
+        assert rp._get_websocket_bearer_token(websocket) is None
 
     @pytest.mark.asyncio
     async def test_authenticate_reverse_proxy_websocket_denies_without_permissions(self):

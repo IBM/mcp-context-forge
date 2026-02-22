@@ -1985,7 +1985,8 @@ class ResourceSubscription(BaseModelWithConfigDict):
 
         Ensures the subscriber ID:
         - Is not empty
-        - Contains only alphanumeric characters, underscores, hyphens, and dots
+        - Contains only safe identifier characters
+        - Allows email-style IDs for authenticated subscribers
         - Does not contain HTML special characters
         - Follows standard identifier naming conventions
         - Does not exceed maximum length (255 characters)
@@ -2002,6 +2003,17 @@ class ResourceSubscription(BaseModelWithConfigDict):
         Raises:
             ValueError: If the subscriber ID violates naming conventions
         """
+        if not v:
+            raise ValueError("Subscriber ID cannot be empty")
+
+        # Allow email-like subscriber IDs while keeping strict character controls.
+        if re.match(r"^[A-Za-z0-9_.@+-]+$", v):
+            if re.search(SecurityValidator.VALIDATION_UNSAFE_URI_PATTERN, v):
+                raise ValueError("Subscriber ID cannot contain HTML special characters")
+            if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+                raise ValueError(f"Subscriber ID exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+            return v
+
         return SecurityValidator.validate_identifier(v, "Subscriber ID")
 
 

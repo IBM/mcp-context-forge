@@ -1200,6 +1200,23 @@ class TestResourceSubscriptions:
         assert "exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_subscribe_resource_denied_when_visibility_check_fails(self, resource_service, mock_db, mock_resource):
+        """Subscription should be denied when the requester cannot access the resource."""
+        subscription = ResourceSubscription(uri="http://example.com/resource", subscriber_id="subscriber1")
+
+        mock_resource.visibility = "private"
+        mock_resource.owner_email = "owner@example.com"
+
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+
+        with pytest.raises(PermissionError):
+            await resource_service.subscribe_resource(mock_db, subscription, user_email="other@example.com", token_teams=[])
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_unsubscribe_resource_success(self, resource_service, mock_db, mock_resource):
         """Test successful resource unsubscription."""
         subscription = ResourceSubscription(uri="test://resource", subscriber_id="subscriber1")
@@ -1265,6 +1282,63 @@ class TestResourceSubscriptions:
 
         assert event["type"] == "resource_created"
         resource_service._event_service.subscribe_events.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_filters_private_events_for_non_owner(self, resource_service):
+        """Scoped subscriptions should not receive private events for other users."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://private",
+                    "visibility": "private",
+                    "owner_email": "owner@example.com",
+                    "team_id": None,
+                },
+            }
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://public",
+                    "visibility": "public",
+                    "owner_email": None,
+                    "team_id": None,
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="other@example.com", token_teams=[]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_allows_team_events_for_member_scope(self, resource_service):
+        """Scoped team subscribers should receive team-visible events for their teams."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://team",
+                    "visibility": "team",
+                    "owner_email": None,
+                    "team_id": "team-1",
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="member@example.com", token_teams=["team-1"]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://team"
 
 
 # --------------------------------------------------------------------------- #

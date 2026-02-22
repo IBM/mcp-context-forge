@@ -76,22 +76,22 @@ logger = logging_service.get_logger(__name__)
 
 
 def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_param_warning: Optional[str] = None) -> Optional[str]:
-    """Extract bearer token from WebSocket query params or Authorization headers.
+    """Extract bearer token from WebSocket Authorization headers.
 
     Args:
         query_params: WebSocket query parameters mapping-like object.
         headers: WebSocket headers mapping-like object.
-        query_param_warning: Optional warning message when query token is used.
+        query_param_warning: Optional warning message when legacy query token is detected.
 
     Returns:
         Bearer token value when present, otherwise None.
     """
+    # Do not accept tokens from query parameters. This avoids leaking bearer
+    # secrets through URL logs/history/proxy telemetry.
     query = query_params or {}
-    token = query.get("token") if hasattr(query, "get") else None
-    if token:
-        if query_param_warning:
-            logger.warning(query_param_warning)
-        return token
+    legacy_token = query.get("token") if hasattr(query, "get") else None
+    if legacy_token and query_param_warning:
+        logger.warning(f"{query_param_warning}; token ignored")
 
     header_values = headers or {}
     auth_header = header_values.get("authorization") if hasattr(header_values, "get") else None

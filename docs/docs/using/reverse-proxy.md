@@ -237,6 +237,7 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
 
 - Always use authentication tokens in production
 - Tokens should have appropriate expiration times
+- WebSocket auth accepts bearer tokens from the `Authorization` header only (`?token=` query auth is not supported)
 - Consider using mutual TLS for additional security
 
 ### Network Security

@@ -1135,10 +1135,10 @@ class TestResourceEndpoints:
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
-        resource_id = MOCK_RESOURCE_READ["id"]
-        response = test_client.post(f"/resources/subscribe", headers=auth_headers)
+        response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
 
 
 # ----------------------------------------------------- #
@@ -1523,6 +1523,23 @@ class TestRootEndpoints:
         assert len(data) == 1
         mock_list.assert_called_once()
 
+    def test_list_roots_endpoint_requires_admin_permission(self, test_client, auth_headers):
+        """Root listing should require admin.system_config permission."""
+        from mcpgateway.main import app
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def non_admin_user(_request=None, _credentials=None, _jwt_token=None):
+            return {"email": "non-admin@example.com", "is_admin": False}
+
+        app.dependency_overrides[get_current_user_with_permissions] = non_admin_user
+        try:
+            client = TestClient(app)
+            with patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new=AsyncMock(return_value=False)):
+                response = client.get("/roots/", headers=auth_headers)
+        finally:
+            app.dependency_overrides.pop(get_current_user_with_permissions, None)
+        assert response.status_code == 403
+
     @patch("mcpgateway.main.root_service.add_root")
     def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
         """Test adding a new root directory."""
@@ -1841,6 +1858,21 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["roots"][0]["uri"] == "root://1"
 
+    @patch("mcpgateway.main.PermissionChecker.has_permission", new_callable=AsyncMock, return_value=False)
+    def test_rpc_list_roots_requires_admin_permission(self, _mock_permission, test_client, auth_headers):
+        """list_roots RPC must enforce admin.system_config permission."""
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "list_roots",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+        assert "admin.system_config" in body["error"]["message"]
+
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
@@ -1992,6 +2024,15 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         assert response.json()["result"]["roots"][0]["uri"] == "root://2"
 
+    @patch("mcpgateway.main.PermissionChecker.has_permission", new_callable=AsyncMock, return_value=False)
+    def test_rpc_roots_list_requires_admin_permission(self, _mock_permission, test_client, auth_headers):
+        """roots/list RPC must enforce admin.system_config permission."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "roots/list", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+
     def test_rpc_roots_other_method(self, test_client, auth_headers):
         """Test roots/* catch-all JSON-RPC method."""
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "roots/remove", "params": {}}
@@ -2098,7 +2139,8 @@ class TestRealtimeEndpoints:
     def test_message_endpoint(self, mock_broadcast, test_client, auth_headers):
         """Test message broadcasting to SSE sessions."""
         message = {"type": "test", "data": "hello"}
-        response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
+        with patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="test_user@example.com")):
+            response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
         assert response.status_code == 202
         mock_broadcast.assert_called_once()
 
@@ -2106,8 +2148,19 @@ class TestRealtimeEndpoints:
     def test_message_endpoint_invalid_payload(self, mock_read, test_client, auth_headers):
         """Test message endpoint invalid JSON handling."""
         mock_read.side_effect = ValueError("Invalid payload")
-        response = test_client.post("/message?session_id=test-session", json={"bad": True}, headers=auth_headers)
+        with patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="test_user@example.com")):
+            response = test_client.post("/message?session_id=test-session", json={"bad": True}, headers=auth_headers)
         assert response.status_code == 400
+
+    def test_message_endpoint_rejects_non_owner(self, test_client, auth_headers):
+        """Message endpoint should reject writes to sessions owned by another user."""
+        message = {"type": "test", "data": "hello"}
+        with (
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="other@example.com")),
+            patch("mcpgateway.main._get_request_identity", return_value=("test_user@example.com", False)),
+        ):
+            response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 403
 
     @pytest.mark.asyncio
     async def test_websocket_forwards_auth_token_to_rpc(self, monkeypatch):

@@ -2536,5 +2536,28 @@ class TestOauthConfigScopesBranch:
         assert result["oauth"]["bearer_methods_supported"] == ["header"]
 
 
+class TestSessionOwnerTracking:
+    """Cover session owner set/get lifecycle for message authorization."""
+
+    @pytest.mark.asyncio
+    async def test_set_and_get_session_owner_memory_backend(self, registry):
+        tr = FakeSSETransport("owner-1")
+        await registry.add_session("owner-1", tr)
+
+        await registry.set_session_owner("owner-1", "owner@example.com")
+        owner = await registry.get_session_owner("owner-1")
+        assert owner == "owner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_remove_session_clears_session_owner(self, registry):
+        tr = FakeSSETransport("owner-2")
+        await registry.add_session("owner-2", tr)
+        await registry.set_session_owner("owner-2", "owner@example.com")
+
+        await registry.remove_session("owner-2")
+        owner = await registry.get_session_owner("owner-2")
+        assert owner is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

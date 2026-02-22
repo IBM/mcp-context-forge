@@ -297,6 +297,7 @@ class SessionRegistry(SessionBackend):
         """
         super().__init__(backend=backend, redis_url=redis_url, database_url=database_url, session_ttl=session_ttl, message_ttl=message_ttl)
         self._sessions: Dict[str, Any] = {}  # Local transport cache
+        self._session_owners: Dict[str, str] = {}  # Session owner email by session_id
         self._client_capabilities: Dict[str, Dict[str, Any]] = {}  # Client capabilities by session_id
         self._respond_tasks: Dict[str, asyncio.Task] = {}  # Track respond tasks for cancellation
         self._stuck_tasks: Dict[str, asyncio.Task] = {}  # Tasks that couldn't be cancelled (for monitoring)
@@ -692,6 +693,131 @@ class SessionRegistry(SessionBackend):
 
         logger.info(f"Added session: {session_id}")
 
+    def _session_owner_key(self, session_id: str) -> str:
+        """Return Redis key used to store session ownership."""
+        return f"mcp:session_owner:{session_id}"
+
+    async def set_session_owner(self, session_id: str, owner_email: Optional[str]) -> None:
+        """Set or clear owner for a session.
+
+        Args:
+            session_id: Session identifier to update.
+            owner_email: Owner email to set. Passing ``None`` clears ownership.
+        """
+        # Skip for none backend
+        if self._backend == "none":
+            return
+
+        if owner_email:
+            self._session_owners[session_id] = owner_email
+        else:
+            self._session_owners.pop(session_id, None)
+
+        if self._backend == "redis":
+            if not self._redis:
+                logger.warning(f"Redis client not initialized, cannot set owner for session {session_id}")
+                return
+            try:
+                owner_key = self._session_owner_key(session_id)
+                if owner_email:
+                    await self._redis.setex(owner_key, self._session_ttl, owner_email)
+                else:
+                    await self._redis.delete(owner_key)
+            except Exception as e:
+                logger.error(f"Redis error setting owner for session {session_id}: {e}")
+
+        elif self._backend == "database":
+            try:
+
+                def _db_set_owner() -> None:
+                    db_session = next(get_db())
+                    try:
+                        record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                        if not record:
+                            record = SessionRecord(session_id=session_id, data=None)
+                            db_session.add(record)
+                            db_session.flush()
+
+                        record_data: Dict[str, Any] = {}
+                        if record.data:
+                            try:
+                                parsed = orjson.loads(record.data)
+                                if isinstance(parsed, dict):
+                                    record_data = parsed
+                            except Exception:
+                                record_data = {}
+
+                        if owner_email:
+                            record_data["owner_email"] = owner_email
+                        else:
+                            record_data.pop("owner_email", None)
+
+                        record.data = orjson.dumps(record_data).decode() if record_data else None
+                        db_session.commit()
+                    except Exception as ex:
+                        db_session.rollback()
+                        raise ex
+                    finally:
+                        db_session.close()
+
+                await asyncio.to_thread(_db_set_owner)
+            except Exception as e:
+                logger.error(f"Database error setting owner for session {session_id}: {e}")
+
+    async def get_session_owner(self, session_id: str) -> Optional[str]:
+        """Get owner email for a session."""
+        owner = self._session_owners.get(session_id)
+        if owner:
+            return owner
+
+        if self._backend == "redis":
+            if not self._redis:
+                return None
+            try:
+                owner_raw = await self._redis.get(self._session_owner_key(session_id))
+                if owner_raw is None:
+                    return None
+                if isinstance(owner_raw, bytes):
+                    owner = owner_raw.decode()
+                else:
+                    owner = str(owner_raw)
+                if owner:
+                    self._session_owners[session_id] = owner
+                return owner or None
+            except Exception as e:
+                logger.error(f"Redis error getting owner for session {session_id}: {e}")
+                return None
+
+        if self._backend == "database":
+            try:
+
+                def _db_get_owner() -> Optional[str]:
+                    db_session = next(get_db())
+                    try:
+                        record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                        if not record or not record.data:
+                            return None
+                        try:
+                            data = orjson.loads(record.data)
+                        except Exception:
+                            return None
+                        if not isinstance(data, dict):
+                            return None
+                        owner_email = data.get("owner_email")
+                        return owner_email if isinstance(owner_email, str) and owner_email else None
+                    finally:
+                        db_session.close()
+
+                owner = await asyncio.to_thread(_db_get_owner)
+                if owner:
+                    self._session_owners[session_id] = owner
+                return owner
+            except Exception as e:
+                logger.error(f"Database error getting owner for session {session_id}: {e}")
+                return None
+
+        return None
+
     async def get_session(self, session_id: str) -> Any:
         """Get session transport by ID.
 
@@ -837,6 +963,7 @@ class SessionRegistry(SessionBackend):
             async with self._lock:
                 if session_id in self._sessions:
                     transport = self._sessions.pop(session_id)
+                self._session_owners.pop(session_id, None)
                 # Also clean up client capabilities
                 if session_id in self._client_capabilities:
                     self._client_capabilities.pop(session_id)
@@ -858,6 +985,7 @@ class SessionRegistry(SessionBackend):
                 return
             try:
                 await self._redis.delete(f"mcp:session:{session_id}")
+                await self._redis.delete(self._session_owner_key(session_id))
                 # Notify other workers
                 await self._redis.publish("mcp_session_events", orjson.dumps({"type": "remove", "session_id": session_id, "timestamp": time.time()}))
             except Exception as e:

@@ -2520,7 +2520,10 @@ class TestUtilityFunctions:
         assert response.status_code == 400  # Should require session_id parameter
 
         # Test with valid session_id
-        with patch("mcpgateway.main.session_registry.broadcast") as mock_broadcast:
+        with (
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="test_user@example.com")),
+            patch("mcpgateway.main.session_registry.broadcast") as mock_broadcast,
+        ):
             response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
             assert response.status_code == 202
             mock_broadcast.assert_called_once()
@@ -2637,6 +2640,16 @@ class TestUtilityFunctions:
         websocket.headers = {"authorization": "bearer test-token"}
 
         assert main_mod._get_websocket_bearer_token(websocket) == "test-token"
+
+    def test_get_websocket_bearer_token_ignores_query_param(self):
+        """Query-string tokens should not be accepted for WebSocket auth."""
+        import mcpgateway.main as main_mod
+
+        websocket = MagicMock()
+        websocket.query_params = {"token": "legacy-token"}
+        websocket.headers = {}
+
+        assert main_mod._get_websocket_bearer_token(websocket) is None
 
     @pytest.mark.asyncio
     async def test_authenticate_websocket_user_wraps_unexpected_auth_errors(self, monkeypatch):
@@ -3495,6 +3508,23 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert result["result"]["gateways"][0]["id"] == "gw-1"
 
+    async def test_handle_rpc_list_roots_requires_admin_permission(self):
+        payload = {"jsonrpc": "2.0", "id": "roots-1", "method": "list_roots", "params": {}}
+        request = self._make_request(payload)
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32003
+            assert "admin.system_config" in result["error"]["message"]
+
+    async def test_handle_rpc_roots_list_requires_admin_permission(self):
+        payload = {"jsonrpc": "2.0", "id": "roots-2", "method": "roots/list", "params": {}}
+        request = self._make_request(payload)
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32003
+
     async def test_handle_rpc_resources_read_missing_uri(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {}}
         request = self._make_request(payload)
@@ -3555,6 +3585,22 @@ class TestRpcHandling:
         request_unsub = self._make_request(payload_unsub)
         with patch("mcpgateway.main.resource_service.unsubscribe_resource", new=AsyncMock(return_value=None)):
             result = await handle_rpc(request_unsub, db=MagicMock(), user="user")
+            assert result["result"] == {}
+
+    async def test_handle_rpc_resources_subscribe_permission_denied(self):
+        payload = {"jsonrpc": "2.0", "id": "4a", "method": "resources/subscribe", "params": {"uri": "resource://two"}}
+        request = self._make_request(payload)
+
+        with patch("mcpgateway.main.resource_service.subscribe_resource", new=AsyncMock(side_effect=PermissionError("denied"))):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32003
+
+    async def test_handle_rpc_resources_subscribe_accepts_email_subscriber_id(self):
+        payload = {"jsonrpc": "2.0", "id": "4b", "method": "resources/subscribe", "params": {"uri": "resource://two"}}
+        request = self._make_request(payload)
+
+        with patch("mcpgateway.main.resource_service.subscribe_resource", new=AsyncMock(return_value=None)):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user+alerts@example.com"})
             assert result["result"] == {}
 
     async def test_handle_rpc_prompts_list_and_get(self):
@@ -4076,6 +4122,8 @@ class TestRpcHandling:
         init_result = MagicMock()
         init_result.model_dump.return_value = {"capabilities": {}}
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
+        monkeypatch.setattr("mcpgateway.main.session_registry.set_session_owner", AsyncMock(return_value=None))
 
         pool = MagicMock()
         pool.register_pool_session_owner = AsyncMock(return_value=None)
@@ -4089,6 +4137,32 @@ class TestRpcHandling:
         with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["capabilities"] == {}
+
+    async def test_handle_rpc_initialize_rejects_session_owner_mismatch(self, monkeypatch):
+        payload = {"jsonrpc": "2.0", "id": "aff-init-deny", "method": "initialize", "params": {"session_id": "init-1"}}
+        request = self._make_request(payload)
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="other@example.com"))
+        monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=MagicMock()))
+
+        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32003
+        assert "ownership mismatch" in result["error"]["message"].lower()
+
+    async def test_handle_rpc_initialize_claims_unowned_session(self, monkeypatch):
+        payload = {"jsonrpc": "2.0", "id": "aff-init-claim", "method": "initialize", "params": {"session_id": "init-2"}}
+        request = self._make_request(payload)
+
+        init_result = MagicMock()
+        init_result.model_dump.return_value = {"capabilities": {}}
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value=None))
+        set_owner = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.main.session_registry.set_session_owner", set_owner)
+        monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))
+
+        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        assert result["result"]["capabilities"] == {}
+        set_owner.assert_awaited_once_with("init-2", "user@example.com")
 
     async def test_handle_rpc_list_tools_legacy_token_teams_none_becomes_public_only(self):
         """Cover legacy list_tools branch when token_teams is explicitly None for non-admin."""
@@ -4445,6 +4519,7 @@ class TestMessageEndpointElicitation:
         elicitation_service = MagicMock()
         elicitation_service.complete_elicitation.return_value = True
         monkeypatch.setattr("mcpgateway.services.elicitation_service.get_elicitation_service", lambda: elicitation_service)
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
 
         broadcast = AsyncMock()
         monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
@@ -4465,6 +4540,7 @@ class TestMessageEndpointElicitation:
         request = MagicMock(spec=Request)
         request.query_params = {"session_id": "session-1"}
 
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
         monkeypatch.setattr("mcpgateway.main._read_request_json", AsyncMock(side_effect=ValueError("bad")))
         with pytest.raises(HTTPException) as excinfo:
             await message_endpoint(request, "server-1", user={"email": "user@example.com"})
@@ -4478,6 +4554,7 @@ class TestMessageEndpointElicitation:
         elicitation_service = MagicMock()
         elicitation_service.complete_elicitation.return_value = True
         monkeypatch.setattr("mcpgateway.services.elicitation_service.get_elicitation_service", lambda: elicitation_service)
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
 
         broadcast = AsyncMock()
         monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
@@ -4494,6 +4571,7 @@ class TestMessageEndpointElicitation:
         elicitation_service = MagicMock()
         elicitation_service.complete_elicitation.return_value = False
         monkeypatch.setattr("mcpgateway.services.elicitation_service.get_elicitation_service", lambda: elicitation_service)
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
 
         broadcast = AsyncMock()
         monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
@@ -4501,6 +4579,17 @@ class TestMessageEndpointElicitation:
         response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
         assert response.status_code == 202
         broadcast.assert_awaited_once()
+
+    async def test_message_endpoint_rejects_non_owner(self, monkeypatch):
+        request = MagicMock(spec=Request)
+        request.query_params = {"session_id": "session-1"}
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="other@example.com"))
+        monkeypatch.setattr("mcpgateway.main._read_request_json", AsyncMock(return_value={"hello": "world"}))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 403
 
 
 class TestRemainingCoverageGaps:
@@ -4994,6 +5083,7 @@ class TestRemainingCoverageGaps:
         request = MagicMock(spec=Request)
         request.query_params = {"session_id": "session-1"}
 
+        monkeypatch.setattr(main_mod.session_registry, "get_session_owner", AsyncMock(return_value="u"))
         monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value={"hello": "world"}))
         monkeypatch.setattr(main_mod.session_registry, "broadcast", AsyncMock(side_effect=RuntimeError("boom")))
 
