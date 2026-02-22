@@ -1340,6 +1340,62 @@ class TestResourceSubscriptions:
         assert len(events) == 1
         assert events[0]["data"]["uri"] == "resource://team"
 
+    @pytest.mark.asyncio
+    async def test_check_resource_access_team_without_db_fails_closed(self, resource_service):
+        """Team-scoped access checks should fail closed when DB context is missing."""
+        resource = MagicMock()
+        resource.visibility = "team"
+        resource.team_id = "team-1"
+        resource.owner_email = None
+
+        allowed = await resource_service._check_resource_access(
+            db=None,
+            resource=resource,
+            user_email="member@example.com",
+            token_teams=None,
+        )
+        assert allowed is False
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_ignores_malformed_event_data(self, resource_service):
+        """Malformed event payloads should be ignored by scoped subscriptions."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": "not-a-dict"}
+            yield {"type": "resource_updated", "data": {"uri": "resource://public", "visibility": "public"}}
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="user@example.com", token_teams=[]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_user_with_none_token_teams_fails_closed(self, resource_service):
+        """User-scoped subscriptions with missing token_teams should normalize to public-only."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://team",
+                    "visibility": "team",
+                    "team_id": "team-1",
+                    "owner_email": None,
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="member@example.com", token_teams=None):
+            events.append(event)
+
+        assert events == []
+
 
 # --------------------------------------------------------------------------- #
 # Template tests                                                              #
