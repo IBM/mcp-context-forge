@@ -1,0 +1,31 @@
+{
+  "deny_word_lists": [
+    {
+      "name": "random_words_10",
+      "words": [
+        "abracadabra",
+        "hocuspocus",
+        "eureka",
+        "jumbo",
+        "voodoo",
+        "juju",
+        "mojo",
+        "nirvana",
+        "chakra",
+        "voila"
+      ]
+    }
+  ],
+  "sample_texts": [
+    {
+      "name": "random_text_1000",
+      "text": "The morning sun rose over the distant mountains casting golden rays across the peaceful valley below. Birds sang their melodious songs from the branches of ancient oak trees that had witnessed countless seasons pass. A gentle breeze carried the sweet fragrance of wildflowers that bloomed in vibrant colors throughout the meadow. The river flowed steadily through the landscape creating a soothing rhythm that calmed the mind and spirit. Travelers walked along the winding path sharing stories of their journeys and adventures in faraway lands. The village marketplace bustled with activity as merchants displayed their finest goods and craftspeople demonstrated their skills. Children played games in the town square while elders sat on wooden benches exchanging wisdom and memories from years gone by. The baker prepared fresh loaves of bread filling the air with an irresistible aroma that drew hungry customers to his shop. Farmers brought their harvest from the fields offering fresh vegetables and fruits that reflected the bounty of the season. The blacksmith hammered metal into useful tools and decorative items that would serve the community for years to come. Musicians gathered in the evening to play traditional tunes that had been passed down through generations. Dancers moved gracefully to the rhythms creating patterns that told stories without words. The library housed countless volumes of knowledge collected over centuries providing resources for scholars and curious minds alike. Teachers guided students through lessons helping them discover new ideas and develop their talents. Artists painted landscapes and portraits capturing the beauty of nature and the essence of human expression. The town hall served as a gathering place where citizens discussed important matters and made decisions that affected everyone. Festivals celebrated the changing seasons bringing people together in joyful celebration and shared gratitude. The night sky revealed countless stars that sparkled like diamonds against the dark canvas above. Astronomers studied the celestial bodies seeking to understand the mysteries of the universe and our place within it. Philosophers pondered questions about existence meaning and the nature of reality itself. Historians recorded events ensuring that future generations would learn from the past and build upon the foundations laid by their ancestors. The community thrived through cooperation mutual respect and a shared commitment to creating a better world for all who called this place home.",
+      "should_block": false
+    },
+    {
+      "name": "random_text_block_1000",
+      "text": "The morning sun rose over the distant mountains casting golden rays across the peaceful valley below. Birds sang their melodious songs from the branches of ancient oak trees that had witnessed countless seasons pass. A gentle breeze carried the sweet fragrance of wildflowers that bloomed in vibrant colors throughout the meadow. The river flowed steadily through the landscape creating a soothing rhythm that calmed the mind and spirit. Travelers walked along the winding path sharing stories of their journeys and adventures in faraway lands. The village marketplace bustled with activity as merchants displayed their finest goods and craftspeople demonstrated their skills. Children played games in the town square while elders sat on wooden benches exchanging wisdom and memories from years gone by. The baker prepared fresh loaves of bread filling the air with an irresistible aroma that drew hungry customers to his shop. Farmers brought their harvest from the fields offering fresh vegetables and fruits that reflected the bounty of the season. The blacksmith hammered metal into useful tools and decorative items that would serve the community for years to come. Musicians gathered in the evening to play traditional tunes that had been passed down through generations. Dancers moved gracefully to the rhythms creating patterns that told stories without words. The library housed countless volumes of knowledge collected over centuries providing resources for scholars and curious minds alike. Teachers guided students through lessons helping them discover new ideas and develop their talents. Artists painted landscapes and portraits capturing the beauty of nature and the essence of human expression. The town hall served as a gathering place where citizens discussed important matters and made decisions that affected everyone. Festivals celebrated the changing seasons bringing people together in joyful celebration and shared gratitude. The night sky revealed countless stars that sparkled like diamonds against the dark canvas above. Astronomers studied the celestial bodies seeking to understand the mysteries of the universe and our place within it. Philosophers pondered questions about existence meaning and the nature of reality itself. Historians recorded events ensuring that future generations would learn from the past and build upon the foundations laid by their ancestors. The community thrived through cooperation mutual respect and a shared commitment to creating a better world for all who called this place home. voila.",
+      "should_block": true
+    }
+  ]
+}

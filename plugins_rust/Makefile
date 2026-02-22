@@ -46,23 +46,23 @@ help: ## Show this help message
 # Build targets (workspace aggregate)
 build: ## Build workspace aggregate module (plugins_rust)
 	@echo "$(GREEN)Building workspace module (plugins_rust)...$(NC)"
-	maturin build --release
+	uv run maturin build --release
 
 build-debug: ## Build workspace module (debug)
 	@echo "$(YELLOW)Building workspace module (debug)...$(NC)"
-	maturin build
+	uv run maturin build
 
 dev: ## Build and install workspace module (plugins_rust) in development mode
 	@echo "$(GREEN)Building and installing workspace module (plugins_rust)...$(NC)"
-	maturin develop --release
+	uv run maturin develop --release
 
 dev-debug: ## Build and install workspace module (debug) in development mode
 	@echo "$(YELLOW)Building workspace module (debug)...$(NC)"
-	maturin develop
+	uv run maturin develop
 
 install: ## Build and install workspace module (uses maturin develop)
 	@echo "$(GREEN)Installing workspace module...$(NC)"
-	maturin develop --release
+	uv run maturin develop --release
 	@echo "$(GREEN)Verifying installation...$(NC)"
 	@python -c "import plugins_rust; import os; import time; stat = os.stat(plugins_rust.__file__); print('✓ plugins_rust installed at:', plugins_rust.__file__); print('✓ Version:', getattr(plugins_rust, '__version__', 'unknown')); print('✓ Install time:', time.ctime(stat.st_mtime))" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
 	@echo "$(GREEN)Installation verified successfully!$(NC)"
