@@ -145,8 +145,8 @@ services:
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # WebSocket transport features (disabled by default; opt-in only)
-      - MCPGATEWAY_WS_RELAY_ENABLED=false
-      - MCPGATEWAY_REVERSE_PROXY_ENABLED=false
+      - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
+      - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
       # Local compose profile: allow local/private upstream URLs used by bundled test services.
       # Production deployments should override these to stricter values.
       - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
