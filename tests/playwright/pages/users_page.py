@@ -177,10 +177,17 @@ class UsersPage(BasePage):
     def reload_and_navigate_to_users(self) -> None:
         """Reload the page so the users list is refreshed.
 
-        The HTMX in-place refresh does not update the UI reliably, so
-        we wait for any pending JS navigation, then load admin directly
-        on the users hash to force a fresh users-partial fetch.
+        Waits for any in-flight HTMX requests to settle before reloading,
+        then loads admin directly on the users hash to force a fresh
+        users-partial fetch.
         """
+        try:
+            self.page.wait_for_function(
+                "() => !document.querySelector('.htmx-request')",
+                timeout=10000,
+            )
+        except PlaywrightTimeoutError:
+            pass  # Proceed with reload even if HTMX requests are still pending
         self.page.wait_for_load_state("domcontentloaded")
         self.page.goto("/admin#users", wait_until="domcontentloaded")
         self.wait_for_users_loaded()
