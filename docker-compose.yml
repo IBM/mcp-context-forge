@@ -144,6 +144,9 @@ services:
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      # WebSocket transport features (disabled by default; opt-in only)
+      - MCPGATEWAY_WS_RELAY_ENABLED=false
+      - MCPGATEWAY_REVERSE_PROXY_ENABLED=false
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp

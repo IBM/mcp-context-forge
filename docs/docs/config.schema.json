@@ -1,5 +1,5 @@
 {
-  "description": "ContextForge configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'ContextForge'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True\n    >>> s6 = Settings(log_detailed_skip_endpoints=[\"/metrics\", \"/health\"])\n    >>> s6.log_detailed_skip_endpoints\n    ['/metrics', '/health']\n    >>> s7 = Settings(log_detailed_sample_rate=0.5)\n    >>> s7.log_detailed_sample_rate\n    0.5\n    >>> s8 = Settings(log_resolve_user_identity=True)\n    >>> s8.log_resolve_user_identity\n    True\n    >>> s9 = Settings()\n    >>> s9.log_detailed_skip_endpoints\n    []\n    >>> s9.log_detailed_sample_rate\n    1.0\n    >>> s9.log_resolve_user_identity\n    False",
+  "description": "ContextForge AI Gateway configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'ContextForge'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True\n    >>> s6 = Settings(log_detailed_skip_endpoints=[\"/metrics\", \"/health\"])\n    >>> s6.log_detailed_skip_endpoints\n    ['/metrics', '/health']\n    >>> s7 = Settings(log_detailed_sample_rate=0.5)\n    >>> s7.log_detailed_sample_rate\n    0.5\n    >>> s8 = Settings(log_resolve_user_identity=True)\n    >>> s8.log_resolve_user_identity\n    True\n    >>> s9 = Settings()\n    >>> s9.log_detailed_skip_endpoints\n    []\n    >>> s9.log_detailed_sample_rate\n    1.0\n    >>> s9.log_resolve_user_identity\n    False",
   "properties": {
     "app_name": {
       "default": "ContextForge",
@@ -63,7 +63,7 @@
       "type": "string"
     },
     "protocol_version": {
-      "default": "2025-06-18",
+      "default": "2025-11-25",
       "title": "Protocol Version",
       "type": "string"
     },
@@ -730,6 +730,19 @@
       "default": null,
       "description": "OIDC issuer URL",
       "title": "Sso Generic Issuer"
+    },
+    "sso_generic_jwks_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC JWKS endpoint URL for token signature verification",
+      "title": "Sso Generic Jwks Uri"
     },
     "sso_generic_scope": {
       "anyOf": [
@@ -1700,8 +1713,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost",
-        "http://localhost:4444"
+        "http://localhost:4444",
+        "http://localhost"
       ],
       "items": {
         "type": "string"
@@ -2253,6 +2266,20 @@
       "title": "Security Rate Limit Window Minutes",
       "type": "integer"
     },
+    "token_usage_logging_enabled": {
+      "default": true,
+      "description": "Enable API token usage logging middleware",
+      "title": "Token Usage Logging Enabled",
+      "type": "boolean"
+    },
+    "token_last_used_update_interval_minutes": {
+      "default": 5,
+      "description": "Minimum minutes between last_used timestamp updates (rate-limits DB writes)",
+      "maximum": 1440,
+      "minimum": 1,
+      "title": "Token Last Used Update Interval Minutes",
+      "type": "integer"
+    },
     "metrics_aggregation_enabled": {
       "default": true,
       "description": "Enable automatic log aggregation into performance metrics",
@@ -2695,6 +2722,18 @@
       "title": "Webhook Logging Urls",
       "type": "array"
     },
+    "mcpgateway_ws_relay_enabled": {
+      "default": false,
+      "description": "Enable WebSocket JSON-RPC relay endpoint at /ws",
+      "title": "Mcpgateway Ws Relay Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_reverse_proxy_enabled": {
+      "default": false,
+      "description": "Enable reverse-proxy transport endpoints under /reverse-proxy/*",
+      "title": "Mcpgateway Reverse Proxy Enabled",
+      "type": "boolean"
+    },
     "transport_type": {
       "default": "all",
       "title": "Transport Type",
@@ -2775,14 +2814,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "image/gif",
         "text/plain",
         "image/jpeg",
-        "image/png",
-        "text/markdown",
         "text/html",
+        "application/xml",
+        "image/png",
+        "image/gif",
         "application/json",
-        "application/xml"
+        "text/markdown"
       ],
       "items": {
         "type": "string"

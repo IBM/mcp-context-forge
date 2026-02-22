@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import orjson
 
 # Third-Party
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 import pytest
 
@@ -45,6 +45,8 @@ def mock_websocket():
     ws.receive_text = AsyncMock()
     ws.close = AsyncMock()
     ws.headers = {"X-Session-ID": "test-session-123"}
+    ws.query_params = {}
+    ws.client = Mock(host="127.0.0.1")
     return ws
 
 
@@ -521,9 +523,13 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+            with (
+                patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db,
+                patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user,
+                patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=True),
+            ):
                 mock_get_db.return_value = Mock()
-                mock_verify.return_value = {"sub": "test-user", "email": "test@example.com"}
+                mock_get_user.return_value = Mock(email="test@example.com", full_name="Test User", is_admin=False)
 
                 try:
                     await websocket_endpoint(mock_websocket, Mock())
@@ -548,9 +554,13 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+            with (
+                patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db,
+                patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user,
+                patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=True),
+            ):
                 mock_get_db.return_value = Mock()
-                mock_verify.return_value = {"sub": "test-user", "email": "test@example.com"}
+                mock_get_user.return_value = Mock(email="test@example.com", full_name="Test User", is_admin=False)
 
                 try:
                     await websocket_endpoint(mock_websocket, Mock())
@@ -575,7 +585,10 @@ class TestWebSocketAuthentication:
             mock_settings.trust_proxy_auth = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
 
-            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
+            with (
+                patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db,
+                patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=True),
+            ):
                 mock_get_db.return_value = Mock()
 
                 try:
@@ -976,8 +989,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = HTTPException(status_code=401, detail="Invalid token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -996,8 +1009,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = ValueError("Malformed token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = ValueError("Malformed token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1017,8 +1030,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = HTTPException(status_code=401, detail="Invalid token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1037,8 +1050,8 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.side_effect = ValueError("Bad token")
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = ValueError("Bad token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1155,7 +1168,7 @@ class TestWebSocketTokenMissingSubject:
 
     @pytest.mark.asyncio
     async def test_bearer_token_missing_subject(self, mock_websocket):
-        """Bearer token verified but has no sub or email → ValueError caught."""
+        """Bearer token auth failure is rejected."""
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         mock_websocket.headers = {"Authorization": "Bearer valid-token"}
@@ -1166,8 +1179,8 @@ class TestWebSocketTokenMissingSubject:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.return_value = {"iss": "test", "iat": 123}  # No sub or email
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()
@@ -1175,7 +1188,7 @@ class TestWebSocketTokenMissingSubject:
 
     @pytest.mark.asyncio
     async def test_query_token_missing_subject(self, mock_websocket):
-        """Query token verified but has no sub or email → ValueError caught."""
+        """Query token auth failure is rejected."""
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         mock_websocket.headers = {}
@@ -1186,8 +1199,8 @@ class TestWebSocketTokenMissingSubject:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = False
 
-            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
-                mock_verify.return_value = {"iss": "test", "iat": 123}  # No sub or email
+            with patch("mcpgateway.routers.reverse_proxy.get_current_user") as mock_get_user:
+                mock_get_user.side_effect = HTTPException(status_code=401, detail="Invalid token")
                 await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_not_called()

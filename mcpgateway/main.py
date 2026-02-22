@@ -47,6 +47,7 @@ from fastapi.exception_handlers import request_validation_exception_handler as f
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -79,7 +80,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -6311,6 +6312,92 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         }
 
 
+_WS_RELAY_REQUIRED_PERMISSIONS = [
+    "tools.read",
+    "tools.execute",
+    "resources.read",
+    "prompts.read",
+    "servers.use",
+    "a2a.read",
+]
+
+
+def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
+    """Extract bearer token from WebSocket query params or headers.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        Bearer token value when present, otherwise None.
+    """
+    if "token" in websocket.query_params:
+        logger.warning("WebSocket authentication token passed via query parameter")
+        return websocket.query_params["token"]
+
+    auth_header = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header[7:]
+
+    return None
+
+
+async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[str], Optional[str]]:
+    """Authenticate and authorize a WebSocket relay connection.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        A tuple of `(auth_token, proxy_user)` where each value may be None.
+
+    Raises:
+        HTTPException: If authentication fails or required permissions are missing.
+    """
+    auth_required = settings.mcp_client_auth_enabled or settings.auth_required
+    auth_token = _get_websocket_bearer_token(websocket)
+    proxy_user: Optional[str] = None
+    user_context: Optional[dict[str, Any]] = None
+
+    # JWT authentication path
+    if auth_token:
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
+        user = await get_current_user(credentials, request=websocket)
+        user_context = {
+            "email": user.email,
+            "full_name": user.full_name,
+            "is_admin": user.is_admin,
+            "ip_address": websocket.client.host if websocket.client else None,
+            "user_agent": websocket.headers.get("user-agent"),
+            "team_id": getattr(websocket.state, "team_id", None),
+            "token_teams": getattr(websocket.state, "token_teams", None),
+            "token_use": getattr(websocket.state, "token_use", None),
+        }
+    # Proxy authentication path (only valid when MCP client auth is disabled)
+    elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+        proxy_user = websocket.headers.get(settings.proxy_user_header)
+        if proxy_user:
+            user_context = {
+                "email": proxy_user,
+                "full_name": proxy_user,
+                "is_admin": False,
+                "ip_address": websocket.client.host if websocket.client else None,
+                "user_agent": websocket.headers.get("user-agent"),
+            }
+        elif auth_required:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    elif auth_required:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    # RBAC gate: require at least one MCP interaction permission before allowing WS relay access
+    if user_context:
+        checker = PermissionChecker(user_context)
+        if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    return auth_token, proxy_user
+
+
 @utility_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -6322,40 +6409,16 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection instance.
     """
-    # Track auth credentials to forward to /rpc
-    auth_token: Optional[str] = None
-    proxy_user: Optional[str] = None
-
     try:
-        # Authenticate WebSocket connection
-        if settings.mcp_client_auth_enabled or settings.auth_required:
-            # Extract auth from query params or headers
-            # Try to get token from query parameter
-            if "token" in websocket.query_params:
-                auth_token = websocket.query_params["token"]
-            # Try to get token from Authorization header
-            elif "authorization" in websocket.headers:
-                auth_header = websocket.headers["authorization"]
-                if auth_header.startswith("Bearer "):
-                    auth_token = auth_header[7:]
+        if not settings.mcpgateway_ws_relay_enabled:
+            await websocket.close(code=1008, reason="WebSocket relay is disabled")
+            return
 
-            # Check for proxy auth if MCP client auth is disabled
-            if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
-                proxy_user = websocket.headers.get(settings.proxy_user_header)
-                if not proxy_user and not auth_token:
-                    await websocket.close(code=1008, reason="Authentication required")
-                    return
-            elif settings.auth_required and not auth_token:
-                await websocket.close(code=1008, reason="Authentication required")
-                return
-
-            # Verify JWT token if provided and MCP client auth is enabled
-            if auth_token and settings.mcp_client_auth_enabled:
-                try:
-                    await verify_jwt_token(auth_token)
-                except Exception:
-                    await websocket.close(code=1008, reason="Invalid authentication")
-                    return
+        try:
+            auth_token, proxy_user = await _authenticate_websocket_user(websocket)
+        except HTTPException as e:
+            await websocket.close(code=1008, reason=str(e.detail))
+            return
 
         await websocket.accept()
         while True:
@@ -7279,14 +7342,17 @@ except ImportError:
     logger.debug("OAuth router not available")
 
 # Include reverse proxy router if enabled
-try:
-    # First-Party
-    from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
+if settings.mcpgateway_reverse_proxy_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
 
-    app.include_router(reverse_proxy_router)
-    logger.info("Reverse proxy router included")
-except ImportError:
-    logger.debug("Reverse proxy router not available")
+        app.include_router(reverse_proxy_router)
+        logger.info("Reverse proxy router included")
+    except ImportError:
+        logger.debug("Reverse proxy router not available")
+else:
+    logger.info("Reverse proxy router not included - feature disabled")
 
 # Include LLMChat router
 if settings.llmchat_enabled:

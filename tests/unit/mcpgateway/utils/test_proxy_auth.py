@@ -409,10 +409,11 @@ class TestWebSocketAuthentication:
         with patch("mcpgateway.main.settings") as mock_settings:
             mock_settings.mcp_client_auth_enabled = True
             mock_settings.auth_required = True
+            mock_settings.mcpgateway_ws_relay_enabled = True
             mock_settings.port = 8000
 
-            # Mock verify_jwt_token to succeed
-            with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "test-user"})):
+            # Mock websocket auth helper to succeed
+            with patch("mcpgateway.main._authenticate_websocket_user", new=AsyncMock(return_value=(token, None))):
                 # First-Party
                 from mcpgateway.main import websocket_endpoint
 

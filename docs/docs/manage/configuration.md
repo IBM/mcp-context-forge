@@ -845,12 +845,16 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                   | Description                        | Default | Options                         |
 | ------------------------- | ---------------------------------- | ------- | ------------------------------- |
 | `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
+| `MCPGATEWAY_WS_RELAY_ENABLED` | Enable `/ws` JSON-RPC WebSocket relay | `false` | bool                       |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | Enable `/reverse-proxy/*` endpoints | `false` | bool                     |
 | `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
 | `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
 | `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
 | `SSE_KEEPALIVE_INTERVAL`  | SSE keepalive interval (secs)      | `30`    | int > 0                         |
 | `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
 | `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
+
+`MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
 ### Federation
 

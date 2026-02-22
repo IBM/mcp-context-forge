@@ -1999,6 +1999,14 @@ class TestRPCEndpoints:
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
 
+    @pytest.fixture(autouse=True)
+    def enable_ws_relay(self, monkeypatch):
+        """Enable WebSocket relay feature for realtime endpoint tests."""
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
+
     @patch("mcpgateway.main.settings")
     @patch("mcpgateway.main.ResilientHttpClient")  # stub network calls
     def test_websocket_endpoint(self, mock_client, mock_settings, test_client):
@@ -2096,8 +2104,9 @@ class TestRealtimeEndpoints:
         monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
         monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
         monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
         monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
-        monkeypatch.setattr(mcpgateway_main, "verify_jwt_token", AsyncMock(return_value=None))
+        monkeypatch.setattr(mcpgateway_main, "_authenticate_websocket_user", AsyncMock(return_value=("test-jwt-token", None)))
 
         # Create mock websocket with token in query params
         websocket = AsyncMock()
@@ -2149,7 +2158,9 @@ class TestRealtimeEndpoints:
         monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
         monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
         monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
         monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
+        monkeypatch.setattr(mcpgateway_main, "_authenticate_websocket_user", AsyncMock(return_value=(None, "proxy-user@example.com")))
 
         # Create mock websocket with proxy user header
         # Note: Use exact case matching settings.proxy_user_header since we're using a plain dict

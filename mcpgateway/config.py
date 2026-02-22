@@ -1388,6 +1388,8 @@ class Settings(BaseSettings):
         return v_up
 
     # Transport
+    mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
+    mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect

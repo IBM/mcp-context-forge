@@ -427,6 +427,8 @@ mcpContextForge:
 
     # ─ Transports ─
     TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
+    MCPGATEWAY_WS_RELAY_ENABLED: "false" # enable /ws JSON-RPC WebSocket relay (disabled by default)
+    MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # enable /reverse-proxy/* endpoints (disabled by default)
     WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings
     SSE_RETRY_TIMEOUT: "5000"        # milliseconds before SSE client retries
     SSE_KEEPALIVE_ENABLED: "true"    # enable SSE keepalive events

@@ -529,6 +529,9 @@ proxy_set_header X-Forwarded-Proto $scheme;
 # Test without authentication (should fail or return anonymous)
 curl -v http://localhost:4444/tools
 
+# Enable /ws relay before WebSocket proxy tests
+# MCPGATEWAY_WS_RELAY_ENABLED=true
+
 # Test with proxy header
 curl -H "X-Authenticated-User: john.doe@example.com" \
      http://localhost:4444/tools

@@ -2529,6 +2529,7 @@ class TestUtilityFunctions:
     def test_websocket_error_scenarios(self, mock_settings):
         """Test WebSocket error scenarios."""
         # Configure mock settings for auth disabled
+        mock_settings.mcpgateway_ws_relay_enabled = True
         mock_settings.mcp_client_auth_enabled = False
         mock_settings.auth_required = False
         mock_settings.federation_timeout = 30
@@ -2563,12 +2564,28 @@ class TestUtilityFunctions:
                     pass
 
     @pytest.mark.asyncio
+    async def test_websocket_feature_disabled_closes(self, monkeypatch):
+        """WebSocket relay should reject connections when feature flag is disabled."""
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", False)
+        websocket = MagicMock()
+        websocket.close = AsyncMock()
+        websocket.accept = AsyncMock()
+
+        await main_mod.websocket_endpoint(websocket)
+
+        websocket.close.assert_awaited_once_with(code=1008, reason="WebSocket relay is disabled")
+        websocket.accept.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_websocket_bearer_auth_invalid_token_closes(self, monkeypatch):
         """Cover Bearer token extraction + invalid token close path."""
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
         monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", True)
 
         websocket = MagicMock()
         websocket.query_params = {}
@@ -2576,7 +2593,7 @@ class TestUtilityFunctions:
         websocket.accept = AsyncMock()
         websocket.close = AsyncMock()
 
-        monkeypatch.setattr(main_mod, "verify_jwt_token", AsyncMock(side_effect=Exception("bad")))
+        monkeypatch.setattr(main_mod, "_authenticate_websocket_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid authentication")))
 
         await main_mod.websocket_endpoint(websocket)
 
@@ -2591,12 +2608,14 @@ class TestUtilityFunctions:
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
         monkeypatch.setattr(main_mod.settings, "trust_proxy_auth", True)
         monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", True)
 
         websocket = MagicMock()
         websocket.query_params = {}
         websocket.headers = {}
         websocket.accept = AsyncMock()
         websocket.close = AsyncMock()
+        monkeypatch.setattr(main_mod, "_authenticate_websocket_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Authentication required")))
 
         await main_mod.websocket_endpoint(websocket)
 
@@ -2610,6 +2629,7 @@ class TestUtilityFunctions:
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
         monkeypatch.setattr(main_mod.settings, "auth_required", False)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", True)
         monkeypatch.setattr(main_mod.settings, "federation_timeout", 1)
         monkeypatch.setattr(main_mod.settings, "skip_ssl_verify", False)
         monkeypatch.setattr(main_mod.settings, "port", 4444)
@@ -2628,6 +2648,7 @@ class TestUtilityFunctions:
                 raise err
 
         monkeypatch.setattr(main_mod, "ResilientHttpClient", lambda *_a, **_k: DummyClient())
+        monkeypatch.setattr(main_mod, "_authenticate_websocket_user", AsyncMock(return_value=(None, None)))
 
         websocket = MagicMock()
         websocket.query_params = {}
@@ -2648,6 +2669,8 @@ class TestUtilityFunctions:
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
         monkeypatch.setattr(main_mod.settings, "auth_required", False)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", True)
+        monkeypatch.setattr(main_mod, "_authenticate_websocket_user", AsyncMock(return_value=(None, None)))
 
         websocket = MagicMock()
         websocket.query_params = {}
@@ -2670,6 +2693,8 @@ class TestUtilityFunctions:
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
         monkeypatch.setattr(main_mod.settings, "auth_required", False)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", True)
+        monkeypatch.setattr(main_mod, "_authenticate_websocket_user", AsyncMock(return_value=(None, None)))
 
         websocket = MagicMock()
         websocket.query_params = {}

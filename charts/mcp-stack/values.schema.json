@@ -800,6 +800,18 @@
               "description": "Transport types (comma-separated)",
               "default": "all"
             },
+            "MCPGATEWAY_WS_RELAY_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable /ws JSON-RPC WebSocket relay endpoint",
+              "default": "false"
+            },
+            "MCPGATEWAY_REVERSE_PROXY_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable /reverse-proxy/* endpoints",
+              "default": "false"
+            },
             "WEBSOCKET_PING_INTERVAL": {
               "type": "string",
               "description": "WebSocket ping interval in seconds",

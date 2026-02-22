@@ -19,14 +19,17 @@ import uuid
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
+from mcpgateway.middleware.rbac import PermissionChecker
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token
+from mcpgateway.utils.verify_credentials import require_auth
 
 # Initialize logging
 logging_service = LoggingService()
@@ -151,6 +154,95 @@ class ReverseProxyManager:
 # Global manager instance
 manager = ReverseProxyManager()
 
+_REVERSE_PROXY_CONNECT_PERMISSIONS = [
+    "servers.create",
+    "servers.update",
+    "servers.manage",
+]
+
+
+def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
+    """Extract bearer token from WebSocket query params or headers.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        Bearer token value when present, otherwise None.
+    """
+    query_params = getattr(websocket, "query_params", {}) or {}
+    token = query_params.get("token") if hasattr(query_params, "get") else None
+    if token:
+        LOGGER.warning("Reverse proxy WebSocket token passed via query parameter")
+        return token
+
+    headers = getattr(websocket, "headers", {}) or {}
+    auth_header = None
+    if hasattr(headers, "get"):
+        auth_header = headers.get("authorization") or headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header.split(" ", 1)[1]
+
+    return None
+
+
+async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optional[str]:
+    """Authenticate and authorize a reverse-proxy WebSocket connection.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        Authenticated user email when available, otherwise None.
+
+    Raises:
+        HTTPException: If authentication fails or required permissions are missing.
+    """
+    auth_required = settings.auth_required or settings.mcp_client_auth_enabled
+    auth_token = _get_websocket_bearer_token(websocket)
+    user_context: Optional[dict[str, Any]] = None
+
+    if auth_token:
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
+        try:
+            user = await get_current_user(credentials, request=websocket)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed") from exc
+        user_context = {
+            "email": user.email,
+            "full_name": user.full_name,
+            "is_admin": user.is_admin,
+            "ip_address": websocket.client.host if websocket.client else None,
+            "user_agent": websocket.headers.get("user-agent"),
+            "team_id": getattr(websocket.state, "team_id", None),
+            "token_teams": getattr(websocket.state, "token_teams", None),
+            "token_use": getattr(websocket.state, "token_use", None),
+        }
+    elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+        proxy_user = websocket.headers.get(settings.proxy_user_header)
+        if proxy_user:
+            user_context = {
+                "email": proxy_user,
+                "full_name": proxy_user,
+                "is_admin": False,
+                "ip_address": websocket.client.host if websocket.client else None,
+                "user_agent": websocket.headers.get("user-agent"),
+            }
+        elif auth_required:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    elif auth_required:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    if user_context:
+        checker = PermissionChecker(user_context)
+        if not await checker.has_any_permission(_REVERSE_PROXY_CONNECT_PERMISSIONS):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        return user_context["email"]
+
+    return None
+
 
 @router.websocket("/ws")
 async def websocket_endpoint(
@@ -175,62 +267,12 @@ async def websocket_endpoint(
     Raises:
         ValueError: If token is missing required subject claim.
     """
-    # Check authentication BEFORE accepting connection
-    user = None
-    auth_header = websocket.headers.get("Authorization", "")
-
-    # Determine if auth is required
-    auth_required = settings.auth_required or settings.mcp_client_auth_enabled
-
-    if auth_required:
-        # Try Bearer token authentication from header
-        if auth_header.startswith("Bearer "):
-            try:
-                token = auth_header.split(" ", 1)[1]
-                payload = await verify_jwt_token(token)
-                user = payload.get("sub") or payload.get("email")
-                if not user:
-                    raise ValueError("Token missing subject claim")
-                LOGGER.debug(f"WebSocket authenticated via JWT: {user}")
-            except HTTPException as e:
-                LOGGER.warning(f"WebSocket JWT authentication failed: {e.detail}")
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
-                return
-            except Exception as e:
-                LOGGER.warning(f"WebSocket JWT authentication failed: {e}")
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
-                return
-        # Try token from query parameter
-        elif "token" in websocket.query_params:
-            try:
-                token = websocket.query_params["token"]
-                payload = await verify_jwt_token(token)
-                user = payload.get("sub") or payload.get("email")
-                if not user:
-                    raise ValueError("Token missing subject claim")
-                LOGGER.debug(f"WebSocket authenticated via query token: {user}")
-            except HTTPException as e:
-                LOGGER.warning(f"WebSocket query token authentication failed: {e.detail}")
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
-                return
-            except Exception as e:
-                LOGGER.warning(f"WebSocket query token authentication failed: {e}")
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
-                return
-        # Try proxy authentication (when mcp_client_auth_enabled is False and trust_proxy_auth is True)
-        elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
-            proxy_user = websocket.headers.get(settings.proxy_user_header)
-            if proxy_user:
-                user = proxy_user
-                LOGGER.debug(f"WebSocket authenticated via proxy header: {user}")
-            else:
-                LOGGER.warning("WebSocket proxy authentication failed: no proxy header")
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication required")
-                return
-        else:
-            LOGGER.warning("WebSocket authentication required but no credentials provided")
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication required")
-            return
+    try:
+        user = await _authenticate_reverse_proxy_websocket(websocket)
+    except HTTPException as e:
+        LOGGER.warning(f"Reverse proxy WebSocket authentication failed: {e.detail}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e.detail))
+        return
 
     # Accept connection only after successful authentication (or when auth not required)
     await websocket.accept()
