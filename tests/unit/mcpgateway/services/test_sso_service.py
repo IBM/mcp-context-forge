@@ -274,6 +274,49 @@ class TestOAuthCallback:
         assert token_data["id_token"] == "id_tok"
 
     @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_rejects_unverified_id_token(self, sso_service, mock_db):
+        """OIDC callback should fail when id_token verification fails."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce="nonce-1")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(p, sess, c):
+            return {"access_token": "tok", "id_token": "bad-id-token"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value=None)
+        sso_service._get_user_info = AsyncMock(return_value={"email": "user@example.com", "provider": "keycloak"})
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is None
+        sso_service._get_user_info.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_passes_verified_claims(self, sso_service, mock_db):
+        """OIDC callback should pass verified id_token claims to user-info path."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce="nonce-1")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(p, sess, c):
+            return {"access_token": "tok", "id_token": "good-id-token"}
+
+        async def _user_info(_provider, _access, token_data=None):
+            assert token_data is not None
+            assert token_data["_verified_id_token_claims"] == {"sub": "user-1", "nonce": "nonce-1"}
+            return {"email": "user@example.com", "provider": "keycloak"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1", "nonce": "nonce-1"})
+        sso_service._get_user_info = _user_info
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is not None
+        user_info, token_data = result
+        assert user_info["email"] == "user@example.com"
+        assert token_data["_verified_id_token_claims"]["sub"] == "user-1"
+
+    @pytest.mark.asyncio
     async def test_handle_oauth_callback_no_session(self, sso_service, mock_db):
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
         result = await sso_service.handle_oauth_callback("github", "code", "bad-state")
@@ -525,7 +568,7 @@ class TestGetUserInfo:
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
 
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -600,7 +643,7 @@ class TestGetUserInfo:
         payload = orjson.dumps({"sub": "oid", "_claim_names": {"groups": "src1"}, "_claim_sources": {"src1": {"endpoint": "https://graph"}}})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -640,7 +683,7 @@ class TestGetUserInfo:
         payload = orjson.dumps({"sub": "oid", "hasgroups": True})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -679,7 +722,7 @@ class TestGetUserInfo:
         payload = orjson.dumps({"sub": "oid", "groups:src1": {"@odata.type": "x"}})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -917,7 +960,7 @@ class TestGetUserInfo:
         payload = orjson.dumps({"sub": "oid", "_claim_names": {"groups": "src1"}})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -953,7 +996,7 @@ class TestGetUserInfo:
         payload = orjson.dumps({"realm_access": {"roles": ["admin"]}, "resource_access": {"app": {"roles": ["edit"]}}, "groups": ["/team"]})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -998,7 +1041,7 @@ class TestGetUserInfo:
         )
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -1082,6 +1125,52 @@ class TestNormalization:
         assert "admin" in result["groups"]
         assert "my-app:editor" in result["groups"]
         assert "/team-a" in result["groups"]
+
+
+# ---------------------------------------------------------------------------
+# OIDC id_token verification tests
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyOidcIdToken:
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_success(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        signing_key = SimpleNamespace(key="public-key")
+        jwks_client = MagicMock()
+        jwks_client.get_signing_key_from_jwt.return_value = signing_key
+
+        with (
+            patch.object(sso_service, "_get_jwks_client", return_value=jwks_client),
+            patch("mcpgateway.services.sso_service.jwt.decode", return_value={"sub": "user-1", "nonce": "nonce-1"}),
+        ):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce="nonce-1")
+
+        assert claims is not None
+        assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_nonce_mismatch(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        signing_key = SimpleNamespace(key="public-key")
+        jwks_client = MagicMock()
+        jwks_client.get_signing_key_from_jwt.return_value = signing_key
+
+        with (
+            patch.object(sso_service, "_get_jwks_client", return_value=jwks_client),
+            patch("mcpgateway.services.sso_service.jwt.decode", return_value={"sub": "user-1", "nonce": "nonce-2"}),
+        ):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce="nonce-1")
+
+        assert claims is None
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_missing_jwks(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer=None, jwks_uri=None, client_id="cid")
+        claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+        assert claims is None
 
 
 # ---------------------------------------------------------------------------
