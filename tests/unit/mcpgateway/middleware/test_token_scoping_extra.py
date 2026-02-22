@@ -159,7 +159,7 @@ class TestResourceTeamOwnershipServers:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True  # Not found = allow through
+        assert result is False
 
     def test_server_public_allowed(self):
         middleware = TokenScopingMiddleware()
@@ -226,7 +226,7 @@ class TestResourceTeamOwnershipTools:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_tool_public_allowed(self):
         middleware = TokenScopingMiddleware()
@@ -265,7 +265,7 @@ class TestResourceTeamOwnershipResources:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/resources/{_RES_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_resource_team_denied(self):
         middleware = TokenScopingMiddleware()
@@ -290,7 +290,7 @@ class TestResourceTeamOwnershipPrompts:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_prompt_public_allowed(self):
         middleware = TokenScopingMiddleware()
@@ -336,7 +336,7 @@ class TestResourceTeamOwnershipGateways:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_gateway_public_allowed(self):
         middleware = TokenScopingMiddleware()

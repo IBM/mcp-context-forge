@@ -103,6 +103,18 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 > **Migration**: Clients must use caller-owned sessions, and automation relying on global roots/resource visibility must run under identities with the required scope and permissions.
 
+#### **🔐 RBAC and Ownership Hardening for RPC, Roots, Gateway Sync, Server Usage, and Import** (C-05, C-18, C-19, C-20, C-35, C-39)
+
+* JSON-RPC tool execution now requires `tools.execute` permission for both `tools/call` and backward-compatible `method=<tool_name>` requests
+* All `/roots*` management endpoints now require `admin.system_config`
+* `POST /oauth/fetch-tools/{gateway_id}` now requires `gateways.update` and enforces scoped gateway ownership checks with normalized token-team semantics (including empty-team admin guard)
+* `POST /gateways/{gateway_id}/tools/refresh` now validates gateway existence and scoped access before refresh
+* `GET /servers/{server_id}/sse` now validates server existence before stream setup and returns `404` when the server is missing
+* Scoped ownership checks now fail closed for missing IDs (`server`, `tool`, `resource`, `prompt`, `gateway`)
+* Import processing now strips untrusted `team_id`, `owner_email`, `visibility`, and `team` payload fields for scoped entities before persistence
+
+> **Migration**: Automation that relied on permissive behavior for RPC tool execution, root endpoints, OAuth fetch-tools, invalid server SSE IDs, or import ownership override fields must be updated to satisfy the new RBAC/scope requirements.
+
 ### Added
 
 #### **🛡️ SSRF CIDR Allowlist** (S-01)
@@ -145,6 +157,13 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **Resource SSE scope enforcement** - resource event streams are filtered by visibility/team/owner context (C-28)
 * **Resource subscribe visibility enforcement** - JSON-RPC `resources/subscribe` checks visibility before persistence (C-29)
 * **Resource subscriber ID compatibility** - safe email-style subscriber IDs are now accepted (C-29)
+* **RPC tool execute authorization** - JSON-RPC `tools/call` and backward-compatible direct tool method invocation now enforce `tools.execute` before invocation (C-05)
+* **Get-by-ID defense in depth** - server/tool/gateway/resource handlers plus `GET /resources/{resource_id}/info` now apply explicit scoped ownership checks (C-18)
+* **Root endpoint RBAC parity** - all `/roots*` management routes now enforce `admin.system_config` (C-19)
+* **Gateway sync authorization parity** - OAuth fetch-tools and manual refresh now enforce RBAC plus scoped ownership checks with normalized token-team fallback behavior (C-20)
+* **Server SSE existence/scope hardening** - `/servers/{id}/sse` now validates server existence and scope before stream setup (C-35)
+* **Import ownership sanitization** - untrusted `team_id`/`owner_email`/`visibility`/`team` are stripped from scoped import entities (C-39)
+* **JWT rich-token teams semantics** - `_create_jwt_token` now preserves explicit `teams=None` as JSON `null` while still allowing omitted teams claims, restoring deterministic admin-token scope behavior for fail-closed ownership checks
 * **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
 * **Health diagnostics auth consistency** - `/health/security` now uses standard bearer JWT validation flow.
 * **RPC/REST permission parity for logging controls** - `logging/setLevel` over `/rpc` now enforces `admin.system_config`, aligned with `POST /logging/setLevel`.
@@ -168,6 +187,13 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **C-28**: Resource event subscriptions now enforce per-subscriber visibility scoping
 * **C-29**: MCP resource subscription creation now enforces visibility checks
 * **C-15**: Token scoping defaults to deny for unmapped API paths
+* **C-05**: JSON-RPC tool execution now requires `tools.execute` for both `tools/call` and backward-compatible direct tool method invocation
+* **C-18**: Get-by-ID handlers, including `GET /resources/{resource_id}/info`, now enforce scoped ownership checks in addition to middleware controls
+* **C-19**: All root management endpoints now require `admin.system_config`
+* **C-20**: Gateway sync endpoints now enforce explicit RBAC and scoped ownership checks with normalized token-team semantics
+* **C-35**: Server usage SSE now validates server existence and fails closed for missing IDs in scoped checks
+* **C-39**: Import flow strips untrusted ownership/team/visibility fields for scoped entities
+* **Token helpers**: Rich-token generation now distinguishes omitted teams from explicit `teams: null` to preserve intended scope semantics
 * Health diagnostics endpoint now follows standard bearer-token validation.
 * JSON-RPC and REST logging controls now use aligned permission checks.
 * Utility SSE/message endpoints now use canonical execution permission naming.

@@ -10,6 +10,7 @@ This module tests OAuth endpoints including authorization flow, callbacks, and s
 
 # Standard
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
@@ -785,6 +786,9 @@ class TestOAuthRouter:
         """Test successful tools fetching after OAuth."""
         # Setup
         mock_tools_result = {"tools": [{"name": "tool1", "description": "Test tool 1"}, {"name": "tool2", "description": "Test tool 2"}, {"name": "tool3", "description": "Test tool 3"}]}
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -795,18 +799,22 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            result = await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+                result = await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             # Assert
             assert result["success"] is True
             assert "Successfully fetched and created 3 tools" in result["message"]
-            mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123", mock_current_user.get("email"))
+            mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123", "test@example.com")
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_no_tools(self, mock_db, mock_current_user):
         """Test tools fetching after OAuth when no tools are returned."""
         # Setup
         mock_tools_result = {"tools": []}
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -817,7 +825,8 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            result = await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+                result = await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             # Assert
             assert result["success"] is True
@@ -827,6 +836,10 @@ class TestOAuthRouter:
     async def test_fetch_tools_after_oauth_service_error(self, mock_db, mock_current_user):
         """Test tools fetching when GatewayService throws error."""
         # Setup
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
             mock_gateway_service.fetch_tools_after_oauth = AsyncMock(side_effect=Exception("Failed to connect to MCP server"))
@@ -837,7 +850,8 @@ class TestOAuthRouter:
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+                with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+                    await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             assert exc_info.value.status_code == 500
             assert "Failed to fetch tools" in str(exc_info.value.detail)
@@ -847,6 +861,9 @@ class TestOAuthRouter:
         """Test tools fetching when service returns malformed result."""
         # Setup
         mock_tools_result = {"message": "Success"}  # Missing "tools" key
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -857,11 +874,98 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            result = await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+                result = await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             # Assert
             assert result["success"] is True
             assert "Successfully fetched and created 0 tools" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_denies_cross_scope_gateway(self, mock_db, mock_current_user):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-2"])
+        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+        with pytest.raises(HTTPException) as exc_info:
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False):
+                await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_cached_public_only_admin_token_stays_scoped(self, mock_db):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload=("token", {"teams": [], "is_admin": True}))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
+            mock_gateway_service = Mock()
+            mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value={"tools": []})
+            mock_gateway_service_class.return_value = mock_gateway_service
+
+            from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+            with pytest.raises(HTTPException) as exc_info:
+                with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False) as ownership_check:
+                    await fetch_tools_after_oauth(
+                        gateway_id="gateway123",
+                        request=request,
+                        current_user={"email": "admin@example.com", "is_admin": True},
+                        db=mock_db,
+                    )
+
+        assert exc_info.value.status_code == 403
+        assert ownership_check.call_args.args[1] == []
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_cached_public_only_admin_token_allow_path(self, mock_db):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload=("token", {"teams": [], "is_admin": True}))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
+            mock_gateway_service = Mock()
+            mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value={"tools": [{"name": "t1"}]})
+            mock_gateway_service_class.return_value = mock_gateway_service
+
+            from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True) as ownership_check:
+                result = await fetch_tools_after_oauth(
+                    gateway_id="gateway123",
+                    request=request,
+                    current_user={"email": "admin@example.com", "is_admin": True},
+                    db=mock_db,
+                )
+
+        assert result["success"] is True
+        assert ownership_check.call_args.args[1] == []
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_gateway_not_found(self, mock_db, mock_current_user):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+        with pytest.raises(HTTPException) as exc_info:
+            await fetch_tools_after_oauth(gateway_id="missing-gateway", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
+
+        assert exc_info.value.status_code == 404
+
+    def test_resolve_token_teams_for_scope_check_admin_attribute_fallback(self):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()
+        current_user = SimpleNamespace(email="admin@example.com", is_admin=True)
+
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        result = _resolve_token_teams_for_scope_check(request, current_user)
+        assert result is None
 
 
 class TestRFC8707ResourceNormalization:

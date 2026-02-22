@@ -25,9 +25,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
@@ -82,6 +84,44 @@ def _require_admin_user(current_user: EmailUserResponse) -> None:
     is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin permissions required")
+
+
+def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
+    """Resolve token teams for scoped ownership checks using normalized token semantics.
+
+    Args:
+        request: Incoming request with token scoping state.
+        current_user: Authenticated user context.
+
+    Returns:
+        ``None`` for unrestricted admin scope, or a normalized team list for scoped access.
+    """
+    is_admin = False
+    if hasattr(current_user, "is_admin"):
+        is_admin = bool(getattr(current_user, "is_admin", False))
+    elif isinstance(current_user, dict):
+        is_admin = bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+
+    _not_set = object()
+    token_teams = getattr(request.state, "token_teams", _not_set)
+    if token_teams is _not_set or not (token_teams is None or isinstance(token_teams, list)):
+        cached = getattr(request.state, "_jwt_verified_payload", None)
+        if cached and isinstance(cached, tuple) and len(cached) == 2:
+            _, payload = cached
+            if payload:
+                token_teams = normalize_token_teams(payload)
+                is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
+
+    if token_teams is _not_set:
+        token_teams = None if is_admin else []
+
+    # Empty-team scoped tokens are public-only and must never receive admin bypass.
+    if isinstance(token_teams, list) and len(token_teams) == 0:
+        is_admin = False
+
+    if is_admin and token_teams is None:
+        return None
+    return token_teams
 
 
 @oauth_router.get("/authorize/{gateway_id}")
@@ -681,11 +721,18 @@ async def get_oauth_status(
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
-async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:
+@require_permission("gateways.update")
+async def fetch_tools_after_oauth(
+    gateway_id: str,
+    request: Request,
+    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
     """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
     Args:
         gateway_id: ID of the gateway to fetch tools for
+        request: Incoming request used for token scope context
         current_user: The authenticated user fetching tools
         db: Database session
 
@@ -696,15 +743,32 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
         HTTPException: If fetching tools fails
     """
     try:
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+        if not gateway:
+            raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
+
+        token_teams = _resolve_token_teams_for_scope_check(request, current_user)
+
+        requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
+        if token_teams is not None and not token_scoping_middleware._check_resource_team_ownership(
+            f"/gateways/{gateway_id}",
+            token_teams,
+            db=db,
+            _user_email=requester_email,
+        ):
+            raise HTTPException(status_code=403, detail="Access denied for requested gateway")
+
         # First-Party
         from mcpgateway.services.gateway_service import GatewayService
 
         gateway_service = GatewayService()
-        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.get("email"))
+        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email)
         tools_count = len(result.get("tools", []))
 
         return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {str(e)}")

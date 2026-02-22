@@ -993,6 +993,7 @@ class TestServerEndpointCoverage:
         request.headers = {"authorization": "Bearer token"}
         request.cookies = {}
         request.scope = {"root_path": ""}
+        db = MagicMock()
 
         from mcpgateway.services.permission_service import PermissionService
 
@@ -1006,13 +1007,131 @@ class TestServerEndpointCoverage:
         monkeypatch.setattr("mcpgateway.main.update_url_protocol", lambda _req: "http://example.com")
         monkeypatch.setattr("mcpgateway.main._get_token_teams_from_request", lambda _req: None)
         monkeypatch.setattr("mcpgateway.main.SSETransport", MagicMock(return_value=transport))
+        monkeypatch.setattr("mcpgateway.main.server_service.get_server", AsyncMock(return_value=SimpleNamespace(id="server-1")))
         monkeypatch.setattr("mcpgateway.main.session_registry.add_session", AsyncMock())
         monkeypatch.setattr("mcpgateway.main.session_registry.respond", AsyncMock(return_value=None))
         monkeypatch.setattr("mcpgateway.main.session_registry.register_respond_task", MagicMock())
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", AsyncMock())
 
-        response = await sse_endpoint(request, "server-1", user={"email": "user@example.com", "is_admin": True, "db": MagicMock()})
+        response = await sse_endpoint(request, "server-1", db=db, user={"email": "user@example.com", "is_admin": True, "db": MagicMock()})
         assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_sse_endpoint_missing_server_returns_404(self, monkeypatch, allow_permission):
+        request = MagicMock(spec=Request)
+        request.headers = {"authorization": "Bearer token"}
+        request.cookies = {}
+        request.scope = {"root_path": ""}
+        db = MagicMock()
+
+        from mcpgateway.services.server_service import ServerNotFoundError
+
+        monkeypatch.setattr("mcpgateway.main.server_service.get_server", AsyncMock(side_effect=ServerNotFoundError("missing")))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await sse_endpoint(request, "missing", db=db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_sse_endpoint_re_raises_http_exception(self, monkeypatch, allow_permission):
+        request = MagicMock(spec=Request)
+        request.headers = {"authorization": "Bearer token"}
+        request.cookies = {}
+        request.scope = {"root_path": ""}
+        db = MagicMock()
+
+        monkeypatch.setattr(
+            "mcpgateway.main.server_service.get_server",
+            AsyncMock(side_effect=HTTPException(status_code=403, detail="denied")),
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            await sse_endpoint(request, "server-1", db=db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == "denied"
+
+    @pytest.mark.asyncio
+    async def test_get_server_denies_when_scope_enforcement_fails(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        monkeypatch.setattr(main_mod.server_service, "get_server", AsyncMock(return_value=SimpleNamespace(id="server-1")))
+
+        def _deny(*_args, **_kwargs):
+            raise HTTPException(status_code=403, detail="denied")
+
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", _deny)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_server("server-1", request=request, db=db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_get_tool_denies_when_scope_enforcement_fails(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+        tool = SimpleNamespace(to_dict=lambda **_kwargs: {"id": "tool-1"})
+
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_user_team_roles", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=tool))
+
+        def _deny(*_args, **_kwargs):
+            raise HTTPException(status_code=403, detail="denied")
+
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", _deny)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_tool("tool-1", request=request, db=db, user={"email": "user@example.com"}, apijsonpath=None)
+
+        assert excinfo.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_denies_when_scope_enforcement_fails(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(return_value=SimpleNamespace(id="gw-1")))
+
+        def _deny(*_args, **_kwargs):
+            raise HTTPException(status_code=403, detail="denied")
+
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", _deny)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_gateway("gw-1", request=request, db=db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_read_resource_denies_when_scope_enforcement_fails(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+        db = MagicMock()
+
+        monkeypatch.setattr(main_mod.resource_service, "read_resource", AsyncMock(return_value={"type": "text"}))
+
+        def _deny(*_args, **_kwargs):
+            raise HTTPException(status_code=403, detail="denied")
+
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", _deny)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.read_resource("res-1", request=request, db=db, user={"email": "user@example.com", "is_admin": False})
+
+        assert excinfo.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_server_get_tools_admin_bypass(self, monkeypatch, allow_permission):
@@ -1862,7 +1981,7 @@ class TestRootEndpointsCoverage:
         root = SimpleNamespace(uri="root://example", name="Root Name")
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(return_value=root))
 
-        result = await main_mod.export_root(uri="root://example", user=SimpleNamespace(email="user@example.com"))
+        result = await main_mod.export_root.__wrapped__(uri="root://example", user=SimpleNamespace(email="user@example.com"))
         assert result["export_type"] == "root"
         assert result["exported_by"] == "user@example.com"
         assert result["root"]["uri"] == "root://example"
@@ -1878,7 +1997,7 @@ class TestRootEndpointsCoverage:
 
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_root(uri="root://err", user="user")
+            await main_mod.export_root.__wrapped__(uri="root://err", user="user")
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -2223,18 +2342,22 @@ class TestGatewayEndpointsCoverage:
 
         request = MagicMock(spec=Request)
         request.headers = {"x-test": "1"}
+        db = MagicMock()
 
         result_payload = {
             "duration_ms": 1.0,
             "refreshed_at": datetime.now(timezone.utc),
             "tools_added": 1,
         }
+        monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(return_value=SimpleNamespace(id="gw-1")))
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(main_mod.gateway_service, "refresh_gateway_manually", AsyncMock(return_value=result_payload))
         response = await main_mod.refresh_gateway_tools(
             "gw-1",
             request,
             include_resources=True,
             include_prompts=False,
+            db=db,
             user={"email": "user@example.com"},
         )
         assert response.gateway_id == "gw-1"
@@ -2247,6 +2370,7 @@ class TestGatewayEndpointsCoverage:
                 request,
                 include_resources=False,
                 include_prompts=False,
+                db=db,
                 user={"email": "user@example.com"},
             )
         assert excinfo.value.status_code == 404
@@ -2258,9 +2382,32 @@ class TestGatewayEndpointsCoverage:
                 request,
                 include_resources=False,
                 include_prompts=False,
+                db=db,
                 user={"email": "user@example.com"},
             )
         assert excinfo.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_refresh_gateway_tools_denies_cross_scope_access(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.headers = {"x-test": "1"}
+        db = MagicMock()
+
+        monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(return_value=SimpleNamespace(id="gw-1")))
+        monkeypatch.setattr(main_mod.gateway_service, "refresh_gateway_manually", AsyncMock(return_value={}))
+
+        def _deny(*_args, **_kwargs):
+            raise HTTPException(status_code=403, detail="denied")
+
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", _deny)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.refresh_gateway_tools("gw-1", request, include_resources=False, include_prompts=False, db=db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 403
+        main_mod.gateway_service.refresh_gateway_manually.assert_not_awaited()
 
 
 class TestLifespanAdvanced:
@@ -3660,11 +3807,58 @@ class TestRpcHandling:
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", False)
 
         with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["ok"] is True
+
+    async def test_handle_rpc_tools_call_requires_execute_permission(self):
+        payload = {"jsonrpc": "2.0", "id": "10b", "method": "tools/call", "params": {"name": "tool-1", "arguments": {"a": 1}}}
+        request = self._make_request(payload)
+        request.state = MagicMock()
+
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})) as invoke_tool,
+        ):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["error"]["code"] == -32003
+        assert "tools.execute" in result["error"]["message"]
+        invoke_tool.assert_not_awaited()
+
+    async def test_handle_rpc_backward_compat_tool_requires_execute_permission(self):
+        payload = {"jsonrpc": "2.0", "id": "10c", "method": "legacy-tool", "params": {"a": 1}}
+        request = self._make_request(payload)
+        request.state = MagicMock()
+
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})) as invoke_tool,
+        ):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["error"]["code"] == -32003
+        assert "tools.execute" in result["error"]["message"]
+        invoke_tool.assert_not_awaited()
+
+    async def test_handle_rpc_backward_compat_tool_allows_when_authorized(self):
+        payload = {"jsonrpc": "2.0", "id": "10d", "method": "legacy-tool", "params": {"a": 1}}
+        request = self._make_request(payload)
+        request.state = MagicMock()
+
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})) as invoke_tool,
+        ):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["result"]["ok"] is True
+        assert invoke_tool.await_args.kwargs["name"] == "legacy-tool"
+        assert invoke_tool.await_args.kwargs["arguments"] == {"a": 1}
 
     async def test_handle_rpc_notifications_and_sampling(self):
         payload_cancel = {"jsonrpc": "2.0", "id": "11", "method": "notifications/cancelled", "params": {"requestId": "r1", "reason": "stop"}}
@@ -3903,6 +4097,7 @@ class TestRpcHandling:
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", True)
 
         with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.cancellation_service.register_run", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"cancelled": True})),
             patch("mcpgateway.main.cancellation_service.unregister_run", new=AsyncMock(return_value=None)),
@@ -3924,6 +4119,7 @@ class TestRpcHandling:
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", True)
 
         with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.cancellation_service.register_run", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(side_effect=[None, {"cancelled": True}])),
             patch("mcpgateway.main.cancellation_service.unregister_run", new=AsyncMock(return_value=None)),
@@ -4286,6 +4482,7 @@ class TestRpcHandling:
             return None
 
         with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.cancellation_service.register_run", new=AsyncMock(side_effect=_capture_register_run)),
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"cancelled": False})),
             patch("mcpgateway.main.cancellation_service.unregister_run", new=AsyncMock(return_value=None)),
@@ -4737,6 +4934,8 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "update_url_protocol", lambda _req: "http://example.com")
         monkeypatch.setattr(main_mod, "_get_token_teams_from_request", lambda _req: [])
         monkeypatch.setattr(main_mod, "SSETransport", MagicMock(return_value=transport))
+        monkeypatch.setattr(main_mod.server_service, "get_server", AsyncMock(return_value=SimpleNamespace(id="server-1")))
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(main_mod.session_registry, "add_session", AsyncMock())
         monkeypatch.setattr(main_mod.session_registry, "respond", AsyncMock(return_value=None))
         monkeypatch.setattr(main_mod.session_registry, "register_respond_task", MagicMock())
@@ -4745,7 +4944,7 @@ class TestRemainingCoverageGaps:
 
         # Cover user.is_admin attribute branch (cookie-authenticated user object).
         user = SimpleNamespace(email="user@example.com", is_admin=True)
-        response = await main_mod.sse_endpoint.__wrapped__(request, "server-1", user=user)
+        response = await main_mod.sse_endpoint.__wrapped__(request, "server-1", db=MagicMock(), user=user)
         assert response.status_code == 200
         remove_session.assert_awaited_once()
 
@@ -4771,13 +4970,15 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "update_url_protocol", lambda _req: "http://example.com")
         monkeypatch.setattr(main_mod, "_get_token_teams_from_request", lambda _req: [])
         monkeypatch.setattr(main_mod, "SSETransport", MagicMock(return_value=transport))
+        monkeypatch.setattr(main_mod.server_service, "get_server", AsyncMock(return_value=SimpleNamespace(id="server-1")))
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(main_mod.session_registry, "add_session", AsyncMock())
         monkeypatch.setattr(main_mod.session_registry, "respond", AsyncMock(return_value=None))
         monkeypatch.setattr(main_mod.session_registry, "register_respond_task", MagicMock())
         monkeypatch.setattr(main_mod.session_registry, "remove_session", AsyncMock(side_effect=RuntimeError("fail")))
 
         user = SimpleNamespace(email="user@example.com", is_admin=False)
-        response = await main_mod.sse_endpoint.__wrapped__(request, "server-1", user=user)
+        response = await main_mod.sse_endpoint.__wrapped__(request, "server-1", db=MagicMock(), user=user)
         assert response.status_code == 200
 
     async def test_list_servers_tags_team_mismatch_and_pagination(self, monkeypatch):
@@ -4908,14 +5109,51 @@ class TestRemainingCoverageGaps:
         from mcpgateway.services.resource_service import ResourceNotFoundError
 
         ok = MagicMock()
+        request = MagicMock(spec=Request)
+        enforce_scope = MagicMock(return_value=None)
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", enforce_scope)
         monkeypatch.setattr(main_mod.resource_service, "get_resource_by_id", AsyncMock(return_value=ok))
-        result = await main_mod.get_resource_info.__wrapped__("res-1", include_inactive=False, db=MagicMock(), user={"email": "user@example.com"})
+        result = await main_mod.get_resource_info.__wrapped__(
+            "res-1",
+            request=request,
+            include_inactive=False,
+            db=MagicMock(),
+            user={"email": "user@example.com"},
+        )
         assert result is ok
+        enforce_scope.assert_called_once()
 
         monkeypatch.setattr(main_mod.resource_service, "get_resource_by_id", AsyncMock(side_effect=ResourceNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_resource_info.__wrapped__("res-1", include_inactive=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.get_resource_info.__wrapped__(
+                "res-1",
+                request=request,
+                include_inactive=False,
+                db=MagicMock(),
+                user={"email": "user@example.com"},
+            )
         assert excinfo.value.status_code == 404
+
+    async def test_get_resource_info_denies_when_scope_enforcement_fails(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        monkeypatch.setattr(main_mod.resource_service, "get_resource_by_id", AsyncMock(return_value=MagicMock()))
+
+        def _deny(*_args, **_kwargs):
+            raise HTTPException(status_code=403, detail="denied")
+
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", _deny)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_resource_info.__wrapped__(
+                "res-1",
+                request=request,
+                include_inactive=False,
+                db=MagicMock(),
+                user={"email": "user@example.com"},
+            )
+        assert excinfo.value.status_code == 403
 
     async def test_get_import_status_found_and_not_found(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -5076,7 +5314,7 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=GatewayNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_gateway.__wrapped__("gw-1", db=MagicMock(), user={"email": "u"})
+            await main_mod.get_gateway.__wrapped__("gw-1", request=MagicMock(spec=Request), db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.gateway_service, "set_gateway_state", AsyncMock(side_effect=RuntimeError("bad")))
@@ -5945,6 +6183,21 @@ class TestHardeningHelperCoverage:
                 await main_mod._assert_session_owner_or_admin(request, {"email": "user@example.com"}, "missing-session")
 
         assert excinfo.value.status_code == 404
+
+    def test_enforce_scoped_resource_access_denies_on_failed_ownership_check(self):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        with (
+            patch.object(main_mod, "_get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=False),
+        ):
+            with pytest.raises(HTTPException) as excinfo:
+                main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
+
+        assert excinfo.value.status_code == 403
 
 
 @pytest.fixture

@@ -497,6 +497,9 @@ class ImportService:
             if rekey_secret and self._has_auth_data(entity_data):
                 entity_data = self._rekey_auth_data(entity_data, rekey_secret)
 
+            # Never trust imported ownership/team fields from payload.
+            entity_data = self._sanitize_import_scope_fields(entity_type, entity_data)
+
             filtered_entities.append(entity_data)
 
         if not filtered_entities:
@@ -549,6 +552,30 @@ class ImportService:
             False
         """
         return "auth_value" in entity_data and entity_data.get("auth_value")
+
+    def _sanitize_import_scope_fields(self, entity_type: str, entity_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop untrusted ownership scope fields from imported entity payloads.
+
+        Import ownership/team assignment is derived from the authenticated
+        importer context, not from import file metadata.
+
+        Args:
+            entity_type: Entity family being imported.
+            entity_data: Source entity payload from import file.
+
+        Returns:
+            Sanitized entity payload copy.
+        """
+        scoped_entity_types = {"tools", "gateways", "servers", "resources", "prompts", "a2a_agents"}
+        if entity_type not in scoped_entity_types:
+            return entity_data
+
+        sanitized = dict(entity_data)
+        sanitized.pop("team_id", None)
+        sanitized.pop("owner_email", None)
+        sanitized.pop("visibility", None)
+        sanitized.pop("team", None)
+        return sanitized
 
     def _rekey_auth_data(self, entity_data: Dict[str, Any], new_secret: str) -> Dict[str, Any]:
         """Re-encrypt authentication data with a new secret key.
