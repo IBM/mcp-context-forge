@@ -694,7 +694,14 @@ class SessionRegistry(SessionBackend):
         logger.info(f"Added session: {session_id}")
 
     def _session_owner_key(self, session_id: str) -> str:
-        """Return Redis key used to store session ownership."""
+        """Return Redis key used to store session ownership.
+
+        Args:
+            session_id: Session identifier.
+
+        Returns:
+            Redis key for the session owner mapping.
+        """
         return f"mcp:session_owner:{session_id}"
 
     async def set_session_owner(self, session_id: str, owner_email: Optional[str]) -> None:
@@ -703,6 +710,9 @@ class SessionRegistry(SessionBackend):
         Args:
             session_id: Session identifier to update.
             owner_email: Owner email to set. Passing ``None`` clears ownership.
+
+        Returns:
+            None.
         """
         # Skip for none backend
         if self._backend == "none":
@@ -730,6 +740,11 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_set_owner() -> None:
+                    """Persist owner metadata for a session in the database backend.
+
+                    Raises:
+                        Exception: Propagates database write failures to the caller.
+                    """
                     db_session = next(get_db())
                     try:
                         record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
@@ -765,7 +780,14 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"Database error setting owner for session {session_id}: {e}")
 
     async def get_session_owner(self, session_id: str) -> Optional[str]:
-        """Get owner email for a session."""
+        """Get owner email for a session.
+
+        Args:
+            session_id: Session identifier to resolve.
+
+        Returns:
+            Owner email when present, otherwise ``None``.
+        """
         owner = self._session_owners.get(session_id)
         if owner:
             return owner

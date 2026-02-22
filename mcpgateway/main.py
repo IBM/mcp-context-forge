@@ -441,13 +441,28 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
 
 
 def _has_verified_jwt_payload(request: Request) -> bool:
-    """Return whether request has a verified JWT payload cached in request.state."""
+    """Return whether request has a verified JWT payload cached in request state.
+
+    Args:
+        request: Incoming request context.
+
+    Returns:
+        ``True`` when a verified payload tuple is present, otherwise ``False``.
+    """
     cached = getattr(request.state, "_jwt_verified_payload", None)
     return bool(cached and isinstance(cached, tuple) and len(cached) == 2 and cached[1])
 
 
 def _get_request_identity(request: Request, user) -> tuple[str, bool]:
-    """Return requester email and admin state honoring scoped-token admin semantics."""
+    """Return requester email and admin state honoring scoped-token semantics.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context from dependency resolution.
+
+    Returns:
+        Tuple of ``(requester_email, requester_is_admin)``.
+    """
     user_email, _token_teams, token_is_admin = _get_rpc_filter_context(request, user)
     resolved_email = user_email or get_user_email(user)
 
@@ -466,7 +481,16 @@ def _get_request_identity(request: Request, user) -> tuple[str, bool]:
 
 
 def _get_scoped_resource_access_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]]]:
-    """Resolve user_email/token_teams context with secure admin/public-only semantics."""
+    """Resolve scoped resource access context for the current requester.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context from dependency resolution.
+
+    Returns:
+        Tuple of ``(user_email, token_teams)`` where ``(None, None)`` represents
+        unrestricted admin access and ``[]`` represents public-only scope.
+    """
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
     # Non-JWT admin contexts (for example basic-auth development mode) should
@@ -484,7 +508,15 @@ def _get_scoped_resource_access_context(request: Request, user) -> tuple[Optiona
 
 
 def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
-    """Build PermissionChecker user payload for method-level RPC permission checks."""
+    """Build PermissionChecker user payload for method-level RPC checks.
+
+    Args:
+        user: Authenticated user context.
+        db: Active database session.
+
+    Returns:
+        Permission checker payload with email and ``db`` keys.
+    """
     permission_user = dict(user) if isinstance(user, dict) else {"email": get_user_email(user)}
     if not permission_user.get("email"):
         permission_user["email"] = get_user_email(user)
@@ -493,14 +525,33 @@ def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
 
 
 async def _ensure_rpc_permission(user, db: Session, permission: str, method: str) -> None:
-    """Require a specific RPC permission for a method branch."""
+    """Require a specific RPC permission for a method branch.
+
+    Args:
+        user: Authenticated user context.
+        db: Active database session.
+        permission: Permission required for the method.
+        method: JSON-RPC method name being authorized.
+
+    Raises:
+        JSONRPCError: If the requester lacks the required permission.
+    """
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
     if not await checker.has_permission(permission):
         raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
 
 
 async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
-    """Ensure session operations are limited to the owner unless requester is admin."""
+    """Ensure session operations are limited to the owner unless requester is admin.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        session_id: Target session identifier.
+
+    Raises:
+        HTTPException: If session is missing or requester is not authorized.
+    """
     session_owner = await session_registry.get_session_owner(session_id)
     if not session_owner:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -4603,6 +4654,7 @@ async def subscribe_resource(request: Request, user=Depends(get_current_user_wit
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
+        request (Request): Incoming HTTP request.
         user (str): Authenticated user.
 
     Returns:

@@ -2576,9 +2576,12 @@ class ResourceService:
         Args:
             db: Database session
             subscription: Resource subscription object
+            user_email: Requester email used for visibility checks.
+            token_teams: Token team scope used for visibility checks.
 
         Raises:
             ResourceNotFoundError: If the resource is not found or is inactive
+            PermissionError: If the requester is not authorized for the resource
             ResourceError: For other subscription errors
 
         Examples:
@@ -3235,7 +3238,16 @@ class ResourceService:
         await self._publish_event(event)
 
     async def _event_visible_to_subscriber(self, event: Dict[str, Any], user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
-        """Return True if a resource event should be visible to the subscriber context."""
+        """Return whether a resource event is visible to a subscriber context.
+
+        Args:
+            event: Event payload emitted by the resource event stream.
+            user_email: Subscriber email. ``None`` only for unrestricted admin context.
+            token_teams: Subscriber token team scope.
+
+        Returns:
+            ``True`` when the event is visible to the subscriber, otherwise ``False``.
+        """
         data = event.get("data") if isinstance(event, dict) else None
         if not isinstance(data, dict):
             return False
