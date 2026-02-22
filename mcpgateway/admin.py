@@ -724,8 +724,7 @@ def _get_span_entity_performance(
     # Use database-native percentiles only if enabled in config and using PostgreSQL
     if dialect_name == "postgresql" and settings.use_postgresdb_percentiles:
         # Safe: uses SQLAlchemy's bindparam for the IN-list
-        stats_sql = text(
-            """
+        stats_sql = text("""
             SELECT
                 (attributes->> :json_key) AS entity,
                 COUNT(*) AS count,
@@ -744,8 +743,7 @@ def _get_span_entity_performance(
             GROUP BY entity
             ORDER BY avg_duration_ms DESC
             LIMIT :limit
-            """
-        ).bindparams(bindparam("names", expanding=True))
+            """).bindparams(bindparam("names", expanding=True))
 
         results = db.execute(
             stats_sql,
@@ -5043,22 +5041,18 @@ async def admin_view_team_members(
                       hx-swap="innerHTML"
                       class="px-6 py-4">
 
-                    <!-- Search box -->
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Search Users</label>
-                        <input
-                            type="text"
-                            id="user-search-{team.id}"
-                            data-team-id="{team.id}"
-                            placeholder="Search by name or email..."
-                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
-                            oninput="debouncedServerSideUserSearch('{team.id}', this.value)"
-                        />
-                    </div>
-
                     <!-- Current Members Section -->
                     <div class="mb-6">
-                        <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Members</h5>
+                        <div class="flex items-center justify-between mb-2">
+                            <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300">Current Members</h5>
+                            <input
+                                type="text"
+                                id="member-search-{team.id}"
+                                placeholder="Search members..."
+                                class="w-48 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                                oninput="debouncedMemberSearch('{team.id}', this.value)"
+                            />
+                        </div>
                         <div
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
@@ -5072,19 +5066,24 @@ async def admin_view_team_members(
                         </div>
                     </div>
 
-                    <!-- Users to Add Section -->
+                    <!-- Add Users Section -->
                     <div class="mb-4">
-                        <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Users to Add</h5>
+                        <div class="flex items-center justify-between mb-2">
+                            <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300">Add Users</h5>
+                            <input
+                                type="text"
+                                id="non-member-search-{team.id}"
+                                placeholder="Search users by name or email..."
+                                class="w-64 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                                oninput="debouncedNonMemberSearch('{team.id}', this.value)"
+                            />
+                        </div>
                         <div
                             id="team-non-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                            data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
-                            hx-trigger="load delay:200ms"
-                            hx-target="this"
-                            hx-swap="innerHTML"
+                            data-per-page="50"
                         >
-                            <!-- Non-members will be loaded here via HTMX -->
+                            <div class="text-center py-4 text-gray-500 dark:text-gray-400">Search for users by name or email to add them to this team.</div>
                         </div>
                     </div>
 
@@ -6632,6 +6631,7 @@ async def admin_team_members_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    search: str = Query("", description="Search term to filter members by name or email"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -6642,6 +6642,7 @@ async def admin_team_members_partial_html(
         request: FastAPI request object.
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page. Default: 50.
+        search: Search term to filter members by name or email.
         db: Database session.
         user: Current authenticated user context.
 
@@ -6671,8 +6672,9 @@ async def admin_team_members_partial_html(
         if current_user_role != "owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
 
-        # Get paginated team members
-        paginated_result = await team_service.get_team_members(team_id, page=page, per_page=per_page)
+        # Get paginated team members with optional search filter
+        search_term = search.strip() if search else ""
+        paginated_result = await team_service.get_team_members(team_id, page=page, per_page=per_page, search=search_term or None)
         members = paginated_result["data"]
         pagination = paginated_result["pagination"]
 
@@ -6683,7 +6685,8 @@ async def admin_team_members_partial_html(
         db.commit()
 
         root_path = request.scope.get("root_path", "")
-        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        search_param = f"&search={urllib.parse.quote(search_term)}" if search_term else ""
+        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -6718,17 +6721,22 @@ async def admin_team_non_members_partial_html(
     team_id: str,
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=50, description="Items per page (max 50 for non-members)"),
+    search: str = Query("", description="Search term to filter non-members by name or email"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
     """Return paginated non-members for two-section layout (bottom section).
 
+    Non-members are only returned when a search term is provided.
+    Without a search term, returns an empty placeholder prompting the user to search.
+
     Args:
         team_id: Team identifier.
         request: FastAPI request object.
         page: Page number (1-indexed). Default: 1.
-        per_page: Items per page. Default: 50.
+        per_page: Items per page (capped at 50). Default: 50.
+        search: Search term to filter non-members by name or email.
         db: Database session.
         user: Current authenticated user context.
 
@@ -6759,8 +6767,19 @@ async def admin_team_non_members_partial_html(
         if current_user_role != "owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
 
-        # Get paginated non-members
-        paginated_result = await auth_service.list_users_not_in_team(team_id, page=page, per_page=per_page)
+        # Require a search term - do not load all non-members by default
+        search_term = search.strip() if search else ""
+        if not search_term:
+            return HTMLResponse(
+                content='<div class="text-center py-4 text-gray-500 dark:text-gray-400">Search for users by name or email to add them to this team.</div>',
+                status_code=200,
+            )
+
+        # Cap per_page at 50 for non-members to prevent DOM overload
+        per_page = min(per_page, 50)
+
+        # Get paginated non-members with search filter
+        paginated_result = await auth_service.list_users_not_in_team(team_id, page=page, per_page=per_page, search=search_term)
         users = paginated_result.data
         pagination = typing_cast(PaginationMeta, paginated_result.pagination)
 
@@ -6768,7 +6787,8 @@ async def admin_team_non_members_partial_html(
         db.commit()
 
         root_path = request.scope.get("root_path", "")
-        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        search_param = f"&search={urllib.parse.quote(search_term)}" if search_term else ""
+        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -6956,8 +6976,7 @@ async def admin_get_user_edit(
         # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
         if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
             pr_lines = []
-            pr_lines.append(
-                f"""                <!-- Password Requirements -->
+            pr_lines.append(f"""                <!-- Password Requirements -->
                 <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
                     <div class="flex items-start">
                         <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
@@ -6970,40 +6989,29 @@ async def admin_get_user_edit(
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
-            """
-            )
+            """)
             if settings.password_require_uppercase:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
-                """
-                )
+                """)
             if settings.password_require_lowercase:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
-                """
-                )
+                """)
             if settings.password_require_numbers:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
-                """
-                )
+                """)
             if settings.password_require_special:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
-                """
-                )
-            pr_lines.append(
-                """
+                """)
+            pr_lines.append("""
                             </div>
                         </div>
                     </div>
                 </div>
-            """
-            )
+            """)
             password_requirements_html = "".join(pr_lines)
         else:
             # Intentionally an empty string for HTML insertion when no requirements apply.
@@ -16463,8 +16471,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
         dict: Time-series percentile data
     """
     # PostgreSQL query with epoch-based bucketing (works for any interval including > 60 min)
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
             percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
@@ -16475,8 +16482,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
         GROUP BY bucket
         ORDER BY bucket
-        """
-    )
+        """)
 
     interval_seconds = interval_minutes * 60
     results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
@@ -16627,8 +16633,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         dict: Time-series metrics data
     """
     # Use epoch-based bucketing (works for any interval including > 60 min)
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
             COUNT(*) as total,
@@ -16638,8 +16643,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         WHERE start_time >= :cutoff_time
         GROUP BY bucket
         ORDER BY bucket
-        """
-    )
+        """)
 
     interval_seconds = interval_minutes * 60
     results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
@@ -16749,13 +16753,11 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
         dict: Heatmap data with time and latency dimensions
     """
     # First, get min/max durations
-    stats_query = text(
-        """
+    stats_query = text("""
         SELECT MIN(duration_ms) as min_d, MAX(duration_ms) as max_d
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
-    """
-    )
+    """)
     stats_row = db.execute(stats_query, {"cutoff_time": cutoff_time}).fetchone()
 
     if not stats_row or stats_row.min_d is None:
@@ -16774,8 +16776,7 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
     time_bucket_minutes = time_range_minutes / time_buckets
 
     # Use SQL arithmetic for 2D histogram bucketing
-    heatmap_query = text(
-        """
+    heatmap_query = text("""
         SELECT
             LEAST(GREATEST(
                 (EXTRACT(EPOCH FROM (start_time - :cutoff_time)) / 60.0 / :time_bucket_minutes)::int,
@@ -16789,8 +16790,7 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
         GROUP BY time_idx, latency_idx
-    """
-    )
+    """)
 
     rows = db.execute(
         heatmap_query,
