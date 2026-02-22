@@ -6286,6 +6286,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "logging/setLevel":
             # MCP spec-compliant logging endpoint
+            permission_user = dict(user) if isinstance(user, dict) else {"email": get_user_email(user)}
+            if not permission_user.get("email"):
+                permission_user["email"] = get_user_email(user)
+            permission_user["db"] = db
+            checker = PermissionChecker(permission_user)
+            if not await checker.has_permission("admin.system_config"):
+                raise JSONRPCError(-32003, "Insufficient permissions. Required: admin.system_config", {"method": method})
             level = LogLevel(params.get("level"))
             await logging_service.set_level(level)
             result = {}
@@ -6513,7 +6520,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-@require_permission("tools.invoke")
+@require_permission("tools.execute")
 async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
@@ -6612,7 +6619,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
 
 @utility_router.post("/message")
-@require_permission("tools.invoke")
+@require_permission("tools.execute")
 async def utility_message_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Handle a JSON-RPC message directed to a specific SSE session.
@@ -6862,10 +6869,11 @@ async def security_health(request: Request):
     """
     # Check authentication
     if settings.auth_required:
-        # Verify the request is authenticated
-        auth_header = request.headers.get("authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        auth_header = request.headers.get("authorization", "")
+        scheme, _, credentials = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not credentials:
             raise HTTPException(401, "Authentication required for security health")
+        await verify_jwt_token(credentials.strip())
 
     security_status = settings.get_security_status()
 

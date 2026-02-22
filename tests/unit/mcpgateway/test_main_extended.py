@@ -1746,6 +1746,56 @@ class TestSecurityHealthEndpoint:
         assert excinfo.value.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_security_health_rejects_invalid_bearer_token(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.headers = {"authorization": "Bearer invalid-token"}
+
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(
+            main_mod,
+            "verify_jwt_token",
+            AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")),
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.security_health(request)
+
+        assert excinfo.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_security_health_accepts_valid_bearer_token(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.headers = {"authorization": "Bearer valid-token"}
+
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(main_mod.settings, "dev_mode", False)
+        monkeypatch.setattr(main_mod, "verify_jwt_token", AsyncMock(return_value={"sub": "user@example.com"}))
+        monkeypatch.setattr(
+            main_mod.settings,
+            "get_security_status",
+            lambda: {
+                "security_score": 80,
+                "auth_enabled": True,
+                "secure_secrets": True,
+                "ssl_verification": True,
+                "debug_disabled": True,
+                "cors_restricted": True,
+                "ui_protected": True,
+                "warnings": ["w1"],
+            },
+        )
+
+        result = await main_mod.security_health(request)
+
+        assert result["status"] == "healthy"
+        assert "warnings" not in result
+        main_mod.verify_jwt_token.assert_awaited_once_with("valid-token")
+
+    @pytest.mark.asyncio
     async def test_security_health_includes_warnings_in_dev_mode(self, monkeypatch):
         import mcpgateway.main as main_mod
 
@@ -3639,9 +3689,38 @@ class TestRpcHandling:
 
         payload_logging = {"jsonrpc": "2.0", "id": "16", "method": "logging/setLevel", "params": {"level": "info"}}
         request_logging = self._make_request(payload_logging)
-        with patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)):
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
+        ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
+
+    async def test_handle_rpc_logging_set_level_requires_admin_permission(self):
+        payload_logging = {"jsonrpc": "2.0", "id": "16", "method": "logging/setLevel", "params": {"level": "info"}}
+        request_logging = self._make_request(payload_logging)
+
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)) as set_level,
+        ):
+            result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32003
+            assert "admin.system_config" in result["error"]["message"]
+            set_level.assert_not_awaited()
+
+    async def test_handle_rpc_logging_set_level_populates_email_when_missing(self):
+        payload_logging = {"jsonrpc": "2.0", "id": "17", "method": "logging/setLevel", "params": {"level": "info"}}
+        request_logging = self._make_request(payload_logging)
+
+        with (
+            patch("mcpgateway.main.get_user_email", return_value="fallback@example.com") as get_user_email,
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
+        ):
+            result = await handle_rpc(request_logging, db=MagicMock(), user={"sub": "user@example.com"})
+            assert result["result"] == {}
+            get_user_email.assert_called_once_with({"sub": "user@example.com"})
 
     async def test_handle_rpc_fallback_tool_error(self):
         payload = {"jsonrpc": "2.0", "id": "17", "method": "custom/tool", "params": {"a": 1}}

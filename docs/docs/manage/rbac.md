@@ -293,6 +293,17 @@ Token scoping is enforced consistently across all access paths:
 | WebSocket | ✅ | ✅ | Forwards auth to /rpc |
 | MCP Transport | ✅ | N/A | Streamable HTTP protocol filtering |
 
+### Method-Level RBAC Examples
+
+The `/rpc` endpoint applies method-level authorization for sensitive operations.
+These checks are aligned with equivalent REST endpoints.
+
+| Method / Endpoint | Required Permission | Notes |
+|-------------------|---------------------|-------|
+| JSON-RPC `logging/setLevel` (`POST /rpc`) | `admin.system_config` | Same permission as `POST /logging/setLevel` |
+| Utility SSE (`GET /sse`) | `tools.execute` | Canonical tool execution permission |
+| Utility message relay (`POST /message`) | `tools.execute` | Canonical tool execution permission |
+
 ---
 
 ## Token Types and Use Cases

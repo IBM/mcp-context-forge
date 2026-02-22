@@ -2,8 +2,6 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
----
-
 ## [1.0.0-RC2] - 2026-02-28 - Hardening: Strict Defaults, Transport Gating & OIDC Verification
 
 ### Overview
@@ -131,6 +129,11 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **Reverse proxy WebSocket auth** - `/reverse-proxy/ws` requires server management permissions (EXTRA-01)
 * **Cancellation authorization** - only run owner, shared-team members, or admins can cancel (C-10)
 * **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
+* **Health diagnostics auth consistency** - `/health/security` now uses standard bearer JWT validation flow.
+* **RPC/REST permission parity for logging controls** - `logging/setLevel` over `/rpc` now enforces `admin.system_config`, aligned with `POST /logging/setLevel`.
+* **Utility transport permission consistency** - `/sse` and `/message` now enforce canonical `tools.execute`.
+* **Shared auth dependency consistency** - `require_auth` now applies the same token/account validity checks used across authenticated flows.
+* **Shared admin auth dependency consistency** - `require_admin_auth` now applies the same token/account validity checks before admin authorization.
 
 ### Hardening
 
@@ -142,6 +145,10 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **EXTRA-01**: WebSocket relay and reverse proxy endpoints gated with proper authorization
 * **C-10**: Cancellation endpoints gated with proper authorization
 * **C-15**: Token scoping defaults to deny for unmapped API paths
+* Health diagnostics endpoint now follows standard bearer-token validation.
+* JSON-RPC and REST logging controls now use aligned permission checks.
+* Utility SSE/message endpoints now use canonical execution permission naming.
+* Shared auth dependencies now enforce consistent token/account validity checks.
 
 ### Chores
 
@@ -158,6 +165,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * `docs/docs/architecture/security-features.md` - Revocation fail-open behavior noted
 * `docs/docs/manage/proxy.md` - Feature flag requirement noted for `/ws` relay
 * `docs/docs/using/reverse-proxy.md` - `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` requirement documented
+* `docs/docs/manage/rbac.md` - Method-level RBAC examples updated for `/rpc` logging and utility SSE/message permissions
 
 ---
 
