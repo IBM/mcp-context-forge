@@ -6,12 +6,12 @@
 
 ### Overview
 
-This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, and authorization with **12 commits across 9 hardening items** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15, EXTRA-01):
+This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, and authorization (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15, EXTRA-01, C-04, C-07, C-11, C-14, C-28, C-29):
 
-- **🔐 9 Hardening Items** - SSRF strict defaults, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP/RPC token-scope enforcement, MCP transport revocation checks
-- **🧪 4 Testing** - Full regression coverage for hardened paths, token scope MCP/RPC coverage, locust load test alignment
+- **🔐 Hardening Items** - SSRF strict defaults, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP/RPC token-scope enforcement, MCP transport revocation checks, session ownership enforcement, resource visibility scoping, roots authorization parity
+- **🧪 Testing** - Full regression coverage for hardened paths, token scope MCP/RPC coverage, and additional allow/deny regression tests for session/resource controls
 
-> **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. Cancellation, OAuth DCR, and token scoping paths enforce proper authorization gates.
+> **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. Cancellation, OAuth DCR, token scoping, session ownership, and resource visibility paths enforce proper authorization gates.
 
 ### ⚠️ Breaking Changes
 
@@ -55,7 +55,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 * `/ws` WebSocket relay now requires authentication and at least one MCP interaction permission (`tools.read`, `tools.execute`, `resources.read`, `prompts.read`, `servers.use`, or `a2a.read`)
 * `/reverse-proxy/ws` now requires server management permissions (`servers.create`, `servers.update`, or `servers.manage`)
-* Bearer token in query parameters is accepted but logs a deprecation warning; use the `Authorization` header instead
+* Bearer token in query parameters is no longer accepted on WebSocket auth paths; use the `Authorization` header
 * Unauthenticated or unauthorized connections are closed with code `1008`
 
 > **Migration**: Ensure WebSocket clients send a valid bearer token via the `Authorization` header and that the associated user has appropriate RBAC permissions.
@@ -93,6 +93,16 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 > **Migration**: Cancellation requests from users who are not the run owner, a shared-team member, or an admin will receive HTTP 403. No configuration change needed; authorization is automatic based on the requesting user's token.
 
+#### **🔒 Session, Resource, and Roots Authorization Tightened** (C-04, C-07, C-11, C-28, C-29)
+
+* `POST /message` and `POST /servers/{server_id}/message` now require session owner or admin authorization
+* JSON-RPC `initialize` now rejects capability writes to existing sessions owned by a different user
+* `POST /resources/subscribe` SSE delivery is now filtered to events visible within caller scope
+* JSON-RPC `resources/subscribe` now enforces resource visibility before creating subscriptions
+* `GET /roots`, JSON-RPC `list_roots`, and JSON-RPC `roots/list` now require `admin.system_config`
+
+> **Migration**: Clients must use caller-owned sessions, and automation relying on global roots/resource visibility must run under identities with the required scope and permissions.
+
 ### Added
 
 #### **🛡️ SSRF CIDR Allowlist** (S-01)
@@ -118,7 +128,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 ### Fixed
 
-#### **🔐 Security** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15, EXTRA-01)
+#### **🔐 Security** (S-01, O-01, O-05, U-05, C-03, C-04, C-07, C-09, C-10, C-11, C-14, C-15, C-28, C-29, EXTRA-01)
 * **SSRF defaults inverted to strict** - localhost, private networks blocked; DNS fail-closed by default (S-01)
 * **OIDC id_token now verified** - cryptographic signature validation in SSO callback (O-01)
 * **OAuth DCR admin gate** - non-admin users denied access to client management endpoints (O-05)
@@ -127,7 +137,14 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **Token scoping default deny** - unmapped paths now denied instead of allowed (C-15)
 * **WebSocket relay authentication** - `/ws` requires auth and MCP interaction permissions (EXTRA-01)
 * **Reverse proxy WebSocket auth** - `/reverse-proxy/ws` requires server management permissions (EXTRA-01)
+* **WebSocket query-token auth removed** - WebSocket auth now accepts bearer tokens only from `Authorization` headers (C-14)
 * **Cancellation authorization** - only run owner, shared-team members, or admins can cancel (C-10)
+* **Session ingress ownership enforcement** - message endpoints now require session owner or admin authorization (C-04)
+* **Initialize ownership enforcement** - JSON-RPC `initialize` rejects cross-user session capability updates (C-11)
+* **Roots admin authorization parity** - `/roots`, `list_roots`, and `roots/list` all enforce `admin.system_config` (C-07)
+* **Resource SSE scope enforcement** - resource event streams are filtered by visibility/team/owner context (C-28)
+* **Resource subscribe visibility enforcement** - JSON-RPC `resources/subscribe` checks visibility before persistence (C-29)
+* **Resource subscriber ID compatibility** - safe email-style subscriber IDs are now accepted (C-29)
 * **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
 * **Health diagnostics auth consistency** - `/health/security` now uses standard bearer JWT validation flow.
 * **RPC/REST permission parity for logging controls** - `logging/setLevel` over `/rpc` now enforces `admin.system_config`, aligned with `POST /logging/setLevel`.
@@ -143,7 +160,13 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **U-05**: MCP transport now validates token revocation status and user active state
 * **C-03**: Bearer scheme parsing normalized to case-insensitive matching
 * **EXTRA-01**: WebSocket relay and reverse proxy endpoints gated with proper authorization
+* **C-14**: WebSocket bearer auth now requires `Authorization` headers (query token auth removed)
 * **C-10**: Cancellation endpoints gated with proper authorization
+* **C-04**: Message ingress endpoints now enforce session ownership
+* **C-11**: JSON-RPC initialize now enforces session ownership for capability writes
+* **C-07**: Roots listing endpoints now enforce admin authorization across REST and JSON-RPC
+* **C-28**: Resource event subscriptions now enforce per-subscriber visibility scoping
+* **C-29**: MCP resource subscription creation now enforces visibility checks
 * **C-15**: Token scoping defaults to deny for unmapped API paths
 * Health diagnostics endpoint now follows standard bearer-token validation.
 * JSON-RPC and REST logging controls now use aligned permission checks.
@@ -164,7 +187,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * `docs/docs/manage/securing.md` - Token revocation availability trade-off documented
 * `docs/docs/architecture/security-features.md` - Revocation fail-open behavior noted
 * `docs/docs/manage/proxy.md` - Feature flag requirement noted for `/ws` relay
-* `docs/docs/using/reverse-proxy.md` - `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` requirement documented
+* `docs/docs/using/reverse-proxy.md` - `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` requirement documented and WebSocket auth clarified as `Authorization`-header only
 * `docs/docs/manage/rbac.md` - Method-level RBAC examples updated for `/rpc` logging and utility SSE/message permissions
 
 ---
