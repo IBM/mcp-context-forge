@@ -285,7 +285,8 @@ Tokens with a `jti` (JWT ID) claim are tracked and can be revoked before expirat
 - Revoked tokens are normally rejected immediately on all endpoints
 - Token revocation is checked against the `token_revocations` database table
 - Administrators can revoke tokens via the Admin UI or API
-- Availability trade-off: when revocation/user lookups fail due to a database outage, transport auth paths currently fail open to preserve availability.
+- Auth dependencies (`require_auth`, `require_admin_auth`) and MCP transport auth all enforce revocation and active-user checks on the normal path.
+- Availability trade-off: when revocation/user lookups fail due to a database outage, these checks currently fail open to preserve availability.
 
 ```bash
 # Enable token tracking (required for revocation)

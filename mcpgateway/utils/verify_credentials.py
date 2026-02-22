@@ -308,7 +308,14 @@ async def verify_credentials_cached(token: str, request: Optional[Request] = Non
 
 
 def _raise_auth_401(detail: str) -> None:
-    """Raise a standardized bearer-auth 401 error."""
+    """Raise a standardized bearer-auth 401 error.
+
+    Args:
+        detail: Error detail message for the response body.
+
+    Raises:
+        HTTPException: Always raises 401 Unauthorized with Bearer auth header.
+    """
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=detail,
@@ -317,7 +324,15 @@ def _raise_auth_401(detail: str) -> None:
 
 
 async def _enforce_revocation_and_active_user(payload: dict) -> None:
-    """Enforce token revocation and active-user checks for JWT-authenticated flows."""
+    """Enforce token revocation and active-user checks for JWT-authenticated flows.
+
+    Args:
+        payload: Verified JWT payload used to derive revocation and user status checks.
+
+    Raises:
+        HTTPException: 401 when the token is revoked, the account is disabled,
+            or strict user-in-db mode rejects a missing user.
+    """
     # First-Party
     from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync
 
