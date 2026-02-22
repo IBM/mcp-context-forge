@@ -379,17 +379,17 @@ class ServerCapabilities(BaseModel):
     """Capabilities that a server may support.
 
     Attributes:
-        prompts (Optional[Dict[str, bool]]): Capability for prompt support.
-        resources (Optional[Dict[str, bool]]): Capability for resource support.
-        tools (Optional[Dict[str, bool]]): Capability for tool support.
+        prompts (Optional[Dict[str, Any]]): Capability for prompt support.
+        resources (Optional[Dict[str, Any]]): Capability for resource support.
+        tools (Optional[Dict[str, Any]]): Capability for tool support.
         logging (Optional[Dict[str, Any]]): Capability for logging support.
         completions (Optional[Dict[str, Any]]): Capability for completion support.
         experimental (Optional[Dict[str, Dict[str, Any]]]): Experimental capabilities.
     """
 
-    prompts: Optional[Dict[str, bool]] = None
-    resources: Optional[Dict[str, bool]] = None
-    tools: Optional[Dict[str, bool]] = None
+    prompts: Optional[Dict[str, Any]] = None
+    resources: Optional[Dict[str, Any]] = None
+    tools: Optional[Dict[str, Any]] = None
     logging: Optional[Dict[str, Any]] = None
     completions: Optional[Dict[str, Any]] = None
     experimental: Optional[Dict[str, Dict[str, Any]]] = None
