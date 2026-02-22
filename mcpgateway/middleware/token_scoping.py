@@ -884,11 +884,11 @@ class TokenScopingMiddleware:
                 # Cannot rely on request.state.token_teams — AuthContextMiddleware
                 # is gated by security_logging_enabled (defaults to False)
                 # First-Party
-                from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import _resolve_session_teams  # pylint: disable=import-outside-toplevel
 
                 is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
                 user_info = {"is_admin": is_admin}
-                token_teams = await _resolve_teams_from_db(user_email, user_info)
+                token_teams = await _resolve_session_teams(payload, user_email, user_info)
             else:
                 # API token or legacy: use embedded teams with normalize_token_teams
                 token_teams = normalize_token_teams(payload)
