@@ -7161,6 +7161,7 @@ async def list_tags(
     Retrieve all unique tags across specified entity types.
 
     Args:
+        request: FastAPI request object used to derive token/team visibility scope
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns tags from all entity types.
@@ -7214,6 +7215,7 @@ async def get_entities_by_tag(
     Get all entities that have a specific tag.
 
     Args:
+        request: FastAPI request object used to derive token/team visibility scope
         tag_name: The tag to search for
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").

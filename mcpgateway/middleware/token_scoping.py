@@ -175,10 +175,26 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("PUT", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
     ("DELETE", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
     # System configuration/admin operations
-    ("GET", re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"), Permissions.ADMIN_SYSTEM_CONFIG),
-    ("POST", re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"), Permissions.ADMIN_SYSTEM_CONFIG),
-    ("PUT", re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"), Permissions.ADMIN_SYSTEM_CONFIG),
-    ("DELETE", re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"), Permissions.ADMIN_SYSTEM_CONFIG),
+    (
+        "GET",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
+    (
+        "POST",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
+    (
+        "PUT",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
+    (
+        "DELETE",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
 ]
 
 

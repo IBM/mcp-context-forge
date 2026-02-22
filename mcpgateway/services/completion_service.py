@@ -91,6 +91,8 @@ class CompletionService:
         Args:
             db: Database session
             request: Completion request
+            user_email: Caller email used for owner/team visibility checks
+            token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
 
         Returns:
             Completion result with suggestions
@@ -137,7 +139,16 @@ class CompletionService:
             raise CompletionError(str(e))
 
     async def _resolve_team_ids(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> List[str]:
-        """Resolve effective team IDs for scoped visibility checks."""
+        """Resolve effective team IDs for scoped visibility checks.
+
+        Args:
+            db: Database session
+            user_email: Caller email for DB-based team lookup when token teams are not explicit
+            token_teams: Explicit token team scope when present
+
+        Returns:
+            Effective team IDs used to build visibility filters.
+        """
         if token_teams is not None:
             return token_teams
         if not user_email:
@@ -151,7 +162,18 @@ class CompletionService:
         return [team.id for team in user_teams]
 
     def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str]):
-        """Apply token/user visibility scope to a SQLAlchemy statement."""
+        """Apply token/user visibility scope to a SQLAlchemy statement.
+
+        Args:
+            stmt: SQLAlchemy statement to constrain
+            model: ORM model that includes visibility/team/owner columns
+            user_email: Caller email used for owner visibility
+            token_teams: Explicit token team scope when present
+            team_ids: Effective team IDs for team visibility
+
+        Returns:
+            Scoped SQLAlchemy statement.
+        """
         if token_teams is None and user_email is None:
             return stmt
 
@@ -182,6 +204,8 @@ class CompletionService:
             ref: Prompt reference
             arg_name: Argument name
             arg_value: Current argument value
+            user_email: Caller email used for owner/team visibility checks
+            token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
 
         Returns:
             Completion suggestions
@@ -279,6 +303,8 @@ class CompletionService:
             db: Database session
             ref: Resource reference
             arg_value: Current URI value
+            user_email: Caller email used for owner/team visibility checks
+            token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
 
         Returns:
             URI completion suggestions

@@ -94,6 +94,8 @@ class TagService:
                          If None, returns tags from all entity types.
             include_entities: Whether to include the list of entities that have each tag.
                              If False, only statistics are returned for better performance.
+            user_email: Caller email used for owner/team visibility checks
+            token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
 
         Returns:
             List of TagInfo objects containing tag details, sorted alphabetically by tag name.
@@ -333,7 +335,16 @@ class TagService:
         return str(tag)
 
     async def _resolve_team_ids(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> List[str]:
-        """Resolve effective team IDs for scoped visibility checks."""
+        """Resolve effective team IDs for scoped visibility checks.
+
+        Args:
+            db: Database session
+            user_email: Caller email for DB-based team lookup when token teams are not explicit
+            token_teams: Explicit token team scope when present
+
+        Returns:
+            Effective team IDs used to build visibility filters.
+        """
         if token_teams is not None:
             return token_teams
         if not user_email:
@@ -354,6 +365,16 @@ class TagService:
         - token_teams == [] -> public-only
         - token_teams == [...] -> public + matching-team (+ owner if user_email present)
         - token_teams is None and user_email present -> use DB team memberships
+
+        Args:
+            stmt: SQLAlchemy statement to constrain
+            model: ORM model that includes visibility/team/owner columns
+            user_email: Caller email used for owner visibility
+            token_teams: Explicit token team scope when present
+            team_ids: Effective team IDs for team visibility
+
+        Returns:
+            Scoped SQLAlchemy statement.
         """
         if token_teams is None and user_email is None:
             return stmt
@@ -389,6 +410,8 @@ class TagService:
             entity_types: Optional list of entity types to search within.
                          Valid types: ['tools', 'resources', 'prompts', 'servers', 'gateways']
                          If None, searches all entity types
+            user_email: Caller email used for owner/team visibility checks
+            token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
 
         Returns:
             List of TaggedEntity objects containing basic entity information.
