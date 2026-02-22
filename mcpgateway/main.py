@@ -6286,6 +6286,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "logging/setLevel":
             # MCP spec-compliant logging endpoint
+            permission_user = dict(user) if isinstance(user, dict) else {"email": get_user_email(user)}
+            if not permission_user.get("email"):
+                permission_user["email"] = get_user_email(user)
+            permission_user["db"] = db
+            checker = PermissionChecker(permission_user)
+            if not await checker.has_permission("admin.system_config"):
+                raise JSONRPCError(-32003, "Insufficient permissions. Required: admin.system_config", {"method": method})
             level = LogLevel(params.get("level"))
             await logging_service.set_level(level)
             result = {}

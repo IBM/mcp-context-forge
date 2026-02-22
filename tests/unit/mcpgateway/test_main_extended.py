@@ -3689,9 +3689,25 @@ class TestRpcHandling:
 
         payload_logging = {"jsonrpc": "2.0", "id": "16", "method": "logging/setLevel", "params": {"level": "info"}}
         request_logging = self._make_request(payload_logging)
-        with patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)):
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
+        ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
+
+    async def test_handle_rpc_logging_set_level_requires_admin_permission(self):
+        payload_logging = {"jsonrpc": "2.0", "id": "16", "method": "logging/setLevel", "params": {"level": "info"}}
+        request_logging = self._make_request(payload_logging)
+
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)) as set_level,
+        ):
+            result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32003
+            assert "admin.system_config" in result["error"]["message"]
+            set_level.assert_not_awaited()
 
     async def test_handle_rpc_fallback_tool_error(self):
         payload = {"jsonrpc": "2.0", "id": "17", "method": "custom/tool", "params": {"a": 1}}
