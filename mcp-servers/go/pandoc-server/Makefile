@@ -147,7 +147,7 @@ test-integration: build
 # help: install               - go install into GOPATH/bin
 # help: release               - Cross-compile (honours GOOS/GOARCH)
 # help: run                   - Build then run (stdio transport)
-# help: run-translate         - Run with MCP Gateway translate on :9000
+# help: run-translate         - Run with ContextForge translate on :9000
 
 .PHONY: build install release run run-translate
 
@@ -175,7 +175,7 @@ run: build
 	@$(DIST_DIR)/$(BIN_NAME)
 
 run-translate: build
-	@echo "$(C_BLUE)Starting $(BIN_NAME) with MCP Gateway on :9000...$(C_RESET)"
+	@echo "$(C_BLUE)Starting $(BIN_NAME) with ContextForge on :9000...$(C_RESET)"
 	@python3 -m mcpgateway.translate --stdio "$(DIST_DIR)/$(BIN_NAME)" --port 9000
 
 # =============================================================================

@@ -69,6 +69,7 @@ __all__: Sequence[str] = (
 DEFAULT_ALGO: str = settings.jwt_algorithm
 DEFAULT_EXP_MINUTES: int = settings.token_expiry
 DEFAULT_USERNAME: str = settings.basic_auth_user
+_TEAMS_UNSET = object()
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ def _create_jwt_token(
     secret: str = "",  # nosec B107 - Optional override; uses config if empty
     algorithm: str = "",  # Optional override; uses config if empty
     user_data: Optional[Dict[str, Any]] = None,
-    teams: Optional[List[str]] = None,
+    teams: Optional[List[str]] | object = _TEAMS_UNSET,
     scopes: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Create a signed JWT token with automatic key selection and validation.
@@ -103,6 +104,8 @@ def _create_jwt_token(
         algorithm: Optional signing algorithm. If empty, uses JWT_ALGORITHM from config.
         user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
         teams: Optional list of team IDs the token is scoped to.
+            Pass ``None`` explicitly to serialize ``"teams": null``.
+            Omit the argument to leave the claim unchanged/absent.
         scopes: Optional scopes dict with keys: server_id, permissions, ip_restrictions, time_restrictions.
 
     Returns:
@@ -148,7 +151,7 @@ def _create_jwt_token(
     if user_data:
         payload["user"] = user_data
 
-    if teams is not None:
+    if teams is not _TEAMS_UNSET:
         payload["teams"] = teams
 
     if scopes is not None:
@@ -184,7 +187,7 @@ async def create_jwt_token(
     secret: str = None,
     algorithm: str = None,
     user_data: Optional[Dict[str, Any]] = None,
-    teams: Optional[List[str]] = None,
+    teams: Optional[List[str]] | object = _TEAMS_UNSET,
     scopes: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
@@ -198,6 +201,8 @@ async def create_jwt_token(
         algorithm: Optional signing algorithm. If None/empty, uses JWT_ALGORITHM from config.
         user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
         teams: Optional list of team IDs the token is scoped to.
+            Pass ``None`` explicitly to serialize ``"teams": null``.
+            Omit to leave teams absent.
         scopes: Optional scopes dict with keys: server_id, permissions, ip_restrictions, time_restrictions.
 
     Returns:
@@ -476,7 +481,7 @@ def main() -> None:  # pragma: no cover
 
     # Build rich token parameters if provided
     user_data = None
-    teams = None
+    teams: object = _TEAMS_UNSET
     scopes_dict = None
 
     if args.admin or args.teams or args.scopes or args.full_name:
@@ -490,7 +495,9 @@ def main() -> None:  # pragma: no cover
             "auth_provider": "cli",  # Mark as CLI-generated for auditing
         }
 
-        # Build teams list
+        # Build teams claim. In rich-token mode, explicit null preserves
+        # normalize_token_teams semantics for admin bypass when intended.
+        teams = None
         if args.teams:
             teams = [t.strip() for t in args.teams.split(",") if t.strip()]
 
@@ -515,7 +522,15 @@ def main() -> None:  # pragma: no cover
             print(orjson.dumps(scopes_dict, default=str, option=orjson.OPT_INDENT_2).decode())
         print("-")
 
-    token = _create_jwt_token(payload, args.exp, args.secret, args.algo, user_data, teams, scopes_dict)
+    token = _create_jwt_token(
+        payload,
+        args.exp,
+        args.secret,
+        args.algo,
+        user_data=user_data,
+        teams=teams,
+        scopes=scopes_dict,
+    )
     print(token)
 
 

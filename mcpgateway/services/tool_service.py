@@ -2667,7 +2667,7 @@ class ToolService:
             arguments: Tool arguments.
             request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Defaults to None.
-            app_user_email (Optional[str], optional): MCP Gateway user email for OAuth token retrieval.
+            app_user_email (Optional[str], optional): ContextForge user email for OAuth token retrieval.
                 Required for OAuth-protected gateways.
             user_email (Optional[str], optional): User email for authorization checks.
                 None = unauthenticated request.
@@ -4578,7 +4578,7 @@ class ToolService:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "User query", "default": "Hello from MCP Gateway Admin UI test!"},
+                    "query": {"type": "string", "description": "User query", "default": "Hello from ContextForge Admin UI test!"},
                 },
                 "required": ["query"],
             },

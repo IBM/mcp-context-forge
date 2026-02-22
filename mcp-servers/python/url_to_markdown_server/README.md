@@ -115,7 +115,7 @@ The new FastMCP implementation requires:
 make dev-fastmcp  # Run FastMCP implementation
 ```
 
-#### HTTP Mode (via MCP Gateway)
+#### HTTP Mode (via ContextForge)
 ```bash
 make serve-http-fastmcp  # Expose FastMCP server over HTTP
 ```

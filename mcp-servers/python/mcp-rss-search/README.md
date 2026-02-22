@@ -1090,7 +1090,7 @@ Built with:
 - [httpx](https://www.python-httpx.org/) - HTTP client
 - [sentence-transformers](https://www.sbert.net/) - Semantic embeddings
 - [rank-bm25](https://github.com/dorianbrown/rank_bm25) - BM25 ranking
-- [MCP Context Forge](https://github.com/your-org/mcp-context-forge) - MCP Gateway ecosystem
+- [ContextForge](https://github.com/your-org/mcp-context-forge) - ContextForge ecosystem
 
 ---
 

@@ -1,10 +1,10 @@
-# Securing MCP Gateway
+# Securing ContextForge
 
-This guide provides essential security configurations and best practices for deploying MCP Gateway in production environments.
+This guide provides essential security configurations and best practices for deploying ContextForge in production environments.
 
 ## ⚠️ Critical Security Notice
 
-**MCP Gateway is currently in beta (v1.0.0-RC-1)** and requires careful security configuration for production use:
+**ContextForge is currently in beta (v1.0.0-RC-1)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
 - Expect **breaking changes** between versions until 1.0 release
@@ -80,7 +80,7 @@ The platform admin user (`PLATFORM_ADMIN_EMAIL`) is automatically created during
 
 #### JWT Security Configuration
 
-MCP Gateway supports both symmetric (HMAC) and asymmetric (RSA/ECDSA) JWT algorithms. **Asymmetric algorithms are strongly recommended for production** due to enhanced security properties.
+ContextForge supports both symmetric (HMAC) and asymmetric (RSA/ECDSA) JWT algorithms. **Asymmetric algorithms are strongly recommended for production** due to enhanced security properties.
 
 ##### Production JWT Security (Recommended)
 
@@ -178,7 +178,7 @@ volumes:
 
 #### Environment Isolation
 
-When deploying MCP Gateway across multiple environments (DEV, UAT, PROD), you must configure unique JWT settings per environment to prevent tokens from one environment being accepted in another.
+When deploying ContextForge across multiple environments (DEV, UAT, PROD), you must configure unique JWT settings per environment to prevent tokens from one environment being accepted in another.
 
 **Required per-environment configuration:**
 
@@ -276,15 +276,17 @@ python3 -m mcpgateway.utils.create_jwt_token \
 
 ### 4. Token Lifecycle Management
 
-MCP Gateway provides token lifecycle controls including revocation and validation requirements.
+ContextForge provides token lifecycle controls including revocation and validation requirements.
 
 #### Token Revocation
 
 Tokens with a `jti` (JWT ID) claim are tracked and can be revoked before expiration:
 
-- Revoked tokens are rejected immediately on all endpoints
+- Revoked tokens are normally rejected immediately on all endpoints
 - Token revocation is checked against the `token_revocations` database table
 - Administrators can revoke tokens via the Admin UI or API
+- Auth dependencies (`require_auth`, `require_admin_auth`) and MCP transport auth all enforce revocation and active-user checks on the normal path.
+- Availability trade-off: when revocation/user lookups fail due to a database outage, these checks currently fail open to preserve availability.
 
 ```bash
 # Enable token tracking (required for revocation)
@@ -326,7 +328,7 @@ For deployments using an authentication proxy:
 TRUST_PROXY_AUTH=true
 PROXY_USER_HEADER=X-Forwarded-User    # Header containing authenticated username
 
-# Important: Only enable when MCP Gateway is behind a trusted proxy
+# Important: Only enable when ContextForge is behind a trusted proxy
 # that properly sets and validates this header
 ```
 
@@ -368,6 +370,56 @@ When disabled, only administrators can create user accounts via the Admin UI or 
 - [ ] Set up rate limiting per endpoint/client
 - [ ] Verify security headers are present (automatically added by SecurityHeadersMiddleware)
 - [ ] Configure iframe embedding policy (X_FRAME_OPTIONS=DENY by default, change to SAMEORIGIN if needed)
+- [ ] Verify Subresource Integrity (SRI) hashes for CDN resources (automatically verified in CI)
+
+#### Subresource Integrity (SRI)
+
+MCP Gateway implements Subresource Integrity for all external CDN resources to cryptographically verify that fetched resources have not been tampered with. This protects against:
+
+- **CDN Compromise**: Malicious code injection if a CDN is compromised
+- **MITM Attacks**: Content modification during transit
+- **DNS Hijacking**: Redirection to malicious CDN servers
+- **Version Drift**: Unexpected changes to CDN content
+
+**Protected Resources** (15 total):
+
+- HTMX (1.9.10) - Dynamic interactions
+- Alpine.js (3.14.1) - Reactive framework
+- Chart.js (4.4.1) - Data visualization
+- Marked (11.1.1) - Markdown parser
+- DOMPurify (3.0.6) - XSS sanitizer
+- CodeMirror (5.65.18) - Code editor (7 files)
+- Font Awesome (6.4.0) - Icon library
+
+**Verification**:
+
+```bash
+# Verify all SRI hashes match current CDN content
+make sri-verify
+
+# Regenerate hashes (after updating CDN library versions)
+make sri-generate
+```
+
+**Updating CDN Libraries**:
+
+When updating a CDN library version:
+
+1. Update the URL in `scripts/cdn_resources.py`
+2. Run `make sri-generate` to calculate new hash
+3. Update the URL in templates (admin.html, login.html, etc.)
+4. Run `make sri-verify` to confirm hash matches
+5. Commit both `mcpgateway/sri_hashes.json` and template changes
+
+The CI pipeline automatically verifies SRI hashes on every build to detect unexpected changes.
+
+**Security Checklist**:
+
+- [x] All CDN resources have SRI integrity attributes
+- [x] All CDN URLs use exact version numbers (no `@latest`)
+- [x] CI verifies hashes match CDN content
+- [x] Hashes use SHA-384 algorithm (W3C recommended)
+- [ ] Review SRI hashes after any CDN library updates
 
 ### 9. Container Security
 
@@ -423,7 +475,7 @@ Before connecting any MCP server:
 
 ### 14. Integration Security
 
-MCP Gateway should be integrated with:
+ContextForge should be integrated with:
 
 - [ ] API Gateway for auth and rate limiting
 - [ ] Web Application Firewall (WAF)
@@ -457,7 +509,7 @@ Security considerations:
 
 ### 16. Downstream Application Security
 
-Applications consuming MCP Gateway data must:
+Applications consuming ContextForge data must:
 
 - [ ] Validate all inputs from the gateway
 - [ ] Implement context-appropriate sanitization
@@ -497,7 +549,7 @@ LOG_TO_FILE=false            # Disable file logging unless required
 LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
 ```
 
-> **Rate limiting:** MCP Gateway does not ship a built-in global rate limiter. Enforce
+> **Rate limiting:** ContextForge does not ship a built-in global rate limiter. Enforce
 > request throttling at an upstream ingress (NGINX, Envoy, API gateway) before traffic
 > reaches the service.
 
@@ -515,7 +567,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
                                                           ▼
                                                  ┌─────────────────┐
                                                  │                 │
-                                                 │  MCP Gateway    │
+                                                 │  ContextForge    │
                                                  │  (Internal)     │
                                                  └────────┬────────┘
                                                           │
@@ -582,4 +634,4 @@ make docker-prod
 make security-report
 ```
 
-Remember: **Security is a shared responsibility**. MCP Gateway provides *some* security controls, but you must properly configure and integrate it within a comprehensive security architecture.
+Remember: **Security is a shared responsibility**. ContextForge provides *some* security controls, but you must properly configure and integrate it within a comprehensive security architecture.

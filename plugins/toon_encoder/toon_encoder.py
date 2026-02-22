@@ -3,7 +3,7 @@
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-TOON Encoder Plugin for MCP Gateway.
+TOON Encoder Plugin for ContextForge.
 
 This plugin converts JSON tool results to TOON (Token-Oriented Object Notation)
 format to reduce token consumption when sending responses to LLM agents/GPUs.

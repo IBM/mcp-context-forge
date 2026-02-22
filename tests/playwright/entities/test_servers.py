@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-CRUD tests for Servers entity in MCP Gateway Admin UI.
+CRUD tests for Servers entity in ContextForge Admin UI.
 """
 
 # Local

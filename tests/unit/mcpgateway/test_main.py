@@ -524,7 +524,7 @@ class TestHealthAndInfrastructure:
             # When UI is disabled, should return API info
             assert response.status_code == 200
             data = response.json()
-            assert data["name"] == "MCP_Gateway"
+            assert data["name"] == "ContextForge"
             assert data["ui_enabled"] is False
 
     def test_static_files(self, test_client):
@@ -555,8 +555,8 @@ class TestProtocolEndpoints:
         mock_result = InitializeResult(
             protocolVersion=PROTOCOL_VERSION,
             capabilities=mock_capabilities,
-            serverInfo={"name": "MCP Gateway", "version": "1.0.0"},
-            instructions="MCP Gateway providing federated tools, resources and prompts.",
+            serverInfo={"name": "ContextForge", "version": "1.0.0"},
+            instructions="ContextForge providing federated tools, resources and prompts.",
         )
         mock_handle_initialize.return_value = mock_result
 
@@ -597,13 +597,49 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
-    @patch("mcpgateway.main.logging_service.notify")
-    def test_handle_notification_cancelled(self, mock_notify, test_client, auth_headers):
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
         """Test handling request cancelled notification."""
+        mock_get_context.return_value = ("test_user@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "test_user@example.com", "owner_team_ids": []}
         req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
         response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
         assert response.status_code == 200
-        mock_notify.assert_called_once()
+        mock_cancel_run.assert_awaited_once_with("123", reason=None)
+        mock_notify.assert_awaited_once()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled_denied_for_non_owner(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """Test cancellation notification denied for non-owner/non-admin users."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "owner@example.com", "owner_team_ids": []}
+        req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
+        response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+        mock_cancel_run.assert_not_awaited()
+        mock_notify.assert_not_awaited()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_alias_cancelled_enforces_authorization(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """The /notifications alias must enforce the same cancellation authorization rules."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "owner@example.com", "owner_team_ids": []}
+        req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
+        response = test_client.post("/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+        mock_cancel_run.assert_not_awaited()
+        mock_notify.assert_not_awaited()
 
     @patch("mcpgateway.main.logging_service.notify")
     def test_handle_notification_message(self, mock_notify, test_client, auth_headers):
@@ -1099,10 +1135,10 @@ class TestResourceEndpoints:
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
-        resource_id = MOCK_RESOURCE_READ["id"]
-        response = test_client.post(f"/resources/subscribe", headers=auth_headers)
+        response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
 
 
 # ----------------------------------------------------- #
@@ -1487,6 +1523,54 @@ class TestRootEndpoints:
         assert len(data) == 1
         mock_list.assert_called_once()
 
+    def test_list_roots_endpoint_requires_admin_permission(self, test_client, auth_headers):
+        """Root listing should require admin.system_config permission."""
+        from mcpgateway.main import app
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def non_admin_user(_request=None, _credentials=None, _jwt_token=None):
+            return {"email": "non-admin@example.com", "is_admin": False}
+
+        app.dependency_overrides[get_current_user_with_permissions] = non_admin_user
+        try:
+            client = TestClient(app)
+            with patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new=AsyncMock(return_value=False)):
+                response = client.get("/roots/", headers=auth_headers)
+        finally:
+            app.dependency_overrides.pop(get_current_user_with_permissions, None)
+        assert response.status_code == 403
+
+    @pytest.mark.parametrize(
+        ("method", "path", "payload"),
+        [
+            ("get", "/roots/export?uri=file:///test", None),
+            ("get", "/roots/changes", None),
+            ("get", "/roots/file%3A%2F%2F%2Ftest", None),
+            ("post", "/roots/", {"uri": "file:///test", "name": "Test Root"}),
+            ("put", "/roots/file%3A%2F%2F%2Ftest", {"uri": "file:///test", "name": "Updated Root"}),
+            ("delete", "/roots/file%3A%2F%2F%2Ftest", None),
+        ],
+    )
+    def test_root_management_endpoints_require_admin_permission(self, method, path, payload, auth_headers):
+        from mcpgateway.main import app
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def non_admin_user(_request=None, _credentials=None, _jwt_token=None):
+            return {"email": "non-admin@example.com", "is_admin": False}
+
+        app.dependency_overrides[get_current_user_with_permissions] = non_admin_user
+        try:
+            client = TestClient(app)
+            with patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new=AsyncMock(return_value=False)):
+                if payload is None:
+                    response = getattr(client, method)(path, headers=auth_headers)
+                else:
+                    response = getattr(client, method)(path, json=payload, headers=auth_headers)
+        finally:
+            app.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+        assert response.status_code == 403
+
     @patch("mcpgateway.main.root_service.add_root")
     def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
         """Test adding a new root directory."""
@@ -1552,6 +1636,34 @@ class TestRPCEndpoints:
             plugin_global_context=ANY,
             meta_data=None,
         )
+
+    def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
+        req = {"jsonrpc": "2.0", "id": "test-id-deny", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
+
+        async def _has_permission(_self, permission):
+            return permission != "tools.execute"
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
+            response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+        assert "tools.execute" in body["error"]["message"]
+
+    def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
+        req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
+
+        async def _has_permission(_self, permission):
+            return permission != "tools.execute"
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
+            response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+        assert "tools.execute" in body["error"]["message"]
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")
@@ -1805,10 +1917,27 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["roots"][0]["uri"] == "root://1"
 
+    @patch("mcpgateway.main.PermissionChecker.has_permission", new_callable=AsyncMock, return_value=False)
+    def test_rpc_list_roots_requires_admin_permission(self, _mock_permission, test_client, auth_headers):
+        """list_roots RPC must enforce admin.system_config permission."""
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "list_roots",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+        assert "admin.system_config" in body["error"]["message"]
+
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
-    def test_rpc_notification_cancelled(self, mock_cancel_run, mock_notify, test_client, auth_headers):
+    def test_rpc_notification_cancelled(self, mock_cancel_run, mock_get_status, mock_notify, test_client, auth_headers):
         """Test notifications/cancelled JSON-RPC method."""
+        mock_get_status.return_value = {"owner_email": "test_user@example.com", "owner_team_ids": []}
         req = {
             "jsonrpc": "2.0",
             "id": "test-id",
@@ -1954,6 +2083,15 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         assert response.json()["result"]["roots"][0]["uri"] == "root://2"
 
+    @patch("mcpgateway.main.PermissionChecker.has_permission", new_callable=AsyncMock, return_value=False)
+    def test_rpc_roots_list_requires_admin_permission(self, _mock_permission, test_client, auth_headers):
+        """roots/list RPC must enforce admin.system_config permission."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "roots/list", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+
     def test_rpc_roots_other_method(self, test_client, auth_headers):
         """Test roots/* catch-all JSON-RPC method."""
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "roots/remove", "params": {}}
@@ -1998,6 +2136,14 @@ class TestRPCEndpoints:
 # ----------------------------------------------------- #
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
+
+    @pytest.fixture(autouse=True)
+    def enable_ws_relay(self, monkeypatch):
+        """Enable WebSocket relay feature for realtime endpoint tests."""
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
 
     @patch("mcpgateway.main.settings")
     @patch("mcpgateway.main.ResilientHttpClient")  # stub network calls
@@ -2052,7 +2198,8 @@ class TestRealtimeEndpoints:
     def test_message_endpoint(self, mock_broadcast, test_client, auth_headers):
         """Test message broadcasting to SSE sessions."""
         message = {"type": "test", "data": "hello"}
-        response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
+        with patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="test_user@example.com")):
+            response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
         assert response.status_code == 202
         mock_broadcast.assert_called_once()
 
@@ -2060,8 +2207,41 @@ class TestRealtimeEndpoints:
     def test_message_endpoint_invalid_payload(self, mock_read, test_client, auth_headers):
         """Test message endpoint invalid JSON handling."""
         mock_read.side_effect = ValueError("Invalid payload")
-        response = test_client.post("/message?session_id=test-session", json={"bad": True}, headers=auth_headers)
+        with patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="test_user@example.com")):
+            response = test_client.post("/message?session_id=test-session", json={"bad": True}, headers=auth_headers)
         assert response.status_code == 400
+
+    def test_message_endpoint_rejects_non_owner(self, test_client, auth_headers):
+        """Message endpoint should reject writes to sessions owned by another user."""
+        message = {"type": "test", "data": "hello"}
+        with (
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="other@example.com")),
+            patch("mcpgateway.main._get_request_identity", return_value=("test_user@example.com", False)),
+        ):
+            response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 403
+
+    def test_message_endpoint_rejects_unknown_owner_metadata(self, test_client, auth_headers):
+        """Message endpoint should fail closed when owner metadata cannot be verified."""
+        message = {"type": "test", "data": "hello"}
+        with (
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.session_registry.session_exists", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.post("/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Session owner metadata unavailable"
+
+    def test_server_message_endpoint_rejects_unknown_owner_metadata(self, test_client, auth_headers):
+        """Server message endpoint should fail closed when owner metadata is unknown."""
+        message = {"type": "test", "data": "hello"}
+        with (
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.session_registry.session_exists", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.post("/servers/test-server/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Session owner metadata unavailable"
 
     @pytest.mark.asyncio
     async def test_websocket_forwards_auth_token_to_rpc(self, monkeypatch):
@@ -2096,8 +2276,9 @@ class TestRealtimeEndpoints:
         monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
         monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
         monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
         monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
-        monkeypatch.setattr(mcpgateway_main, "verify_jwt_token", AsyncMock(return_value=None))
+        monkeypatch.setattr(mcpgateway_main, "_authenticate_websocket_user", AsyncMock(return_value=("test-jwt-token", None)))
 
         # Create mock websocket with token in query params
         websocket = AsyncMock()
@@ -2149,7 +2330,9 @@ class TestRealtimeEndpoints:
         monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
         monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
         monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main.settings, "mcpgateway_ws_relay_enabled", True)
         monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
+        monkeypatch.setattr(mcpgateway_main, "_authenticate_websocket_user", AsyncMock(return_value=(None, "proxy-user@example.com")))
 
         # Create mock websocket with proxy user header
         # Note: Use exact case matching settings.proxy_user_header since we're using a plain dict
@@ -2203,6 +2386,8 @@ class TestRealtimeEndpoints:
         request = _make_request("/servers/1/sse")
         with (
             patch("mcpgateway.main.SSETransport", DummyTransport),
+            patch("mcpgateway.main.server_service.get_server", new_callable=AsyncMock),
+            patch("mcpgateway.main._enforce_scoped_resource_access"),
             patch("mcpgateway.main.session_registry.add_session", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.respond", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.register_respond_task"),
@@ -2210,7 +2395,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(asyncio.CancelledError):
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(request, "1", db=MagicMock(), user={"email": "user@example.com"})
 
     @pytest.mark.asyncio
     async def test_server_sse_failure_cleanup(self):
@@ -2231,6 +2416,8 @@ class TestRealtimeEndpoints:
         request = _make_request("/servers/1/sse")
         with (
             patch("mcpgateway.main.SSETransport", DummyTransport),
+            patch("mcpgateway.main.server_service.get_server", new_callable=AsyncMock),
+            patch("mcpgateway.main._enforce_scoped_resource_access"),
             patch("mcpgateway.main.session_registry.add_session", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.respond", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.register_respond_task"),
@@ -2238,7 +2425,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(HTTPException) as excinfo:
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(request, "1", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio

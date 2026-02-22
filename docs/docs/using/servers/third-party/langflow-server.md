@@ -1,8 +1,8 @@
 # 🌊 Langflow MCP Server Integration
 
-**Langflow** is a visual framework for building multi-agent and RAG applications through an intuitive drag-and-drop interface. Langflow implements the **Model Context Protocol (MCP)** natively, exposing flows as MCP tools via Server-Sent Events (SSE). When integrated with **MCP Context Forge Gateway**, Langflow workflows become accessible as standardized MCP tools with enterprise-grade security, observability, and federation capabilities.
+**Langflow** is a visual framework for building multi-agent and RAG applications through an intuitive drag-and-drop interface. Langflow implements the **Model Context Protocol (MCP)** natively, exposing flows as MCP tools via Server-Sent Events (SSE). When integrated with **ContextForge Gateway**, Langflow workflows become accessible as standardized MCP tools with enterprise-grade security, observability, and federation capabilities.
 
-> **Perfect for visual AI workflow automation** - Langflow's visual interface combined with MCP Gateway's federation capabilities creates powerful, discoverable AI automation tools.
+> **Perfect for visual AI workflow automation** - Langflow's visual interface combined with ContextForge's federation capabilities creates powerful, discoverable AI automation tools.
 
 **Documentation**: See [Langflow MCP Server Documentation](https://docs.langflow.org/mcp-server) for Langflow's native MCP implementation details.
 
@@ -22,14 +22,14 @@
 
 ### Integration Benefits
 
-When federated with MCP Gateway, you get:
+When federated with ContextForge, you get:
 
 - ✅ **Workflow-as-Tools** - Langflow workflows become discoverable MCP tools
 - ✅ **Visual Development** - No code required for complex AI automation
-- ✅ **Enterprise Security** - JWT authentication and rate limiting via MCP Gateway
+- ✅ **Enterprise Security** - JWT authentication and rate limiting via ContextForge
 - ✅ **Observability** - Comprehensive metrics and logging for workflow execution
 - ✅ **Federation** - Combine Langflow workflows with other MCP servers
-- ✅ **Version Control** - Track and manage workflow versions through MCP Gateway
+- ✅ **Version Control** - Track and manage workflow versions through ContextForge
 
 ---
 
@@ -38,7 +38,7 @@ When federated with MCP Gateway, you get:
 ### Required Software
 
 - **Langflow 1.0+** installed and running
-- **MCP Context Forge Gateway** running (see [Quick Start](../../../overview/quick_start.md))
+- **ContextForge Gateway** running (see [Quick Start](../../../overview/quick_start.md))
 - **Python 3.10+** for Langflow
 - **Docker** (optional, for containerized deployment)
 
@@ -169,7 +169,7 @@ LANGFLOW_MCP_CONFIG = {
 
 ---
 
-## 🔌 MCP Gateway Integration
+## 🔌 ContextForge Integration
 
 ### Server Registration
 
@@ -234,7 +234,7 @@ curl -X GET "http://localhost:4444/gateways" \
 
 ### Discover Available Tools
 
-Once the Langflow gateway is registered, MCP Gateway automatically discovers all flows and exposes them as tools.
+Once the Langflow gateway is registered, ContextForge automatically discovers all flows and exposes them as tools.
 
 ```bash
 # List all tools across all gateways
@@ -280,7 +280,7 @@ curl -X GET "http://localhost:4444/tools" \
 
 ## 💡 Usage Examples
 
-**Important**: MCP Gateway uses JSON-RPC protocol for tool invocation via the `/rpc` endpoint.
+**Important**: ContextForge uses JSON-RPC protocol for tool invocation via the `/rpc` endpoint.
 
 ### Echo Workflow Example
 
@@ -295,7 +295,7 @@ curl -X POST "http://localhost:4444/rpc" \
     "params": {
       "name": "langflow-mcp-server-test-echo-workflow",
       "arguments": {
-        "input_value": "Hello from MCP Gateway!"
+        "input_value": "Hello from ContextForge!"
       }
     },
     "id": 1
@@ -309,7 +309,7 @@ curl -X POST "http://localhost:4444/rpc" \
     "content": [
       {
         "type": "text",
-        "text": "Hello from MCP Gateway!"
+        "text": "Hello from ContextForge!"
       }
     ],
     "is_error": false
@@ -548,7 +548,7 @@ curl -X GET "http://localhost:7860/api/v1/flows/{flow_id}/validate"
 
 **Solution**:
 ```yaml
-# Increase timeout in MCP Gateway configuration
+# Increase timeout in ContextForge configuration
 servers:
 
   - id: "langflow-server"
@@ -581,7 +581,7 @@ telnet localhost 7860
 LANGFLOW_SECRET_KEY=your-secret-key
 LANGFLOW_SUPERUSER=admin@example.com
 
-# Update MCP Gateway auth configuration
+# Update ContextForge auth configuration
 auth:
   type: "bearer"
   token: "${LANGFLOW_API_TOKEN}"
@@ -756,12 +756,12 @@ def get_workflow_endpoint(workflow_id, version="latest"):
 - [Deployment Strategies](https://docs.langflow.org/deployment) - Production deployment options
 - [Authentication Setup](https://docs.langflow.org/configuration/authentication) - Security configuration
 
-### MCP Gateway Documentation
-- [MCP Gateway Integration](../../index.md) - Server integration overview
+### ContextForge Documentation
+- [ContextForge Integration](../../index.md) - Server integration overview
 - [Virtual Server Composition](../../../manage/api-usage.md#virtual-server-management) - Combining multiple servers
 - [Authentication Configuration](../../../manage/sso.md) - Gateway authentication setup
 
 ### Community and Support
 - [Langflow Community](https://github.com/logspace-ai/langflow/discussions) - Community discussions
 - [Langflow Discord](https://discord.gg/langflow) - Real-time community support
-- [MCP Context Forge Issues](https://github.com/IBM/mcp-context-forge/issues) - Report integration issues
+- [ContextForge Issues](https://github.com/IBM/mcp-context-forge/issues) - Report integration issues

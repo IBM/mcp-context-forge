@@ -1,4 +1,4 @@
-# 🧪 MCP Gateway v0.9.0 - YAML-Based Manual Testing Suite
+# 🧪 ContextForge v0.9.0 - YAML-Based Manual Testing Suite
 
 **Maintainable, scalable manual testing with YAML test definitions**
 
@@ -185,4 +185,4 @@ python3 generate_test_plan.py
 - **Validate YAML** before generating (python3 -c "import yaml; yaml.safe_load(open('file.yaml'))")
 - **Version control** YAML files to track test evolution
 
-This YAML-based approach makes the test suite much more maintainable and scalable for ongoing MCP Gateway validation!
+This YAML-based approach makes the test suite much more maintainable and scalable for ongoing ContextForge validation!

@@ -185,7 +185,7 @@ mcpContextForge:
     # GRANIAN_HTTP: "auto"              # HTTP version: auto, 1, 2 (auto recommended)
 
     # ─ Basic application info ─
-    APP_NAME: MCP_Gateway            # public-facing name of the gateway
+    APP_NAME: ContextForge            # public-facing name of the gateway
     HOST: 0.0.0.0                    # address the server binds to
     PORT: "4444"                     # internal container port
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
@@ -310,7 +310,7 @@ mcpContextForge:
     TOOLOPS_ENABLED: "false"            # enable ToolOps feature
 
     # ─ LLM Chat Feature ─
-    LLMCHAT_ENABLED: "false"            # enable LLM Chat feature
+    LLMCHAT_ENABLED: "true"            # enable LLM Chat feature
 
     # ─ LLM Settings (Internal API) ─
     # These settings control the internal LLM API that allows the gateway to
@@ -358,18 +358,20 @@ mcpContextForge:
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
     # Prevents gateway from accessing internal resources or cloud metadata services.
-    # Default: enabled with safe settings for internal/dev deployments.
+    # Default: strict mode (external endpoints only).
     # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
-    SSRF_ALLOW_LOCALHOST: "true"               # allow localhost/127.x (set false for stricter security)
-    SSRF_ALLOW_PRIVATE_NETWORKS: "true"        # allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)
-    SSRF_DNS_FAIL_CLOSED: "false"              # reject on DNS failure (set true for stricter security)
+    SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
+    SSRF_ALLOWED_NETWORKS: "[]"                # optional CIDR allowlist when private networks are blocked
+    SSRF_DNS_FAIL_CLOSED: "true"               # reject on DNS failure by default
     # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
     # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
-    # For strict production mode (external endpoints only):
+    # For controlled internal access:
     # SSRF_ALLOW_LOCALHOST: "false"
     # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     # SSRF_DNS_FAIL_CLOSED: "true"
+    # SSRF_ALLOWED_NETWORKS: '["10.20.0.0/16"]'
 
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -427,6 +429,8 @@ mcpContextForge:
 
     # ─ Transports ─
     TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
+    MCPGATEWAY_WS_RELAY_ENABLED: "false" # enable /ws JSON-RPC WebSocket relay (disabled by default)
+    MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # enable /reverse-proxy/* endpoints (disabled by default)
     WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings
     SSE_RETRY_TIMEOUT: "5000"        # milliseconds before SSE client retries
     SSE_KEEPALIVE_ENABLED: "true"    # enable SSE keepalive events
@@ -560,7 +564,7 @@ mcpContextForge:
       User-agent: *
       Disallow: /
 
-      # MCP Gateway is a private API gateway
+      # ContextForge is a private API gateway
       # Public crawling is disabled by default
     WELL_KNOWN_SECURITY_TXT: ""      # security.txt content (RFC 9116)
     WELL_KNOWN_SECURITY_TXT_ENABLED: "false" # enable security.txt endpoint (auto-enabled when content provided)
@@ -848,7 +852,7 @@ mcpContextForge:
     SMTP_USER: ""                           # SMTP username
     SMTP_PASSWORD: ""                       # SMTP password
     SMTP_FROM_EMAIL: ""                     # sender email for auth notifications
-    SMTP_FROM_NAME: "MCP Gateway"           # sender display name for auth notifications
+    SMTP_FROM_NAME: "ContextForge"           # sender display name for auth notifications
     SMTP_USE_TLS: "true"                    # use STARTTLS for SMTP
     SMTP_USE_SSL: "false"                   # use implicit SSL/TLS (typically port 465)
     SMTP_TIMEOUT_SECONDS: "15"              # SMTP timeout in seconds
@@ -873,7 +877,7 @@ mcpContextForge:
     DCR_ALLOWED_ISSUERS: "[]"              # allowlist of trusted issuer URLs for DCR (empty = allow any)
     DCR_TOKEN_ENDPOINT_AUTH_METHOD: "client_secret_basic" # token endpoint auth method for DCR
     DCR_METADATA_CACHE_TTL: "3600"         # AS metadata cache TTL in seconds (RFC 8414 discovery)
-    DCR_CLIENT_NAME_TEMPLATE: "MCP Gateway ({gateway_name})" # template for client_name in DCR requests
+    DCR_CLIENT_NAME_TEMPLATE: "ContextForge ({gateway_name})" # template for client_name in DCR requests
     DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED: "false" # request refresh_token when AS omits grant_types_supported
     OAUTH_DISCOVERY_ENABLED: "true"        # enable AS metadata discovery (RFC 8414)
     OAUTH_PREFERRED_CODE_CHALLENGE_METHOD: "S256" # PKCE code challenge method (S256 or plain)
@@ -941,6 +945,9 @@ mcpContextForge:
     SSO_ENTRA_ROLE_MAPPINGS: "{}"          # map groups to roles (JSON)
     SSO_ENTRA_DEFAULT_ROLE: ""             # default role for unmapped users
     SSO_ENTRA_SYNC_ROLES_ON_LOGIN: "true"  # sync roles on each login
+    SSO_ENTRA_GRAPH_API_ENABLED: "true"    # call Graph API for groups overage fallback
+    SSO_ENTRA_GRAPH_API_TIMEOUT: "10"      # timeout (seconds) for Graph fallback call
+    SSO_ENTRA_GRAPH_API_MAX_GROUPS: "0"    # cap Graph-fetched groups (0 = no cap)
 
     # ─ Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.) ─
     SSO_GENERIC_ENABLED: "false"           # enable generic OIDC provider authentication
@@ -952,6 +959,7 @@ mcpContextForge:
     SSO_GENERIC_TOKEN_URL: ""              # token endpoint URL
     SSO_GENERIC_USERINFO_URL: ""           # userinfo endpoint URL
     SSO_GENERIC_ISSUER: ""                 # OIDC issuer URL
+    SSO_GENERIC_JWKS_URI: ""               # OIDC JWKS endpoint URL (auto-discovered if empty)
     SSO_GENERIC_SCOPE: "openid profile email" # OAuth scopes (space-separated)
 
     # ─ Default Role Configuration ─

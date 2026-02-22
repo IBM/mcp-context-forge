@@ -6,7 +6,7 @@
 
 ## Context
 
-MCP Gateway uses redis-py for Redis connections (caching, federation, leader election, metrics). The default pure-Python protocol parser in redis-py has significant overhead, especially for large responses. This impacts performance for:
+ContextForge uses redis-py for Redis connections (caching, federation, leader election, metrics). The default pure-Python protocol parser in redis-py has significant overhead, especially for large responses. This impacts performance for:
 
 - Tool registry queries returning many tools
 - Bulk operations and federation
@@ -49,9 +49,9 @@ Based on hiredis-py benchmarks:
 | LRANGE (100 items) | Baseline | +900% | ~10x |
 | LRANGE (999 items) | Baseline | +8220% | **83.2x** |
 
-**Key insight:** The larger the response, the greater the improvement. This is critical for MCP Gateway operations that retrieve large datasets from Redis.
+**Key insight:** The larger the response, the greater the improvement. This is critical for ContextForge operations that retrieve large datasets from Redis.
 
-### Impact on MCP Gateway
+### Impact on ContextForge
 
 | Use Case | Typical Response Size | Expected Improvement |
 |----------|----------------------|---------------------|

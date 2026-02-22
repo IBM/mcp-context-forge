@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-End-to-end tests for MCP Gateway admin APIs.
+End-to-end tests for ContextForge admin APIs.
 This module contains comprehensive end-to-end tests for all admin API endpoints.
 These tests are designed to exercise the entire application stack with minimal mocking,
 using only a temporary SQLite database and bypassing authentication.

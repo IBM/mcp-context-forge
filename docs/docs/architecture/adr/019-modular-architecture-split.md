@@ -6,7 +6,7 @@
 
 ## Context
 
-The ContextForge codebase has grown to support diverse use cases:
+ContextForge codebase has grown to support diverse use cases:
 
 - Standalone Python module for development
 - Serverless deployments (Lambda, Cloud Run, Code Engine)
@@ -29,7 +29,7 @@ We needed maximum deployment flexibility while maintaining cohesive functionalit
 
 ## Decision
 
-We will split the ContextForge ecosystem into **14 independently deployable modules** that can run standalone or be composed together:
+We will split ContextForge ecosystem into **14 independently deployable modules** that can run standalone or be composed together:
 
 ### Core Gateway (2 modules)
 1. **mcp-contextforge-gateway-core** - FastAPI gateway with 33 services, 11 routers (~150K lines)

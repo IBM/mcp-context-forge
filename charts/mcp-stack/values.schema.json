@@ -62,7 +62,7 @@
     },
     "mcpContextForge": {
       "type": "object",
-      "description": "MCP Context-Forge Gateway configuration",
+      "description": "ContextForge Gateway configuration",
       "properties": {
         "replicaCount": {
           "type": "integer",
@@ -471,7 +471,7 @@
             "APP_NAME": {
               "type": "string",
               "description": "Application name",
-              "default": "MCP_Gateway"
+              "default": "ContextForge"
             },
             "HOST": {
               "type": "string",
@@ -800,6 +800,18 @@
               "description": "Transport types (comma-separated)",
               "default": "all"
             },
+            "MCPGATEWAY_WS_RELAY_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable /ws JSON-RPC WebSocket relay endpoint",
+              "default": "false"
+            },
+            "MCPGATEWAY_REVERSE_PROXY_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable /reverse-proxy/* endpoints",
+              "default": "false"
+            },
             "WEBSOCKET_PING_INTERVAL": {
               "type": "string",
               "description": "WebSocket ping interval in seconds",
@@ -1038,7 +1050,7 @@
             "SMTP_FROM_NAME": {
               "type": "string",
               "description": "Sender display name for auth notifications",
-              "default": "MCP Gateway"
+              "default": "ContextForge"
             },
             "SMTP_USE_TLS": {
               "type": "string",

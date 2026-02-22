@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-OAuth 2.0 Manager for MCP Gateway.
+OAuth 2.0 Manager for ContextForge.
 
 This module handles OAuth 2.0 authentication flows including:
 - Client Credentials (Machine-to-Machine)
@@ -522,7 +522,7 @@ class OAuthManager:
         Args:
             gateway_id: ID of the gateway being configured
             credentials: OAuth configuration with client_id, authorization_url, etc.
-            app_user_email: MCP Gateway user email to associate with tokens
+            app_user_email: ContextForge user email to associate with tokens
 
         Returns:
             Dict containing authorization_url and state
@@ -626,7 +626,7 @@ class OAuthManager:
 
         Args:
             gateway_id: ID of the gateway
-            app_user_email: MCP Gateway user email
+            app_user_email: ContextForge user email
 
         Returns:
             Valid access token or None if not available
@@ -640,7 +640,7 @@ class OAuthManager:
 
         Args:
             gateway_id: ID of the gateway
-            app_user_email: MCP Gateway user email (optional but recommended)
+            app_user_email: ContextForge user email (optional but recommended)
 
         Returns:
             Unique state string with embedded user context and HMAC signature

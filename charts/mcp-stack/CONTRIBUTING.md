@@ -279,7 +279,7 @@ appVersion: "0.9.0"     # Application version
 
 ### Resources
 
-- **Documentation**: [MCP Context Forge Docs](https://ibm.github.io/mcp-context-forge/)
+- **Documentation**: [ContextForge Docs](https://ibm.github.io/mcp-context-forge/)
 - **Helm Documentation**: [https://helm.sh/docs/](https://helm.sh/docs/)
 - **Kubernetes Documentation**: [https://kubernetes.io/docs/](https://kubernetes.io/docs/)
 
@@ -287,7 +287,7 @@ appVersion: "0.9.0"     # Application version
 
 - **Issues**: [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/IBM/mcp-context-forge/discussions)
-- **Main Project**: [MCP Context Forge](https://github.com/IBM/mcp-context-forge)
+- **Main Project**: [ContextForge](https://github.com/IBM/mcp-context-forge)
 
 ### Common Issues
 
@@ -302,4 +302,4 @@ Your contributions help make the MCP ContextForge Stack easier to deploy and man
 
 ---
 
-*This document is based on the [MCP Context Forge](https://github.com/IBM/mcp-context-forge) project and follows established open-source contribution practices.*
+*This document is based on the [ContextForge](https://github.com/IBM/mcp-context-forge) project and follows established open-source contribution practices.*

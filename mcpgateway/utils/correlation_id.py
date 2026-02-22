@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/utils/correlation_id.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: MCP Gateway Contributors
+Authors: ContextForge Contributors
 
 Correlation ID (Request ID) Utilities.
 

@@ -1,6 +1,6 @@
 # ContextForge Plugin Framework
 
-The ContextForge Plugin Framework provides a powerful, production-ready system for AI safety middleware, content security, policy enforcement, and operational excellence. Plugins run as middleware components that can intercept and transform requests and responses at various points in the gateway lifecycle.
+ContextForge Plugin Framework provides a powerful, production-ready system for AI safety middleware, content security, policy enforcement, and operational excellence. Plugins run as middleware components that can intercept and transform requests and responses at various points in the gateway lifecycle.
 
 ## Quick Start
 

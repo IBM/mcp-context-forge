@@ -81,7 +81,7 @@
 - **Error handling**: Comprehensive exception handling and logging
 
 #### Security
-- **Authentication**: JWT token support for MCP Gateway
+- **Authentication**: JWT token support for ContextForge
 - **Tool allowlists**: Production security with configurable tool filtering
 - **Input validation**: Pydantic models for all API inputs
 - **Security scanning**: Automated vulnerability detection
@@ -136,6 +136,6 @@ This release transforms the MCP LangChain Agent from a basic prototype into a **
 - **Professional documentation and examples**
 - **Container-ready deployment**
 - **Security and performance optimizations**
-- **Consistent integration** with MCP Gateway ecosystem
+- **Consistent integration** with ContextForge ecosystem
 
 The agent is now ready for production deployment with confidence!

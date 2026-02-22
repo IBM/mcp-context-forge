@@ -163,7 +163,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Added
 * **Complete Helm chart** - Full-featured Helm chart for MCP Stack deployment
-* **Multi-service architecture** - Deploy MCP Gateway, PostgreSQL, Redis, PgAdmin, and Redis Commander
+* **Multi-service architecture** - Deploy ContextForge, PostgreSQL, Redis, PgAdmin, and Redis Commander
 * **Configurable deployments** - Comprehensive values.yaml with ~100 configuration options
 * **Template helpers** - Reusable template functions for consistent naming and labeling
 * **Ingress support** - NGINX ingress controller support with SSL termination
@@ -178,7 +178,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **Multi-environment support** - Development, staging, and production value configurations
 
 ### Components
-* **MCP Gateway** - FastAPI-based gateway with configurable replicas and scaling
+* **ContextForge** - FastAPI-based gateway with configurable replicas and scaling
 * **PostgreSQL 17** - Production-ready database with backup and recovery options
 * **Redis** - In-memory cache for sessions and temporary data
 * **PgAdmin** - Web-based PostgreSQL administration interface

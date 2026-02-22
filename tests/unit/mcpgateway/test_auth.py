@@ -556,6 +556,35 @@ class TestGetCurrentUser:
                     assert "Attempting JWT token validation" in caplog.text
                     assert "JWT token validated successfully" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_token_value_is_not_logged(self, caplog):
+        """Ensure raw bearer token material is never emitted to logs."""
+        raw_token = "super_secret_token_value_1234567890"
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=raw_token)
+
+        jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        caplog.set_level(logging.DEBUG)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    await get_current_user(credentials=credentials)
+
+        assert raw_token not in caplog.text
+        assert raw_token[:20] not in caplog.text
+
 
 class TestAuthHooksOptimization:
     """Test cases for has_hooks_for optimization in get_current_user."""

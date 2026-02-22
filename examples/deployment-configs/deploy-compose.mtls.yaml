@@ -1,11 +1,11 @@
 # MCP Stack - Local Docker Compose Test Configuration
-# This config deploys MCP Gateway + external plugins locally with mTLS
+# This config deploys ContextForge + external plugins locally with mTLS
 
 deployment:
   type: compose
   project_name: mcp-stack-test
 
-# MCP Gateway configuration
+# ContextForge configuration
 gateway:
   # Use local gateway image (build first with: make container-build)
   image: mcpgateway/mcpgateway:latest

@@ -95,6 +95,12 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    # Token permissions
+    ("GET", re.compile(r"^/tokens(?:$|/)"), Permissions.TOKENS_READ),
+    ("POST", re.compile(r"^/tokens/?$"), Permissions.TOKENS_CREATE),  # Only exact /tokens or /tokens/
+    ("POST", re.compile(r"^/tokens/teams/[^/]+(?:$|/)"), Permissions.TOKENS_CREATE),
+    ("PUT", re.compile(r"^/tokens/[^/]+(?:$|/)"), Permissions.TOKENS_UPDATE),
+    ("DELETE", re.compile(r"^/tokens/[^/]+(?:$|/)"), Permissions.TOKENS_REVOKE),
     # Admin permissions
     ("GET", re.compile(r"^/admin(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
     ("POST", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
@@ -156,12 +162,18 @@ class TokenScopingMiddleware:
         Returns:
             Dict containing token scopes or None if no valid token
         """
-        # Get authorization header
+        # Get authorization header and parse bearer scheme case-insensitively.
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        if not auth_header:
             return None
 
-        token = auth_header.split(" ", 1)[1]
+        parts = auth_header.split(" ", 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return None
+
+        token = parts[1].strip()
+        if not token:
+            return None
 
         try:
             # Use the centralized verify_jwt_token_cached function for consistent JWT validation
@@ -387,8 +399,8 @@ class TokenScopingMiddleware:
             if request_method == method and path_pattern.match(request_path):
                 return required_permission in permissions
 
-        # Default allow for unmatched paths
-        return True
+        # Default deny for unmatched paths (requires explicit permission mapping)
+        return False
 
     def _check_team_membership(self, payload: dict, db=None) -> bool:
         """
@@ -568,7 +580,7 @@ class TokenScopingMiddleware:
 
                 if not server:
                     logger.warning(f"Server {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get server visibility (default to 'team' if field doesn't exist)
                 server_visibility = getattr(server, "visibility", "team")
@@ -613,7 +625,7 @@ class TokenScopingMiddleware:
 
                 if not tool:
                     logger.warning(f"Tool {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get tool visibility (default to 'team' if field doesn't exist)
                 tool_visibility = getattr(tool, "visibility", "team")
@@ -659,7 +671,7 @@ class TokenScopingMiddleware:
 
                 if not resource:
                     logger.warning(f"Resource {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get resource visibility (default to 'team' if field doesn't exist)
                 resource_visibility = getattr(resource, "visibility", "team")
@@ -705,7 +717,7 @@ class TokenScopingMiddleware:
 
                 if not prompt:
                     logger.warning(f"Prompt {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get prompt visibility (default to 'team' if field doesn't exist)
                 prompt_visibility = getattr(prompt, "visibility", "team")
@@ -751,7 +763,7 @@ class TokenScopingMiddleware:
 
                 if not gateway:
                     logger.warning(f"Gateway {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get gateway visibility (default to 'team' if field doesn't exist)
                 gateway_visibility = getattr(gateway, "visibility", "team")

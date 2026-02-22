@@ -5,7 +5,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway - Main FastAPI Application.
+ContextForge AI Gateway - Main FastAPI Application.
 
 This module defines the core FastAPI application for the Model Context Protocol (MCP) Gateway.
 It serves as the entry point for handling all HTTP and WebSocket traffic.
@@ -47,6 +47,7 @@ from fastapi.exception_handlers import request_validation_exception_handler as f
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -79,7 +80,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -149,7 +150,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -439,6 +440,198 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
     return user_email, token_teams, is_admin
 
 
+def _has_verified_jwt_payload(request: Request) -> bool:
+    """Return whether request has a verified JWT payload cached in request state.
+
+    Args:
+        request: Incoming request context.
+
+    Returns:
+        ``True`` when a verified payload tuple is present, otherwise ``False``.
+    """
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    return bool(cached and isinstance(cached, tuple) and len(cached) == 2 and cached[1])
+
+
+def _get_request_identity(request: Request, user) -> tuple[str, bool]:
+    """Return requester email and admin state honoring scoped-token semantics.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context from dependency resolution.
+
+    Returns:
+        Tuple of ``(requester_email, requester_is_admin)``.
+    """
+    user_email, _token_teams, token_is_admin = _get_rpc_filter_context(request, user)
+    resolved_email = user_email or get_user_email(user)
+
+    # If a JWT payload exists, respect token-derived admin semantics (including
+    # public-only admin tokens where bypass is intentionally disabled).
+    if _has_verified_jwt_payload(request):
+        return resolved_email, token_is_admin
+
+    fallback_is_admin = False
+    if hasattr(user, "is_admin"):
+        fallback_is_admin = bool(getattr(user, "is_admin", False))
+    elif isinstance(user, dict):
+        fallback_is_admin = bool(user.get("is_admin", False) or user.get("user", {}).get("is_admin", False))
+
+    return resolved_email, token_is_admin or fallback_is_admin
+
+
+def _get_scoped_resource_access_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]]]:
+    """Resolve scoped resource access context for the current requester.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context from dependency resolution.
+
+    Returns:
+        Tuple of ``(user_email, token_teams)`` where ``(None, None)`` represents
+        unrestricted admin access and ``[]`` represents public-only scope.
+    """
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    # Non-JWT admin contexts (for example basic-auth development mode) should
+    # keep unrestricted access semantics.
+    if not _has_verified_jwt_payload(request):
+        _requester_email, fallback_admin = _get_request_identity(request, user)
+        if fallback_admin:
+            return None, None
+
+    if is_admin and token_teams is None:
+        return None, None
+    if token_teams is None:
+        return user_email, []
+    return user_email, token_teams
+
+
+def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
+    """Build PermissionChecker user payload for method-level RPC checks.
+
+    Args:
+        user: Authenticated user context.
+        db: Active database session.
+
+    Returns:
+        Permission checker payload with email and ``db`` keys.
+    """
+    permission_user = dict(user) if isinstance(user, dict) else {"email": get_user_email(user)}
+    if not permission_user.get("email"):
+        permission_user["email"] = get_user_email(user)
+    permission_user["db"] = db
+    return permission_user
+
+
+async def _ensure_rpc_permission(user, db: Session, permission: str, method: str) -> None:
+    """Require a specific RPC permission for a method branch.
+
+    Args:
+        user: Authenticated user context.
+        db: Active database session.
+        permission: Permission required for the method.
+        method: JSON-RPC method name being authorized.
+
+    Raises:
+        JSONRPCError: If the requester lacks the required permission.
+    """
+    checker = PermissionChecker(_build_rpc_permission_user(user, db))
+    if not await checker.has_permission(permission):
+        raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+
+
+def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:
+    """Apply token-scope ownership checks for a concrete resource path.
+
+    This provides defense-in-depth for ID-based handlers so they continue to
+    enforce visibility even if middleware coverage regresses.
+
+    Args:
+        request: Incoming request context.
+        db: Active database session.
+        user: Authenticated user context.
+        resource_path: Canonical resource path (e.g. ``/tools/{id}``).
+
+    Raises:
+        HTTPException: If access to the target resource is not allowed.
+    """
+    scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+
+    # Admin bypass / unrestricted scope
+    if scoped_token_teams is None:
+        return
+
+    if not token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
+        resource_path,
+        scoped_token_teams,
+        db=db,
+        _user_email=scoped_user_email,
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied for requested resource")
+
+
+async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
+    """Ensure session operations are limited to the owner unless requester is admin.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        session_id: Target session identifier.
+
+    Raises:
+        HTTPException: If session is missing or requester is not authorized.
+    """
+    session_owner = await session_registry.get_session_owner(session_id)
+    if not session_owner:
+        session_exists = await session_registry.session_exists(session_id)
+        if session_exists is False:
+            raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=403, detail="Session owner metadata unavailable")
+
+    requester_email, requester_is_admin = _get_request_identity(request, user)
+    if requester_is_admin:
+        return
+    if requester_email and requester_email == session_owner:
+        return
+    raise HTTPException(status_code=403, detail="Session access denied")
+
+
+async def _authorize_run_cancellation(request: Request, user, request_id: str, *, as_jsonrpc_error: bool) -> None:
+    """Authorize a notifications/cancelled request for a specific run id.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        request_id: Run/request identifier to cancel.
+        as_jsonrpc_error: Raise ``JSONRPCError`` when True, otherwise ``HTTPException``.
+
+    Raises:
+        JSONRPCError: When ``as_jsonrpc_error`` is True and cancellation is not authorized.
+        HTTPException: When ``as_jsonrpc_error`` is False and cancellation is not authorized.
+    """
+    requester_email, requester_token_teams, requester_is_admin = _get_rpc_filter_context(request, user)
+    requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
+    run_status = await cancellation_service.get_status(request_id)
+
+    unauthorized = False
+    if run_status is None:
+        # Default deny for non-admin users when run is not known on this worker.
+        # Session-affinity clients should route cancellation to the worker that owns the run.
+        unauthorized = not requester_is_admin
+    else:
+        run_owner_email = run_status.get("owner_email")
+        run_owner_team_ids = run_status.get("owner_team_ids") or []
+        requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
+        requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
+        unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
+
+    if unauthorized:
+        if as_jsonrpc_error:
+            raise JSONRPCError(-32003, "Not authorized to cancel this run", {"requestId": request_id})
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to cancel this run")
+
+
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
@@ -600,7 +793,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
-    logger.info("Starting MCP Gateway services")
+    logger.info("Starting ContextForge services")
 
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
@@ -853,7 +1046,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
 
-        logger.info("Shutting down MCP Gateway services")
+        logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
         # Build service list conditionally
         services_to_shutdown: List[Any] = [
@@ -965,7 +1158,7 @@ async def setup_passthrough_headers():
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    description="A FastAPI-based MCP Gateway with federation support",
+    description="ContextForge AI Gateway — a unified gateway for Tools, Agents, Models, and APIs with federation support",
     root_path=settings.app_root_path,
     lifespan=lifespan,
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
@@ -2376,6 +2569,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         logger.info(f"Request cancelled: {request_id}, reason: {reason}")
         # Attempt local cancellation per MCP spec
         if request_id is not None:
+            await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=False)
             await cancellation_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":
@@ -2512,12 +2706,13 @@ async def list_servers(
 
 @server_router.get("/{server_id}", response_model=ServerRead)
 @require_permission("servers.read")
-async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
     Args:
         server_id (str): The ID of the server to retrieve.
+        request (Request): The incoming request used for scoped access validation.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -2529,7 +2724,9 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends
     """
     try:
         logger.debug(f"User {user} requested server with ID {server_id}")
-        return await server_service.get_server(db, server_id)
+        server = await server_service.get_server(db, server_id)
+        _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}")
+        return server
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -2788,13 +2985,14 @@ async def delete_server(
 
 @server_router.get("/{server_id}/sse")
 @require_permission("servers.use")
-async def sse_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
+async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
     Args:
         request (Request): The incoming request.
         server_id (str): The ID of the server for which updates are received.
+        db (Session): The database session used for server existence and scope checks.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2806,6 +3004,9 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
+        await server_service.get_server(db, server_id)
+        _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}/sse")
+
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
 
@@ -2813,6 +3014,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
+        await session_registry.set_session_owner(transport.session_id, get_user_email(user))
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         # MUST be computed BEFORE create_sse_response to avoid race condition (Finding 1)
@@ -2883,6 +3085,10 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         response.background = tasks
         logger.info(f"SSE connection established: {transport.session_id}")
         return response
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"SSE connection error: {e}")
         raise HTTPException(status_code=500, detail="SSE connection failed")
@@ -2911,6 +3117,8 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+
+        await _assert_session_owner_or_admin(request, user, session_id)
 
         message = await _read_request_json(request)
 
@@ -3779,12 +3987,15 @@ async def get_tool(
         _req_email, _, _req_is_admin = _get_rpc_filter_context(request, user)
         _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
+        _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
         if apijsonpath is None:
             return data
 
         data_dict = data.to_dict(use_alias=True)
 
         return jsonpath_modifier(data_dict, apijsonpath.jsonpath, apijsonpath.mapping)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -4317,6 +4528,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
+        _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         # Release transaction before response serialization
         db.commit()
         db.close()
@@ -4356,6 +4568,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 @require_permission("resources.read")
 async def get_resource_info(
     resource_id: str,
+    request: Request,
     include_inactive: bool = Query(False, description="Include inactive resources"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4368,6 +4581,7 @@ async def get_resource_info(
 
     Args:
         resource_id (str): ID of the resource.
+        request (Request): Incoming request context used for scope enforcement.
         include_inactive (bool): Whether to include inactive resources.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -4380,7 +4594,9 @@ async def get_resource_info(
     """
     try:
         logger.debug(f"User {user} requested resource info for ID {resource_id}")
-        return await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        result = await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
+        return result
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -4485,18 +4701,20 @@ async def delete_resource(
 
 @resource_router.post("/subscribe")
 @require_permission("resources.read")
-async def subscribe_resource(user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(request: Request, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
+        request (Request): Incoming HTTP request.
         user (str): Authenticated user.
 
     Returns:
         StreamingResponse: A streaming response with event updates.
     """
     logger.debug(f"User {user} is subscribing to resource")
-    return StreamingResponse(resource_service.subscribe_events(), media_type="text/event-stream")
+    user_email, token_teams = _get_scoped_resource_access_context(request, user)
+    return StreamingResponse(resource_service.subscribe_events(user_email=user_email, token_teams=token_teams), media_type="text/event-stream")
 
 
 ###############
@@ -5241,12 +5459,13 @@ async def register_gateway(
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read")
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
+        request: Incoming request used for scoped access validation.
         db: Database session.
         user: Authenticated user.
 
@@ -5258,7 +5477,9 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
     try:
-        return await gateway_service.get_gateway(db, gateway_id)
+        gateway = await gateway_service.get_gateway(db, gateway_id)
+        _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
+        return gateway
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -5375,6 +5596,7 @@ async def refresh_gateway_tools(
     request: Request,
     include_resources: bool = Query(False, description="Include resources in refresh"),
     include_prompts: bool = Query(False, description="Include prompts in refresh"),
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> GatewayRefreshResponse:
     """
@@ -5389,6 +5611,7 @@ async def refresh_gateway_tools(
         request: The FastAPI request object.
         include_resources: Whether to include resources in the refresh.
         include_prompts: Whether to include prompts in the refresh.
+        db: Database session used to validate gateway access.
         user: Authenticated user.
 
     Returns:
@@ -5399,6 +5622,9 @@ async def refresh_gateway_tools(
     """
     logger.info(f"User '{user}' requested manual refresh for gateway {gateway_id}")
     try:
+        await gateway_service.get_gateway(db, gateway_id)
+        _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
+
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
@@ -5420,6 +5646,7 @@ async def refresh_gateway_tools(
 ##############
 @root_router.get("", response_model=List[Root])
 @root_router.get("/", response_model=List[Root])
+@require_permission("admin.system_config")
 async def list_roots(
     user=Depends(get_current_user_with_permissions),
 ) -> List[Root]:
@@ -5437,6 +5664,7 @@ async def list_roots(
 
 
 @root_router.get("/export", response_model=Dict[str, Any])
+@require_permission("admin.system_config")
 async def export_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -5492,6 +5720,7 @@ async def export_root(
 
 
 @root_router.get("/changes")
+@require_permission("admin.system_config")
 async def subscribe_roots_changes(
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
@@ -5519,6 +5748,7 @@ async def subscribe_roots_changes(
 
 
 @root_router.get("/{root_uri:path}", response_model=Root)
+@require_permission("admin.system_config")
 async def get_root_by_uri(
     root_uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -5550,6 +5780,7 @@ async def get_root_by_uri(
 
 @root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
+@require_permission("admin.system_config")
 async def add_root(
     root: Root,  # Accept JSON body using the Root model from models.py
     user=Depends(get_current_user_with_permissions),
@@ -5569,6 +5800,7 @@ async def add_root(
 
 
 @root_router.put("/{root_uri:path}", response_model=Root)
+@require_permission("admin.system_config")
 async def update_root(
     root_uri: str,
     root: Root,
@@ -5601,6 +5833,7 @@ async def update_root(
 
 
 @root_router.delete("/{uri:path}")
+@require_permission("admin.system_config")
 async def remove_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -5724,6 +5957,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
             init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
+            requester_email, requester_is_admin = _get_request_identity(request, user)
+
+            if init_session_id:
+                effective_owner = await session_registry.claim_session_owner(init_session_id, requester_email)
+                if effective_owner is None:
+                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership unavailable.", {"method": method, "session_id": init_session_id})
+
+                if effective_owner and not requester_is_admin and requester_email != effective_owner:
+                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
+
             # Pass server_id to advertise OAuth capability if configured per RFC 9728
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
             if hasattr(result, "model_dump"):
@@ -5840,6 +6083,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if next_cursor:
                 result["nextCursor"] = next_cursor
         elif method == "list_roots":
+            await _ensure_rpc_permission(user, db, "admin.system_config", method)
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
@@ -5910,10 +6154,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             uri = params.get("uri")
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            access_user_email, access_token_teams = _get_scoped_resource_access_context(request, user)
             # Get user email for subscriber ID
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
-            await resource_service.subscribe_resource(db, subscription)
+            try:
+                await resource_service.subscribe_resource(db, subscription, user_email=access_user_email, token_teams=access_token_teams)
+            except PermissionError:
+                raise JSONRPCError(-32003, "Insufficient permissions for resource subscription", {"uri": uri})
             db.commit()
             db.close()
             result = {}
@@ -5994,9 +6242,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
+            await _ensure_rpc_permission(user, db, "tools.execute", method)
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            run_owner_email = auth_user_email
+            run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
                 # auth_token_teams stays None (unrestricted)
@@ -6025,7 +6276,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     tool_task.cancel()
 
             if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                await cancellation_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
+                await cancellation_service.register_run(
+                    run_id,
+                    name=f"tool:{name}",
+                    cancel_callback=cancel_tool_task,
+                    owner_email=run_owner_email,
+                    owner_team_ids=run_owner_team_ids,
+                )
 
             try:
                 # Check if cancelled before execution (only if feature enabled)
@@ -6109,6 +6366,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
         elif method == "roots/list":
             # MCP spec-compliant method name
+            await _ensure_rpc_permission(user, db, "admin.system_config", method)
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
@@ -6128,6 +6386,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             logger.info(f"Request cancelled: {request_id}, reason: {reason}")
             # Attempt local cancellation per MCP spec
             if request_id is not None:
+                await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=True)
                 await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
@@ -6240,6 +6499,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "logging/setLevel":
             # MCP spec-compliant logging endpoint
+            await _ensure_rpc_permission(user, db, "admin.system_config", method)
             level = LogLevel(params.get("level"))
             await logging_service.set_level(level)
             result = {}
@@ -6249,6 +6509,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
+            await _ensure_rpc_permission(user, db, "tools.execute", method)
             # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
 
@@ -6311,6 +6572,93 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         }
 
 
+_WS_RELAY_REQUIRED_PERMISSIONS = [
+    "tools.read",
+    "tools.execute",
+    "resources.read",
+    "prompts.read",
+    "servers.use",
+    "a2a.read",
+]
+
+
+def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
+    """Extract bearer token from WebSocket Authorization headers.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        Bearer token value when present, otherwise None.
+    """
+    return extract_websocket_bearer_token(
+        getattr(websocket, "query_params", {}),
+        getattr(websocket, "headers", {}),
+        query_param_warning="WebSocket authentication token passed via query parameter",
+    )
+
+
+async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[str], Optional[str]]:
+    """Authenticate and authorize a WebSocket relay connection.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        A tuple of `(auth_token, proxy_user)` where each value may be None.
+
+    Raises:
+        HTTPException: If authentication fails or required permissions are missing.
+    """
+    auth_required = settings.mcp_client_auth_enabled or settings.auth_required
+    auth_token = _get_websocket_bearer_token(websocket)
+    proxy_user: Optional[str] = None
+    user_context: Optional[dict[str, Any]] = None
+
+    # JWT authentication path
+    if auth_token:
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
+        try:
+            user = await get_current_user(credentials, request=websocket)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed") from exc
+        user_context = {
+            "email": user.email,
+            "full_name": user.full_name,
+            "is_admin": user.is_admin,
+            "ip_address": websocket.client.host if websocket.client else None,
+            "user_agent": websocket.headers.get("user-agent"),
+            "team_id": getattr(websocket.state, "team_id", None),
+            "token_teams": getattr(websocket.state, "token_teams", None),
+            "token_use": getattr(websocket.state, "token_use", None),
+        }
+    # Proxy authentication path (only valid when MCP client auth is disabled)
+    elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+        proxy_user = websocket.headers.get(settings.proxy_user_header)
+        if proxy_user:
+            user_context = {
+                "email": proxy_user,
+                "full_name": proxy_user,
+                "is_admin": False,
+                "ip_address": websocket.client.host if websocket.client else None,
+                "user_agent": websocket.headers.get("user-agent"),
+            }
+        elif auth_required:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    elif auth_required:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    # RBAC gate: require at least one MCP interaction permission before allowing WS relay access
+    if user_context:
+        checker = PermissionChecker(user_context)
+        if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    return auth_token, proxy_user
+
+
 @utility_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -6322,40 +6670,16 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection instance.
     """
-    # Track auth credentials to forward to /rpc
-    auth_token: Optional[str] = None
-    proxy_user: Optional[str] = None
-
     try:
-        # Authenticate WebSocket connection
-        if settings.mcp_client_auth_enabled or settings.auth_required:
-            # Extract auth from query params or headers
-            # Try to get token from query parameter
-            if "token" in websocket.query_params:
-                auth_token = websocket.query_params["token"]
-            # Try to get token from Authorization header
-            elif "authorization" in websocket.headers:
-                auth_header = websocket.headers["authorization"]
-                if auth_header.startswith("Bearer "):
-                    auth_token = auth_header[7:]
+        if not settings.mcpgateway_ws_relay_enabled:
+            await websocket.close(code=1008, reason="WebSocket relay is disabled")
+            return
 
-            # Check for proxy auth if MCP client auth is disabled
-            if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
-                proxy_user = websocket.headers.get(settings.proxy_user_header)
-                if not proxy_user and not auth_token:
-                    await websocket.close(code=1008, reason="Authentication required")
-                    return
-            elif settings.auth_required and not auth_token:
-                await websocket.close(code=1008, reason="Authentication required")
-                return
-
-            # Verify JWT token if provided and MCP client auth is enabled
-            if auth_token and settings.mcp_client_auth_enabled:
-                try:
-                    await verify_jwt_token(auth_token)
-                except Exception:
-                    await websocket.close(code=1008, reason="Invalid authentication")
-                    return
+        try:
+            auth_token, proxy_user = await _authenticate_websocket_user(websocket)
+        except HTTPException as e:
+            await websocket.close(code=1008, reason=str(e.detail))
+            return
 
         await websocket.accept()
         while True:
@@ -6404,7 +6728,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-@require_permission("tools.invoke")
+@require_permission("tools.execute")
 async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
@@ -6429,6 +6753,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
+        await session_registry.set_session_owner(transport.session_id, get_user_email(user))
 
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
@@ -6503,7 +6828,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
 
 @utility_router.post("/message")
-@require_permission("tools.invoke")
+@require_permission("tools.execute")
 async def utility_message_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Handle a JSON-RPC message directed to a specific SSE session.
@@ -6526,6 +6851,8 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+
+        await _assert_session_owner_or_admin(request, user, session_id)
 
         message = await _read_request_json(request)
 
@@ -6753,10 +7080,11 @@ async def security_health(request: Request):
     """
     # Check authentication
     if settings.auth_required:
-        # Verify the request is authenticated
-        auth_header = request.headers.get("authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        auth_header = request.headers.get("authorization", "")
+        scheme, _, credentials = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not credentials:
             raise HTTPException(401, "Authentication required for security health")
+        await verify_jwt_token(credentials.strip())
 
     security_status = settings.get_security_status()
 
@@ -7279,14 +7607,17 @@ except ImportError:
     logger.debug("OAuth router not available")
 
 # Include reverse proxy router if enabled
-try:
-    # First-Party
-    from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
+if settings.mcpgateway_reverse_proxy_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
 
-    app.include_router(reverse_proxy_router)
-    logger.info("Reverse proxy router included")
-except ImportError:
-    logger.debug("Reverse proxy router not available")
+        app.include_router(reverse_proxy_router)
+        logger.info("Reverse proxy router included")
+    except ImportError:
+        logger.debug("Reverse proxy router not available")
+else:
+    logger.info("Reverse proxy router not included - feature disabled")
 
 # Include LLMChat router
 if settings.llmchat_enabled:

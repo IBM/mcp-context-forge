@@ -1,6 +1,6 @@
 # Dynamic Client Registration (DCR)
 
-Dynamic Client Registration (DCR) is an OAuth 2.0 extension that enables automatic client registration without manual configuration. This guide explains how to configure and use DCR with MCP Gateway for streamable HTTP servers.
+Dynamic Client Registration (DCR) is an OAuth 2.0 extension that enables automatic client registration without manual configuration. This guide explains how to configure and use DCR with ContextForge for streamable HTTP servers.
 
 ## Overview
 
@@ -21,7 +21,7 @@ DCR solves a common authentication challenge in distributed MCP deployments:
 
 ## What is Dynamic Client Registration?
 
-Dynamic Client Registration is defined in [RFC 7591](https://tools.ietf.org/html/rfc7591) as a protocol that allows OAuth 2.0 clients to register with authorization servers dynamically. In the context of MCP Gateway:
+Dynamic Client Registration is defined in [RFC 7591](https://tools.ietf.org/html/rfc7591) as a protocol that allows OAuth 2.0 clients to register with authorization servers dynamically. In the context of ContextForge:
 
 1. **Discovery Phase**: Gateway discovers Authorization Server (AS) metadata via [RFC 8414](https://tools.ietf.org/html/rfc8414)
 2. **Registration Phase**: Gateway registers itself as an OAuth client with the AS
@@ -41,7 +41,7 @@ MCPGATEWAY_DCR_DEFAULT_SCOPES="mcp:read"                 # Default scopes to req
 MCPGATEWAY_DCR_ALLOWED_ISSUERS=""                        # Optional allowlist of issuer URLs (empty = allow any)
 MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD="client_secret_basic" # Auth method: client_secret_basic or client_secret_post
 MCPGATEWAY_DCR_METADATA_CACHE_TTL=3600                   # AS metadata cache TTL in seconds (default: 1 hour)
-MCPGATEWAY_DCR_CLIENT_NAME_TEMPLATE="MCP Gateway ({gateway_name})" # Client name template for registration
+MCPGATEWAY_DCR_CLIENT_NAME_TEMPLATE="ContextForge ({gateway_name})" # Client name template for registration
 MCPGATEWAY_DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=false       # Request refresh_token when AS omits grant_types_supported
 
 # OAuth Settings (used by DCR)
@@ -88,7 +88,7 @@ POST https://auth.example.com/register
 Content-Type: application/json
 
 {
-  "client_name": "MCP Gateway (GitHub MCP)",
+  "client_name": "ContextForge (GitHub MCP)",
   "redirect_uris": ["https://gateway.example.com/oauth/callback"],
   "grant_types": ["authorization_code"],
   "response_types": ["code"],
@@ -128,7 +128,7 @@ A simplified architecture. Please view the following guide for an in-depth swiml
 ```mermaid
 graph LR
     Client[MCP Client]
-    HyprMCP[HyprMCP Gateway]
+    HyprMCP[HyprContextForge]
     Dex[Dex]
     IdP[Federated IdP<br/>GitHub/Google/LDAP]
     ContextForge[ContextForge]

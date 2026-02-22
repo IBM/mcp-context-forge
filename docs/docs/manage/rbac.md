@@ -1,12 +1,12 @@
 # RBAC Configuration
 
-Role-based access control (RBAC) defines which actions users or teams can perform in MCP Gateway. This document covers the two-layer security model, token scoping semantics, permission system, and best practices for access control.
+Role-based access control (RBAC) defines which actions users or teams can perform in ContextForge. This document covers the two-layer security model, token scoping semantics, permission system, and best practices for access control.
 
 ---
 
 ## Overview
 
-MCP Gateway implements a **two-layer security model**:
+ContextForge implements a **two-layer security model**:
 
 1. **Token Scoping (Layer 1)**: Controls what resources a user CAN SEE (data filtering)
 2. **RBAC (Layer 2)**: Controls what actions a user CAN DO (action authorization)
@@ -251,7 +251,7 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
 
 ### Visibility Levels
 
-Resources in MCP Gateway have three visibility levels:
+Resources in ContextForge have three visibility levels:
 
 | Visibility | Description | Who Can See |
 |------------|-------------|-------------|
@@ -292,6 +292,17 @@ Token scoping is enforced consistently across all access paths:
 | Service Layer | ✅ | N/A | Database query filtering |
 | WebSocket | ✅ | ✅ | Forwards auth to /rpc |
 | MCP Transport | ✅ | N/A | Streamable HTTP protocol filtering |
+
+### Method-Level RBAC Examples
+
+The `/rpc` endpoint applies method-level authorization for sensitive operations.
+These checks are aligned with equivalent REST endpoints.
+
+| Method / Endpoint | Required Permission | Notes |
+|-------------------|---------------------|-------|
+| JSON-RPC `logging/setLevel` (`POST /rpc`) | `admin.system_config` | Same permission as `POST /logging/setLevel` |
+| Utility SSE (`GET /sse`) | `tools.execute` | Canonical tool execution permission |
+| Utility message relay (`POST /message`) | `tools.execute` | Canonical tool execution permission |
 
 ---
 
@@ -620,7 +631,7 @@ If REST and RPC endpoints return different results:
 
 ## Bootstrap Custom Roles
 
-MCP Gateway allows you to define custom roles that are automatically created during database bootstrap. This is useful for organizations that need to pre-configure roles before deployment.
+ContextForge allows you to define custom roles that are automatically created during database bootstrap. This is useful for organizations that need to pre-configure roles before deployment.
 
 ### Configuration
 

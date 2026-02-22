@@ -6,7 +6,7 @@
 
     For SSO deployments, configure group‑to‑team mappings to auto‑assign users on first login. See [Team Management](teams.md) and the provider tutorials for examples.
 
-MCP Gateway supports enterprise Single Sign-On authentication through OAuth2 and OpenID Connect (OIDC) providers. This enables seamless integration with existing identity providers while maintaining backward compatibility with local authentication.
+ContextForge supports enterprise Single Sign-On authentication through OAuth2 and OpenID Connect (OIDC) providers. This enables seamless integration with existing identity providers while maintaining backward compatibility with local authentication.
 
 ## Overview
 
@@ -30,16 +30,31 @@ sequenceDiagram
     participant P as SSO Provider
     participant D as Database
 
-    U->>G: GET /auth/sso/login/github
+    U->>G: GET /auth/sso/login/{provider}
     G->>D: Create auth session
     G->>U: Redirect to provider with PKCE
     U->>P: Authenticate with provider
     P->>G: Callback with auth code
     G->>P: Exchange code for tokens (PKCE)
     P->>G: Access token + user info
-    G->>D: Create/update user
+    opt OIDC providers
+        P->>G: id_token (signed)
+        G->>G: Verify id_token signature (JWKS)
+    end
+    G->>D: Create/update user from verified claims
     G->>U: Set JWT cookie + redirect
 ```
+
+!!! info "ID Token Verification"
+    For OIDC providers (Keycloak, Entra ID, Okta, generic OIDC), ContextForge cryptographically verifies the `id_token` signature using the provider's JWKS (JSON Web Key Set) endpoint. OAuth-only providers (GitHub, Google) use the access token to fetch user info from the provider's userinfo endpoint instead. This prevents token tampering attacks by validating:
+
+    - **Signature** - verified against the provider's public keys (RS256, ES256, EdDSA, etc.)
+    - **Expiration** - expired tokens are rejected
+    - **Audience** - must match the configured `client_id`
+    - **Issuer** - must match the provider's issuer URL
+    - **Nonce** - must match the value stored in the auth session (replay protection)
+
+    The JWKS URI is automatically discovered from the provider's `.well-known/openid-configuration` endpoint and cached for 5 minutes. Use `SSO_GENERIC_JWKS_URI` to override automatic discovery if needed.
 
 ### Database Schema
 
@@ -245,7 +260,7 @@ Response:
 1. **GitHub Settings** → **Developer settings** → **OAuth Apps**
 2. **New OAuth App**:
 
-   - **Application name**: `MCP Gateway - YourOrg`
+   - **Application name**: `ContextForge - YourOrg`
    - **Homepage URL**: `https://your-gateway.com`
    - **Authorization callback URL**: `https://your-gateway.com/auth/sso/callback/github`
 
@@ -345,7 +360,7 @@ SSO_OKTA_ISSUER=https://your-company.okta.com
 1. **Azure Portal** → **Microsoft Entra ID** → **App registrations**
 2. **New registration**:
 
-   - **Name**: `MCP Gateway - YourOrg`
+   - **Name**: `ContextForge - YourOrg`
    - **Supported account types**: Accounts in this organizational directory only
    - **Redirect URI**: `https://your-gateway.com/auth/sso/callback/entra`
 

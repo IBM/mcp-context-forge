@@ -1,0 +1,17 @@
+{
+  "alpinejs": "sha384-l8f0VcPi/M1iHPv8egOnY/15TDwqgbOR1anMIJWvU6nLRgZVLTLSaNqi/TOoT5Fh",
+  "chartjs": "sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4",
+  "codemirror_addon_simple": "sha384-5+aYjV0V2W3IwhAYp/9WOrGMv1TaYkCjnkkW7Hv3yJQo28MergRCSRaUIUzDUs2J",
+  "codemirror_css": "sha384-zaeBlB/vwYsDRSlFajnDd7OydJ0cWk+c2OWybl3eSUf6hW2EbhlCsQPqKr3gkznT",
+  "codemirror_js": "sha384-BEgQlz0fN4eG0n4jipmUe+nOg65hPY7L0E/lPVRaOPdzAfLPGEbXnpAodHtSnlwM",
+  "codemirror_mode_go": "sha384-5JibIOm7aukO/59w24DrtvE9mo7X9IgRteN2f2OnH+KiO1RM2wMH3jeWaSMdW2Yc",
+  "codemirror_mode_javascript": "sha384-g0o+WW9mdIxA7LaaCKTkRm0M5TVT+Bb4s9eocxPsI2G0Xm0POG9iD6G6qP1IIsfS",
+  "codemirror_mode_python": "sha384-Xy+2exU6lBoT4OpUOtnQb+cUpn+nlJQEHvRobWVtwz6wIsw4oNoO7xyd/l8rYgMy",
+  "codemirror_mode_rust": "sha384-SR4yBoZPBNymEiWYb4h8YbjccmCDvVyzr5DYXq4QWt7E/voRHmUbr/ja617eM6Rh",
+  "codemirror_mode_shell": "sha384-dmPRq54XNtYnlnAo7QrwJnZNa5r0JP5gU8z4H0686Cgz37qrR2jmNaDHUXyMI4wn",
+  "codemirror_theme_monokai": "sha384-05WuhgjXiqmZzcQ3vQRQ39HN356Yqb+SnhvELzFtpwS5b2IlqE8QsOO5LCSJ2znj",
+  "dompurify": "sha384-cwS6YdhLI7XS60eoDiC+egV0qHp8zI+Cms46R0nbn8JrmoAzV9uFL60etMZhAnSu",
+  "fontawesome": "sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0",
+  "htmx": "sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC",
+  "marked": "sha384-zbcZAIxlvJtNE3Dp5nxLXdXtXyxwOdnILY1TDPVmKFhl4r4nSUG1r8bcFXGVa4Te"
+}

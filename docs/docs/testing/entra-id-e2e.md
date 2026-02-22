@@ -33,7 +33,7 @@ You need access to an Azure tenant where you can:
 ```bash
 # Clone and set up the project
 git clone <repository-url>
-cd hoax-id
+cd mcp-context-forge
 make venv install-dev
 ```
 

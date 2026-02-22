@@ -7,6 +7,7 @@ Startup script for the MCP Langchain Agent
 # Standard
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -18,9 +19,11 @@ from dotenv import load_dotenv
 try:
     # Local
     from .config import get_example_env, get_settings, validate_environment
+    from .env_utils import _env_int
 except ImportError:
     # Third-Party
     from config import get_example_env, get_settings, validate_environment
+    from env_utils import _env_int
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -110,12 +113,23 @@ def main():
     logger.info("Starting FastAPI server...")
 
     try:
+        host = os.getenv("HOST", "127.0.0.1")
+        port = _env_int("PORT", default=8000)
+
+        _valid_log_levels = {"critical", "error", "warning", "info", "debug", "trace"}
+        _default_log_level = "debug" if settings.debug_mode else "info"
+        env_log_level = (os.getenv("LOG_LEVEL") or "").strip().lower()
+        if env_log_level and env_log_level not in _valid_log_levels:
+            logger.warning("Invalid LOG_LEVEL=%r; falling back to %r", env_log_level, _default_log_level)
+            env_log_level = ""
+        log_level = env_log_level or _default_log_level
+
         uvicorn.run(
             "agent_runtimes.langchain_agent.app:app",
-            host="0.0.0.0",
-            port=8000,
+            host=host,
+            port=port,
             reload=settings.debug_mode,
-            log_level="info" if not settings.debug_mode else "debug",
+            log_level=log_level,
             access_log=True,
         )
     except KeyboardInterrupt:

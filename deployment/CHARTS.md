@@ -1,4 +1,4 @@
-# Publishing the Helm chart for MCP Context-Forge
+# Publishing the Helm chart for ContextForge
 
 ## Lint & package:
 

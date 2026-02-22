@@ -28,7 +28,7 @@
     definition: "{{ lookup('template', 'configmap.yaml.j2') | from_yaml }}"
 
 # Application (Deployment + Service + Ingress) via one multi-doc template
-- name: Deploy MCP Context-Forge
+- name: Deploy ContextForge
   kubernetes.core.k8s:
     kubeconfig: "{{ kubeconfig_path }}"
     namespace: "{{ prefix }}"

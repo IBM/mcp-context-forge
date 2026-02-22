@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-End-to-end tests for MCP Gateway main APIs.
+End-to-end tests for ContextForge main APIs.
 This module contains comprehensive end-to-end tests for all main API endpoints in main.py.
 These tests are designed to exercise the entire application stack with minimal mocking,
 using only a temporary SQLite database and bypassing authentication.
@@ -45,7 +45,7 @@ import os
 import tempfile
 import time
 from typing import AsyncGenerator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from unittest.mock import patch as mock_patch
 
 # Third-Party
@@ -87,11 +87,14 @@ else:
     settings.jwt_secret_key = JWT_SECRET
 
 
-def generate_test_jwt():
+def generate_test_jwt(*, is_admin: bool = False, teams=None):
+    if teams is None:
+        teams = []
     payload = {
         "sub": "test_user",
         "exp": int(time.time()) + 3600,
-        "teams": [],  # Empty teams list allows access to public resources and own private resources
+        "teams": teams,
+        "is_admin": is_admin,
     }
     secret = settings.jwt_secret_key
     if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
@@ -456,9 +459,16 @@ class TestProtocolAPIs:
         response = await client.post("/protocol/notifications", json={"method": "notifications/initialized"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
-    async def test_notifications_cancelled(self, client: AsyncClient):
-        """Test POST /protocol/notifications - request cancelled."""
+    async def test_notifications_cancelled_denied_for_unknown_run(self, client: AsyncClient):
+        """Test POST /protocol/notifications - unknown run is denied for non-admin token."""
         response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+
+    async def test_notifications_cancelled_allowed_for_owner(self, client: AsyncClient):
+        """Test POST /protocol/notifications - owner can cancel."""
+        with patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"owner_email": "testuser@example.com", "owner_team_ids": []})):
+            response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
     async def test_notifications_message(self, client: AsyncClient):
@@ -963,7 +973,7 @@ class TestResourceAPIs:
     async def test_create_markdown_resource(self, client: AsyncClient, mock_auth):
         """Test POST /resources - create markdown resource."""
         resource_data = {
-            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# MCP Gateway\n\nWelcome to the MCP Gateway!"},
+            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to ContextForge!"},
             "team_id": None,
             "visibility": "private",
         }
@@ -1225,7 +1235,7 @@ class TestPromptAPIs:
     async def test_create_prompt_no_arguments(self, client: AsyncClient, mock_auth):
         """Test POST /prompts - create prompt without arguments."""
         prompt_data = {
-            "prompt": {"name": "system_summary", "description": "System status summary", "template": "MCP Gateway is running and ready to process requests.", "arguments": []},
+            "prompt": {"name": "system_summary", "description": "System status summary", "template": "ContextForge is running and ready to process requests.", "arguments": []},
             "team_id": None,
             "visibility": "private",
         }
@@ -1656,7 +1666,7 @@ class TestVersionAndDocs:
     #     response = await client.get("/openapi.json", headers=TEST_AUTH_HEADER)
     #     assert response.status_code == 200
     #     result = response.json()
-    #     assert result["info"]["title"] == "MCP Gateway"
+    #     assert result["info"]["title"] == "ContextForge"
 
     async def test_docs_requires_auth(self, client: AsyncClient):
         """Test GET /docs requires authentication."""

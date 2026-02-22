@@ -56,6 +56,30 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     assert s_empty.sso_entra_admin_groups == []
 
 
+def test_sso_entra_graph_fallback_settings_defaults_and_overrides():
+    """Graph fallback settings should expose sane defaults and accept overrides."""
+    defaults = Settings(_env_file=None)
+    assert defaults.sso_entra_graph_api_enabled is True
+    assert defaults.sso_entra_graph_api_timeout == 10
+    assert defaults.sso_entra_graph_api_max_groups == 0
+
+    custom = Settings(sso_entra_graph_api_enabled=False, sso_entra_graph_api_timeout=25, sso_entra_graph_api_max_groups=500, _env_file=None)
+    assert custom.sso_entra_graph_api_enabled is False
+    assert custom.sso_entra_graph_api_timeout == 25
+    assert custom.sso_entra_graph_api_max_groups == 500
+
+
+def test_sso_entra_graph_timeout_and_max_groups_validation():
+    """Graph fallback timeout and max_groups should enforce configured bounds."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(sso_entra_graph_api_timeout=0, _env_file=None)
+
+    with pytest.raises(ValidationError):
+        Settings(sso_entra_graph_api_max_groups=-1, _env_file=None)
+
+
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #
@@ -143,7 +167,7 @@ def test_settings_default_values():
     with patch.dict(os.environ, dummy_env, clear=True):
         settings = Settings(_env_file=None)
 
-        assert settings.app_name == "MCP_Gateway"
+        assert settings.app_name == "ContextForge"
         assert settings.host == "127.0.0.1"
         assert settings.port == 4444
         assert settings.database_url == "sqlite:///./mcp.db"
@@ -359,6 +383,7 @@ def test_x_frame_options_none_value_returns_none():
     """x_frame_options set to None should return None."""
     s = Settings(x_frame_options=None, _env_file=None)
     assert s.x_frame_options is None
+
 
 # --------------------------------------------------------------------------- #
 #                      parse_allowed_roots                                     #
@@ -1041,3 +1066,15 @@ def test_direct_proxy_timeout_default_30():
     """mcpgateway_direct_proxy_timeout should default to 30."""
     s = Settings(_env_file=None)
     assert s.mcpgateway_direct_proxy_timeout == 30
+
+
+def test_ws_relay_feature_default_false():
+    """mcpgateway_ws_relay_enabled should default to False."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_ws_relay_enabled is False
+
+
+def test_reverse_proxy_feature_default_false():
+    """mcpgateway_reverse_proxy_enabled should default to False."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_reverse_proxy_enabled is False

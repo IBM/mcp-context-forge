@@ -243,7 +243,7 @@ class TestOAuthCallback:
         async def _exchange(p, sess, c):
             return {"access_token": "tok", "id_token": "id_tok"}
 
-        async def _user_info(p, access, token_data=None):
+        async def _user_info(p, access, token_data=None, expected_nonce=None):  # noqa: ARG001
             return {"email": "user@example.com", "provider": "github"}
 
         sso_service._exchange_code_for_tokens = _exchange
@@ -261,7 +261,7 @@ class TestOAuthCallback:
         async def _exchange(p, sess, c):
             return {"access_token": "tok", "id_token": "id_tok"}
 
-        async def _user_info(p, access, token_data=None):
+        async def _user_info(p, access, token_data=None, expected_nonce=None):  # noqa: ARG001
             return {"email": "user@example.com", "provider": "github"}
 
         sso_service._exchange_code_for_tokens = _exchange
@@ -272,6 +272,49 @@ class TestOAuthCallback:
         user_info, token_data = result
         assert user_info["email"] == "user@example.com"
         assert token_data["id_token"] == "id_tok"
+
+    @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_rejects_unverified_id_token(self, sso_service, mock_db):
+        """OIDC callback should fail when id_token verification fails."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce="nonce-1")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(p, sess, c):
+            return {"access_token": "tok", "id_token": "bad-id-token"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value=None)
+        sso_service._get_user_info = AsyncMock(return_value={"email": "user@example.com", "provider": "keycloak"})
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is None
+        sso_service._get_user_info.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_passes_verified_claims(self, sso_service, mock_db):
+        """OIDC callback should pass verified id_token claims to user-info path."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce="nonce-1")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(p, sess, c):
+            return {"access_token": "tok", "id_token": "good-id-token"}
+
+        async def _user_info(_provider, _access, token_data=None, expected_nonce=None):  # noqa: ARG001
+            assert token_data is not None
+            assert token_data["_verified_id_token_claims"] == {"sub": "user-1", "nonce": "nonce-1"}
+            return {"email": "user@example.com", "provider": "keycloak"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1", "nonce": "nonce-1"})
+        sso_service._get_user_info = _user_info
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is not None
+        user_info, token_data = result
+        assert user_info["email"] == "user@example.com"
+        assert token_data["_verified_id_token_claims"]["sub"] == "user-1"
 
     @pytest.mark.asyncio
     async def test_handle_oauth_callback_no_session(self, sso_service, mock_db):
@@ -306,6 +349,44 @@ class TestOAuthCallback:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_requires_nonce(self, sso_service, mock_db):
+        """OIDC callback should fail when auth session nonce is missing."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce=None)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(_p, _sess, _code):
+            return {"access_token": "tok", "id_token": "id-token"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1"})
+        sso_service._get_user_info = AsyncMock(return_value={"email": "user@example.com"})
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is None
+        sso_service._verify_oidc_id_token.assert_not_called()
+        sso_service._get_user_info.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_requires_id_token(self, sso_service, mock_db):
+        """OIDC callback should fail when token response does not contain id_token."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce="nonce-1")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(_p, _sess, _code):
+            return {"access_token": "tok"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1"})
+        sso_service._get_user_info = AsyncMock(return_value={"email": "user@example.com"})
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is None
+        sso_service._verify_oidc_id_token.assert_not_called()
+        sso_service._get_user_info.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_handle_oauth_callback_user_info_fails(self, sso_service, mock_db):
         auth_session = _make_auth_session()
         mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
@@ -313,7 +394,7 @@ class TestOAuthCallback:
         async def _exchange(p, sess, c):
             return {"access_token": "tok"}
 
-        async def _user_info(p, access, token_data=None):
+        async def _user_info(p, access, token_data=None, expected_nonce=None):  # noqa: ARG001
             return None
 
         sso_service._exchange_code_for_tokens = _exchange
@@ -385,6 +466,77 @@ class TestTokenExchange:
 
 
 class TestGetUserInfo:
+    def test_resolve_entra_graph_fallback_settings_valid_overrides(self, sso_service):
+        """Provider metadata should parse valid string overrides."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = False
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings(
+                {
+                    "graph_api_enabled": "true",
+                    "graph_api_timeout": "15",
+                    "graph_api_max_groups": "4",
+                }
+            )
+
+        assert enabled is True
+        assert timeout == 15
+        assert max_groups == 4
+
+    def test_resolve_entra_graph_fallback_settings_invalid_string_enabled(self, sso_service):
+        """Invalid string values should keep defaults for graph_api_enabled."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_enabled": "maybe"})
+
+        assert enabled is True
+        assert timeout == 10
+        assert max_groups == 9
+
+    def test_resolve_entra_graph_fallback_settings_non_string_enabled(self, sso_service):
+        """Non-string metadata values should be coerced to bool for graph_api_enabled."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_enabled": 0})
+
+        assert enabled is False
+        assert timeout == 10
+        assert max_groups == 9
+
+    def test_resolve_entra_graph_fallback_settings_invalid_timeout_and_max_groups(self, sso_service):
+        """Invalid timeout/max values should keep defaults."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_timeout": "0", "graph_api_max_groups": "-1"})
+
+        assert enabled is True
+        assert timeout == 10
+        assert max_groups == 9
+
+    def test_resolve_entra_graph_fallback_settings_unparseable_timeout_and_max_groups(self, sso_service):
+        """Unparseable timeout/max values should keep defaults."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_timeout": "abc", "graph_api_max_groups": "xyz"})
+
+        assert enabled is True
+        assert timeout == 10
+        assert max_groups == 9
+
     @pytest.mark.asyncio
     async def test_get_user_info_github_with_orgs(self, sso_service):
         user_response = MagicMock()
@@ -454,7 +606,7 @@ class TestGetUserInfo:
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
 
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -466,6 +618,50 @@ class TestGetUserInfo:
         assert result["provider"] == "entra"
         assert "group-id-1" in result["groups"]
         assert "App.Admin" in result["groups"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_oidc_fallback_verification_uses_expected_nonce(self, sso_service):
+        """OIDC fallback id_token verification should enforce the callback nonce when provided."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@example.com", "name": "Test User"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="oidc-test", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        token_data = {"access_token": "at", "id_token": "id-token-without-cached-claims"}
+
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1", "nonce": "nonce-1"})
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._get_user_info(provider, "at", token_data, expected_nonce="nonce-1")
+
+        assert result is not None
+        sso_service._verify_oidc_id_token.assert_awaited_once_with(provider, "id-token-without-cached-claims", expected_nonce="nonce-1")
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_oidc_fallback_skips_verification_without_nonce(self, sso_service):
+        """OIDC fallback id_token verification should be skipped when nonce context is unavailable."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@example.com", "name": "Test User"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="oidc-test", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        token_data = {"access_token": "at", "id_token": "id-token-without-cached-claims"}
+
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1", "nonce": "nonce-1"})
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._get_user_info(provider, "at", token_data, expected_nonce=None)
+
+        assert result is not None
+        sso_service._verify_oidc_id_token.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_user_info_failure(self, sso_service):
@@ -515,8 +711,13 @@ class TestGetUserInfo:
         user_response.status_code = 200
         user_response.json.return_value = {"email": "user@contoso.com", "name": "User"}
 
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": ["group-id-1", "group-id-2", "group-id-2"]}
+
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=user_response)
+        mock_client.post = AsyncMock(return_value=graph_response)
 
         provider = _make_provider(id="entra", name="entra", provider_type="oidc", provider_metadata={})
 
@@ -524,16 +725,337 @@ class TestGetUserInfo:
         payload = orjson.dumps({"sub": "oid", "_claim_names": {"groups": "src1"}, "_claim_sources": {"src1": {"endpoint": "https://graph"}}})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
             result = await sso_service._get_user_info(provider, "at", token_data)
 
         assert result is not None
         assert result["provider"] == "entra"
+        assert "group-id-1" in result["groups"]
+        assert "group-id-2" in result["groups"]
+        mock_client.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_entra_group_overage_hasgroups_marker(self, sso_service):
+        """Entra overage fallback should trigger for hasgroups marker."""
+        import base64
+        import orjson
+
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@contoso.com", "name": "User"}
+
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": ["group-id-1"]}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        provider = _make_provider(id="entra", name="entra", provider_type="oidc", provider_metadata={})
+
+        payload = orjson.dumps({"sub": "oid", "hasgroups": True})
+        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["provider"] == "entra"
+        assert "group-id-1" in result["groups"]
+        mock_client.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_entra_group_overage_groups_src_marker(self, sso_service):
+        """Entra overage fallback should trigger for groups:srcN marker."""
+        import base64
+        import orjson
+
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@contoso.com", "name": "User"}
+
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": ["group-id-2"]}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        provider = _make_provider(id="entra", name="entra", provider_type="oidc", provider_metadata={})
+
+        payload = orjson.dumps({"sub": "oid", "groups:src1": {"@odata.type": "x"}})
+        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["provider"] == "entra"
+        assert "group-id-2" in result["groups"]
+        mock_client.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_handles_401(self, sso_service):
+        """Graph API failures should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 401
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_handles_403(self, sso_service):
+        """Graph API forbidden responses should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 403
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_handles_500(self, sso_service):
+        """Non-auth Graph API failures should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 500
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_invalid_json_response(self, sso_service):
+        """Invalid Graph JSON payload should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.side_effect = ValueError("invalid json")
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_non_list_value(self, sso_service):
+        """Graph response with non-list value should return empty list."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": "not-a-list"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups == []
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_skips_non_string_ids(self, sso_service):
+        """Graph response should ignore non-string group IDs."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": [123, "group-1", None, "group-2"]}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups == ["group-1", "group-2"]
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_applies_max_group_cap(self, sso_service):
+        """Configured Graph max_groups should truncate the returned list."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": ["g1", "g2", "g3"]}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 2
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups == ["g1", "g2"]
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_disabled(self, sso_service):
+        """Disabled Graph fallback should skip network calls."""
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = False
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_timeout(self, sso_service):
+        """Timeouts or transport errors should not break login flow."""
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=TimeoutError("request timed out"))
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 1
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_respects_provider_metadata_override(self, sso_service):
+        """Provider metadata should override global Graph fallback defaults."""
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api(
+                "at",
+                "user@contoso.com",
+                {"graph_api_enabled": False},
+            )
+
+        assert groups is None
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_respects_string_bool_override(self, sso_service):
+        """String provider metadata values should be parsed for graph_api_enabled."""
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api(
+                "at",
+                "user@contoso.com",
+                {"graph_api_enabled": "false"},
+            )
+
+        assert groups is None
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_entra_group_overage_graph_fallback_failure(self, sso_service):
+        """Overage with failed Graph fallback should continue with safe defaults."""
+        import base64
+        import orjson
+
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@contoso.com", "name": "User"}
+
+        graph_response = MagicMock()
+        graph_response.status_code = 401
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        provider = _make_provider(id="entra", name="entra", provider_type="oidc", provider_metadata={})
+
+        payload = orjson.dumps({"sub": "oid", "_claim_names": {"groups": "src1"}})
+        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["provider"] == "entra"
+        assert result["groups"] == []
 
     @pytest.mark.asyncio
     async def test_get_user_info_keycloak_with_id_token(self, sso_service):
@@ -556,7 +1078,7 @@ class TestGetUserInfo:
         payload = orjson.dumps({"realm_access": {"roles": ["admin"]}, "resource_access": {"app": {"roles": ["edit"]}}, "groups": ["/team"]})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -601,7 +1123,7 @@ class TestGetUserInfo:
         )
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
-        token_data = {"access_token": "at", "id_token": fake_id_token}
+        token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
              patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -685,6 +1207,176 @@ class TestNormalization:
         assert "admin" in result["groups"]
         assert "my-app:editor" in result["groups"]
         assert "/team-a" in result["groups"]
+
+
+# ---------------------------------------------------------------------------
+# OIDC id_token verification tests
+# ---------------------------------------------------------------------------
+
+
+class TestOidcMetadataAndJwksHelpers:
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_returns_fresh_cached_value(self, sso_service):
+        import time
+
+        sso_service._oidc_config_cache["https://issuer.example.com"] = (time.monotonic(), {"jwks_uri": "https://issuer.example.com/jwks"})
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            metadata = await sso_service._get_oidc_provider_metadata("https://issuer.example.com/")
+
+        assert metadata == {"jwks_uri": "https://issuer.example.com/jwks"}
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_expires_cache_and_handles_non_200(self, sso_service):
+        import time
+
+        sso_service._oidc_config_cache["https://issuer.example.com"] = (
+            time.monotonic() - sso_service._OIDC_METADATA_CACHE_TTL_SECONDS - 1,
+            {"jwks_uri": "stale"},
+        )
+
+        response = MagicMock()
+        response.status_code = 500
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata("https://issuer.example.com")
+
+        assert metadata is None
+        assert "https://issuer.example.com" not in sso_service._oidc_config_cache
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_rejects_non_object_json(self, sso_service):
+        issuer = "https://issuer-bad-json.example.com"
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = ["not", "an", "object"]
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata(issuer)
+
+        assert metadata is None
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_caches_successful_discovery(self, sso_service):
+        issuer = "https://issuer-cache-success.example.com"
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"issuer": issuer, "jwks_uri": f"{issuer}/jwks"}
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata(issuer)
+
+        assert metadata == {"issuer": issuer, "jwks_uri": f"{issuer}/jwks"}
+        assert issuer in sso_service._oidc_config_cache
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_handles_request_exception(self, sso_service):
+        issuer = "https://issuer-error.example.com"
+        client = AsyncMock()
+        client.get = AsyncMock(side_effect=RuntimeError("network error"))
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata(issuer)
+
+        assert metadata is None
+
+    @pytest.mark.asyncio
+    async def test_resolve_oidc_issuer_and_jwks_from_discovery(self, sso_service):
+        provider = _make_provider(provider_type="oidc", issuer="https://issuer.example.com", jwks_uri=None)
+        sso_service._get_oidc_provider_metadata = AsyncMock(return_value={"jwks_uri": " https://issuer.example.com/jwks ", "issuer": " https://resolved-issuer.example.com "})
+
+        issuer, jwks_uri = await sso_service._resolve_oidc_issuer_and_jwks(provider)
+
+        assert issuer == "https://resolved-issuer.example.com"
+        assert jwks_uri == "https://issuer.example.com/jwks"
+
+    def test_get_jwks_client_reuses_cached_instance(self, sso_service):
+        first = sso_service._get_jwks_client("https://issuer.example.com/jwks")
+        second = sso_service._get_jwks_client("https://issuer.example.com/jwks")
+
+        assert first is second
+
+
+class TestVerifyOidcIdToken:
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_returns_none_for_non_oidc_provider(self, sso_service):
+        provider = _make_provider(provider_type="oauth2")
+        claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+        assert claims is None
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_success(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        signing_key = SimpleNamespace(key="public-key")
+        jwks_client = MagicMock()
+        jwks_client.get_signing_key_from_jwt.return_value = signing_key
+
+        with (
+            patch.object(sso_service, "_get_jwks_client", return_value=jwks_client),
+            patch("mcpgateway.services.sso_service.jwt.decode", return_value={"sub": "user-1", "nonce": "nonce-1"}),
+        ):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce="nonce-1")
+
+        assert claims is not None
+        assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_nonce_mismatch(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        signing_key = SimpleNamespace(key="public-key")
+        jwks_client = MagicMock()
+        jwks_client.get_signing_key_from_jwt.return_value = signing_key
+
+        with (
+            patch.object(sso_service, "_get_jwks_client", return_value=jwks_client),
+            patch("mcpgateway.services.sso_service.jwt.decode", return_value={"sub": "user-1", "nonce": "nonce-2"}),
+        ):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce="nonce-1")
+
+        assert claims is None
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_missing_jwks(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer=None, jwks_uri=None, client_id="cid")
+        claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+        assert claims is None
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_handles_pyjwt_error(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        signing_key = SimpleNamespace(key="public-key")
+        jwks_client = MagicMock()
+        jwks_client.get_signing_key_from_jwt.return_value = signing_key
+
+        # First-Party
+        from mcpgateway.services import sso_service as sso_mod
+
+        with (
+            patch.object(sso_service, "_get_jwks_client", return_value=jwks_client),
+            patch("mcpgateway.services.sso_service.jwt.decode", side_effect=sso_mod.jwt.PyJWTError("bad token")),
+        ):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+
+        assert claims is None
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_handles_unexpected_exception(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        with patch.object(sso_service, "_get_jwks_client", side_effect=RuntimeError("boom")):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+
+        assert claims is None
 
 
 # ---------------------------------------------------------------------------

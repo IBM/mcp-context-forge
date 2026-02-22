@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""CRUD tests for Users entity in MCP Gateway Admin UI.
+"""CRUD tests for Users entity in ContextForge Admin UI.
 
 Location: ./tests/playwright/entities/test_users.py
 Copyright 2026

@@ -1,6 +1,6 @@
-# 🧪 Testing MCP Gateway
+# 🧪 Testing ContextForge
 
-This section covers the testing strategy and tools for MCP Gateway.
+This section covers the testing strategy and tools for ContextForge.
 
 ---
 
@@ -122,7 +122,6 @@ Use the [Entra ID E2E Testing Guide](entra-id-e2e.md) to validate:
 - SSO integration with Microsoft Entra ID (Azure AD)
 - Group-based `platform_admin` role assignment
 - Dynamic user and group management via Microsoft Graph API
-- OIDC discovery and JWKS validation
 
 These tests are fully automated and self-contained, creating and cleaning up Azure resources automatically.
 

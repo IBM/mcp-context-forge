@@ -99,7 +99,7 @@ class TestMainEndpointPermissions:
             "tools.create",
             "tools.update",
             "tools.delete",
-            "tools.invoke",
+            "tools.execute",
             "resources.read",
             "resources.create",
             "resources.update",

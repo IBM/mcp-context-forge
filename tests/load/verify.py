@@ -42,7 +42,7 @@ def create_database_session():
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Verify load test data integrity in MCP Gateway database",
+        description="Verify load test data integrity in ContextForge database",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 

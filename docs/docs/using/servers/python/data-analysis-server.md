@@ -39,10 +39,10 @@ python -m data_analysis_server.server
 python -m data_analysis_server.server --config my_config.yaml
 ```
 
-### Integration with MCP Gateway
+### Integration with ContextForge
 
 ```bash
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:4444/servers \
   -H "Content-Type: application/json" \
   -d '{

@@ -356,7 +356,7 @@ def mock_tool(mock_gateway):
     tool.jsonpath_filter = ""
     tool.created_at = "2023-01-01T00:00:00"
     tool.updated_at = "2023-01-01T00:00:00"
-    tool.created_by = "MCP Gateway team"
+    tool.created_by = "ContextForge team"
     tool.created_from_ip = "1.2.3.4"
     tool.created_via = "ui"
     tool.created_user_agent = "Chrome"

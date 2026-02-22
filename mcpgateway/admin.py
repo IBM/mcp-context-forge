@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Admin UI Routes for MCP Gateway.
-This module contains all the administrative UI endpoints for the MCP Gateway.
+Admin UI Routes for ContextForge AI Gateway.
+This module contains all the administrative UI endpoints for ContextForge AI Gateway.
 It provides a comprehensive interface for managing servers, tools, resources,
 prompts, gateways, and roots through RESTful API endpoints. The module handles
 all aspects of CRUD operations for these entities, including creation,
@@ -23,9 +23,10 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import lru_cache, wraps
 import html
 import io
+import json
 import logging
 import math
 import os
@@ -356,6 +357,27 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)
+
+
+@lru_cache(maxsize=1)
+def load_sri_hashes() -> Dict[str, str]:
+    """Load SRI hashes from sri_hashes.json file.
+
+    Uses lru_cache to ensure the file is only read once per process.
+
+    Returns:
+        Dict[str, str]: Dictionary mapping resource names to SRI hash strings.
+                       Returns empty dict if file not found or invalid.
+    """
+    try:
+        sri_file = Path(__file__).parent / "sri_hashes.json"
+        if sri_file.exists():
+            with sri_file.open("r") as f:
+                return json.load(f)
+    except Exception as e:
+        LOGGER.warning("Failed to load SRI hashes: %s", e)
+
+    return {}
 
 
 def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
@@ -1293,7 +1315,7 @@ async def get_overview_partial(
 
     This endpoint returns a rendered HTML partial containing an architecture
     diagram showing ContextForge inputs (Virtual Servers), middleware (Plugins),
-    and outputs (A2A Agents, MCP Gateways, Tools, etc.) along with key metrics.
+    and outputs (A2A Agents, Gateways, Tools, etc.) along with key metrics.
 
     Args:
         request: FastAPI request object
@@ -1312,7 +1334,7 @@ async def get_overview_partial(
         servers_total = db.query(func.count(DbServer.id)).scalar() or 0  # pylint: disable=not-callable
         servers_active = db.query(func.count(DbServer.id)).filter(DbServer.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 
-        # MCP Gateways - uses 'enabled' field
+        # Gateways - uses 'enabled' field
         gateways_total = db.query(func.count(DbGateway.id)).scalar() or 0  # pylint: disable=not-callable
         gateways_active = db.query(func.count(DbGateway.id)).filter(DbGateway.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 
@@ -3319,6 +3341,7 @@ async def admin_ui(
             "password_require_special": getattr(settings, "password_require_special", False),
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3478,6 +3501,7 @@ async def admin_login_page(request: Request) -> Response:
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "prefill_email": prefill_email,
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3667,6 +3691,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
             "root_path": root_path,
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3743,6 +3768,7 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
             "token_error": token_error,
             "password_min_length": settings.password_min_length,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -4049,6 +4075,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -10127,6 +10154,22 @@ async def admin_unified_search(
         }
 
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
+        """Execute entity search and return empty results on auth denials.
+
+        This keeps unified search resilient when one entity type is not visible
+        to the caller due to authorization boundaries.
+
+        Args:
+            search_callable: Async entity search function to execute.
+            empty_key: Entity collection key used for fallback empty payloads.
+            **kwargs: Parameters forwarded to ``search_callable``.
+
+        Returns:
+            Search result payload or an empty payload for auth-denied entities.
+
+        Raises:
+            HTTPException: Re-raised when the failure is not an auth-denied status.
+        """
         try:
             return await search_callable(**kwargs)
         except HTTPException as exc:
@@ -14498,7 +14541,7 @@ async def admin_test_a2a_agent(
         agent = await a2a_service.get_agent(db, agent_id)
 
         # Parse request body to get user-provided query
-        default_message = "Hello from MCP Gateway Admin UI test!"
+        default_message = "Hello from ContextForge Admin UI test!"
         try:
             body = await _read_request_json(request)
             # Use 'or' to also handle empty string queries

@@ -1267,7 +1267,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
-            app_user_email: MCP Gateway user email for token retrieval
+            app_user_email: ContextForge user email for token retrieval
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -1317,9 +1317,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Debug: Check if token was decrypted
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
-                logger.error(f"Token appears to be encrypted! Encryption service may have failed. Token length: {len(access_token)}")
+                logger.error("OAuth token decryption may have failed before gateway initialization")
             else:
-                logger.info(f"Using decrypted OAuth token for {gateway.name} (length: {len(access_token)})")
+                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}

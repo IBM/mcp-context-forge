@@ -217,13 +217,13 @@ export MARKDOWN_USER_AGENT="Custom-Agent/1.0"  # Custom user agent
 
 ## Integration
 
-### With MCP Gateway
+### With ContextForge
 
 ```bash
 # Start the URL-to-markdown server via HTTP
 make serve-http-fastmcp
 
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:8000/gateways \
   -H "Content-Type: application/json" \
   -d '{

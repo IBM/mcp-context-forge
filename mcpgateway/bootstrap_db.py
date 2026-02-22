@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhav Kandukuri
 
-Database bootstrap/upgrade entry-point for MCP Gateway.
+Database bootstrap/upgrade entry-point for ContextForge.
 The script:
 
 1. Creates a synchronous SQLAlchemy ``Engine`` from ``settings.database_url``.

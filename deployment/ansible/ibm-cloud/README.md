@@ -1,4 +1,4 @@
-# MCP Context-Forge - Ansible Deployment
+# ContextForge - Ansible Deployment
 
 This folder spins up:
 

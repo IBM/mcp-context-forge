@@ -4,7 +4,7 @@ plugins:
     kind: "tests.unit.mcpgateway.plugins.fixtures.plugins.headers.HeadersMetaDataPlugin"
     description: "A tools header plugin."
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge Team"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "headers"]
     mode: "enforce"  # enforce | permissive | disabled

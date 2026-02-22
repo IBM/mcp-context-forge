@@ -84,7 +84,14 @@ jobs:
         # pre-commit
 
       # -------------------------------------------------------------
-      # 5️⃣  Comprehensive Testing & Verification
+      # 5️⃣  SRI Hash Verification
+      # -------------------------------------------------------------
+      - name: 🔐  Verify SRI hashes
+        run: |
+          make sri-verify
+
+      # -------------------------------------------------------------
+      # 6️⃣  Comprehensive Testing & Verification
       #      REMOVED `test` and `doctest` as they are verified identical
       #      to other github workflows
       # -------------------------------------------------------------
@@ -93,14 +100,14 @@ jobs:
           make lint-web flake8 bandit interrogate pylint verify
 
       # -------------------------------------------------------------
-      # 6️⃣  Smoke Tests
+      # 7️⃣  Smoke Tests
       # -------------------------------------------------------------
       - name: 🔥  End-to-end smoke tests
         run: |
           make smoketest
 
       # -------------------------------------------------------------
-      # 7️⃣  Production Docker Build
+      # 8️⃣  Production Docker Build
       #     REMOVED as identical to another github workflow
       # -------------------------------------------------------------
       # - name: 🐳  Production Docker build
@@ -108,7 +115,7 @@ jobs:
       #     make docker-prod
 
       # -------------------------------------------------------------
-      # 8️⃣  Summary
+      # 9️⃣  Summary
       # -------------------------------------------------------------
       - name: ✅  Pipeline complete
         if: success()
@@ -118,6 +125,7 @@ jobs:
           echo "All pipeline steps completed successfully:" >> "$GITHUB_STEP_SUMMARY"
           echo "- Environment setup" >> "$GITHUB_STEP_SUMMARY"
           echo "- Code quality & formatting" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SRI hash verification" >> "$GITHUB_STEP_SUMMARY"
           echo "- Comprehensive testing & verification" >> "$GITHUB_STEP_SUMMARY"
           echo "- End-to-end smoke tests" >> "$GITHUB_STEP_SUMMARY"
           # echo "- Production Docker build" >> "$GITHUB_STEP_SUMMARY"

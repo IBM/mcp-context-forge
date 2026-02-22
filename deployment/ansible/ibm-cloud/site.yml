@@ -1,4 +1,4 @@
-- name: Provision IBM Cloud & deploy MCP Context-Forge
+- name: Provision IBM Cloud & deploy ContextForge
   hosts: localhost
   gather_facts: false
   roles:

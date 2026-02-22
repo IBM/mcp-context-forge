@@ -1,6 +1,6 @@
 # Performance Testing
 
-Use this guide to benchmark **MCP Gateway** under load, validate performance improvements, and identify bottlenecks before production deployment. For an overview of the high-performance architecture and Rust-powered components that drive MCP Gateway's performance, see the [Performance Architecture Diagram](../architecture/performance-architecture.md).
+Use this guide to benchmark **ContextForge** under load, validate performance improvements, and identify bottlenecks before production deployment. For an overview of the high-performance architecture and Rust-powered components that drive ContextForge's performance, see the [Performance Architecture Diagram](../architecture/performance-architecture.md).
 
 ---
 
@@ -18,7 +18,7 @@ go install github.com/rakyll/hey@latest  # From source
 
 ## 🎯 Establishing a Baseline
 
-Before benchmarking the full MCP Gateway stack, run tests against the **MCP server directly** (if applicable) to establish baseline latency and throughput. This helps isolate issues related to gateway overhead, authentication, or network I/O.
+Before benchmarking the full ContextForge stack, run tests against the **MCP server directly** (if applicable) to establish baseline latency and throughput. This helps isolate issues related to gateway overhead, authentication, or network I/O.
 
 If your backend service exposes a direct HTTP interface or gRPC gateway, target it with `hey` using the same payload and concurrency settings.
 
@@ -183,7 +183,7 @@ To persist across reboots, create `/etc/sysctl.d/99-mcp-loadtest.conf`:
 
 ```bash
 cat << 'EOF' | sudo tee /etc/sysctl.d/99-mcp-loadtest.conf
-# MCP Gateway Load Testing TCP/System Tuning
+# ContextForge Load Testing TCP/System Tuning
 # See: docs/docs/testing/performance.md
 
 # TCP connection handling
@@ -277,7 +277,7 @@ ulimit -u   # Should show 65536
 
 ## 🦗 Locust Load Testing
 
-MCP Gateway includes [Locust](https://locust.io/) for comprehensive load testing with realistic user behavior simulation.
+ContextForge includes [Locust](https://locust.io/) for comprehensive load testing with realistic user behavior simulation.
 
 ### Quick Start
 
@@ -377,7 +377,7 @@ For testing with 4000+ concurrent users:
 
 ## 🎯 Benchmark Server Stack
 
-MCP Gateway includes a high-performance Go-based benchmark server that can spawn multiple MCP servers in a single process for load testing gateway registration, federation, and tool invocation at scale.
+ContextForge includes a high-performance Go-based benchmark server that can spawn multiple MCP servers in a single process for load testing gateway registration, federation, and tool invocation at scale.
 
 ### Quick Start
 
@@ -500,7 +500,7 @@ The Go benchmark server is optimized for:
 
 ## 🚀 JSON Serialization Performance: orjson
 
-MCP Gateway uses **orjson** for high-performance JSON serialization, providing **5-6x faster serialization** and **1.5-2x faster deserialization** compared to Python's standard library `json` module.
+ContextForge uses **orjson** for high-performance JSON serialization, providing **5-6x faster serialization** and **1.5-2x faster deserialization** compared to Python's standard library `json` module.
 
 ### Why orjson?
 
@@ -550,7 +550,7 @@ orjson provides the biggest impact for:
 
 ### Implementation Details
 
-MCP Gateway configures orjson as the default JSON response class for all FastAPI endpoints:
+ContextForge configures orjson as the default JSON response class for all FastAPI endpoints:
 
 ```python
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -624,7 +624,7 @@ Based on benchmark results, orjson provides:
 
 ## 📈 JMeter Performance Testing
 
-MCP Gateway includes [Apache JMeter](https://jmeter.apache.org/) test plans for industry-standard performance baseline measurements and CI/CD integration.
+ContextForge includes [Apache JMeter](https://jmeter.apache.org/) test plans for industry-standard performance baseline measurements and CI/CD integration.
 
 ### Prerequisites
 

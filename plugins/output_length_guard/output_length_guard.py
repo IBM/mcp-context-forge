@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Output Length Guard Plugin for MCP Gateway.
+Output Length Guard Plugin for ContextForge.
 Enforces min/max output length bounds on tool results, with either
 truncate or block strategies.
 
