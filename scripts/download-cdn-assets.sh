@@ -53,6 +53,18 @@ echo "  ⬇️  Chart.js 4.4.1..."
 curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" \
   -o "${STATIC_DIR}/chartjs/chart.umd.min.js"
 
+# Download Marked (Markdown parser, pinned to 11.1.1 for reproducibility)
+echo "  ⬇️  Marked 11.1.1..."
+mkdir -p "${STATIC_DIR}/marked"
+curl -fsSL "https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" \
+  -o "${STATIC_DIR}/marked/marked.min.js"
+
+# Download DOMPurify (XSS sanitizer, pinned to 3.0.6 for reproducibility)
+echo "  ⬇️  DOMPurify 3.0.6..."
+mkdir -p "${STATIC_DIR}/dompurify"
+curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js" \
+  -o "${STATIC_DIR}/dompurify/purify.min.js"
+
 # Download Font Awesome (pinned to 6.4.0 for reproducibility)
 echo "  ⬇️  Font Awesome 6.4.0..."
 curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" \

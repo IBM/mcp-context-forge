@@ -23,9 +23,10 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import lru_cache, wraps
 import html
 import io
+import json
 import logging
 import math
 import os
@@ -356,6 +357,27 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)
+
+
+@lru_cache(maxsize=1)
+def load_sri_hashes() -> Dict[str, str]:
+    """Load SRI hashes from sri_hashes.json file.
+
+    Uses lru_cache to ensure the file is only read once per process.
+
+    Returns:
+        Dict[str, str]: Dictionary mapping resource names to SRI hash strings.
+                       Returns empty dict if file not found or invalid.
+    """
+    try:
+        sri_file = Path(__file__).parent / "sri_hashes.json"
+        if sri_file.exists():
+            with sri_file.open("r") as f:
+                return json.load(f)
+    except Exception as e:
+        LOGGER.warning("Failed to load SRI hashes: %s", e)
+
+    return {}
 
 
 def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
@@ -3319,6 +3341,7 @@ async def admin_ui(
             "password_require_special": getattr(settings, "password_require_special", False),
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3478,6 +3501,7 @@ async def admin_login_page(request: Request) -> Response:
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "prefill_email": prefill_email,
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3667,6 +3691,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
             "root_path": root_path,
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3743,6 +3768,7 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
             "token_error": token_error,
             "password_min_length": settings.password_min_length,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -4049,6 +4075,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 

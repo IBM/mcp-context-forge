@@ -111,14 +111,18 @@ def _submit_login_and_wait(page: Page, login_page, email: str, password: str) ->
 
 
 def _set_admin_jwt_cookie(page: Page, email: str) -> None:
-    """Seed an admin JWT cookie to bypass UI login when credentials are unknown."""
+    """Seed an admin JWT cookie to bypass UI login when credentials are unknown.
+
+    Uses cookie-only auth (no Authorization header) to avoid CORS preflight
+    failures on cross-origin CDN requests that carry crossorigin="anonymous"
+    (required by SRI integrity attributes).
+    """
     try:
         token = _create_jwt_token({"sub": email}, user_data={"email": email, "is_admin": True, "auth_provider": "local"}, teams=None)
     except Exception as exc:  # pragma: no cover - should only fail on misconfig
         raise AssertionError(f"Failed to create admin JWT token: {exc}") from exc
 
     cookie_url = f"{BASE_URL.rstrip('/')}/"
-    page.context.set_extra_http_headers({"Authorization": f"Bearer {token}"})
     page.context.add_cookies(
         [
             {

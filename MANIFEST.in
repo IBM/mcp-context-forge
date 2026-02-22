@@ -61,6 +61,7 @@ recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico
+recursive-include mcpgateway *.json
 recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
