@@ -156,12 +156,18 @@ class TokenScopingMiddleware:
         Returns:
             Dict containing token scopes or None if no valid token
         """
-        # Get authorization header
+        # Get authorization header and parse bearer scheme case-insensitively.
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        if not auth_header:
             return None
 
-        token = auth_header.split(" ", 1)[1]
+        parts = auth_header.split(" ", 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return None
+
+        token = parts[1].strip()
+        if not token:
+            return None
 
         try:
             # Use the centralized verify_jwt_token_cached function for consistent JWT validation

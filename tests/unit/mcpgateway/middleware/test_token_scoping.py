@@ -58,6 +58,25 @@ class TestTokenScopingMiddleware:
             assert await middleware._extract_token_scopes(request) == payload
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("scheme", ["bearer", "BEARER", "BeArEr"])
+    async def test_extract_token_scopes_accepts_case_insensitive_bearer(self, middleware, scheme):
+        """Bearer scheme should be parsed case-insensitively."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": f"{scheme} test-token"}
+
+        payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
+
+    @pytest.mark.asyncio
+    async def test_extract_token_scopes_rejects_empty_bearer_token(self, middleware):
+        """Bearer authorization with an empty token should be rejected."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": "Bearer "}
+
+        assert await middleware._extract_token_scopes(request) is None
+
+    @pytest.mark.asyncio
     async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
         """Test that /admin is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
         mock_request.url.path = "/admin/users"
