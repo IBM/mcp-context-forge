@@ -177,7 +177,8 @@ The project maintains production-grade quality through comprehensive GitHub Acti
 
 **Deployment:**
 
-- **IBM Cloud Code Engine** (`ibm-cloud-code-engine.yml`): Automated deployment to IBM Cloud with environment configuration and health checks
+- **CE SQLite Fresh-Install** (`ce-sqlite-fresh-install-ephemeral.yml`): Ephemeral SQLite smoke test — builds, deploys to IBM Code Engine, validates the app boots with a fresh database (no persistence, no migration testing)
+- **CE SQLite Upgrade-Install** (`ce-sqlite-upgrade-install.yml`): Upgrade-path smoke test — deploys the prior release (v1.0.0-BETA-2) to Code Engine, upgrades to the current build, and validates health checks pass after the in-place update
 
 **Key CI/CD Features:**
 

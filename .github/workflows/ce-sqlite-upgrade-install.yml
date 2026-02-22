@@ -1,0 +1,390 @@
+# ===============================================================
+# ☁️  ContextForge ▸ CE Upgrade-Install Smoke Test (Ephemeral SQLite)
+# ===============================================================
+#
+# This workflow validates the **upgrade path** on IBM Code Engine:
+#   1. Deploy the previous release (v1.0.0-BETA-2, already in ICR)
+#   2. Smoke-test the old version via /health
+#   3. Build the current commit and push to ICR
+#   4. `ibmcloud ce application update` to the new image
+#   5. Smoke-test the upgraded version via /health
+#   6. Cleanup (always)
+#
+# Complements the local Docker upgrade test
+# (alembic-upgrade-validation.yml) by exercising the real CE
+# update path with ephemeral in-container SQLite.
+#
+# What it validates:
+#   - Application upgrades cleanly from a known prior release
+#   - Alembic migrations run successfully during container boot
+#   - Health checks pass after upgrade on Code Engine
+#
+# What it does NOT validate:
+#   - Data persistence across deployments (ephemeral SQLite)
+#   - PostgreSQL compatibility
+#   - Downgrade / rollback path
+#
+# ---------------------------------------------------------------
+# Required repository secrets & variables: same as fresh-install
+# (see ce-sqlite-fresh-install-ephemeral.yml header)
+# ---------------------------------------------------------------
+#
+# Security notes:
+#   - No untrusted user input (issue titles, PR bodies, commit
+#     messages) is interpolated into run: blocks.
+#   - github.sha and github.repository are safe (hex SHA / owner/repo).
+#   - All secret values flow through env: blocks, never inline.
+# ---------------------------------------------------------------
+
+name: "CE: SQLite Upgrade-Install (Ephemeral)"
+
+on:
+  push:
+    branches: ["main"]
+
+# -----------------------------------------------------------------
+# Only one upgrade-test at a time; cancel stale runs on new push.
+# The if: always() cleanup step still fires on cancellation.
+# -----------------------------------------------------------------
+concurrency:
+  group: ce-upgrade-test
+  cancel-in-progress: true
+
+# -----------------------------------------------------------------
+# Minimal permissions (Principle of Least Privilege)
+# -----------------------------------------------------------------
+permissions:
+  contents: read
+
+# -----------------------------------------------------------------
+# Global environment (secrets & variables)
+# -----------------------------------------------------------------
+env:
+  # Build metadata
+  GITHUB_SHA: ${{ github.sha }}
+  CACHE_DIR: /tmp/.buildx-cache # BuildKit layer cache dir
+
+  # Base version for upgrade testing
+  BASE_VERSION_TAG: "v1.0.0-BETA-2"
+
+  # IBM Cloud region (variable)
+  IBM_CLOUD_REGION: ${{ vars.IBM_CLOUD_REGION }}
+
+  # Registry coordinates (variables)
+  REGISTRY_HOSTNAME: ${{ vars.REGISTRY_HOSTNAME }}
+  ICR_NAMESPACE: ${{ vars.ICR_NAMESPACE }}
+
+  # Image / app naming (variables)
+  IMAGE_NAME: ${{ vars.APP_NAME }}
+  IMAGE_TAG: ${{ github.sha }}
+
+  # Code Engine deployment (variables)
+  CODE_ENGINE_APP_NAME: "${{ vars.APP_NAME }}-upgrade-test"
+  CODE_ENGINE_PROJECT: ${{ vars.CODE_ENGINE_PROJECT }}
+  CODE_ENGINE_REGISTRY_SECRET: ${{ vars.CODE_ENGINE_REGISTRY_SECRET }}
+  PORT: ${{ vars.CODE_ENGINE_PORT }}
+
+  # Repository (safe: owner/repo format, no user input)
+  REPO: ${{ github.repository }}
+
+jobs:
+  upgrade-test:
+    name: 🔄 Build, Push & Upgrade Smoke Test
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout repository
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@v5
+
+      # -----------------------------------------------------------
+      # 1️⃣  Validate required secrets & variables
+      # -----------------------------------------------------------
+      - name: ✅  Validate configuration
+        env:
+          CF_IBM_CLOUD_API_KEY: ${{ secrets.IBM_CLOUD_API_KEY }}
+          CF_JWT_SECRET_KEY: ${{ secrets.CF_JWT_SECRET_KEY }}
+          CF_BASIC_AUTH_PASSWORD: ${{ secrets.CF_BASIC_AUTH_PASSWORD }}
+          CF_AUTH_ENCRYPTION_SECRET: ${{ secrets.CF_AUTH_ENCRYPTION_SECRET }}
+          CF_PLATFORM_ADMIN_PASSWORD: ${{ secrets.CF_PLATFORM_ADMIN_PASSWORD }}
+          CF_DEFAULT_USER_PASSWORD: ${{ secrets.CF_DEFAULT_USER_PASSWORD }}
+        run: |
+          missing=()
+          placeholder=()
+          for var in CF_IBM_CLOUD_API_KEY CF_JWT_SECRET_KEY CF_BASIC_AUTH_PASSWORD \
+                     CF_AUTH_ENCRYPTION_SECRET CF_PLATFORM_ADMIN_PASSWORD \
+                     CF_DEFAULT_USER_PASSWORD; do
+            val="${!var}"
+            if [ -z "$val" ]; then
+              missing+=("$var")
+            elif [ "$val" = "-" ] || [ "$val" = "changeme" ] || [ "$val" = "CHANGE_ME" ]; then
+              placeholder+=("$var")
+            fi
+          done
+          for var in IBM_CLOUD_REGION REGISTRY_HOSTNAME ICR_NAMESPACE \
+                     IMAGE_NAME CODE_ENGINE_APP_NAME CODE_ENGINE_PROJECT \
+                     CODE_ENGINE_REGISTRY_SECRET PORT; do
+            if [ -z "${!var}" ]; then
+              missing+=("$var")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Required secrets/variables are empty or unconfigured: ${missing[*]}"
+            exit 1
+          fi
+          if [ ${#placeholder[@]} -gt 0 ]; then
+            echo "::error::Secrets contain placeholder values (e.g. '-', 'changeme'): ${placeholder[*]}"
+            echo "::error::Update these in GitHub → Settings → Environments → production → Secrets"
+            exit 1
+          fi
+          echo "All required secrets and variables are present."
+
+      # -----------------------------------------------------------
+      # 2️⃣  Resolve base image SHA from tag
+      # -----------------------------------------------------------
+      - name: 🔍  Resolve base version SHA
+        id: base-sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV_SHA=$(gh api "repos/$REPO/git/ref/tags/$BASE_VERSION_TAG" \
+            --jq '.object.sha')
+          if [ -z "$PREV_SHA" ]; then
+            echo "::error::Could not resolve SHA for tag $BASE_VERSION_TAG"
+            exit 1
+          fi
+          echo "sha=$PREV_SHA" >> "$GITHUB_OUTPUT"
+          echo "Resolved $BASE_VERSION_TAG → $PREV_SHA"
+
+      # -----------------------------------------------------------
+      # 3️⃣  Set up Docker Buildx
+      # -----------------------------------------------------------
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      # -----------------------------------------------------------
+      # 4️⃣  Restore BuildKit layer cache
+      # -----------------------------------------------------------
+      - name: 🔄  Restore BuildKit cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CACHE_DIR }}
+          key: ${{ runner.os }}-buildx-upgrade-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-buildx-upgrade-
+
+      # -----------------------------------------------------------
+      # 5️⃣  Install IBM Cloud CLI + plugins & login
+      # -----------------------------------------------------------
+      - name: 🧰  Install IBM Cloud CLI
+        uses: IBM/actions-ibmcloud-cli@v1
+        with:
+          api_key: ${{ secrets.IBM_CLOUD_API_KEY }}
+          region: ${{ vars.IBM_CLOUD_REGION }}
+          plugins: container-registry, code-engine
+
+      # -----------------------------------------------------------
+      # 6️⃣  Authenticate to IBM Cloud Code Engine project
+      # -----------------------------------------------------------
+      - name: 🔐  IBM Cloud Code Engine login
+        run: |
+          ibmcloud cr region-set "$IBM_CLOUD_REGION"
+          ibmcloud cr login
+          ibmcloud ce project select --name "$CODE_ENGINE_PROJECT"
+
+      # -----------------------------------------------------------
+      # 7️⃣  Verify mcpgateway-dev secret exists
+      # -----------------------------------------------------------
+      - name: 🔍  Verify CE secret exists and has required keys
+        run: |
+          if ! ibmcloud ce secret get --name mcpgateway-dev > /dev/null 2>&1; then
+            echo "::error::CE secret 'mcpgateway-dev' does not exist."
+            echo "::error::Run the fresh-install workflow first to create it."
+            exit 1
+          fi
+
+          # Verify the 5 critical keys are present and non-placeholder
+          SECRET_JSON=$(ibmcloud ce secret get --name mcpgateway-dev --decode -o json 2>/dev/null)
+          missing=()
+          placeholder=()
+          for key in JWT_SECRET_KEY BASIC_AUTH_PASSWORD AUTH_ENCRYPTION_SECRET \
+                     PLATFORM_ADMIN_PASSWORD DEFAULT_USER_PASSWORD; do
+            val=$(echo "$SECRET_JSON" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin).get('data',{}).get('$key',''))" 2>/dev/null || echo "")
+            if [ -z "$val" ]; then
+              missing+=("$key")
+            elif [ "$val" = "-" ] || [ "$val" = "changeme" ] || [ "$val" = "CHANGE_ME" ]; then
+              placeholder+=("$key")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::CE secret 'mcpgateway-dev' is missing keys: ${missing[*]}"
+            echo "::error::Run the fresh-install workflow to sync secrets."
+            exit 1
+          fi
+          if [ ${#placeholder[@]} -gt 0 ]; then
+            echo "::error::CE secret 'mcpgateway-dev' has placeholder values: ${placeholder[*]}"
+            exit 1
+          fi
+          echo "CE secret 'mcpgateway-dev' verified (5 critical keys present)."
+
+      # -----------------------------------------------------------
+      # 8️⃣  Deploy base version (v1.0.0-BETA-2)
+      # -----------------------------------------------------------
+      - name: 🏗️  Deploy base version
+        env:
+          PREV_SHA: ${{ steps.base-sha.outputs.sha }}
+        run: |
+          BASE_IMAGE="$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$PREV_SHA"
+          echo "Deploying base image: $BASE_IMAGE"
+
+          # If a previous cancelled run left the app deleting, wait for
+          # it to finish (up to 60s) then create fresh.
+          if ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" > /dev/null 2>&1; then
+            echo "Stale app found (previous run). Deleting..."
+            ibmcloud ce application delete \
+              --name "$CODE_ENGINE_APP_NAME" --force --wait 2>/dev/null || true
+            # Belt-and-suspenders: poll until gone (up to 60s)
+            for i in $(seq 1 12); do
+              if ! ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" > /dev/null 2>&1; then
+                echo "Stale app removed."
+                break
+              fi
+              if [ "$i" = "12" ]; then
+                echo "::error::Stale app still exists after 60s"
+                exit 1
+              fi
+              sleep 5
+            done
+          fi
+
+          ibmcloud ce application create \
+            --name  "$CODE_ENGINE_APP_NAME" \
+            --image "$BASE_IMAGE" \
+            --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
+            --port  "$PORT" \
+            --env-from-secret mcpgateway-dev \
+            --cpu 1 --memory 2G
+
+      # -----------------------------------------------------------
+      # 9️⃣  Smoke-test base version
+      # -----------------------------------------------------------
+      - name: 🩺  Smoke-test base version
+        run: |
+          APP_URL=$(ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" \
+            --output json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(data.get('status', {}).get('url', ''))
+          ")
+
+          if [ -z "$APP_URL" ]; then
+            echo "::error::Could not retrieve application URL"
+            exit 1
+          fi
+          echo "Base version URL: $APP_URL"
+
+          # Wait for the app to become ready (up to 120s)
+          for i in $(seq 1 12); do
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+              --max-time 15 "$APP_URL/health" || echo "000")
+            echo "  Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Base version is healthy."
+              break
+            fi
+            if [ "$i" = "12" ]; then
+              echo "::error::Base version health check failed after 120s"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      # -----------------------------------------------------------
+      # 🔟  Build new image & push to ICR
+      # -----------------------------------------------------------
+      - name: 🏗️  Build current image (with cache)
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --file Containerfile.lite \
+            --tag "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
+            --cache-from type=local,src=$CACHE_DIR \
+            --cache-to   type=local,dest=$CACHE_DIR,mode=max \
+            --load \
+            .
+
+      - name: 📤  Push image to ICR
+        run: |
+          docker push "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG"
+
+      # -----------------------------------------------------------
+      # 1️⃣1️⃣  Upgrade application to current build
+      # -----------------------------------------------------------
+      - name: 🚀  Upgrade to current build
+        run: |
+          echo "Upgrading to: $REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG"
+
+          ibmcloud ce application update \
+            --name  "$CODE_ENGINE_APP_NAME" \
+            --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
+            --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
+            --env-from-secret mcpgateway-dev \
+            --cpu 1 --memory 2G
+
+      # -----------------------------------------------------------
+      # 1️⃣2️⃣  Smoke-test upgraded version
+      # -----------------------------------------------------------
+      - name: 🩺  Smoke-test upgraded version
+        run: |
+          APP_URL=$(ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" \
+            --output json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(data.get('status', {}).get('url', ''))
+          ")
+
+          if [ -z "$APP_URL" ]; then
+            echo "::error::Could not retrieve application URL after upgrade"
+            exit 1
+          fi
+          echo "Upgraded version URL: $APP_URL"
+
+          # Wait for the upgraded app to become ready (up to 120s)
+          for i in $(seq 1 12); do
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+              --max-time 15 "$APP_URL/health" || echo "000")
+            echo "  Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Upgraded version is healthy."
+              break
+            fi
+            if [ "$i" = "12" ]; then
+              echo "::error::Upgraded version health check failed after 120s"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      # -----------------------------------------------------------
+      # 1️⃣3️⃣  Display deployment status
+      # -----------------------------------------------------------
+      - name: 📈  Display deployment status
+        if: always()
+        run: |
+          ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" 2>/dev/null || true
+
+      # -----------------------------------------------------------
+      # 🧹  Cleanup: delete the ephemeral upgrade-test app
+      # -----------------------------------------------------------
+      - name: 🧹  Cleanup upgrade-test app
+        if: always()
+        run: |
+          echo "Deleting ephemeral app: $CODE_ENGINE_APP_NAME"
+          ibmcloud ce application delete \
+            --name "$CODE_ENGINE_APP_NAME" \
+            --force \
+            --no-wait 2>/dev/null || true
+          echo "Cleanup complete."
