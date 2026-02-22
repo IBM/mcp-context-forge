@@ -100,6 +100,7 @@
 <div id="agents-pagination-controls" hx-swap-oob="true">
   {% set base_url = root_path + '/admin/a2a/partial' %}
   {% set hx_target = '#agents-table' %}
+  {% set hx_swap = 'outerHTML' %}
   {% set hx_indicator = '#agents-loading' %}
   {% set table_name = 'agents' %}
   {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}
