@@ -4,6 +4,162 @@
 
 ---
 
+## [1.0.0-RC2] - 2026-02-28 - Hardening: Strict Defaults, Transport Gating & OIDC Verification
+
+### Overview
+
+This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, and authorization with **12 commits across 8 hardening items** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15):
+
+- **🔐 8 Hardening Changes** - SSRF strict defaults, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP transport revocation checks
+- **🧪 4 Testing** - Full regression coverage for hardened paths, token scope MCP/RPC coverage, locust load test alignment
+
+> **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. Cancellation, OAuth DCR, and token scoping paths enforce proper authorization gates.
+
+### ⚠️ Breaking Changes
+
+#### **🛡️ SSRF Protection Defaults Inverted to Strict** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), S-01)
+
+**Action Required**: Three SSRF defaults have changed from permissive to strict.
+
+| Setting | Old Default | New Default |
+|---------|------------|------------|
+| `SSRF_ALLOW_LOCALHOST` | `true` | **`false`** |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | `true` | **`false`** |
+| `SSRF_DNS_FAIL_CLOSED` | `false` | **`true`** |
+
+* Localhost/loopback addresses (127.0.0.0/8, ::1) are now **blocked by default**
+* RFC 1918 private IPs (10.x, 172.16.x, 192.168.x) are now **blocked by default**
+* Unresolvable hostnames are now **rejected by default** (fail-closed)
+* New setting `SSRF_ALLOWED_NETWORKS` provides explicit CIDR allowlist for private destinations without globally relaxing `SSRF_ALLOW_PRIVATE_NETWORKS`
+
+> **Migration**: Deployments that register gateways or tools pointing to internal services must update configuration:
+>
+> * **Explicit allowlist (recommended)**: Set `SSRF_ALLOWED_NETWORKS=["10.20.0.0/16","192.168.50.0/24"]` to allow specific internal ranges
+> * **Restore previous behavior**: Set `SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`
+>
+> The `.env.example` and `docker-compose.yml` files include local-friendly overrides for development environments.
+
+#### **🔌 WebSocket Relay & Reverse Proxy Disabled by Default** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), EXTRA-01)
+
+**Action Required**: Two transport endpoints are now gated behind opt-in feature flags.
+
+| Setting | Default | Endpoint |
+|---------|---------|----------|
+| `MCPGATEWAY_WS_RELAY_ENABLED` | `false` | `/ws` WebSocket JSON-RPC relay |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | `false` | `/reverse-proxy/*` endpoints |
+
+* Clients connecting to `/ws` receive close code `1008` ("WebSocket relay is disabled") when the flag is off
+* The reverse-proxy router is not included in the application when the flag is off
+
+> **Migration**: If your deployment uses the `/ws` WebSocket relay or `/reverse-proxy/*` endpoints, set the corresponding feature flag to `true` in your environment. These endpoints now also require proper RBAC permissions (see below).
+
+#### **🔐 WebSocket & Reverse Proxy Authentication Hardened** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), EXTRA-01)
+
+* `/ws` WebSocket relay now requires authentication and at least one MCP interaction permission (`tools.read`, `tools.execute`, `resources.read`, `prompts.read`, `servers.use`, or `a2a.read`)
+* `/reverse-proxy/ws` now requires server management permissions (`servers.create`, `servers.update`, or `servers.manage`)
+* Bearer token in query parameters is accepted but logs a deprecation warning; use the `Authorization` header instead
+* Unauthenticated or unauthorized connections are closed with code `1008`
+
+> **Migration**: Ensure WebSocket clients send a valid bearer token via the `Authorization` header and that the associated user has appropriate RBAC permissions.
+
+#### **🔑 OIDC ID Token Verification Enforced** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), O-01)
+
+* SSO callback now cryptographically verifies `id_token` signatures using the provider's JWKS endpoint
+* Validates expiration, audience, issuer, and nonce claims
+* Supports RS256, ES256, EdDSA, and other standard algorithms
+* Provider JWKS metadata is discovered automatically from `.well-known/openid-configuration` and cached for 5 minutes
+* New optional setting `SSO_GENERIC_JWKS_URI` allows explicit JWKS endpoint configuration
+
+> **Migration**: Ensure your OIDC provider issues valid `id_token` values with correct audience and issuer claims. Providers that do not return an `id_token` in the token response will cause SSO login to fail. Set `SSO_GENERIC_JWKS_URI` if automatic discovery does not work for your provider.
+
+#### **🔒 OAuth DCR Endpoints Require Admin** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), O-05)
+
+* `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` now require admin permissions
+* Non-admin users receive HTTP 403
+
+> **Migration**: Ensure only admin users manage OAuth Dynamic Client Registration clients.
+
+#### **🛑 Token Scoping Default Deny** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), C-15)
+
+* API paths not explicitly mapped in the token scoping permission matrix now **default to deny** (previously allowed)
+* New permission patterns added for `/tokens` CRUD endpoints (`TOKENS_READ`, `TOKENS_CREATE`, `TOKENS_UPDATE`, `TOKENS_REVOKE`)
+* Bearer scheme parsing is now case-insensitive (`bearer` and `Bearer` both accepted)
+
+> **Migration**: If you have custom API extensions or routes, add corresponding permission patterns to the token scoping middleware. Standard ContextForge endpoints are already mapped.
+
+#### **🚫 Cancellation Authorization Required** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), C-10)
+
+* `notifications/cancelled` and JSON-RPC `notifications/cancelled` now check that the requester is the run owner, a team member of the owner, or an admin
+* Non-admin users cannot cancel runs that were not found on the current worker (session-affinity protection)
+* The cancellation service now tracks `owner_email` and `owner_team_ids` for authorization
+
+> **Migration**: Cancellation requests from users who are not the run owner, a shared-team member, or an admin will receive HTTP 403. No configuration change needed; authorization is automatic based on the requesting user's token.
+
+### Added
+
+#### **🛡️ SSRF CIDR Allowlist** (S-01)
+* New `SSRF_ALLOWED_NETWORKS` setting accepts a JSON array of CIDR ranges (e.g., `["10.20.0.0/16"]`) to explicitly allow specific private network destinations when `SSRF_ALLOW_PRIVATE_NETWORKS=false`
+
+#### **🔐 OIDC Metadata Discovery & JWKS Caching** (O-01)
+* Automatic OIDC provider metadata discovery from `.well-known/openid-configuration`
+* JWKS client caching with 5-minute TTL for provider public keys
+* New optional `SSO_GENERIC_JWKS_URI` setting for explicit JWKS endpoint configuration
+
+#### **🔌 Transport Feature Flags**
+* `MCPGATEWAY_WS_RELAY_ENABLED` controls `/ws` WebSocket JSON-RPC relay endpoint
+* `MCPGATEWAY_REVERSE_PROXY_ENABLED` controls `/reverse-proxy/*` transport endpoints
+
+#### **🔑 MCP Transport Token Revocation** (U-05)
+* Streamable HTTP transport now checks JTI-based token revocation and user active status
+* Fail-open behavior when revocation/user store is unavailable to preserve availability
+* Disabled users are rejected; unknown users rejected when `REQUIRE_USER_IN_DB=true`
+
+#### **👤 User Deletion Referential Integrity**
+* User deletion now reassigns audit trail FK references (invitations, roles, revocations) to a replacement admin before deleting the user record
+* Nullable references (team memberships, join requests) are nullified instead of cascading
+
+### Fixed
+
+#### **🔐 Security** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15)
+* **SSRF defaults inverted to strict** - localhost, private networks blocked; DNS fail-closed by default (S-01)
+* **OIDC id_token now verified** - cryptographic signature validation in SSO callback (O-01)
+* **OAuth DCR admin gate** - non-admin users denied access to client management endpoints (O-05)
+* **MCP transport revocation checks** - JTI revocation and user status validated in streamable HTTP auth (U-05)
+* **Bearer scheme case-insensitive** - `bearer` and `Bearer` both accepted in token scoping (C-03)
+* **Token scoping default deny** - unmapped paths now denied instead of allowed (C-15)
+* **WebSocket relay authentication** - `/ws` requires auth and MCP interaction permissions (C-10)
+* **Reverse proxy WebSocket auth** - `/reverse-proxy/ws` requires server management permissions (C-10)
+* **Cancellation authorization** - only run owner, shared-team members, or admins can cancel (C-10)
+* **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
+
+### Hardening
+
+* **S-01**: SSRF defaults tightened — block private/localhost by default with explicit CIDR allowlist
+* **O-01**: OIDC `id_token` signature verification added to SSO callback flow
+* **O-05**: OAuth DCR management endpoints restricted to admin users
+* **U-05**: MCP transport now validates token revocation status and user active state
+* **C-03**: Bearer scheme parsing normalized to case-insensitive matching
+* **C-10**: WebSocket relay, reverse proxy, and cancellation endpoints gated with proper authorization
+* **C-15**: Token scoping defaults to deny for unmapped API paths
+
+### Chores
+
+* Updated `.env.example` with strict SSRF defaults, local dev overrides section, and transport feature flags
+* Updated `docker-compose.yml` with transport feature flags and local SSRF overrides
+* Updated Helm chart `values.yaml`, `values.schema.json`, and `README.md` with new SSRF and transport settings
+* Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`
+* Protocol version bumped to `2025-11-25` in configuration schema
+
+### Documentation
+
+* `docs/docs/manage/configuration.md` - SSRF section rewritten for strict defaults, CIDR allowlist, local dev note; transport feature flags documented
+* `docs/docs/manage/securing.md` - Token revocation availability trade-off documented
+* `docs/docs/architecture/security-features.md` - Revocation fail-open behavior noted
+* `docs/docs/manage/proxy.md` - Feature flag requirement noted for `/ws` relay
+* `docs/docs/using/reverse-proxy.md` - `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` requirement documented
+
+---
+
 ## [1.0.0-RC1] - 2026-02-17 - Security Hardening, Enterprise Controls & Quality
 
 ### Overview

@@ -593,6 +593,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.SSO_GENERIC_DISPLAY_NAME | string | `""` |  |
 | mcpContextForge.secret.SSO_GENERIC_ENABLED | string | `"false"` |  |
 | mcpContextForge.secret.SSO_GENERIC_ISSUER | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_JWKS_URI | string | `""` |  |
 | mcpContextForge.secret.SSO_GENERIC_PROVIDER_ID | string | `""` |  |
 | mcpContextForge.secret.SSO_GENERIC_SCOPE | string | `"openid profile email"` |  |
 | mcpContextForge.secret.SSO_GENERIC_TOKEN_URL | string | `""` |  |

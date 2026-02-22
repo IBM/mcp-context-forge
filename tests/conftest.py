@@ -7,6 +7,7 @@ Authors: Mihai Criveti
 
 # Standard
 import os
+import socket
 import sys
 import tempfile
 import warnings
@@ -380,6 +381,60 @@ def assert_max_queries(test_engine):
 # ---------------------------------------------------------------------------
 # Cache invalidation fixtures for test isolation
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Deterministic DNS for SSRF validation (network-independent)
+# ---------------------------------------------------------------------------
+# The SSRF validator resolves hostnames via socket.getaddrinfo(). On CI runners
+# (GitHub Actions) external domains like example.com may not resolve, causing
+# Pydantic schema construction to fail with SSRF_DNS_FAIL_CLOSED errors.
+# This fixture returns a well-known public IP so the full SSRF validation
+# pipeline runs without requiring real network access.
+_REAL_GETADDRINFO = socket.getaddrinfo
+_STUB_PUBLIC_IP = "93.184.215.14"  # IANA example.com
+
+
+def _stub_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    """Return a deterministic public IP for non-loopback hostnames.
+
+    Trade-off: this returns a fixed AF_INET/SOCK_STREAM tuple regardless of
+    the requested family/type/proto, which reduces fidelity for non-SSRF tests
+    that care about DNS details. Tests that validate actual DNS behavior should
+    patch ``mcpgateway.common.validators.socket.getaddrinfo`` (or ``socket.getaddrinfo``
+    directly) which takes precedence within the patch context.
+    """
+    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return _REAL_GETADDRINFO(host, port, family, type, proto, flags)
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_STUB_PUBLIC_IP, port or 0))]
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _deterministic_dns():
+    """Stub DNS globally so SSRF URL validators work without network access."""
+    socket.getaddrinfo = _stub_getaddrinfo
+    yield
+    socket.getaddrinfo = _REAL_GETADDRINFO
+
+
+@pytest.fixture(autouse=True)
+def _test_ssrf_defaults():
+    """Relax strict SSRF defaults for tests that use localhost/example URLs.
+
+    Production defaults block localhost and fail-closed on DNS errors.
+    Tests need localhost URLs for plugin/transport tests and deterministic
+    DNS behavior. Tests that specifically validate SSRF behavior override
+    these settings themselves via mock or monkeypatch.
+    """
+    from mcpgateway.config import settings
+
+    orig_localhost = settings.ssrf_allow_localhost
+    orig_private = settings.ssrf_allow_private_networks
+    settings.ssrf_allow_localhost = True
+    settings.ssrf_allow_private_networks = True
+    yield
+    settings.ssrf_allow_localhost = orig_localhost
+    settings.ssrf_allow_private_networks = orig_private
 
 
 @pytest.fixture(autouse=True)

@@ -959,6 +959,7 @@ mcpContextForge:
     SSO_GENERIC_TOKEN_URL: ""              # token endpoint URL
     SSO_GENERIC_USERINFO_URL: ""           # userinfo endpoint URL
     SSO_GENERIC_ISSUER: ""                 # OIDC issuer URL
+    SSO_GENERIC_JWKS_URI: ""               # OIDC JWKS endpoint URL (auto-discovered if empty)
     SSO_GENERIC_SCOPE: "openid profile email" # OAuth scopes (space-separated)
 
     # ─ Default Role Configuration ─

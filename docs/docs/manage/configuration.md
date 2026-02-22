@@ -574,6 +574,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_GENERIC_TOKEN_URL`             | Token endpoint URL                               | (none)                     | string  |
 | `SSO_GENERIC_USERINFO_URL`          | Userinfo endpoint URL                            | (none)                     | string  |
 | `SSO_GENERIC_ISSUER`                | OIDC issuer URL                                  | (none)                     | string  |
+| `SSO_GENERIC_JWKS_URI`             | JWKS endpoint URL for id_token signature verification | (auto-discovered)     | string  |
 | `SSO_GENERIC_SCOPE`                 | OAuth scopes (space-separated)                   | `openid profile email`     | string  |
 
 **Okta OIDC:**
