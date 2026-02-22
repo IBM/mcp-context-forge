@@ -14,7 +14,8 @@
 [![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
 
 <!-- === Container Build & Deploy === -->
-[![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
+[![CE: SQLite Fresh-Install](https://github.com/IBM/mcp-context-forge/actions/workflows/ce-sqlite-fresh-install-ephemeral.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ce-sqlite-fresh-install-ephemeral.yml)
+[![CE: SQLite Upgrade-Install](https://github.com/IBM/mcp-context-forge/actions/workflows/ce-sqlite-upgrade-install.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ce-sqlite-upgrade-install.yml)
 
 <!-- === Package / Container === -->
 [![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)

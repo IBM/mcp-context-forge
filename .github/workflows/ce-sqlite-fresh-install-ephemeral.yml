@@ -1,12 +1,21 @@
 # ===============================================================
-# ☁️  ContextForge ▸ Build, Cache & Deploy to IBM Code Engine
+# ☁️  ContextForge ▸ CE Fresh-Install Smoke Test (Ephemeral SQLite)
 # ===============================================================
 #
-# This workflow:
-#   - Restores / updates a local **BuildKit layer cache**  ❄️
-#   - Builds the Docker image from **Containerfile.lite**  🏗️
-#   - Pushes the image to **IBM Container Registry (ICR)** 📤
-#   - Creates / updates an **IBM Cloud Code Engine** app   🚀
+# This workflow deploys a **fresh instance** to IBM Code Engine on
+# every push to main.  The database is **ephemeral in-container
+# SQLite** — no persistent storage, no migration testing.  Each
+# deploy starts from scratch.
+#
+# What it validates:
+#   - Image builds successfully from Containerfile.lite
+#   - Application boots and passes health checks on Code Engine
+#   - Secrets sync correctly from GitHub to Code Engine
+#
+# What it does NOT validate:
+#   - Database migrations / upgrades from a previous version
+#   - Data persistence across deployments
+#   - PostgreSQL compatibility
 #
 # ---------------------------------------------------------------
 # Required repository **secrets** (environment: production)
@@ -44,7 +53,7 @@
 #     `.env.example` + GitHub Secrets (merge; never logged).
 # ---------------------------------------------------------------
 
-name: Deploy to IBM Code Engine
+name: "CE: SQLite Fresh-Install (Ephemeral)"
 
 on:
   push:
@@ -83,7 +92,7 @@ env:
 
 jobs:
   build-push-deploy:
-    name: 🚀 Build, Cache, Push & Deploy
+    name: 🧪 Build, Push & Fresh-Install Smoke Test
     runs-on: ubuntu-latest
     environment: production
 
@@ -310,7 +319,41 @@ jobs:
           fi
 
       # -----------------------------------------------------------
-      # 🔟  Show deployment status
+      # 🔟  Smoke-test: health check
+      # -----------------------------------------------------------
+      - name: 🩺  Smoke-test /health
+        run: |
+          APP_URL=$(ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" \
+            --output json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(data.get('status', {}).get('url', ''))
+          ")
+
+          if [ -z "$APP_URL" ]; then
+            echo "::error::Could not retrieve application URL"
+            exit 1
+          fi
+          echo "Application URL: $APP_URL"
+
+          # Wait for the app to become ready (up to 120s)
+          for i in $(seq 1 12); do
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+              --max-time 15 "$APP_URL/health" || echo "000")
+            echo "  Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Health check passed."
+              break
+            fi
+            if [ "$i" = "12" ]; then
+              echo "::error::Health check failed after 120s"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      # -----------------------------------------------------------
+      # 1️⃣1️⃣  Show deployment status
       # -----------------------------------------------------------
       - name: 📈  Display deployment status
         run: ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME"
