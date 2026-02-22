@@ -1034,6 +1034,25 @@ class TestServerEndpointCoverage:
         assert excinfo.value.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_sse_endpoint_re_raises_http_exception(self, monkeypatch, allow_permission):
+        request = MagicMock(spec=Request)
+        request.headers = {"authorization": "Bearer token"}
+        request.cookies = {}
+        request.scope = {"root_path": ""}
+        db = MagicMock()
+
+        monkeypatch.setattr(
+            "mcpgateway.main.server_service.get_server",
+            AsyncMock(side_effect=HTTPException(status_code=403, detail="denied")),
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            await sse_endpoint(request, "server-1", db=db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == "denied"
+
+    @pytest.mark.asyncio
     async def test_get_server_denies_when_scope_enforcement_fails(self, monkeypatch):
         import mcpgateway.main as main_mod
 
@@ -6164,6 +6183,21 @@ class TestHardeningHelperCoverage:
                 await main_mod._assert_session_owner_or_admin(request, {"email": "user@example.com"}, "missing-session")
 
         assert excinfo.value.status_code == 404
+
+    def test_enforce_scoped_resource_access_denies_on_failed_ownership_check(self):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        with (
+            patch.object(main_mod, "_get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=False),
+        ):
+            with pytest.raises(HTTPException) as excinfo:
+                main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
+
+        assert excinfo.value.status_code == 403
 
 
 @pytest.fixture

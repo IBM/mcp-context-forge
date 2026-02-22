@@ -957,6 +957,16 @@ class TestOAuthRouter:
 
         assert exc_info.value.status_code == 404
 
+    def test_resolve_token_teams_for_scope_check_admin_attribute_fallback(self):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()
+        current_user = SimpleNamespace(email="admin@example.com", is_admin=True)
+
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        result = _resolve_token_teams_for_scope_check(request, current_user)
+        assert result is None
+
 
 class TestRFC8707ResourceNormalization:
     """Test cases for RFC 8707 resource URL normalization."""
