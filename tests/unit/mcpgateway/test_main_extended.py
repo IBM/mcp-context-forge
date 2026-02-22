@@ -1746,6 +1746,56 @@ class TestSecurityHealthEndpoint:
         assert excinfo.value.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_security_health_rejects_invalid_bearer_token(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.headers = {"authorization": "Bearer invalid-token"}
+
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(
+            main_mod,
+            "verify_jwt_token",
+            AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")),
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.security_health(request)
+
+        assert excinfo.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_security_health_accepts_valid_bearer_token(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.headers = {"authorization": "Bearer valid-token"}
+
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(main_mod.settings, "dev_mode", False)
+        monkeypatch.setattr(main_mod, "verify_jwt_token", AsyncMock(return_value={"sub": "user@example.com"}))
+        monkeypatch.setattr(
+            main_mod.settings,
+            "get_security_status",
+            lambda: {
+                "security_score": 80,
+                "auth_enabled": True,
+                "secure_secrets": True,
+                "ssl_verification": True,
+                "debug_disabled": True,
+                "cors_restricted": True,
+                "ui_protected": True,
+                "warnings": ["w1"],
+            },
+        )
+
+        result = await main_mod.security_health(request)
+
+        assert result["status"] == "healthy"
+        assert "warnings" not in result
+        main_mod.verify_jwt_token.assert_awaited_once_with("valid-token")
+
+    @pytest.mark.asyncio
     async def test_security_health_includes_warnings_in_dev_mode(self, monkeypatch):
         import mcpgateway.main as main_mod
 

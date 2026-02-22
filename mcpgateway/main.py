@@ -6862,10 +6862,11 @@ async def security_health(request: Request):
     """
     # Check authentication
     if settings.auth_required:
-        # Verify the request is authenticated
-        auth_header = request.headers.get("authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        auth_header = request.headers.get("authorization", "")
+        scheme, _, credentials = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not credentials:
             raise HTTPException(401, "Authentication required for security health")
+        await verify_jwt_token(credentials.strip())
 
     security_status = settings.get_security_status()
 
