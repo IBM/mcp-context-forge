@@ -7872,10 +7872,9 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
 	@if ! command -v rustup > /dev/null 2>&1; then \
 		echo "🦀 Rust not found. Installing Rust toolchain..."; \
-		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
-		echo "✅ Rust installed successfully."; \
-		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
-		exit 1; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt --component clippy; \
+		echo "🦀 Rust installed. Sourcing environment..."; \
+		. "$$HOME/.cargo/env"; \
 	fi
 	@if ! command -v cargo > /dev/null 2>&1; then \
 		echo "⚠️  cargo not in PATH. Please run 'source \"$$HOME/.cargo/env\"' or restart your shell."; \
