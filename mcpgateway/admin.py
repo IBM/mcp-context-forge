@@ -7028,7 +7028,7 @@ async def admin_get_user_edit(
                 </div>
                 {"" if is_editing_self else f'''<div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                        <input type="checkbox" name="is_admin" {"checked" if user_obj.is_admin else ""}
+                        <input type="checkbox" name="is_admin" id="admin-field" {"checked" if user_obj.is_admin else ""}
                                class="mr-2"> Administrator
                     </label>
                 </div>'''}
@@ -7144,7 +7144,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui", requesting_user_email=current_user_email)
 
         # Return success message with auto-close and refresh
         success_html = """
