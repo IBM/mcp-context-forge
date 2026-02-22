@@ -234,9 +234,13 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/tools/", "GET", [Permissions.TOOLS_READ]) == True
         assert middleware._check_permission_restrictions("/tools/abc", "GET", [Permissions.TOOLS_READ]) == True
 
-    def test_permission_restrictions_default_allow_for_unmatched_path(self, middleware):
-        """Unmatched paths should default-allow when permissions list is non-empty."""
-        assert middleware._check_permission_restrictions("/unmatched/path", "GET", [Permissions.TOOLS_READ]) is True
+    def test_permission_restrictions_default_deny_for_unmatched_path(self, middleware):
+        """Unmatched paths should default-deny when permissions list is non-empty."""
+        assert middleware._check_permission_restrictions("/unmatched/path", "GET", [Permissions.TOOLS_READ]) is False
+
+    def test_permission_restrictions_unmatched_path_public_token(self, middleware):
+        """Unmatched paths should still allow empty permissions (public token behavior)."""
+        assert middleware._check_permission_restrictions("/unmatched/path", "GET", []) is True
 
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""

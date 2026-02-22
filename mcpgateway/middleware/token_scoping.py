@@ -387,8 +387,8 @@ class TokenScopingMiddleware:
             if request_method == method and path_pattern.match(request_path):
                 return required_permission in permissions
 
-        # Default allow for unmatched paths
-        return True
+        # Default deny for unmatched paths (requires explicit permission mapping)
+        return False
 
     def _check_team_membership(self, payload: dict, db=None) -> bool:
         """
