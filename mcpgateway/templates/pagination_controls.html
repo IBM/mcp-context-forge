@@ -121,9 +121,20 @@
     {% endfor %}
     {% endif %}
 
+    // Read live search/tag filters from URL (source of truth written by
+    // updatePanelSearchStateInUrl).  These override template-baked values so
+    // that pagination always reflects the user's current filter state.
+    const currentUrlParams = new URLSearchParams(window.location.search);
+    if (this.tableName) {
+      const livePrefix = this.tableName + '_';
+      const liveQuery = currentUrlParams.get(livePrefix + 'q');
+      const liveTags = currentUrlParams.get(livePrefix + 'tags');
+      if (liveQuery) url.searchParams.set('q', liveQuery);
+      if (liveTags) url.searchParams.set('tags', liveTags);
+    }
+
     // Preserve team_id from current URL (if present) - this ensures team filter
     // is maintained during pagination
-    const currentUrlParams = new URLSearchParams(window.location.search);
     const teamIdFromUrl = currentUrlParams.get('team_id');
     if (teamIdFromUrl) {
       url.searchParams.set('team_id', teamIdFromUrl);
