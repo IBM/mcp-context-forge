@@ -2221,6 +2221,56 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
+            jti = user_payload.get("jti")
+            if jti:
+                # First-Party
+                from mcpgateway.auth import _check_token_revoked_sync  # pylint: disable=import-outside-toplevel
+
+                try:
+                    is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                except Exception as exc:
+                    logger.warning(f"MCP token revocation check failed for jti={jti}: {exc}")
+                    is_revoked = False
+                if is_revoked:
+                    response = ORJSONResponse(
+                        {"detail": "Token has been revoked"},
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                    await response(scope, receive, send)
+                    return False
+
+            user_email = user_payload.get("sub") or user_payload.get("email")
+            if user_email:
+                # First-Party
+                from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                user_lookup_succeeded = True
+                try:
+                    user_record = await asyncio.to_thread(_get_user_by_email_sync, user_email)
+                except Exception as exc:
+                    user_lookup_succeeded = False
+                    user_record = None
+                    logger.warning(f"MCP user lookup failed for user={user_email}: {exc}")
+
+                if user_lookup_succeeded:
+                    if user_record and not getattr(user_record, "is_active", True):
+                        response = ORJSONResponse(
+                            {"detail": "Account disabled"},
+                            status_code=HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                        await response(scope, receive, send)
+                        return False
+                    if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
+                        response = ORJSONResponse(
+                            {"detail": "User not found in database"},
+                            status_code=HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                        await response(scope, receive, send)
+                        return False
+
             # Resolve teams based on token_use claim
             token_use = user_payload.get("token_use")
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
@@ -2248,7 +2298,6 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             # SECURITY: Validate team membership for team-scoped tokens
             # Users removed from a team should lose MCP access immediately, not at token expiry
             # ═══════════════════════════════════════════════════════════════════════════
-            user_email = user_payload.get("sub") or user_payload.get("email")
             is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
 
             # Only validate membership for team-scoped tokens (non-empty teams list)

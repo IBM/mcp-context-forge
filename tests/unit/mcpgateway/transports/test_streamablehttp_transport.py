@@ -6738,6 +6738,64 @@ async def test_streamable_http_auth_verify_credentials_non_dict_payload(monkeypa
     assert sent == []
 
 
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_revoked_jwt(monkeypatch):
+    """Revoked JWTs should be rejected before user context is populated."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "user@example.com",
+            "jti": "revoked-jti",
+            "teams": ["team-a"],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=True):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_inactive_user(monkeypatch):
+    """Inactive users should be rejected after JWT validation."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "disabled@example.com",
+            "jti": "active-jti",
+            "teams": ["team-a"],
+        }
+
+    disabled_user = MagicMock()
+    disabled_user.is_active = False
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=disabled_user),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+
+
 # ---------------------------------------------------------------------------
 # Proxy function tests - comprehensive coverage for direct_proxy mode
 # ---------------------------------------------------------------------------
