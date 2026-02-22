@@ -2,7 +2,8 @@
 """Tests for policy_decision_service."""
 
 # Standard
-from unittest.mock import MagicMock
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -228,3 +229,117 @@ def test_siem_processor_wiring(monkeypatch):
     mock_processor = MagicMock()
     service.set_siem_processor(mock_processor)
     assert service._siem_processor is mock_processor
+
+
+def test_siem_queuing_no_event_loop(monkeypatch):
+    """SIEM queuing handles missing event loop gracefully."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_allowed", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_denied", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.PolicyDecisionService()
+    mock_processor = MagicMock()
+    service.set_siem_processor(mock_processor)
+
+    # No running event loop — should log debug and not raise
+    result = service.log_decision(action="tools.invoke", decision="allow", subject_id="u1")
+    assert result is not None
+    assert result.decision == "allow"
+    assert dummy_session.committed is True
+
+
+def test_siem_queuing_exception(monkeypatch):
+    """SIEM queuing handles generic exceptions gracefully."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_allowed", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_denied", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.PolicyDecisionService()
+
+    class BadProcessor:
+        async def add(self, record):
+            raise ValueError("bad processor")
+
+    service.set_siem_processor(BadProcessor())
+
+    # asyncio.get_running_loop() will raise RuntimeError (no loop),
+    # which is caught first. Let's patch to simulate a different error.
+    import asyncio  # pylint: disable=import-outside-toplevel
+
+    mock_loop = MagicMock()
+    mock_loop.create_task.side_effect = TypeError("unexpected")
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: mock_loop)
+
+    result = service.log_decision(action="tools.invoke", decision="deny", subject_id="u1")
+    assert result is not None
+    assert result.decision == "deny"
+
+
+def test_query_decisions_with_all_filters(monkeypatch):
+    """query_decisions applies all filter conditions."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.PolicyDecisionService()
+    result = service.query_decisions(
+        subject_email="user@example.com",
+        subject_id="user-1",
+        resource_id="tool-1",
+        resource_type="tool",
+        action="tools.invoke",
+        decision="deny",
+        start_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 12, 31, tzinfo=timezone.utc),
+        severity="warning",
+        min_risk_score=50,
+        sort_by="action",
+        sort_order="asc",
+    )
+    assert isinstance(result, list)
+
+
+def test_query_decisions_with_provided_db(monkeypatch):
+    """query_decisions uses provided db session."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+    dummy_session = DummySession()
+
+    service = svc.PolicyDecisionService()
+    result = service.query_decisions(db=dummy_session)
+    assert isinstance(result, list)
+    # Should NOT close session we didn't create
+    assert dummy_session.closed is False
+
+
+def test_get_statistics_with_time_range(monkeypatch):
+    """get_statistics applies time range filters."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+
+    call_count = 0
+
+    class StatsSession(DummySession):
+        def execute(self, _query):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return DummyResult([10])
+            elif call_count == 2:
+                return DummyResult([("allow", 8), ("deny", 2)])
+            else:
+                return DummyResult([2.5])
+
+    dummy_session = StatsSession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.PolicyDecisionService()
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 12, 31, tzinfo=timezone.utc)
+    stats = service.get_statistics(start_time=start, end_time=end)
+
+    assert stats["total_decisions"] == 10
+    assert stats["time_range"]["start"] == start.isoformat()
+    assert stats["time_range"]["end"] == end.isoformat()
