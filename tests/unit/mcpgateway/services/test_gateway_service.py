@@ -127,7 +127,7 @@ class _PassthroughMasked:
     def __init__(self, obj):
         self._obj = obj
 
-    def masked(self):
+    def masked(self, **kwargs):
         return self._obj
 
     def model_dump(self, **kw):

@@ -3412,7 +3412,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
         return self
 
-    def masked(self) -> "GatewayRead":
+    def masked(self, *, preserve_unmasked: bool = False) -> "GatewayRead":
         """
         Return a masked version of the model instance with sensitive authentication fields hidden.
 
@@ -3422,7 +3422,9 @@ class GatewayRead(BaseModelWithConfigDict):
         are present and not already masked.
 
         Args:
-            None
+            preserve_unmasked: If True, keep the ``_unmasked`` companion fields so that
+                privileged callers (e.g. the admin UI) can still reveal the original
+                values.  Defaults to False for safety.
 
         Returns:
             GatewayRead: A new instance of the GatewayRead model with sensitive authentication-related fields
@@ -3457,10 +3459,12 @@ class GatewayRead(BaseModelWithConfigDict):
             masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
 
         # SECURITY: Never expose unmasked credentials in API responses
-        masked_data["auth_password_unmasked"] = None
-        masked_data["auth_token_unmasked"] = None
-        masked_data["auth_header_value_unmasked"] = None
-        masked_data["auth_headers_unmasked"] = None
+        # unless the caller explicitly opts in (e.g. admin UI)
+        if not preserve_unmasked:
+            masked_data["auth_password_unmasked"] = None
+            masked_data["auth_token_unmasked"] = None
+            masked_data["auth_header_value_unmasked"] = None
+            masked_data["auth_headers_unmasked"] = None
         return GatewayRead.model_validate(masked_data)
 
 
