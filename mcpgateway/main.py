@@ -6520,7 +6520,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-@require_permission("tools.invoke")
+@require_permission("tools.execute")
 async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
@@ -6619,7 +6619,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
 
 @utility_router.post("/message")
-@require_permission("tools.invoke")
+@require_permission("tools.execute")
 async def utility_message_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Handle a JSON-RPC message directed to a specific SSE session.
