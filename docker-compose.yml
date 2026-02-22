@@ -293,16 +293,19 @@ services:
       # SSRF Protection (Server-Side Request Forgery)
       # ═══════════════════════════════════════════════════════════════════════════
       # Prevents gateway from accessing internal resources or cloud metadata services.
-      # Default: enabled with safe settings for dev/internal deployments.
+      # Default: strict mode (external endpoints only).
       # Cloud metadata (169.254.169.254, etc.) is ALWAYS blocked by default.
       # - SSRF_PROTECTION_ENABLED=true           # Master switch (default: true)
-      # - SSRF_ALLOW_LOCALHOST=true              # Allow localhost (default: true for dev)
-      # - SSRF_ALLOW_PRIVATE_NETWORKS=true       # Allow 10.x, 172.16.x, 192.168.x (default: true)
-      # - SSRF_DNS_FAIL_CLOSED=false             # Reject on DNS failure (default: false = fail open)
-      # For strict production mode (external endpoints only):
+      # - SSRF_ALLOW_LOCALHOST=false             # Block localhost/loopback (default: false)
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=false      # Block RFC1918 private IPs (default: false)
+      # - SSRF_DNS_FAIL_CLOSED=true              # Reject on DNS failure (default: true)
+      # Optional explicit internal allowlist (when private networks are blocked):
+      # - SSRF_ALLOWED_NETWORKS=["10.20.0.0/16","192.168.50.0/24"]
+      # For controlled internal access:
       # - SSRF_ALLOW_LOCALHOST=false
       # - SSRF_ALLOW_PRIVATE_NETWORKS=false
       # - SSRF_DNS_FAIL_CLOSED=true
+      # - SSRF_ALLOWED_NETWORKS=["10.20.0.0/16"]
 
       # Uncomment to enable stateful sessions for Streamable HTTP transport
       # - USE_STATEFUL_SESSIONS=true

@@ -666,9 +666,10 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 | Setting                     | Description                                                      | Default | Options |
 | --------------------------- | ---------------------------------------------------------------- | ------- | ------- |
 | `SSRF_PROTECTION_ENABLED`   | Master switch for SSRF protection                                | `true`  | bool    |
-| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `true`  | bool    |
-| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `true`  | bool    |
-| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `false` | bool    |
+| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `false` | bool    |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `false` | bool    |
+| `SSRF_ALLOWED_NETWORKS`     | Optional private CIDR allowlist when private networks are blocked | `[]`  | JSON array |
+| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `true`  | bool    |
 | `SSRF_BLOCKED_NETWORKS`     | CIDR ranges always blocked (cloud metadata by default)          | See below | JSON array |
 | `SSRF_BLOCKED_HOSTS`        | Hostnames always blocked (case-insensitive)                     | See below | JSON array |
 
@@ -688,24 +689,24 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 !!! note "DNS Resolution Behavior"
     The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
 
-    - **DNS fail-open** (default): Unresolvable hostnames are allowed (hostname blocklist still applies)
-    - **DNS fail-closed** (`SSRF_DNS_FAIL_CLOSED=true`): Unresolvable hostnames are rejected
-
-    For maximum security, enable `SSRF_DNS_FAIL_CLOSED=true` in production. Note that DNS rebinding attacks (where DNS changes between validation and connection) require additional mitigations like a dedicated SSRF proxy.
+    - **DNS fail-closed** (default): Unresolvable hostnames are rejected
+    - **DNS fail-open** (`SSRF_DNS_FAIL_CLOSED=false`): Unresolvable hostnames are allowed (hostname blocklist still applies)
 
 !!! tip "Configuration Modes"
-    **Development/Internal Mode** (default): Localhost and private networks allowed, only cloud metadata blocked.
-    ```bash
-    SSRF_PROTECTION_ENABLED=true
-    SSRF_ALLOW_LOCALHOST=true
-    SSRF_ALLOW_PRIVATE_NETWORKS=true
-    ```
-
-    **Strict Production Mode** (external endpoints only):
+    **Strict Mode (default)**: External endpoints only.
     ```bash
     SSRF_PROTECTION_ENABLED=true
     SSRF_ALLOW_LOCALHOST=false
     SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_DNS_FAIL_CLOSED=true
+    ```
+
+    **Controlled Internal Access** (explicit CIDR exceptions):
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=false
+    SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_ALLOWED_NETWORKS='["10.20.0.0/16","192.168.50.0/24"]'
     ```
 
     **Custom Blocked Networks** (add additional ranges):

@@ -358,18 +358,20 @@ mcpContextForge:
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
     # Prevents gateway from accessing internal resources or cloud metadata services.
-    # Default: enabled with safe settings for internal/dev deployments.
+    # Default: strict mode (external endpoints only).
     # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
-    SSRF_ALLOW_LOCALHOST: "true"               # allow localhost/127.x (set false for stricter security)
-    SSRF_ALLOW_PRIVATE_NETWORKS: "true"        # allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)
-    SSRF_DNS_FAIL_CLOSED: "false"              # reject on DNS failure (set true for stricter security)
+    SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
+    SSRF_ALLOWED_NETWORKS: "[]"                # optional CIDR allowlist when private networks are blocked
+    SSRF_DNS_FAIL_CLOSED: "true"               # reject on DNS failure by default
     # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
     # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
-    # For strict production mode (external endpoints only):
+    # For controlled internal access:
     # SSRF_ALLOW_LOCALHOST: "false"
     # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     # SSRF_DNS_FAIL_CLOSED: "true"
+    # SSRF_ALLOWED_NETWORKS: '["10.20.0.0/16"]'
 
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL

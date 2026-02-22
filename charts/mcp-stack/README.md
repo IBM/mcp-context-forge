@@ -370,9 +370,10 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.SSE_RETRY_TIMEOUT | string | `"5000"` |  |
 | mcpContextForge.config.SSE_SEND_TIMEOUT | string | `"30.0"` |  |
 | mcpContextForge.config.SSE_TASK_GROUP_CLEANUP_TIMEOUT | string | `"5.0"` |  |
-| mcpContextForge.config.SSRF_ALLOW_LOCALHOST | string | `"true"` |  |
-| mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS | string | `"true"` |  |
-| mcpContextForge.config.SSRF_DNS_FAIL_CLOSED | string | `"false"` |  |
+| mcpContextForge.config.SSRF_ALLOW_LOCALHOST | string | `"false"` |  |
+| mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS | string | `"false"` |  |
+| mcpContextForge.config.SSRF_ALLOWED_NETWORKS | string | `"[]"` |  |
+| mcpContextForge.config.SSRF_DNS_FAIL_CLOSED | string | `"true"` |  |
 | mcpContextForge.config.SSRF_PROTECTION_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.STATIC_DIR | string | `"/app/mcpgateway/static"` |  |
 | mcpContextForge.config.STRUCTURED_LOGGING_DATABASE_ENABLED | string | `"false"` |  |

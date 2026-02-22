@@ -594,8 +594,8 @@ def test_validate_url_valid():
         "https://example.com",
         "https://example.com/path",
         "https://example.com:8080/path?query=value",
-        "ws://websocket.example.com",
-        "wss://secure-websocket.example.com",
+        "ws://example.com/ws",
+        "wss://example.com/ws",
     ]
 
     for url in valid_urls:
@@ -1185,6 +1185,7 @@ class TestValidateSsrf:
         s.ssrf_blocked_hosts = ["metadata.google.internal"]
         s.ssrf_allow_localhost = False
         s.ssrf_allow_private_networks = False
+        s.ssrf_allowed_networks = []
         s.ssrf_dns_fail_closed = True
         return s
 
@@ -1208,6 +1209,11 @@ class TestValidateSsrf:
             with pytest.raises(ValueError, match="private network"):
                 SecurityValidator._validate_ssrf("10.1.2.3", "URL")
 
+    def test_private_network_allowed_when_in_allowlist(self, ssrf_settings):
+        ssrf_settings.ssrf_allowed_networks = ["10.1.0.0/16"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("10.1.2.3", "URL")  # Should not raise
+
     def test_dns_fail_closed(self, ssrf_settings):
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             with patch("socket.getaddrinfo", side_effect=socket.gaierror):
@@ -1226,6 +1232,12 @@ class TestValidateSsrf:
         ssrf_settings.ssrf_allow_private_networks = True
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             SecurityValidator._validate_ssrf("8.8.8.8", "URL")  # Should not raise
+
+    def test_invalid_allowlist_cidr_logged(self, ssrf_settings):
+        ssrf_settings.ssrf_allowed_networks = ["invalid-cidr"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="private network"):
+                SecurityValidator._validate_ssrf("10.1.2.3", "URL")
 
     def test_no_resolved_addresses_fail_closed(self, ssrf_settings):
         """DNS resolves but returns no valid addresses."""

@@ -414,25 +414,35 @@ class Settings(BaseSettings):
     )
 
     ssrf_allow_localhost: bool = Field(
-        default=True,
-        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Set to false to block localhost access for stricter security. " "Default true for development compatibility."),
+        default=False,
+        description=(
+            "Allow localhost/loopback addresses (127.0.0.0/8, ::1). "
+            "Default false for safer production behavior."
+        ),
     )
 
     ssrf_allow_private_networks: bool = Field(
-        default=True,
+        default=False,
         description=(
             "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). "
-            "Set to false if the gateway should only access public internet endpoints. "
-            "Default true for internal deployment compatibility."
+            "When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
+        ),
+    )
+
+    ssrf_allowed_networks: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional CIDR allowlist for internal/private destinations. "
+            "Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."
         ),
     )
 
     ssrf_dns_fail_closed: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
-            "are rejected. When false (default), unresolvable hostnames are allowed through "
-            "(hostname blocklist still applies). Set to true for stricter security."
+            "are rejected. When false, unresolvable hostnames are allowed through "
+            "(hostname blocklist still applies)."
         ),
     )
 

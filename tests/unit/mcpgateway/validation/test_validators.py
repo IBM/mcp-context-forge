@@ -261,8 +261,8 @@ def test_validate_url_empty():
 def test_validate_url_too_long():
     # 50 is max, so 51 should fail
     with pytest.raises(ValueError):
-        SecurityValidator.validate_url("http://" + "a" * 44, "URL")
-    SecurityValidator.validate_url("http://" + "a" * 43, "URL")
+        SecurityValidator.validate_url("http://example.com/" + "a" * 32, "URL")
+    SecurityValidator.validate_url("http://example.com/" + "a" * 31, "URL")
 
 
 def test_validate_url_bad_scheme():
