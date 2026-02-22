@@ -268,6 +268,44 @@ async def test_require_auth_rejects_inactive_user(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_require_auth_allows_missing_user_when_not_required_in_db(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+    monkeypatch.setattr(vc, "verify_credentials_cached", AsyncMock(return_value={"sub": "ghost@example.com", "token": "token"}))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    payload = await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+    assert payload["sub"] == "ghost@example.com"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_rejects_missing_user_when_required_in_db(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", True, raising=False)
+    monkeypatch.setattr(vc.settings, "platform_admin_email", "admin@example.com", raising=False)
+    monkeypatch.setattr(vc, "verify_credentials_cached", AsyncMock(return_value={"sub": "ghost@example.com", "token": "token"}))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "User not found in database"
+
+
+@pytest.mark.asyncio
 async def test_require_auth_manual_cookie_overrides_header(monkeypatch):
     """Manual cookie reading should take precedence over the Authorization header."""
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)

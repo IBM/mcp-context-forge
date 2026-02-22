@@ -3709,6 +3709,19 @@ class TestRpcHandling:
             assert "admin.system_config" in result["error"]["message"]
             set_level.assert_not_awaited()
 
+    async def test_handle_rpc_logging_set_level_populates_email_when_missing(self):
+        payload_logging = {"jsonrpc": "2.0", "id": "17", "method": "logging/setLevel", "params": {"level": "info"}}
+        request_logging = self._make_request(payload_logging)
+
+        with (
+            patch("mcpgateway.main.get_user_email", return_value="fallback@example.com") as get_user_email,
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
+        ):
+            result = await handle_rpc(request_logging, db=MagicMock(), user={"sub": "user@example.com"})
+            assert result["result"] == {}
+            get_user_email.assert_called_once_with({"sub": "user@example.com"})
+
     async def test_handle_rpc_fallback_tool_error(self):
         payload = {"jsonrpc": "2.0", "id": "17", "method": "custom/tool", "params": {"a": 1}}
         request = self._make_request(payload)
