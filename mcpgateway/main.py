@@ -817,8 +817,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Initialize SIEM export for policy audit if enabled
         if settings.policy_audit_enabled and settings.siem_enabled:
             try:
-                from mcpgateway.services.siem_export_service import create_siem_service  # pylint: disable=import-outside-toplevel
+                # First-Party
                 from mcpgateway.services.policy_decision_service import policy_decision_service  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.siem_export_service import create_siem_service  # pylint: disable=import-outside-toplevel
 
                 _siem_processor = create_siem_service(settings)
                 if _siem_processor:

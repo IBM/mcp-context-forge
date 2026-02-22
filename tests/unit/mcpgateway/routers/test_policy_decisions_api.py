@@ -152,3 +152,33 @@ def test_health_check_no_auth(mock_settings):
     data = response.json()
     assert data["status"] == "healthy"
     assert data["service"] == "policy-decision-logging"
+
+
+@patch("mcpgateway.routers.policy_decisions_api.policy_decision_service")
+def test_get_decisions_error_returns_500(mock_svc):
+    """GET /decisions returns 500 when service raises."""
+    mock_svc.query_decisions.side_effect = RuntimeError("db error")
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/api/policy-decisions/decisions")
+    assert response.status_code == 500
+
+
+@patch("mcpgateway.routers.policy_decisions_api.policy_decision_service")
+def test_post_query_error_returns_500(mock_svc):
+    """POST /decisions/query returns 500 when service raises."""
+    mock_svc.query_decisions.side_effect = RuntimeError("db error")
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/api/policy-decisions/decisions/query", json={})
+    assert response.status_code == 500
+
+
+@patch("mcpgateway.routers.policy_decisions_api.policy_decision_service")
+def test_get_statistics_error_returns_500(mock_svc):
+    """GET /statistics returns 500 when service raises."""
+    mock_svc.get_statistics.side_effect = RuntimeError("db error")
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/api/policy-decisions/statistics")
+    assert response.status_code == 500

@@ -741,6 +741,10 @@ omit = [
     "*/test_*.py",
     # Generated protobuf files - auto-generated, not hand-written code
     "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py",
+    # Unmerged ip_control feature - not part of current branch
+    "mcpgateway/middleware/ip_control.py",
+    "mcpgateway/services/ip_control_service.py",
+    "mcpgateway/routers/ip_control_router.py",
 ]
 
 [tool.coverage.report]
