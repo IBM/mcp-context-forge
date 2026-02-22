@@ -261,6 +261,15 @@ class TestTokenScopingMiddleware:
         """Unmatched paths should still allow empty permissions (public token behavior)."""
         assert middleware._check_permission_restrictions("/unmatched/path", "GET", []) is True
 
+    def test_permission_restrictions_rpc_denied_for_scoped_token(self, middleware):
+        """Scoped tokens should not access /rpc directly without explicit mapping."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.RESOURCES_READ]) is False
+
+    def test_permission_restrictions_server_mcp_requires_servers_use(self, middleware):
+        """Server MCP endpoint should require servers.use permission."""
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is False
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
+
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""
         payload = {"sub": "user@example.com", "teams": ["team-1"]}
