@@ -401,6 +401,123 @@ async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
+# _proxy_list_prompts_to_gateway tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_proxy_list_prompts_forwards_meta(monkeypatch):
+    """_proxy_list_prompts_to_gateway passes _meta via PaginatedRequestParams."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_list_prompts_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_prompt = types.Prompt(name="p1", description="desc", arguments=[])
+    mock_result = MagicMock()
+    mock_result.prompts = [mock_prompt]
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_prompts = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-1"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    from mcp.types import RequestParams
+
+    meta = RequestParams.Meta(progressToken="tok-1")
+    result = await _proxy_list_prompts_to_gateway(mock_gateway, {}, {}, meta=meta)
+
+    assert len(result) == 1
+    assert result[0].name == "p1"
+    call_kwargs = mock_session.list_prompts.call_args[1]
+    assert call_kwargs["params"] is not None
+
+
+@pytest.mark.asyncio
+async def test_proxy_list_prompts_no_meta(monkeypatch):
+    """_proxy_list_prompts_to_gateway passes params=None when no meta."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_list_prompts_to_gateway
+    from contextlib import asynccontextmanager
+
+    mock_result = MagicMock()
+    mock_result.prompts = []
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_prompts = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-2"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    result = await _proxy_list_prompts_to_gateway(mock_gateway, {}, {}, meta=None)
+    assert result == []
+    mock_session.list_prompts.assert_called_once_with(params=None)
+
+
+@pytest.mark.asyncio
+async def test_proxy_list_prompts_exception_returns_empty(monkeypatch):
+    """_proxy_list_prompts_to_gateway returns [] on exception."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_list_prompts_to_gateway
+    from contextlib import asynccontextmanager
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-err"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        raise RuntimeError("upstream down")
+        yield
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+
+    result = await _proxy_list_prompts_to_gateway(mock_gateway, {}, {})
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
 # list_prompts tests
 # ---------------------------------------------------------------------------
 
@@ -512,6 +629,323 @@ async def test_list_prompts_exception_no_server_id(monkeypatch, caplog):
         assert result == []
         assert "Error listing prompts:global prompt fail!" in caplog.text
     server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# list_prompts direct_proxy tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_direct_proxy_delegates_to_helper(monkeypatch):
+    """list_prompts calls _proxy_list_prompts_to_gateway in direct_proxy mode."""
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-dp"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_meta = MagicMock()
+    mock_ctx = MagicMock()
+    mock_ctx.meta = mock_meta
+
+    mock_prompt = types.Prompt(name="upstream-p", description="d", arguments=[])
+    proxy_mock = AsyncMock(return_value=[mock_prompt])
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_list_prompts_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await list_prompts()
+    assert len(result) == 1
+    assert result[0].name == "upstream-p"
+    proxy_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_direct_proxy_access_denied(monkeypatch):
+    """list_prompts returns [] when direct_proxy RBAC check fails."""
+    from mcpgateway.transports.streamablehttp_transport import list_prompts
+    from contextlib import asynccontextmanager
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-deny"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await list_prompts()
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_direct_proxy_no_request_context(monkeypatch):
+    """list_prompts handles LookupError when no request context (lines 1390-1391)."""
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-noctx"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_prompt = types.Prompt(name="upstream-p", description="d", arguments=[])
+    proxy_mock = AsyncMock(return_value=[mock_prompt])
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_list_prompts_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-noctx")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError("no context")))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await list_prompts()
+    assert len(result) == 1
+    assert result[0].name == "upstream-p"
+    proxy_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_gateway_not_direct_proxy_mode(monkeypatch):
+    """list_prompts logs when gateway found but not in direct_proxy mode (lines 1395-1396)."""
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-cache"
+    mock_gateway.gateway_mode = "cache"
+
+    mock_prompt = MagicMock()
+    mock_prompt.name = "cached-prompt"
+    mock_prompt.description = "d"
+    mock_prompt.arguments = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-cache")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    monkeypatch.setattr(prompt_service, "list_server_prompts", AsyncMock(return_value=[mock_prompt]))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    token = server_id_var.set("srv-1")
+    try:
+        result = await list_prompts()
+        assert len(result) == 1
+        assert result[0].name == "cached-prompt"
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_gateway_not_found(monkeypatch):
+    """list_prompts logs warning when gateway header specifies non-existent gateway (line 1398)."""
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_prompt = MagicMock()
+    mock_prompt.name = "fallback-prompt"
+    mock_prompt.description = "d"
+    mock_prompt.arguments = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-missing")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    monkeypatch.setattr(prompt_service, "list_server_prompts", AsyncMock(return_value=[mock_prompt]))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = None
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    token = server_id_var.set("srv-1")
+    try:
+        result = await list_prompts()
+        assert len(result) == 1
+        assert result[0].name == "fallback-prompt"
+    finally:
+        server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# _proxy_get_prompt_to_gateway tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_proxy_get_prompt_returns_result(monkeypatch):
+    """_proxy_get_prompt_to_gateway fetches prompt from upstream."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_get_prompt_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello"))
+    mock_result = types.GetPromptResult(description="A prompt", messages=[mock_message])
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.get_prompt = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-gp"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "my-prompt", {"lang": "en"}, None)
+
+    assert result is not None
+    assert result.description == "A prompt"
+    mock_session.get_prompt.assert_called_once_with("my-prompt", arguments={"lang": "en"})
+
+
+@pytest.mark.asyncio
+async def test_proxy_get_prompt_forwards_meta_via_send_request(monkeypatch):
+    """_proxy_get_prompt_to_gateway uses send_request when _meta is present."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_get_prompt_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))
+    mock_result = types.GetPromptResult(description="d", messages=[mock_message])
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.get_prompt = AsyncMock()
+    mock_session.send_request = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-gp-meta"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    meta = {"progressToken": "tok-42"}
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "meta-prompt", None, meta)
+
+    assert result is not None
+    mock_session.send_request.assert_called_once()
+    mock_session.get_prompt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_proxy_get_prompt_exception_returns_none(monkeypatch):
+    """_proxy_get_prompt_to_gateway returns None on exception."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_get_prompt_to_gateway
+    from contextlib import asynccontextmanager
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-err"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        raise RuntimeError("upstream down")
+        yield
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "p", None)
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -635,6 +1069,227 @@ async def test_get_prompt_outer_exception(monkeypatch, caplog):
         result = await get_prompt("db_error_prompt")
         assert result == []
         assert "Error getting prompt 'db_error_prompt': db error!" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# get_prompt direct_proxy tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_direct_proxy_delegates_to_helper(monkeypatch):
+    """get_prompt calls _proxy_get_prompt_to_gateway in direct_proxy mode."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-dp"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="hi"))
+    mock_proxy_result = types.GetPromptResult(description="d", messages=[mock_message])
+
+    proxy_mock = AsyncMock(return_value=mock_proxy_result)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_get_prompt_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("my-prompt", {"lang": "en"})
+
+    assert result is not None
+    assert len(result.messages) == 1
+    proxy_mock.assert_called_once()
+    call_args = proxy_mock.call_args[0]
+    assert call_args[2] == "my-prompt"
+    assert call_args[3] == {"lang": "en"}
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_direct_proxy_access_denied(monkeypatch):
+    """get_prompt returns [] when direct_proxy RBAC check fails."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-deny"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("denied-prompt", None)
+    assert result == types.GetPromptResult(messages=[], description=None)
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_direct_proxy_no_content_returned(monkeypatch):
+    """get_prompt returns empty when upstream returns no content (lines 1483-1484)."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-empty"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    proxy_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_get_prompt_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-empty")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("empty-prompt", None)
+    assert result == types.GetPromptResult(messages=[], description=None)
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_direct_proxy_empty_messages(monkeypatch):
+    """get_prompt returns empty when upstream returns empty messages list (lines 1483-1484)."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-empty-msg"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_proxy_result = types.GetPromptResult(description="d", messages=[])
+    proxy_mock = AsyncMock(return_value=mock_proxy_result)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_get_prompt_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-empty-msg")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("empty-msg-prompt", None)
+    assert result == types.GetPromptResult(messages=[], description=None)
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_gateway_not_direct_proxy_mode(monkeypatch):
+    """get_prompt logs when gateway found but not in direct_proxy mode (lines 1488-1489)."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-cache-gp"
+    mock_gateway.gateway_mode = "cache"
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="hi"))
+    mock_result = types.GetPromptResult(description="d", messages=[mock_message])
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-cache-gp")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("cached-prompt", None)
+    assert len(result.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_gateway_not_found(monkeypatch):
+    """get_prompt logs warning when gateway header specifies non-existent gateway (line 1491)."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="hi"))
+    mock_result = types.GetPromptResult(description="d", messages=[mock_message])
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-missing-gp")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = None
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("fallback-prompt", None)
+    assert len(result.messages) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -3570,6 +4225,421 @@ async def test_complete_exception(monkeypatch):
     assert isinstance(result, mcp_types.Completion)
     assert result.values == []
     assert result.total == 0
+
+
+# ---------------------------------------------------------------------------
+# complete direct_proxy tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_complete_direct_proxy_delegates_to_helper(monkeypatch):
+    """complete() delegates to _proxy_complete_to_gateway in direct_proxy mode."""
+    from mcpgateway.transports.streamablehttp_transport import complete, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-dp"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_completion = types.Completion(values=["python"], total=1, hasMore=False)
+    mock_proxy_result = types.CompleteResult(completion=mock_completion)
+
+    proxy_mock = AsyncMock(return_value=mock_proxy_result)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_complete_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+
+    mock_meta = MagicMock()
+    mock_meta.model_dump.return_value = {"progressToken": "tok-1"}
+    mock_ctx = MagicMock()
+    mock_ctx.meta = mock_meta
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="my-prompt")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="language", value="py")))
+
+    result = await complete(ref, argument, context=None)
+
+    assert result is not None
+    proxy_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_complete_direct_proxy_access_denied(monkeypatch):
+    """complete() returns empty Completion when direct_proxy RBAC check fails."""
+    from mcpgateway.transports.streamablehttp_transport import complete, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-deny"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="a", value="v")))
+
+    result = await complete(ref, argument, context=None)
+    assert result.values == []
+
+
+@pytest.mark.asyncio
+async def test_complete_direct_proxy_result_is_none(monkeypatch):
+    """complete() returns empty Completion when proxy returns None (line 1875)."""
+    from mcpgateway.transports.streamablehttp_transport import complete, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-none"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    proxy_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_complete_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-none")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="a", value="v")))
+
+    result = await complete(ref, argument, context=None)
+    assert result.values == []
+    assert result.total == 0
+    assert result.hasMore is False
+
+
+@pytest.mark.asyncio
+async def test_complete_direct_proxy_result_is_dict(monkeypatch):
+    """complete() handles dict result from proxy (line 1877)."""
+    from mcpgateway.transports.streamablehttp_transport import complete, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-dict"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_dict_result = {"completion": {"values": ["val1", "val2"], "total": 2, "hasMore": False}}
+    proxy_mock = AsyncMock(return_value=mock_dict_result)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_complete_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dict")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="a", value="v")))
+
+    result = await complete(ref, argument, context=None)
+    assert result.values == ["val1", "val2"]
+    assert result.total == 2
+
+
+@pytest.mark.asyncio
+async def test_complete_direct_proxy_result_without_completion_attr(monkeypatch):
+    """complete() returns result directly when no completion attribute (line 1881)."""
+    from mcpgateway.transports.streamablehttp_transport import complete, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-direct"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_completion = types.Completion(values=["direct_val"], total=1, hasMore=False)
+    proxy_mock = AsyncMock(return_value=mock_completion)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_complete_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-direct")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="a", value="v")))
+
+    result = await complete(ref, argument, context=None)
+    assert result.values == ["direct_val"]
+    assert result.total == 1
+
+
+@pytest.mark.asyncio
+async def test_complete_gateway_not_direct_proxy_mode(monkeypatch):
+    """complete() logs when gateway found but not in direct_proxy mode (lines 1883-1884)."""
+    from mcpgateway.transports.streamablehttp_transport import complete, completion_service, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-cache-comp"
+    mock_gateway.gateway_mode = "cache"
+
+    mock_completion = types.Completion(values=["cached_val"], total=1, hasMore=False)
+    mock_result = types.CompleteResult(completion=mock_completion)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-cache-comp")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    monkeypatch.setattr(completion_service, "handle_completion", AsyncMock(return_value=mock_result))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="a", value="v")))
+
+    result = await complete(ref, argument, context=None)
+    assert result.values == ["cached_val"]
+
+
+@pytest.mark.asyncio
+async def test_complete_gateway_not_found(monkeypatch):
+    """complete() logs warning when gateway header specifies non-existent gateway (line 1886)."""
+    from mcpgateway.transports.streamablehttp_transport import complete, completion_service, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_completion = types.Completion(values=["fallback_val"], total=1, hasMore=False)
+    mock_result = types.CompleteResult(completion=mock_completion)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-missing-comp")
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False}))
+    )
+    monkeypatch.setattr(completion_service, "handle_completion", AsyncMock(return_value=mock_result))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = None
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="a", value="v")))
+
+    result = await complete(ref, argument, context=None)
+    assert result.values == ["fallback_val"]
+
+
+# ---------------------------------------------------------------------------
+# _proxy_complete_to_gateway tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_proxy_complete_returns_result(monkeypatch):
+    """_proxy_complete_to_gateway fetches completions from upstream."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_complete_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_completion = types.Completion(values=["python", "pytorch"], total=2, hasMore=False)
+    mock_result = types.CompleteResult(completion=mock_completion)
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.complete = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-cmp"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    ref = types.PromptReference(type="ref/prompt", name="my-prompt")
+    argument = types.CompletionArgument(name="language", value="py")
+
+    result = await _proxy_complete_to_gateway(mock_gateway, {}, {}, ref=ref, argument=argument, context=None, meta=None)
+
+    assert result is not None
+    mock_session.complete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_proxy_complete_forwards_meta_via_send_request(monkeypatch):
+    """_proxy_complete_to_gateway uses send_request when _meta is present."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_complete_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_completion = types.Completion(values=["x"], total=1, hasMore=False)
+    mock_result = types.CompleteResult(completion=mock_completion)
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.complete = AsyncMock()
+    mock_session.send_request = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-cmp-meta"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, *a):
+            pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    ref = types.PromptReference(type="ref/prompt", name="my-prompt")
+    argument = types.CompletionArgument(name="language", value="py")
+    meta = {"progressToken": "tok-99"}
+
+    result = await _proxy_complete_to_gateway(mock_gateway, {}, {}, ref=ref, argument=argument, context=None, meta=meta)
+
+    assert result is not None
+    mock_session.send_request.assert_called_once()
+    mock_session.complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_proxy_complete_exception_returns_none(monkeypatch):
+    """_proxy_complete_to_gateway returns None on exception."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_complete_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-err"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        raise RuntimeError("upstream down")
+        yield
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompletionArgument(name="a", value="v")
+
+    result = await _proxy_complete_to_gateway(mock_gateway, {}, {}, ref=ref, argument=argument, context=None)
+    assert result is None
 
 
 # ---------------------------------------------------------------------------

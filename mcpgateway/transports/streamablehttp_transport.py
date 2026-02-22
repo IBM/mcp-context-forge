@@ -49,7 +49,16 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
+from mcp.types import (
+    CompleteRequest,
+    CompleteRequestParams,
+    GetPromptRequest,
+    GetPromptRequestParams,
+    JSONRPCMessage,
+    PaginatedRequestParams,
+    ReadResourceRequest,
+    ReadResourceRequestParams,
+)
 import orjson
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -460,6 +469,30 @@ def get_user_email_from_context() -> str:
     return str(user) if user else "unknown"
 
 
+async def update_headers_with_passthrough_headers(gateway: Any, request_headers: dict) -> dict:
+    """
+    Build headers for forwarding to remote gateway, including auth headers and passthrough headers.
+
+    Args:
+        gateway: Gateway ORM instance containing auth config and passthrough header list
+        request_headers: Original request headers from the client
+
+    Returns:
+        Dictionary of headers to include in the proxied request to the remote gateway
+    """
+
+    headers = build_gateway_auth_headers(gateway)
+
+    # Forward passthrough headers if configured
+    if gateway.passthrough_headers and request_headers:
+        for header_name in gateway.passthrough_headers:
+            header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+            if header_value:
+                headers[header_name] = header_value
+
+    return headers
+
+
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
@@ -474,14 +507,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
     """
     try:
         # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -517,14 +543,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
     """
     try:
         # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         logger.info(f"Proxying resources/list to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -552,6 +571,153 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         return []
 
 
+async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Prompt]:  # pylint: disable=unused-argument
+    """Proxy prompts/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Prompt objects from remote server
+    """
+    try:
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
+
+        logger.info(f"Proxying prompts/list to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+
+                result = await session.list_prompts(params=params)
+                logger.info(f"Received {len(result.prompts)} prompts from gateway {gateway.id}")
+                return result.prompts
+
+    except Exception as e:
+        logger.exception(f"Error proxying prompts/list to gateway {gateway.id}: {e}")
+        return []
+
+
+async def _proxy_get_prompt_to_gateway(
+    gateway: Any, request_headers: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None
+) -> Optional[types.GetPromptResult]:  # pylint: disable=unused-argument
+    """Proxy prompts/get request directly to remote MCP gateway using MCP SDK.
+
+    Uses session.send_request() when _meta is present (ClientSession.get_prompt()
+    has no params argument), matching the pattern in _proxy_read_resource_to_gateway.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        name: Prompt name to retrieve
+        arguments: Optional argument substitutions
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        GetPromptResult from remote server, or None on failure
+    """
+    try:
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
+
+        logger.info(f"Proxying prompts/get '{name}' to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                if meta:
+                    # ClientSession.get_prompt() has no params arg, use send_request to forward _meta
+                    params_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump()
+                    params_dict["_meta"] = meta
+                    result = await session.send_request(
+                        types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(params_dict))),
+                        types.GetPromptResult,
+                    )
+                else:
+                    result = await session.get_prompt(name, arguments=arguments)
+
+                logger.info(f"Received prompt '{name}' from gateway {gateway.id}")
+                return result
+
+    except Exception as e:
+        logger.exception(f"Error proxying prompts/get '{name}' to gateway {gateway.id}: {e}")
+        return None
+
+
+async def _proxy_complete_to_gateway(  # pylint: disable=unused-argument
+    gateway: Any,
+    request_headers: dict,
+    user_context: dict,
+    ref: Any,
+    argument: Any,
+    context: Optional[Any] = None,
+    meta: Optional[Any] = None,
+) -> Optional[types.CompleteResult]:
+    """Proxy completion/complete request directly to remote MCP gateway using MCP SDK.
+
+    Uses session.send_request() when _meta is present (ClientSession.complete()
+    has no params argument), matching the pattern in _proxy_read_resource_to_gateway.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - auth comes from gateway config)
+        ref: PromptReference or ResourceTemplateReference
+        argument: CompletionArgument specifying name and partial value
+        context: Optional CompletionContext with previously resolved arguments
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        CompleteResult from remote server, or None on failure
+    """
+    try:
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
+
+        logger.info(f"Proxying completion/complete to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                if meta:
+                    # ClientSession.complete() has no params arg, use send_request to forward _meta
+                    params_dict = CompleteRequestParams(ref=ref, argument=argument, context=context).model_dump()
+                    params_dict["_meta"] = meta
+                    result = await session.send_request(
+                        types.ClientRequest(CompleteRequest(params=CompleteRequestParams.model_validate(params_dict))),
+                        types.CompleteResult,
+                    )
+                else:
+                    ref_dict = ref.model_dump() if hasattr(ref, "model_dump") else ref
+                    arg_dict = argument.model_dump() if hasattr(argument, "model_dump") else argument
+                    context_args = context.arguments if context and hasattr(context, "arguments") else None
+                    result = await session.complete(
+                        ref=ref_dict,
+                        argument=arg_dict,
+                        context_arguments=context_args,
+                    )
+
+                logger.info(f"Received completion result from gateway {gateway.id}")
+                return result
+
+    except Exception as e:
+        logger.exception(f"Error proxying completion/complete to gateway {gateway.id}: {e}")
+        return None
+
+
 async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument
     """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
 
@@ -565,23 +731,15 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         List of content objects (TextResourceContents or BlobResourceContents) from remote server
     """
     try:
-        # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
         # Get request headers
         request_headers = request_headers_var.get()
+
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         # Forward X-Context-Forge-Gateway-Id header
         gw_id = extract_gateway_id_from_headers(request_headers)
         if gw_id:
             headers[GATEWAY_ID_HEADER] = gw_id
-
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
 
         logger.info(f"Proxying resources/read for {resource_uri} to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -1191,7 +1349,7 @@ async def list_prompts() -> List[types.Prompt]:
         >>> sig.return_annotation
         typing.List[mcp.types.Prompt]
     """
-    server_id, _, user_context = await _get_request_context_or_default()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1210,6 +1368,36 @@ async def list_prompts() -> List[types.Prompt]:
     if server_id:
         try:
             async with get_db() as db:
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []
+
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST PROMPTS] Using direct_proxy mode for server {server_id}, gateway {gateway.id}. Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_prompts_to_gateway(gateway, request_headers, user_context, meta)
+
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
                 prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
@@ -1236,7 +1424,6 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
 
     Returns:
         GetPromptResult: Object containing the prompt messages and description.
-        Returns an empty list on failure or if no prompt content is found.
 
     Logs exceptions if any errors occur during retrieval.
 
@@ -1248,7 +1435,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         >>> sig.return_annotation.__name__
         'GetPromptResult'
     """
-    server_id, _, user_context = await _get_request_context_or_default()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -1274,6 +1461,36 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
 
     try:
         async with get_db() as db:
+            # Check for direct_proxy mode (uses the same DB session as cache path)
+            if server_id:
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return types.GetPromptResult(messages=[], description=None)
+
+                        logger.info(f"[GET PROMPT] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
+                        result = await _proxy_get_prompt_to_gateway(gateway, request_headers, prompt_id, arguments, meta_data)
+                        if not result or not result.messages:
+                            logger.warning(f"No content returned by upstream prompt: {prompt_id}")
+                            return types.GetPromptResult(messages=[], description=None)
+                        message_dicts = [message.model_dump() for message in result.messages]
+                        return types.GetPromptResult(messages=message_dicts, description=result.description)
+
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
             try:
                 result = await prompt_service.get_prompt(
                     db=db,
@@ -1613,12 +1830,67 @@ async def complete(
         Exception: If completion handling fails internally. The method
             logs the exception and returns an empty completion structure.
     """
+    meta_data = None
+    try:
+        ctx = mcp_app.request_context
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
+    except LookupError:
+        logger.debug("No active request context found for _meta extraction in completion/complete")
+
+    server_id, request_headers, user_context = await _get_request_context_or_default()
+
     try:
         async with get_db() as db:
+            # Check for direct_proxy mode (uses the same DB session as cache path)
+            if server_id:
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        user_email = user_context.get("email") if user_context else None
+                        token_teams = user_context.get("teams") if user_context else None
+
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return types.Completion(values=[], total=0, hasMore=False)
+
+                        logger.info(f"[COMPLETE] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
+                        result = await _proxy_complete_to_gateway(
+                            gateway,
+                            request_headers,
+                            user_context,
+                            ref=ref,
+                            argument=argument,
+                            context=context,
+                            meta=meta_data,
+                        )
+                        if result is None:
+                            return types.Completion(values=[], total=0, hasMore=False)
+                        if isinstance(result, dict):
+                            return types.Completion(**result.get("completion", result))
+                        if hasattr(result, "completion"):
+                            comp = result.completion
+                            return comp if isinstance(comp, types.Completion) else types.Completion(**comp.model_dump())
+                        return result
+
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} not in direct_proxy mode, using cache")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} not found")
+
             params = {
                 "ref": ref.model_dump() if hasattr(ref, "model_dump") else ref,
                 "argument": argument.model_dump() if hasattr(argument, "model_dump") else argument,
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
+                "_meta": meta_data,
             }
 
             result = await completion_service.handle_completion(db, params)
