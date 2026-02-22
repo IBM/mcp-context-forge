@@ -1123,6 +1123,76 @@ async def test_require_admin_auth_email_auth_uses_token_from_bearer_credentials(
 
 
 @pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_rejects_revoked_token(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return MagicMock(email=email, is_admin=True, is_active=True)
+
+    revoked_check = MagicMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "admin@example.com", "jti": "revoked-jti"}))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", revoked_check)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=True))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    revoked_check.assert_called_once_with("revoked-jti")
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_rejects_inactive_admin_user(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool, is_active: bool):
+            self.email = email
+            self.is_admin = is_admin
+            self.is_active = is_active
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=True, is_active=False)
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "admin@example.com", "jti": "active-jti"}))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=True))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
 async def test_require_admin_auth_email_auth_non_admin_user_falls_back_to_basic(monkeypatch):
     """Email auth non-admin path raises internally but falls back to basic auth."""
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)

@@ -1093,12 +1093,16 @@ async def require_admin_auth(
                 try:
                     # Decode and verify JWT token (use cached version for performance)
                     payload = await verify_jwt_token_cached(token, request)
+                    await _enforce_revocation_and_active_user(payload)
                     username = payload.get("sub") or payload.get("username")  # Support both new and legacy formats
 
                     if username:
                         # Get user from database
                         auth_service = EmailAuthService(db_session)
                         current_user = await auth_service.get_user_by_email(username)
+
+                        if current_user and not getattr(current_user, "is_active", True):
+                            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
 
                         if current_user and current_user.is_admin:
                             return current_user.email
