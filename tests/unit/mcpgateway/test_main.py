@@ -1806,9 +1806,11 @@ class TestRPCEndpoints:
         assert body["roots"][0]["uri"] == "root://1"
 
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
-    def test_rpc_notification_cancelled(self, mock_cancel_run, mock_notify, test_client, auth_headers):
+    def test_rpc_notification_cancelled(self, mock_cancel_run, mock_get_status, mock_notify, test_client, auth_headers):
         """Test notifications/cancelled JSON-RPC method."""
+        mock_get_status.return_value = {"owner_email": "test_user@example.com", "owner_team_ids": []}
         req = {
             "jsonrpc": "2.0",
             "id": "test-id",

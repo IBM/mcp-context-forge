@@ -3452,6 +3452,7 @@ class TestRpcHandling:
         request_cancel = self._make_request(payload_cancel)
 
         with (
+            patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"owner_email": "user@example.com", "owner_team_ids": []})),
             patch("mcpgateway.main.cancellation_service.cancel_run", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
         ):
@@ -4013,6 +4014,19 @@ class TestRpcHandling:
 
             result = await rpc_task
             assert result["error"]["code"] == -32800
+
+    @pytest.mark.asyncio
+    async def test_handle_rpc_notifications_cancelled_denies_non_owner(self):
+        payload_cancel = {"jsonrpc": "2.0", "id": "32", "method": "notifications/cancelled", "params": {"requestId": "r1", "reason": "stop"}}
+        request_cancel = self._make_request(payload_cancel)
+
+        with (
+            patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"owner_email": "owner@example.com", "owner_team_ids": []})),
+            patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
+        ):
+            result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["error"]["message"] == "Not authorized to cancel this run"
 
 
 class TestA2AListAndGet:

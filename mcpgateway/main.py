@@ -5998,6 +5998,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            run_owner_email = auth_user_email
+            run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
                 # auth_token_teams stays None (unrestricted)
@@ -6026,7 +6028,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     tool_task.cancel()
 
             if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                await cancellation_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
+                await cancellation_service.register_run(
+                    run_id,
+                    name=f"tool:{name}",
+                    cancel_callback=cancel_tool_task,
+                    owner_email=run_owner_email,
+                    owner_team_ids=run_owner_team_ids,
+                )
 
             try:
                 # Check if cancelled before execution (only if feature enabled)
@@ -6129,6 +6137,24 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             logger.info(f"Request cancelled: {request_id}, reason: {reason}")
             # Attempt local cancellation per MCP spec
             if request_id is not None:
+                requester_email, requester_token_teams, requester_is_admin = _get_rpc_filter_context(request, user)
+                requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
+                run_status = await cancellation_service.get_status(request_id)
+
+                # Default deny for non-admin users when run is not known on this worker.
+                # Session-affinity clients should route cancellation to the worker that owns the run.
+                if run_status is None:
+                    if not requester_is_admin:
+                        raise JSONRPCError(-32003, "Not authorized to cancel this run", {"requestId": request_id})
+                else:
+                    run_owner_email = run_status.get("owner_email")
+                    run_owner_team_ids = run_status.get("owner_team_ids") or []
+                    requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
+                    requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
+
+                    if not requester_is_admin and not requester_is_owner and not requester_shares_team:
+                        raise JSONRPCError(-32003, "Not authorized to cancel this run", {"requestId": request_id})
+
                 await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
