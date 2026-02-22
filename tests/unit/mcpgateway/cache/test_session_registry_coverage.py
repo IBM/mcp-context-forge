@@ -2590,6 +2590,83 @@ class TestSessionOwnerTracking:
         await registry.add_session("owner-5", tr)
         assert await registry.session_exists("owner-5") is True
 
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_without_client_returns_none(self, registry):
+        registry._backend = "redis"
+        registry._redis = None
+
+        claimed = await registry.claim_session_owner("owner-6", "owner@example.com")
+        assert claimed is None
+        assert "owner-6" not in registry._session_owners
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_claim_success(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.return_value = True
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-7", "owner@example.com")
+        assert claimed == "owner@example.com"
+        assert registry._session_owners["owner-7"] == "owner@example.com"
+        redis_client.set.assert_awaited_once_with("mcp:session_owner:owner-7", "owner@example.com", ex=registry._session_ttl, nx=True)
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_returns_existing_owner_when_nx_fails(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.side_effect = [False]
+        redis_client.get.return_value = b"existing@example.com"
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-8", "owner@example.com")
+        assert claimed == "existing@example.com"
+        assert registry._session_owners["owner-8"] == "existing@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_uses_thread_result(self, registry):
+        registry._backend = "database"
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(return_value="dbowner@example.com")):
+            claimed = await registry.claim_session_owner("owner-9", "owner@example.com")
+
+        assert claimed == "dbowner@example.com"
+        assert registry._session_owners["owner-9"] == "dbowner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_returns_none_when_unverifiable(self, registry):
+        registry._backend = "database"
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(return_value=None)):
+            claimed = await registry.claim_session_owner("owner-10", "owner@example.com")
+
+        assert claimed is None
+
+    @pytest.mark.asyncio
+    async def test_session_exists_redis_backend(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.exists.return_value = 1
+        registry._redis = redis_client
+
+        assert await registry.session_exists("owner-11") is True
+
+        redis_client.exists.return_value = 0
+        assert await registry.session_exists("owner-12") is False
+
+    @pytest.mark.asyncio
+    async def test_session_exists_redis_without_client_is_unverifiable(self, registry):
+        registry._backend = "redis"
+        registry._redis = None
+        assert await registry.session_exists("owner-13") is None
+
+    @pytest.mark.asyncio
+    async def test_session_exists_database_backend(self, registry):
+        registry._backend = "database"
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(return_value=True)):
+            assert await registry.session_exists("owner-14") is True
+
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(side_effect=RuntimeError("db error"))):
+            assert await registry.session_exists("owner-14") is None
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -812,13 +812,8 @@ class SessionRegistry(SessionBackend):
 
         if self._backend == "redis":
             if not self._redis:
-                logger.warning("Redis client not initialized, using local session owner claim for %s", session_id)
-                async with self._lock:
-                    existing_owner = self._session_owners.get(session_id)
-                    if existing_owner:
-                        return existing_owner
-                    self._session_owners[session_id] = owner_email
-                    return owner_email
+                logger.warning("Redis client not initialized, session owner claim unavailable for %s", session_id)
+                return None
 
             owner_key = self._session_owner_key(session_id)
             try:
