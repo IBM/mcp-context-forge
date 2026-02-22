@@ -676,6 +676,19 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email=None, token_teams=None)
 
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.completion_service.handle_completion")
+    def test_handle_completion_endpoint_defaults_to_public_scope_when_token_teams_none(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """Protocol completion should treat token_teams=None as public-only for non-admin context."""
+        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_completion.return_value = {"result": "completion_result"}
+
+        req = {"ref": {"type": "ref/prompt", "name": "test"}}
+        response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_completion.assert_called_once_with(ANY, req, user_email="viewer@example.com", token_teams=[])
+
     @patch("mcpgateway.main.sampling_handler.create_message")
     def test_handle_sampling_endpoint(self, mock_sampling, test_client, auth_headers):
         """Test sampling message creation endpoint."""
@@ -1557,6 +1570,60 @@ class TestTagEndpoints:
             token_teams=None,
         )
 
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
+    def test_list_tags_defaults_to_public_scope_when_token_teams_none(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
+        """Non-admin token_teams=None should be normalized to public-only scope."""
+        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_get_tags.return_value = []
+
+        response = test_client.get("/tags", headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_get_tags.assert_awaited_once_with(
+            ANY,
+            entity_types=None,
+            include_entities=False,
+            user_email="viewer@example.com",
+            token_teams=[],
+        )
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
+    def test_get_entities_by_tag_admin_bypass_passes_unrestricted_scope(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
+        """Admin bypass context should pass unrestricted scope to tag entity lookup."""
+        mock_filter_context.return_value = ("admin@example.com", None, True)
+        mock_get_entities.return_value = []
+
+        response = test_client.get("/tags/test/entities", headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_get_entities.assert_awaited_once_with(
+            ANY,
+            tag_name="test",
+            entity_types=None,
+            user_email=None,
+            token_teams=None,
+        )
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
+    def test_get_entities_by_tag_defaults_to_public_scope_when_token_teams_none(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
+        """Non-admin token_teams=None should be normalized to public-only for tag entity lookup."""
+        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_get_entities.return_value = []
+
+        response = test_client.get("/tags/test/entities", headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_get_entities.assert_awaited_once_with(
+            ANY,
+            tag_name="test",
+            entity_types=None,
+            user_email="viewer@example.com",
+            token_teams=[],
+        )
+
     @patch("mcpgateway.main.tag_service.get_all_tags")
     def test_list_tags_error(self, mock_get_tags, test_client, auth_headers):
         """Test tag list error handling."""
@@ -2114,6 +2181,34 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="rpc-user@example.com", token_teams=["team-2"])
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
+    def test_rpc_completion_complete_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """RPC completion should preserve explicit admin bypass context."""
+        mock_filter_context.return_value = ("admin@example.com", None, True)
+        mock_completion.return_value = {"result": "done"}
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"]["result"] == "done"
+        mock_completion.assert_awaited_once_with(ANY, req["params"], user_email=None, token_teams=None)
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
+    def test_rpc_completion_complete_defaults_to_public_scope_when_token_teams_none(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """RPC completion should normalize non-admin token_teams=None to public-only."""
+        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_completion.return_value = {"result": "done"}
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"]["result"] == "done"
+        mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="viewer@example.com", token_teams=[])
 
     def test_rpc_completion_other_method(self, test_client, auth_headers):
         """Test completion/* catch-all JSON-RPC method."""

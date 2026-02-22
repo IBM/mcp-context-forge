@@ -5,6 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
+# Standard
+from types import SimpleNamespace
+
 # Third-Party
 import pytest
 from sqlalchemy import create_engine
@@ -208,6 +211,23 @@ async def test_unregister_completions():
     assert comp["values"] == []
     assert comp["total"] == 0
     assert comp["hasMore"] is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_team_ids_uses_team_management_service_when_token_teams_absent(monkeypatch):
+    service = CompletionService()
+
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, _user_email):
+            return [SimpleNamespace(id="team-1"), SimpleNamespace(id="team-2")]
+
+    monkeypatch.setattr("mcpgateway.services.team_management_service.TeamManagementService", MockTeamService)
+
+    team_ids = await service._resolve_team_ids(db=object(), user_email="member@example.com", token_teams=None)
+    assert team_ids == ["team-1", "team-2"]
 
 
 @pytest.fixture

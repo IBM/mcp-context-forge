@@ -8,6 +8,7 @@ Tests for Tag Service.
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
@@ -43,6 +44,21 @@ def tag_service():
 def mock_db():
     """Create a mock database session."""
     return MagicMock(spec=Session)
+
+
+@pytest.mark.asyncio
+async def test_resolve_team_ids_uses_team_management_service_when_token_teams_absent(tag_service, monkeypatch):
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, _user_email):
+            return [SimpleNamespace(id="team-a"), SimpleNamespace(id="team-b")]
+
+    monkeypatch.setattr("mcpgateway.services.team_management_service.TeamManagementService", MockTeamService)
+
+    team_ids = await tag_service._resolve_team_ids(db=object(), user_email="member@example.com", token_teams=None)
+    assert team_ids == ["team-a", "team-b"]
 
 
 @pytest.fixture
