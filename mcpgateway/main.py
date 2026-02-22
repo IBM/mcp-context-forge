@@ -541,6 +541,36 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
 
 
+def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:
+    """Apply token-scope ownership checks for a concrete resource path.
+
+    This provides defense-in-depth for ID-based handlers so they continue to
+    enforce visibility even if middleware coverage regresses.
+
+    Args:
+        request: Incoming request context.
+        db: Active database session.
+        user: Authenticated user context.
+        resource_path: Canonical resource path (e.g. ``/tools/{id}``).
+
+    Raises:
+        HTTPException: If access to the target resource is not allowed.
+    """
+    scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+
+    # Admin bypass / unrestricted scope
+    if scoped_token_teams is None:
+        return
+
+    if not token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
+        resource_path,
+        scoped_token_teams,
+        db=db,
+        _user_email=scoped_user_email,
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied for requested resource")
+
+
 async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
     """Ensure session operations are limited to the owner unless requester is admin.
 
@@ -2676,12 +2706,13 @@ async def list_servers(
 
 @server_router.get("/{server_id}", response_model=ServerRead)
 @require_permission("servers.read")
-async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
     Args:
         server_id (str): The ID of the server to retrieve.
+        request (Request): The incoming request used for scoped access validation.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -2693,7 +2724,9 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends
     """
     try:
         logger.debug(f"User {user} requested server with ID {server_id}")
-        return await server_service.get_server(db, server_id)
+        server = await server_service.get_server(db, server_id)
+        _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}")
+        return server
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -2952,13 +2985,14 @@ async def delete_server(
 
 @server_router.get("/{server_id}/sse")
 @require_permission("servers.use")
-async def sse_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
+async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
     Args:
         request (Request): The incoming request.
         server_id (str): The ID of the server for which updates are received.
+        db (Session): The database session used for server existence and scope checks.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2970,6 +3004,9 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
+        await server_service.get_server(db, server_id)
+        _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}/sse")
+
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
 
@@ -3048,6 +3085,10 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         response.background = tasks
         logger.info(f"SSE connection established: {transport.session_id}")
         return response
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"SSE connection error: {e}")
         raise HTTPException(status_code=500, detail="SSE connection failed")
@@ -3946,12 +3987,15 @@ async def get_tool(
         _req_email, _, _req_is_admin = _get_rpc_filter_context(request, user)
         _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
+        _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
         if apijsonpath is None:
             return data
 
         data_dict = data.to_dict(use_alias=True)
 
         return jsonpath_modifier(data_dict, apijsonpath.jsonpath, apijsonpath.mapping)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -4484,6 +4528,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
+        _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         # Release transaction before response serialization
         db.commit()
         db.close()
@@ -4523,6 +4568,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 @require_permission("resources.read")
 async def get_resource_info(
     resource_id: str,
+    request: Request,
     include_inactive: bool = Query(False, description="Include inactive resources"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4535,6 +4581,7 @@ async def get_resource_info(
 
     Args:
         resource_id (str): ID of the resource.
+        request (Request): Incoming request context used for scope enforcement.
         include_inactive (bool): Whether to include inactive resources.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -4547,7 +4594,9 @@ async def get_resource_info(
     """
     try:
         logger.debug(f"User {user} requested resource info for ID {resource_id}")
-        return await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        result = await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
+        return result
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -5410,12 +5459,13 @@ async def register_gateway(
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read")
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
+        request: Incoming request used for scoped access validation.
         db: Database session.
         user: Authenticated user.
 
@@ -5427,7 +5477,9 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
     try:
-        return await gateway_service.get_gateway(db, gateway_id)
+        gateway = await gateway_service.get_gateway(db, gateway_id)
+        _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
+        return gateway
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -5544,6 +5596,7 @@ async def refresh_gateway_tools(
     request: Request,
     include_resources: bool = Query(False, description="Include resources in refresh"),
     include_prompts: bool = Query(False, description="Include prompts in refresh"),
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> GatewayRefreshResponse:
     """
@@ -5558,6 +5611,7 @@ async def refresh_gateway_tools(
         request: The FastAPI request object.
         include_resources: Whether to include resources in the refresh.
         include_prompts: Whether to include prompts in the refresh.
+        db: Database session used to validate gateway access.
         user: Authenticated user.
 
     Returns:
@@ -5568,6 +5622,9 @@ async def refresh_gateway_tools(
     """
     logger.info(f"User '{user}' requested manual refresh for gateway {gateway_id}")
     try:
+        await gateway_service.get_gateway(db, gateway_id)
+        _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
+
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
@@ -5607,6 +5664,7 @@ async def list_roots(
 
 
 @root_router.get("/export", response_model=Dict[str, Any])
+@require_permission("admin.system_config")
 async def export_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -5662,6 +5720,7 @@ async def export_root(
 
 
 @root_router.get("/changes")
+@require_permission("admin.system_config")
 async def subscribe_roots_changes(
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
@@ -5689,6 +5748,7 @@ async def subscribe_roots_changes(
 
 
 @root_router.get("/{root_uri:path}", response_model=Root)
+@require_permission("admin.system_config")
 async def get_root_by_uri(
     root_uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -5720,6 +5780,7 @@ async def get_root_by_uri(
 
 @root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
+@require_permission("admin.system_config")
 async def add_root(
     root: Root,  # Accept JSON body using the Root model from models.py
     user=Depends(get_current_user_with_permissions),
@@ -5739,6 +5800,7 @@ async def add_root(
 
 
 @root_router.put("/{root_uri:path}", response_model=Root)
+@require_permission("admin.system_config")
 async def update_root(
     root_uri: str,
     root: Root,
@@ -5771,6 +5833,7 @@ async def update_root(
 
 
 @root_router.delete("/{uri:path}")
+@require_permission("admin.system_config")
 async def remove_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -6179,6 +6242,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
+            await _ensure_rpc_permission(user, db, "tools.execute", method)
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
@@ -6445,6 +6509,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
+            await _ensure_rpc_permission(user, db, "tools.execute", method)
             # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
 

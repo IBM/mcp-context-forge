@@ -580,7 +580,7 @@ class TokenScopingMiddleware:
 
                 if not server:
                     logger.warning(f"Server {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get server visibility (default to 'team' if field doesn't exist)
                 server_visibility = getattr(server, "visibility", "team")
@@ -625,7 +625,7 @@ class TokenScopingMiddleware:
 
                 if not tool:
                     logger.warning(f"Tool {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get tool visibility (default to 'team' if field doesn't exist)
                 tool_visibility = getattr(tool, "visibility", "team")
@@ -671,7 +671,7 @@ class TokenScopingMiddleware:
 
                 if not resource:
                     logger.warning(f"Resource {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get resource visibility (default to 'team' if field doesn't exist)
                 resource_visibility = getattr(resource, "visibility", "team")
@@ -717,7 +717,7 @@ class TokenScopingMiddleware:
 
                 if not prompt:
                     logger.warning(f"Prompt {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get prompt visibility (default to 'team' if field doesn't exist)
                 prompt_visibility = getattr(prompt, "visibility", "team")
@@ -763,7 +763,7 @@ class TokenScopingMiddleware:
 
                 if not gateway:
                     logger.warning(f"Gateway {resource_id} not found in database")
-                    return True
+                    return False
 
                 # Get gateway visibility (default to 'team' if field doesn't exist)
                 gateway_visibility = getattr(gateway, "visibility", "team")

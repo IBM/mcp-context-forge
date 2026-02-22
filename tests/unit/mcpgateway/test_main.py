@@ -1540,6 +1540,37 @@ class TestRootEndpoints:
             app.dependency_overrides.pop(get_current_user_with_permissions, None)
         assert response.status_code == 403
 
+    @pytest.mark.parametrize(
+        ("method", "path", "payload"),
+        [
+            ("get", "/roots/export?uri=file:///test", None),
+            ("get", "/roots/changes", None),
+            ("get", "/roots/file%3A%2F%2F%2Ftest", None),
+            ("post", "/roots/", {"uri": "file:///test", "name": "Test Root"}),
+            ("put", "/roots/file%3A%2F%2F%2Ftest", {"uri": "file:///test", "name": "Updated Root"}),
+            ("delete", "/roots/file%3A%2F%2F%2Ftest", None),
+        ],
+    )
+    def test_root_management_endpoints_require_admin_permission(self, method, path, payload, auth_headers):
+        from mcpgateway.main import app
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def non_admin_user(_request=None, _credentials=None, _jwt_token=None):
+            return {"email": "non-admin@example.com", "is_admin": False}
+
+        app.dependency_overrides[get_current_user_with_permissions] = non_admin_user
+        try:
+            client = TestClient(app)
+            with patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new=AsyncMock(return_value=False)):
+                if payload is None:
+                    response = getattr(client, method)(path, headers=auth_headers)
+                else:
+                    response = getattr(client, method)(path, json=payload, headers=auth_headers)
+        finally:
+            app.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+        assert response.status_code == 403
+
     @patch("mcpgateway.main.root_service.add_root")
     def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
         """Test adding a new root directory."""
@@ -1605,6 +1636,34 @@ class TestRPCEndpoints:
             plugin_global_context=ANY,
             meta_data=None,
         )
+
+    def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
+        req = {"jsonrpc": "2.0", "id": "test-id-deny", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
+
+        async def _has_permission(_self, permission):
+            return permission != "tools.execute"
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
+            response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+        assert "tools.execute" in body["error"]["message"]
+
+    def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
+        req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
+
+        async def _has_permission(_self, permission):
+            return permission != "tools.execute"
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
+            response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32003
+        assert "tools.execute" in body["error"]["message"]
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")
@@ -2327,6 +2386,8 @@ class TestRealtimeEndpoints:
         request = _make_request("/servers/1/sse")
         with (
             patch("mcpgateway.main.SSETransport", DummyTransport),
+            patch("mcpgateway.main.server_service.get_server", new_callable=AsyncMock),
+            patch("mcpgateway.main._enforce_scoped_resource_access"),
             patch("mcpgateway.main.session_registry.add_session", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.respond", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.register_respond_task"),
@@ -2334,7 +2395,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(asyncio.CancelledError):
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(request, "1", db=MagicMock(), user={"email": "user@example.com"})
 
     @pytest.mark.asyncio
     async def test_server_sse_failure_cleanup(self):
@@ -2355,6 +2416,8 @@ class TestRealtimeEndpoints:
         request = _make_request("/servers/1/sse")
         with (
             patch("mcpgateway.main.SSETransport", DummyTransport),
+            patch("mcpgateway.main.server_service.get_server", new_callable=AsyncMock),
+            patch("mcpgateway.main._enforce_scoped_resource_access"),
             patch("mcpgateway.main.session_registry.add_session", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.respond", new_callable=AsyncMock),
             patch("mcpgateway.main.session_registry.register_respond_task"),
@@ -2362,7 +2425,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(HTTPException) as excinfo:
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(request, "1", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
