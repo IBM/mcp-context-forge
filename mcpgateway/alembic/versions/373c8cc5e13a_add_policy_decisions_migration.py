@@ -2,7 +2,7 @@
 """Add policy_decisions table
 
 Revision ID: 373c8cc5e13a
-Revises: b1b2b3b4b5b6, w2b3c4d5e6f7, w6g7h8i9j0k1
+Revises: x7h8i9j0k1l2
 Create Date: 2026-02-10
 
 Adds policy decision logging to extend audit_trail functionality.
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "373c8cc5e13a"
-down_revision: Union[str, Sequence[str], None] = ("b1b2b3b4b5b6", "w2b3c4d5e6f7", "w6g7h8i9j0k1")
+down_revision: Union[str, Sequence[str], None] = "x7h8i9j0k1l2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
