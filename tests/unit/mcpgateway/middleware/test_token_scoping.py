@@ -124,15 +124,18 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
-        """Test that admin endpoints use canonical admin permissions."""
-        result = middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
-        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT permission"
+        """Test that admin endpoint groups use canonical granular permissions."""
+        result = middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT on /admin/users"
 
-        result = middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.ADMIN_USER_MANAGEMENT])
-        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT for admin operations"
+        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
+        assert result == True, "Should accept canonical ADMIN_SYSTEM_CONFIG on /admin/config/*"
+
+        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        assert result == False, "Should reject ADMIN_USER_MANAGEMENT for system-config admin routes"
 
         # Test that old non-canonical admin permissions would not work
-        result = middleware._check_permission_restrictions("/admin", "GET", ["admin.read"])
+        result = middleware._check_permission_restrictions("/admin/users", "GET", ["admin.read"])
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
     @pytest.mark.asyncio
@@ -194,7 +197,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return admin-scoped token
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}}
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -213,7 +216,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return wildcard permissions
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"permissions": ["*"]}
+            mock_extract.return_value = {"scopes": {"permissions": ["*"]}}
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -367,21 +370,31 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_admin(self, middleware):
-        """Test that admin regex patterns require correct permissions."""
-        # Test exact /admin path requires ADMIN_USER_MANAGEMENT
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        """Test that admin regex patterns enforce route-group-specific permissions."""
+        # Dashboard/overview groups
+        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_DASHBOARD]) == True
+        assert middleware._check_permission_restrictions("/admin/overview/partial", "GET", [Permissions.ADMIN_OVERVIEW]) == True
 
-        # Test admin operations require admin permissions
-        assert middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/teams", "PUT", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        # User management vs config domains must remain separated
+        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == True
+        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == False
+        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
 
-        # Test that non-admin permissions are rejected for admin paths
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.TOOLS_READ]) == False
-        assert middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.RESOURCES_CREATE]) == False
+        # Other admin route groups
+        assert middleware._check_permission_restrictions("/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
+        assert middleware._check_permission_restrictions("/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
+        assert middleware._check_permission_restrictions("/admin/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
 
-        # Test that empty permissions list returns True (no restrictions policy)
-        assert middleware._check_permission_restrictions("/admin", "GET", []) == True
+        # Unmapped admin paths default-deny when token has explicit restrictions
+        assert middleware._check_permission_restrictions("/admin/not-mapped", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
+
+        # Explicitly multi-scoped token remains functional
+        assert middleware._check_permission_restrictions(
+            "/admin/config/settings",
+            "GET",
+            [Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SYSTEM_CONFIG],
+        ) == True
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_servers(self, middleware):
@@ -632,7 +645,7 @@ class TestTokenScopingMiddleware:
         # Test that exact patterns still work correctly
         exact_matches = [
             ("/tools", "GET", [Permissions.TOOLS_READ], True),
-            ("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT], True),
+            ("/admin", "GET", [Permissions.ADMIN_DASHBOARD], True),
             ("/resources", "GET", [Permissions.RESOURCES_READ], True),
             ("/prompts", "POST", [Permissions.PROMPTS_CREATE], True),
             ("/servers", "POST", [Permissions.SERVERS_CREATE], True),

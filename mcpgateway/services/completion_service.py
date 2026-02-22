@@ -18,10 +18,10 @@ Examples:
 """
 
 # Standard
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -79,7 +79,13 @@ class CompletionService:
         logger.info("Shutting down completion service")
         self._custom_completions.clear()
 
-    async def handle_completion(self, db: Session, request: Dict[str, Any]) -> CompleteResult:
+    async def handle_completion(
+        self,
+        db: Session,
+        request: Dict[str, Any],
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> CompleteResult:
         """Handle completion request.
 
         Args:
@@ -118,9 +124,9 @@ class CompletionService:
 
             # Handle different reference types
             if ref_type == "ref/prompt":
-                result = await self._complete_prompt_argument(db, ref, arg_name, arg_value)
+                result = await self._complete_prompt_argument(db, ref, arg_name, arg_value, user_email=user_email, token_teams=token_teams)
             elif ref_type == "ref/resource":
-                result = await self._complete_resource_uri(db, ref, arg_value)
+                result = await self._complete_resource_uri(db, ref, arg_value, user_email=user_email, token_teams=token_teams)
             else:
                 raise CompletionError(f"Invalid reference type: {ref_type}")
 
@@ -130,7 +136,45 @@ class CompletionService:
             logger.error(f"Completion error: {e}")
             raise CompletionError(str(e))
 
-    async def _complete_prompt_argument(self, db: Session, ref: Dict[str, Any], arg_name: str, arg_value: str) -> CompleteResult:
+    async def _resolve_team_ids(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> List[str]:
+        """Resolve effective team IDs for scoped visibility checks."""
+        if token_teams is not None:
+            return token_teams
+        if not user_email:
+            return []
+
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email)
+        return [team.id for team in user_teams]
+
+    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str]):
+        """Apply token/user visibility scope to a SQLAlchemy statement."""
+        if token_teams is None and user_email is None:
+            return stmt
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        access_conditions = [model.visibility == "public"]
+
+        if not is_public_only_token and user_email:
+            access_conditions.append(model.owner_email == user_email)
+
+        if team_ids:
+            access_conditions.append(and_(model.team_id.in_(team_ids), model.visibility.in_(["team", "public"])))
+
+        return stmt.where(or_(*access_conditions))
+
+    async def _complete_prompt_argument(
+        self,
+        db: Session,
+        ref: Dict[str, Any],
+        arg_name: str,
+        arg_value: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> CompleteResult:
         """Complete prompt argument value.
 
         Args:
@@ -176,8 +220,12 @@ class CompletionService:
         if not prompt_name:
             raise CompletionError("Missing prompt name")
 
-        # Only consider prompts that are enabled (renamed from `is_active` -> `enabled`)
-        prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)).scalar_one_or_none()
+        # Only consider prompts that are enabled and visible to caller
+        team_ids = await self._resolve_team_ids(db, user_email, token_teams)
+        stmt = select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)
+        stmt = self._apply_visibility_scope(stmt, DbPrompt, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+        stmt = stmt.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id)).limit(1)
+        prompt = db.execute(stmt).scalar_one_or_none()
 
         if not prompt:
             raise CompletionError(f"Prompt not found: {prompt_name}")
@@ -217,7 +265,14 @@ class CompletionService:
         # No completions available
         return CompleteResult(completion={"values": [], "total": 0, "hasMore": False})
 
-    async def _complete_resource_uri(self, db: Session, ref: Dict[str, Any], arg_value: str) -> CompleteResult:
+    async def _complete_resource_uri(
+        self,
+        db: Session,
+        ref: Dict[str, Any],
+        arg_value: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> CompleteResult:
         """Complete resource URI.
 
         Args:
@@ -265,8 +320,11 @@ class CompletionService:
         if not uri_template:
             raise CompletionError("Missing URI template")
 
-        # List matching resources
-        resources = db.execute(select(DbResource).where(DbResource.enabled)).scalars().all()
+        # List matching resources visible to caller
+        team_ids = await self._resolve_team_ids(db, user_email, token_teams)
+        stmt = select(DbResource).where(DbResource.enabled)
+        stmt = self._apply_visibility_scope(stmt, DbResource, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+        resources = db.execute(stmt).scalars().all()
 
         # Filter by URI pattern
         matches = []
