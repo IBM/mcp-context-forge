@@ -133,60 +133,53 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
 
 
 def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
-    """Ensure the page is logged into the admin interface using LoginPage.
+    """Ensure the page is logged into the admin interface.
 
-    This helper function handles all login scenarios including:
-    - Password change requirements
-    - Initial login
-    - Retry with new password
-    - JWT fallback if credentials fail
+    Prefers direct JWT cookie injection for resilience against shared password
+    state and multi-worker routing.  Falls back to form-based login only when
+    JWT injection is explicitly disabled via PLAYWRIGHT_DISABLE_JWT_FALLBACK.
     """
     settings = Settings()
     admin_email = settings.platform_admin_email or ADMIN_EMAIL
 
-    # Create LoginPage instance
-    login_page = LoginPage(page, base_url)
-
-    # Go directly to admin
-    page.goto("/admin", wait_until="domcontentloaded")
-
-    # Handle password change requirement
-    if login_page.is_on_change_password_page():
-        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
-        login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
-        ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+    if not DISABLE_JWT_FALLBACK:
+        # ---- Primary path: inject a fresh JWT cookie per fixture ----
+        _set_admin_jwt_cookie(page, admin_email)
+        page.goto("/admin/", wait_until="domcontentloaded")
         _wait_for_admin_transition(page)
+    else:
+        # ---- Fallback: interactive form login (JWT disabled) ----
+        login_page = LoginPage(page, base_url)
+        page.goto("/admin", wait_until="domcontentloaded")
 
-    # Handle login page redirect if auth is required
-    if login_page.is_on_login_page() or login_page.is_login_form_available():
-        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
-
-        status = _submit_login_and_wait(page, login_page, admin_email, current_password)
-        if status is not None and status >= 400:
-            raise AssertionError(f"Login failed with status {status}")
-        _wait_for_admin_transition(page)
-
-        # Handle password change after login
         if login_page.is_on_change_password_page():
+            current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
             login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page)
 
-        # Retry with new password if credentials were invalid
-        if login_page.has_invalid_credentials_error() and ADMIN_NEW_PASSWORD != current_password:
-            status = _submit_login_and_wait(page, login_page, admin_email, ADMIN_NEW_PASSWORD)
+        if login_page.is_on_login_page() or login_page.is_login_form_available():
+            current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
+
+            status = _submit_login_and_wait(page, login_page, admin_email, current_password)
             if status is not None and status >= 400:
                 raise AssertionError(f"Login failed with status {status}")
-            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page)
 
-        # If login still failed, fallback to JWT cookie unless disabled
-        if login_page.is_on_login_page():
-            if DISABLE_JWT_FALLBACK:
+            if login_page.is_on_change_password_page():
+                login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
+                ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+                _wait_for_admin_transition(page)
+
+            if login_page.has_invalid_credentials_error() and ADMIN_NEW_PASSWORD != current_password:
+                status = _submit_login_and_wait(page, login_page, admin_email, ADMIN_NEW_PASSWORD)
+                if status is not None and status >= 400:
+                    raise AssertionError(f"Login failed with status {status}")
+                ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+                _wait_for_admin_transition(page)
+
+            if login_page.is_on_login_page():
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
-            _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
-            _wait_for_admin_transition(page)
 
     # Verify we're on the admin page
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
