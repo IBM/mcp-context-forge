@@ -298,9 +298,13 @@ plugins:
     priority: 60
     conditions: []
     config:
-      blocked_domains:
-        - malicious.example.com
+      whitelist_domains: ["example.com"]
+      allowed_patterns: []
+      blocked_domains: ["malicious.example.com"]
       blocked_patterns: []
+      use_heuristic_check: false
+      entropy_threshold: 3.65
+      block_non_secure_http: true
 
   # File type allowlist for resources
   - name: "FileTypeAllowlistPlugin"

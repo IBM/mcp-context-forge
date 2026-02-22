@@ -1,0 +1,18 @@
+[package]
+name = "url_reputation"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "url_reputation"
+crate-type = ["cdylib"]
+
+[dependencies]
+idna = "1.1.0"
+phf = { version = "0.13.1", features = ["macros"] }
+pyo3 = "0.28.1"
+regex = "1.12.3"
+unicode-script = "0.5.8"
+unicode-security = "0.1.2"
+url = "2.5.8"
