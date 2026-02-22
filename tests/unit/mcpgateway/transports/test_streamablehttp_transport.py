@@ -6796,6 +6796,70 @@ async def test_streamable_http_auth_rejects_inactive_user(monkeypatch):
     assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
 
 
+@pytest.mark.asyncio
+async def test_streamable_http_auth_revocation_check_exception_fails_open(monkeypatch):
+    """Revocation-check backend failures should fail open and allow the request."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "user@example.com",
+            "jti": "jti-1",
+            "teams": ["team-a"],
+        }
+
+    active_user = MagicMock()
+    active_user.is_active = True
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", side_effect=RuntimeError("db unavailable")),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=active_user),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_missing_user_when_required(monkeypatch):
+    """When require_user_in_db is enabled, unknown users should be rejected."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "missing@example.com",
+            "jti": "ok-jti",
+            "teams": ["team-a"],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.platform_admin_email", "admin@example.com")
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+    assert any(m.get("type") == "http.response.body" and b"User not found in database" in m.get("body", b"") for m in sent)
+
+
 # ---------------------------------------------------------------------------
 # Proxy function tests - comprehensive coverage for direct_proxy mode
 # ---------------------------------------------------------------------------

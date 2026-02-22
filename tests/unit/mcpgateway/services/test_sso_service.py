@@ -349,6 +349,44 @@ class TestOAuthCallback:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_requires_nonce(self, sso_service, mock_db):
+        """OIDC callback should fail when auth session nonce is missing."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce=None)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(_p, _sess, _code):
+            return {"access_token": "tok", "id_token": "id-token"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1"})
+        sso_service._get_user_info = AsyncMock(return_value={"email": "user@example.com"})
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is None
+        sso_service._verify_oidc_id_token.assert_not_called()
+        sso_service._get_user_info.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_oidc_requires_id_token(self, sso_service, mock_db):
+        """OIDC callback should fail when token response does not contain id_token."""
+        provider = _make_provider(id="keycloak", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        auth_session = _make_auth_session(provider=provider, nonce="nonce-1")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(_p, _sess, _code):
+            return {"access_token": "tok"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1"})
+        sso_service._get_user_info = AsyncMock(return_value={"email": "user@example.com"})
+
+        result = await sso_service.handle_oauth_callback_with_tokens("keycloak", "code", "test-state")
+        assert result is None
+        sso_service._verify_oidc_id_token.assert_not_called()
+        sso_service._get_user_info.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_handle_oauth_callback_user_info_fails(self, sso_service, mock_db):
         auth_session = _make_auth_session()
         mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
@@ -1176,7 +1214,103 @@ class TestNormalization:
 # ---------------------------------------------------------------------------
 
 
+class TestOidcMetadataAndJwksHelpers:
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_returns_fresh_cached_value(self, sso_service):
+        import time
+
+        sso_service._oidc_config_cache["https://issuer.example.com"] = (time.monotonic(), {"jwks_uri": "https://issuer.example.com/jwks"})
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            metadata = await sso_service._get_oidc_provider_metadata("https://issuer.example.com/")
+
+        assert metadata == {"jwks_uri": "https://issuer.example.com/jwks"}
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_expires_cache_and_handles_non_200(self, sso_service):
+        import time
+
+        sso_service._oidc_config_cache["https://issuer.example.com"] = (
+            time.monotonic() - sso_service._OIDC_METADATA_CACHE_TTL_SECONDS - 1,
+            {"jwks_uri": "stale"},
+        )
+
+        response = MagicMock()
+        response.status_code = 500
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata("https://issuer.example.com")
+
+        assert metadata is None
+        assert "https://issuer.example.com" not in sso_service._oidc_config_cache
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_rejects_non_object_json(self, sso_service):
+        issuer = "https://issuer-bad-json.example.com"
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = ["not", "an", "object"]
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata(issuer)
+
+        assert metadata is None
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_caches_successful_discovery(self, sso_service):
+        issuer = "https://issuer-cache-success.example.com"
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"issuer": issuer, "jwks_uri": f"{issuer}/jwks"}
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata(issuer)
+
+        assert metadata == {"issuer": issuer, "jwks_uri": f"{issuer}/jwks"}
+        assert issuer in sso_service._oidc_config_cache
+
+    @pytest.mark.asyncio
+    async def test_get_oidc_provider_metadata_handles_request_exception(self, sso_service):
+        issuer = "https://issuer-error.example.com"
+        client = AsyncMock()
+        client.get = AsyncMock(side_effect=RuntimeError("network error"))
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=client):
+            metadata = await sso_service._get_oidc_provider_metadata(issuer)
+
+        assert metadata is None
+
+    @pytest.mark.asyncio
+    async def test_resolve_oidc_issuer_and_jwks_from_discovery(self, sso_service):
+        provider = _make_provider(provider_type="oidc", issuer="https://issuer.example.com", jwks_uri=None)
+        sso_service._get_oidc_provider_metadata = AsyncMock(return_value={"jwks_uri": " https://issuer.example.com/jwks ", "issuer": " https://resolved-issuer.example.com "})
+
+        issuer, jwks_uri = await sso_service._resolve_oidc_issuer_and_jwks(provider)
+
+        assert issuer == "https://resolved-issuer.example.com"
+        assert jwks_uri == "https://issuer.example.com/jwks"
+
+    def test_get_jwks_client_reuses_cached_instance(self, sso_service):
+        first = sso_service._get_jwks_client("https://issuer.example.com/jwks")
+        second = sso_service._get_jwks_client("https://issuer.example.com/jwks")
+
+        assert first is second
+
+
 class TestVerifyOidcIdToken:
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_returns_none_for_non_oidc_provider(self, sso_service):
+        provider = _make_provider(provider_type="oauth2")
+        claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+        assert claims is None
+
     @pytest.mark.asyncio
     async def test_verify_oidc_id_token_success(self, sso_service):
         provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
@@ -1214,6 +1348,34 @@ class TestVerifyOidcIdToken:
     async def test_verify_oidc_id_token_missing_jwks(self, sso_service):
         provider = _make_provider(id="oidc", provider_type="oidc", issuer=None, jwks_uri=None, client_id="cid")
         claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+        assert claims is None
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_handles_pyjwt_error(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        signing_key = SimpleNamespace(key="public-key")
+        jwks_client = MagicMock()
+        jwks_client.get_signing_key_from_jwt.return_value = signing_key
+
+        # First-Party
+        from mcpgateway.services import sso_service as sso_mod
+
+        with (
+            patch.object(sso_service, "_get_jwks_client", return_value=jwks_client),
+            patch("mcpgateway.services.sso_service.jwt.decode", side_effect=sso_mod.jwt.PyJWTError("bad token")),
+        ):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+
+        assert claims is None
+
+    @pytest.mark.asyncio
+    async def test_verify_oidc_id_token_handles_unexpected_exception(self, sso_service):
+        provider = _make_provider(id="oidc", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks", client_id="cid")
+
+        with patch.object(sso_service, "_get_jwks_client", side_effect=RuntimeError("boom")):
+            claims = await sso_service._verify_oidc_id_token(provider, "id-token", expected_nonce=None)
+
         assert claims is None
 
 

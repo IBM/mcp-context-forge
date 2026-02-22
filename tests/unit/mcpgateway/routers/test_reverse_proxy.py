@@ -900,6 +900,35 @@ class TestGetUserFromCredentials:
 
         assert rp._get_websocket_bearer_token(websocket) == "lower-case-token"
 
+    @pytest.mark.asyncio
+    async def test_authenticate_reverse_proxy_websocket_denies_without_permissions(self):
+        """Authenticated users without server-management permissions should be rejected."""
+        # First-Party
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "Bearer valid-token"}
+        websocket.client = Mock(host="127.0.0.1")
+        websocket.state = Mock(team_id=None, token_teams=None, token_use=None)
+
+        mock_user = Mock(email="user@example.com", full_name="Test User", is_admin=False)
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings,
+            patch("mcpgateway.routers.reverse_proxy.get_current_user", new=AsyncMock(return_value=mock_user)),
+            patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=False),
+        ):
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = True
+            mock_settings.trust_proxy_auth = False
+
+            with pytest.raises(HTTPException) as exc_info:
+                await rp._authenticate_reverse_proxy_websocket(websocket)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Insufficient permissions"
+
     def test_dict_with_sub(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
         user, is_admin = _get_user_from_credentials({"sub": "user@test.com", "is_admin": False})

@@ -77,6 +77,14 @@ class TestTokenScopingMiddleware:
         assert await middleware._extract_token_scopes(request) is None
 
     @pytest.mark.asyncio
+    async def test_extract_token_scopes_rejects_non_bearer_scheme(self, middleware):
+        """Non-bearer auth schemes must not be treated as JWT bearer tokens."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": "Basic abc123"}
+
+        assert await middleware._extract_token_scopes(request) is None
+
+    @pytest.mark.asyncio
     async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
         """Test that /admin is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
         mock_request.url.path = "/admin/users"

@@ -2611,6 +2611,97 @@ class TestUtilityFunctions:
         assert exc_info.value.detail == "Authentication failed"
 
     @pytest.mark.asyncio
+    async def test_authenticate_websocket_user_propagates_http_exception(self, monkeypatch):
+        """HTTPException from auth backend should pass through unchanged."""
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+
+        websocket = MagicMock()
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "Bearer token"}
+        websocket.client = SimpleNamespace(host="127.0.0.1")
+        websocket.state = SimpleNamespace(team_id=None, token_teams=None, token_use=None)
+
+        monkeypatch.setattr(main_mod, "get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await main_mod._authenticate_websocket_user(websocket)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid token"
+
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_user_success_with_bearer_token(self, monkeypatch):
+        """Successful bearer auth should return token and no proxy user."""
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+
+        websocket = MagicMock()
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "Bearer token", "user-agent": "pytest"}
+        websocket.client = SimpleNamespace(host="127.0.0.1")
+        websocket.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"], token_use="session")
+
+        user = SimpleNamespace(email="user@example.com", full_name="User Example", is_admin=False)
+        monkeypatch.setattr(main_mod, "get_current_user", AsyncMock(return_value=user))
+        monkeypatch.setattr(main_mod.PermissionChecker, "has_any_permission", AsyncMock(return_value=True))
+
+        auth_token, proxy_user = await main_mod._authenticate_websocket_user(websocket)
+
+        assert auth_token == "token"
+        assert proxy_user is None
+
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_user_proxy_auth_missing_header_requires_auth(self, monkeypatch):
+        """Proxy-auth mode should reject requests without trusted user header when auth is required."""
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(main_mod.settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(main_mod.settings, "proxy_user_header", "X-Forwarded-User")
+
+        websocket = MagicMock()
+        websocket.query_params = {}
+        websocket.headers = {}
+        websocket.client = SimpleNamespace(host="127.0.0.1")
+        websocket.state = SimpleNamespace(team_id=None, token_teams=None, token_use=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await main_mod._authenticate_websocket_user(websocket)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Authentication required"
+
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_user_denies_when_permissions_missing(self, monkeypatch):
+        """Authenticated websocket users must have at least one allowed permission."""
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+
+        websocket = MagicMock()
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "Bearer token", "user-agent": "pytest"}
+        websocket.client = SimpleNamespace(host="127.0.0.1")
+        websocket.state = SimpleNamespace(team_id=None, token_teams=[], token_use="api")
+
+        user = SimpleNamespace(email="user@example.com", full_name="User Example", is_admin=False)
+        monkeypatch.setattr(main_mod, "get_current_user", AsyncMock(return_value=user))
+        monkeypatch.setattr(main_mod.PermissionChecker, "has_any_permission", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await main_mod._authenticate_websocket_user(websocket)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Insufficient permissions"
+
+    @pytest.mark.asyncio
     async def test_websocket_bearer_auth_invalid_token_closes(self, monkeypatch):
         """Cover Bearer token extraction + invalid token close path."""
         import mcpgateway.main as main_mod
@@ -4057,6 +4148,19 @@ class TestRpcHandling:
             patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["error"]["message"] == "Not authorized to cancel this run"
+
+    @pytest.mark.asyncio
+    async def test_handle_rpc_notifications_cancelled_denies_unknown_run_for_non_admin(self):
+        payload_cancel = {"jsonrpc": "2.0", "id": "33", "method": "notifications/cancelled", "params": {"requestId": "unknown-run", "reason": "stop"}}
+        request_cancel = self._make_request(payload_cancel)
+
+        with (
+            patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
+        ):
+            result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com", "is_admin": False})
 
         assert result["error"]["message"] == "Not authorized to cancel this run"
 
@@ -5573,6 +5677,23 @@ class TestRemainingCoverageGaps:
             "mcpgateway.routers.rbac",
         }
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
+
+    async def test_module_level_reverse_proxy_router_success_and_import_error(self, monkeypatch):
+        from types import ModuleType
+
+        from fastapi import APIRouter
+
+        reverse_proxy_mod = ModuleType("mcpgateway.routers.reverse_proxy")
+        reverse_proxy_mod.router = APIRouter()
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.reverse_proxy", reverse_proxy_mod)
+
+        _ = _import_fresh_main_module(monkeypatch, overrides={"mcpgateway_reverse_proxy_enabled": True})
+
+        _ = _import_fresh_main_module(
+            monkeypatch,
+            overrides={"mcpgateway_reverse_proxy_enabled": True},
+            force_import_error={"mcpgateway.routers.reverse_proxy"},
+        )
 
 
 @pytest.fixture
