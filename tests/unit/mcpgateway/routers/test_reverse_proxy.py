@@ -889,6 +889,17 @@ class TestIntegration:
 class TestGetUserFromCredentials:
     """Test _get_user_from_credentials function."""
 
+    def test_get_websocket_bearer_token_accepts_lowercase_scheme(self):
+        """Reverse-proxy WebSocket token parser should accept lowercase bearer scheme."""
+        # First-Party
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "bearer lower-case-token"}
+
+        assert rp._get_websocket_bearer_token(websocket) == "lower-case-token"
+
     def test_dict_with_sub(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
         user, is_admin = _get_user_from_credentials({"sub": "user@test.com", "is_admin": False})

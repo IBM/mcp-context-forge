@@ -715,6 +715,11 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
     ```
     The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
 
+!!! note "Local Development Defaults"
+    The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
+    (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
+    Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
+
 ### Ed25519 Certificate Signing
 
 ContextForge supports **Ed25519 digital signatures** for certificate validation and integrity verification.

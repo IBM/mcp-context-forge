@@ -2229,7 +2229,7 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 try:
                     is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
                 except Exception as exc:
-                    logger.warning(f"MCP token revocation check failed for jti={jti}: {exc}")
+                    logger.warning(f"MCP token revocation check failed for jti={jti}; allowing request (fail-open): {exc}")
                     is_revoked = False
                 if is_revoked:
                     response = ORJSONResponse(
@@ -2251,7 +2251,7 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 except Exception as exc:
                     user_lookup_succeeded = False
                     user_record = None
-                    logger.warning(f"MCP user lookup failed for user={user_email}: {exc}")
+                    logger.warning(f"MCP user lookup failed for user={user_email}; allowing request (fail-open): {exc}")
 
                 if user_lookup_succeeded:
                     if user_record and not getattr(user_record, "is_active", True):

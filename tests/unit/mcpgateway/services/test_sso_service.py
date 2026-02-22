@@ -243,7 +243,7 @@ class TestOAuthCallback:
         async def _exchange(p, sess, c):
             return {"access_token": "tok", "id_token": "id_tok"}
 
-        async def _user_info(p, access, token_data=None):
+        async def _user_info(p, access, token_data=None, expected_nonce=None):  # noqa: ARG001
             return {"email": "user@example.com", "provider": "github"}
 
         sso_service._exchange_code_for_tokens = _exchange
@@ -261,7 +261,7 @@ class TestOAuthCallback:
         async def _exchange(p, sess, c):
             return {"access_token": "tok", "id_token": "id_tok"}
 
-        async def _user_info(p, access, token_data=None):
+        async def _user_info(p, access, token_data=None, expected_nonce=None):  # noqa: ARG001
             return {"email": "user@example.com", "provider": "github"}
 
         sso_service._exchange_code_for_tokens = _exchange
@@ -301,7 +301,7 @@ class TestOAuthCallback:
         async def _exchange(p, sess, c):
             return {"access_token": "tok", "id_token": "good-id-token"}
 
-        async def _user_info(_provider, _access, token_data=None):
+        async def _user_info(_provider, _access, token_data=None, expected_nonce=None):  # noqa: ARG001
             assert token_data is not None
             assert token_data["_verified_id_token_claims"] == {"sub": "user-1", "nonce": "nonce-1"}
             return {"email": "user@example.com", "provider": "keycloak"}
@@ -356,7 +356,7 @@ class TestOAuthCallback:
         async def _exchange(p, sess, c):
             return {"access_token": "tok"}
 
-        async def _user_info(p, access, token_data=None):
+        async def _user_info(p, access, token_data=None, expected_nonce=None):  # noqa: ARG001
             return None
 
         sso_service._exchange_code_for_tokens = _exchange
@@ -580,6 +580,50 @@ class TestGetUserInfo:
         assert result["provider"] == "entra"
         assert "group-id-1" in result["groups"]
         assert "App.Admin" in result["groups"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_oidc_fallback_verification_uses_expected_nonce(self, sso_service):
+        """OIDC fallback id_token verification should enforce the callback nonce when provided."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@example.com", "name": "Test User"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="oidc-test", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        token_data = {"access_token": "at", "id_token": "id-token-without-cached-claims"}
+
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1", "nonce": "nonce-1"})
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._get_user_info(provider, "at", token_data, expected_nonce="nonce-1")
+
+        assert result is not None
+        sso_service._verify_oidc_id_token.assert_awaited_once_with(provider, "id-token-without-cached-claims", expected_nonce="nonce-1")
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_oidc_fallback_skips_verification_without_nonce(self, sso_service):
+        """OIDC fallback id_token verification should be skipped when nonce context is unavailable."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@example.com", "name": "Test User"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="oidc-test", provider_type="oidc", issuer="https://issuer.example.com", jwks_uri="https://issuer.example.com/jwks")
+        token_data = {"access_token": "at", "id_token": "id-token-without-cached-claims"}
+
+        sso_service._verify_oidc_id_token = AsyncMock(return_value={"sub": "user-1", "nonce": "nonce-1"})
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._get_user_info(provider, "at", token_data, expected_nonce=None)
+
+        assert result is not None
+        sso_service._verify_oidc_id_token.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_user_info_failure(self, sso_service):

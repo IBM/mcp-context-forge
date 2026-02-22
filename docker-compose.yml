@@ -147,6 +147,11 @@ services:
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=false
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=false
+      # Local compose profile: allow local/private upstream URLs used by bundled test services.
+      # Production deployments should override these to stricter values.
+      - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
+      - SSRF_ALLOW_PRIVATE_NETWORKS=${SSRF_ALLOW_PRIVATE_NETWORKS:-true}
+      - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-false}
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
@@ -1243,6 +1248,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        set -e
         echo "Using latest gateway image with current JWT utility..."
 
         echo "Waiting for services to be ready..."

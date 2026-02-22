@@ -2578,6 +2578,38 @@ class TestUtilityFunctions:
         websocket.close.assert_awaited_once_with(code=1008, reason="WebSocket relay is disabled")
         websocket.accept.assert_not_called()
 
+    def test_get_websocket_bearer_token_accepts_lowercase_scheme(self):
+        """Bearer scheme parsing should be case-insensitive for WebSocket auth headers."""
+        import mcpgateway.main as main_mod
+
+        websocket = MagicMock()
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "bearer test-token"}
+
+        assert main_mod._get_websocket_bearer_token(websocket) == "test-token"
+
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_user_wraps_unexpected_auth_errors(self, monkeypatch):
+        """Unexpected auth backend errors should be normalized to HTTP 401."""
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+
+        websocket = MagicMock()
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "Bearer token"}
+        websocket.client = SimpleNamespace(host="127.0.0.1")
+        websocket.state = SimpleNamespace(team_id=None, token_teams=None, token_use=None)
+
+        monkeypatch.setattr(main_mod, "get_current_user", AsyncMock(side_effect=RuntimeError("db down")))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await main_mod._authenticate_websocket_user(websocket)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Authentication failed"
+
     @pytest.mark.asyncio
     async def test_websocket_bearer_auth_invalid_token_closes(self, monkeypatch):
         """Cover Bearer token extraction + invalid token close path."""
@@ -3996,7 +4028,7 @@ class TestRpcHandling:
 
         cancel_callback_holder: dict[str, object] = {}
 
-        async def _capture_register_run(run_id, *, name, cancel_callback):  # noqa: ANN001
+        async def _capture_register_run(run_id, *, name, cancel_callback, owner_email=None, owner_team_ids=None):  # noqa: ANN001, ARG001
             cancel_callback_holder["cb"] = cancel_callback
             return None
 
@@ -4008,7 +4040,7 @@ class TestRpcHandling:
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             rpc_task = asyncio.create_task(handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"}))
-            await started.wait()
+            await asyncio.wait_for(started.wait(), timeout=2.0)
             await cancel_callback_holder["cb"](reason="test")  # type: ignore[misc]
             release.set()
 

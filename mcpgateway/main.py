@@ -150,7 +150,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -438,6 +438,41 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
         is_admin = False
 
     return user_email, token_teams, is_admin
+
+
+async def _authorize_run_cancellation(request: Request, user, request_id: str, *, as_jsonrpc_error: bool) -> None:
+    """Authorize a notifications/cancelled request for a specific run id.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        request_id: Run/request identifier to cancel.
+        as_jsonrpc_error: Raise ``JSONRPCError`` when True, otherwise ``HTTPException``.
+
+    Raises:
+        JSONRPCError: When ``as_jsonrpc_error`` is True and cancellation is not authorized.
+        HTTPException: When ``as_jsonrpc_error`` is False and cancellation is not authorized.
+    """
+    requester_email, requester_token_teams, requester_is_admin = _get_rpc_filter_context(request, user)
+    requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
+    run_status = await cancellation_service.get_status(request_id)
+
+    unauthorized = False
+    if run_status is None:
+        # Default deny for non-admin users when run is not known on this worker.
+        # Session-affinity clients should route cancellation to the worker that owns the run.
+        unauthorized = not requester_is_admin
+    else:
+        run_owner_email = run_status.get("owner_email")
+        run_owner_team_ids = run_status.get("owner_team_ids") or []
+        requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
+        requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
+        unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
+
+    if unauthorized:
+        if as_jsonrpc_error:
+            raise JSONRPCError(-32003, "Not authorized to cancel this run", {"requestId": request_id})
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to cancel this run")
 
 
 # Initialize cache
@@ -2377,6 +2412,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         logger.info(f"Request cancelled: {request_id}, reason: {reason}")
         # Attempt local cancellation per MCP spec
         if request_id is not None:
+            await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=False)
             await cancellation_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":
@@ -6137,24 +6173,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             logger.info(f"Request cancelled: {request_id}, reason: {reason}")
             # Attempt local cancellation per MCP spec
             if request_id is not None:
-                requester_email, requester_token_teams, requester_is_admin = _get_rpc_filter_context(request, user)
-                requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
-                run_status = await cancellation_service.get_status(request_id)
-
-                # Default deny for non-admin users when run is not known on this worker.
-                # Session-affinity clients should route cancellation to the worker that owns the run.
-                if run_status is None:
-                    if not requester_is_admin:
-                        raise JSONRPCError(-32003, "Not authorized to cancel this run", {"requestId": request_id})
-                else:
-                    run_owner_email = run_status.get("owner_email")
-                    run_owner_team_ids = run_status.get("owner_team_ids") or []
-                    requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
-                    requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
-
-                    if not requester_is_admin and not requester_is_owner and not requester_shares_team:
-                        raise JSONRPCError(-32003, "Not authorized to cancel this run", {"requestId": request_id})
-
+                await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=True)
                 await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
@@ -6357,15 +6376,11 @@ def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
     Returns:
         Bearer token value when present, otherwise None.
     """
-    if "token" in websocket.query_params:
-        logger.warning("WebSocket authentication token passed via query parameter")
-        return websocket.query_params["token"]
-
-    auth_header = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        return auth_header[7:]
-
-    return None
+    return extract_websocket_bearer_token(
+        getattr(websocket, "query_params", {}),
+        getattr(websocket, "headers", {}),
+        query_param_warning="WebSocket authentication token passed via query parameter",
+    )
 
 
 async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[str], Optional[str]]:
@@ -6388,7 +6403,12 @@ async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[s
     # JWT authentication path
     if auth_token:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
-        user = await get_current_user(credentials, request=websocket)
+        try:
+            user = await get_current_user(credentials, request=websocket)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed") from exc
         user_context = {
             "email": user.email,
             "full_name": user.full_name,

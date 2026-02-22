@@ -693,6 +693,24 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/gateways", "POST", [Permissions.GATEWAYS_READ]) is False
 
     @pytest.mark.asyncio
+    async def test_token_permission_patterns(self, middleware):
+        """Test that token endpoints enforce the expected token permissions."""
+        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_READ]) is True
+        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_CREATE]) is False
+
+        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_REVOKE]) is True
+        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_UPDATE]) is False
+
+    @pytest.mark.asyncio
     async def test_private_visibility_requires_owner(self, middleware):
         """Test that private visibility enforces owner-only access per RBAC doc."""
         # Create mock DB session directly (passed as db parameter)

@@ -29,7 +29,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import PermissionChecker
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.verify_credentials import require_auth
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, require_auth
 
 # Initialize logging
 logging_service = LoggingService()
@@ -170,20 +170,11 @@ def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
     Returns:
         Bearer token value when present, otherwise None.
     """
-    query_params = getattr(websocket, "query_params", {}) or {}
-    token = query_params.get("token") if hasattr(query_params, "get") else None
-    if token:
-        LOGGER.warning("Reverse proxy WebSocket token passed via query parameter")
-        return token
-
-    headers = getattr(websocket, "headers", {}) or {}
-    auth_header = None
-    if hasattr(headers, "get"):
-        auth_header = headers.get("authorization") or headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        return auth_header.split(" ", 1)[1]
-
-    return None
+    return extract_websocket_bearer_token(
+        getattr(websocket, "query_params", {}),
+        getattr(websocket, "headers", {}),
+        query_param_warning="Reverse proxy WebSocket token passed via query parameter",
+    )
 
 
 async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optional[str]:

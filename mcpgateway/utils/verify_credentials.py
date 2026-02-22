@@ -53,7 +53,7 @@ Examples:
 # Standard
 from base64 import b64decode
 import binascii
-from typing import Optional
+from typing import Any, Optional
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -72,6 +72,35 @@ security = HTTPBearer(auto_error=False)
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_param_warning: Optional[str] = None) -> Optional[str]:
+    """Extract bearer token from WebSocket query params or Authorization headers.
+
+    Args:
+        query_params: WebSocket query parameters mapping-like object.
+        headers: WebSocket headers mapping-like object.
+        query_param_warning: Optional warning message when query token is used.
+
+    Returns:
+        Bearer token value when present, otherwise None.
+    """
+    query = query_params or {}
+    token = query.get("token") if hasattr(query, "get") else None
+    if token:
+        if query_param_warning:
+            logger.warning(query_param_warning)
+        return token
+
+    header_values = headers or {}
+    auth_header = header_values.get("authorization") if hasattr(header_values, "get") else None
+    if not auth_header and hasattr(header_values, "get"):
+        auth_header = header_values.get("Authorization")
+    if auth_header:
+        scheme, _, credentials = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and credentials:
+            return credentials.strip()
+    return None
 
 
 async def verify_jwt_token(token: str) -> dict:

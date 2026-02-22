@@ -20,6 +20,7 @@ import hashlib
 import logging
 import secrets
 import string
+from time import monotonic
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
@@ -64,6 +65,10 @@ class SSOService:
         True
     """
 
+    _OIDC_METADATA_CACHE_TTL_SECONDS = 300
+    _oidc_config_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+    _jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
+
     def __init__(self, db: Session):
         """Initialize SSO service with database session.
 
@@ -73,8 +78,6 @@ class SSOService:
         self.db = db
         self.auth_service = EmailAuthService(db)
         self._encryption = get_encryption_service(settings.auth_encryption_secret)
-        self._oidc_config_cache: Dict[str, Dict[str, Any]] = {}
-        self._jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
 
     async def _encrypt_secret(self, secret: str) -> str:
         """Encrypt a client secret for secure storage.
@@ -159,7 +162,10 @@ class SSOService:
         normalized_issuer = issuer.rstrip("/")
         cached = self._oidc_config_cache.get(normalized_issuer)
         if cached is not None:
-            return cached
+            cached_at, cached_metadata = cached
+            if monotonic() - cached_at < self._OIDC_METADATA_CACHE_TTL_SECONDS:
+                return cached_metadata
+            self._oidc_config_cache.pop(normalized_issuer, None)
 
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
@@ -176,7 +182,7 @@ class SSOService:
             if not isinstance(metadata, dict):
                 logger.warning("OIDC discovery response for issuer %s is not a JSON object", normalized_issuer)
                 return None
-            self._oidc_config_cache[normalized_issuer] = metadata
+            self._oidc_config_cache[normalized_issuer] = (monotonic(), metadata)
             return metadata
         except Exception as exc:
             logger.warning("OIDC discovery request failed for issuer %s: %s", normalized_issuer, exc)
@@ -685,12 +691,12 @@ class SSOService:
             >>> svc = SSOService(MagicMock())
             >>> # Mock DB auth session lookup
             >>> provider = SimpleNamespace(id='github', is_enabled=True, provider_type='oauth2')
-            >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False)
+            >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False, nonce=None)
             >>> svc.db.execute.return_value.scalar_one_or_none.return_value = auth_session
             >>> # Patch token exchange and user info retrieval
             >>> async def _ex(p, sess, c):
             ...     return {'access_token': 'tok', 'id_token': 'id_tok'}
-            >>> async def _ui(p, access, token_data=None):
+            >>> async def _ui(p, access, token_data=None, expected_nonce=None):
             ...     return {'email': 'user@example.com'}
             >>> svc._exchange_code_for_tokens = _ex
             >>> svc._get_user_info = _ui
@@ -767,10 +773,18 @@ class SSOService:
                 logger.error(f"Failed to exchange code for tokens for provider {provider_id}")
                 return None
             logger.info(f"Token exchange successful for provider {provider_id}")
+            callback_nonce = getattr(auth_session, "nonce", None)
 
             # For OIDC providers, verify id_token before any claim extraction.
-            if provider.provider_type == "oidc" and isinstance(token_data.get("id_token"), str):
-                verified_claims = await self._verify_oidc_id_token(provider, token_data["id_token"], expected_nonce=auth_session.nonce)
+            if provider.provider_type == "oidc":
+                if callback_nonce is None:
+                    logger.error("OAuth callback: missing nonce for OIDC provider %s.", provider_id)
+                    return None
+                id_token = token_data.get("id_token")
+                if not isinstance(id_token, str):
+                    logger.error("OAuth callback: missing id_token for OIDC provider %s.", provider_id)
+                    return None
+                verified_claims = await self._verify_oidc_id_token(provider, id_token, expected_nonce=callback_nonce)
                 if verified_claims is None:
                     logger.error(f"id_token verification failed for provider {provider_id}")
                     return None
@@ -778,7 +792,7 @@ class SSOService:
                 token_data["_verified_id_token_claims"] = verified_claims
 
             # Get user info from provider (pass full token_data for id_token parsing)
-            user_info = await self._get_user_info(provider, token_data["access_token"], token_data)
+            user_info = await self._get_user_info(provider, token_data["access_token"], token_data, expected_nonce=callback_nonce)
             if not user_info:
                 logger.error(f"Failed to get user info for provider {provider_id}")
                 return None
@@ -829,13 +843,14 @@ class SSOService:
 
         return None
 
-    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get user information from provider using access token.
 
         Args:
             provider: SSO provider configuration
             access_token: OAuth access token
             token_data: Optional full token response containing id_token for OIDC providers
+            expected_nonce: Nonce bound to the current auth session for OIDC id_token verification
 
         Returns:
             User info dict or None if failed
@@ -848,7 +863,10 @@ class SSOService:
         if token_data and isinstance(token_data.get("_verified_id_token_claims"), dict):
             verified_id_token_claims = token_data.get("_verified_id_token_claims")
         elif provider.provider_type == "oidc" and token_data and isinstance(token_data.get("id_token"), str):
-            verified_id_token_claims = await self._verify_oidc_id_token(provider, token_data["id_token"])
+            if expected_nonce is None:
+                logger.warning("Skipping OIDC id_token fallback verification for provider %s because expected nonce is unavailable.", provider.id)
+            else:
+                verified_id_token_claims = await self._verify_oidc_id_token(provider, token_data["id_token"], expected_nonce=expected_nonce)
 
         keycloak_id_token_claims: Optional[Dict[str, Any]] = None
         if provider.id == "keycloak" and verified_id_token_claims:

@@ -19,7 +19,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, PasswordResetToken
+from mcpgateway.db import (
+    EmailAuthEvent,
+    EmailTeam,
+    EmailTeamInvitation,
+    EmailTeamJoinRequest,
+    EmailTeamMember,
+    EmailTeamMemberHistory,
+    EmailUser,
+    PasswordResetToken,
+    PendingUserApproval,
+    Role,
+    SSOAuthSession,
+    TokenRevocation,
+    UserRole,
+)
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 
@@ -2378,6 +2392,61 @@ class TestEmailAuthServiceUserDeletion:
             result = await service.delete_user("test@example.com")
 
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_delete_user_cleans_join_request_and_related_fk_references(self, service, mock_db, mock_user):
+        """Test user deletion clears join-request related FKs to avoid DB integrity errors."""
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_teams_result = MagicMock()
+        mock_teams_result.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, MagicMock(), MagicMock()]
+
+        query_mocks = {}
+
+        def _build_query():
+            q = MagicMock()
+            q.filter.return_value = q
+            q.order_by.return_value = q
+            q.update.return_value = 0
+            q.delete.return_value = 0
+            q.first.return_value = None
+            return q
+
+        def _query(*entities):
+            key = tuple(entities)
+            if key not in query_mocks:
+                query_mocks[key] = _build_query()
+            return query_mocks[key]
+
+        mock_db.query.side_effect = _query
+        query_mocks[(EmailUser.email,)] = _build_query()
+        query_mocks[(EmailUser.email,)].first.return_value = ("admin@example.com",)
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        def _close_task(coro):
+            coro.close()
+            return None
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            with patch("asyncio.create_task", side_effect=_close_task):
+                result = await service.delete_user("test@example.com")
+
+        assert result is True
+        query_mocks[(EmailTeamJoinRequest,)].update.assert_called_once_with({EmailTeamJoinRequest.reviewed_by: None}, synchronize_session=False)
+        query_mocks[(EmailTeamJoinRequest,)].delete.assert_called_once_with(synchronize_session=False)
+        query_mocks[(EmailTeamInvitation,)].update.assert_called_once_with({EmailTeamInvitation.invited_by: "admin@example.com"}, synchronize_session=False)
+        query_mocks[(Role,)].update.assert_called_once_with({Role.created_by: "admin@example.com"}, synchronize_session=False)
+        query_mocks[(UserRole,)].update.assert_called_once_with({UserRole.granted_by: "admin@example.com"}, synchronize_session=False)
+        query_mocks[(TokenRevocation,)].update.assert_called_once_with({TokenRevocation.revoked_by: "admin@example.com"}, synchronize_session=False)
+        query_mocks[(EmailTeamMember,)].update.assert_called_once_with({EmailTeamMember.invited_by: None}, synchronize_session=False)
+        query_mocks[(EmailTeamMemberHistory,)].update.assert_called_once_with({EmailTeamMemberHistory.action_by: None}, synchronize_session=False)
+        query_mocks[(PendingUserApproval,)].update.assert_called_once_with({PendingUserApproval.approved_by: None}, synchronize_session=False)
+        query_mocks[(SSOAuthSession,)].update.assert_called_once_with({SSOAuthSession.user_email: None}, synchronize_session=False)
 
     @pytest.mark.asyncio
     async def test_delete_user_not_found(self, service, mock_db):

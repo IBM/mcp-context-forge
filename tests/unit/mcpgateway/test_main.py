@@ -597,13 +597,49 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
-    @patch("mcpgateway.main.logging_service.notify")
-    def test_handle_notification_cancelled(self, mock_notify, test_client, auth_headers):
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
         """Test handling request cancelled notification."""
+        mock_get_context.return_value = ("test_user@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "test_user@example.com", "owner_team_ids": []}
         req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
         response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
         assert response.status_code == 200
-        mock_notify.assert_called_once()
+        mock_cancel_run.assert_awaited_once_with("123", reason=None)
+        mock_notify.assert_awaited_once()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled_denied_for_non_owner(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """Test cancellation notification denied for non-owner/non-admin users."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "owner@example.com", "owner_team_ids": []}
+        req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
+        response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+        mock_cancel_run.assert_not_awaited()
+        mock_notify.assert_not_awaited()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_alias_cancelled_enforces_authorization(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """The /notifications alias must enforce the same cancellation authorization rules."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = {"owner_email": "owner@example.com", "owner_team_ids": []}
+        req = {"method": "notifications/cancelled", "params": {"requestId": "123"}}
+        response = test_client.post("/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+        mock_cancel_run.assert_not_awaited()
+        mock_notify.assert_not_awaited()
 
     @patch("mcpgateway.main.logging_service.notify")
     def test_handle_notification_message(self, mock_notify, test_client, auth_headers):
