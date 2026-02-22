@@ -997,6 +997,18 @@ class TeamManagementService:
 
         return team_id
 
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape LIKE wildcards for prefix search.
+
+        Args:
+            value: Raw value to escape for LIKE matching.
+
+        Returns:
+            Escaped string safe for LIKE patterns.
+        """
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     async def get_team_members(
         self,
         team_id: str,
@@ -1004,6 +1016,7 @@ class TeamManagementService:
         limit: Optional[int] = None,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
+        search: Optional[str] = None,
     ) -> Union[List[Tuple[EmailUser, EmailTeamMember]], Tuple[List[Tuple[EmailUser, EmailTeamMember]], Optional[str]], Dict[str, Any]]:
         """Get all members of a team with optional cursor or page-based pagination.
 
@@ -1016,6 +1029,7 @@ class TeamManagementService:
             limit: Maximum number of members to return (for cursor-based, default: 50)
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination (default: 30)
+            search: Optional search term to filter by email or full name
 
         Returns:
             - If cursor is provided: Tuple (members, next_cursor)
@@ -1028,6 +1042,15 @@ class TeamManagementService:
         try:
             # Build base query - for pagination, select EmailTeamMember and eager-load user
             # For backward compat (no pagination), select both entities as tuple
+            # Build optional search filter
+            search_filter = None
+            if search and search.strip():
+                search_term = f"{self._escape_like(search.strip())}%"
+                search_filter = or_(
+                    EmailUser.email.ilike(search_term, escape="\\"),
+                    EmailUser.full_name.ilike(search_term, escape="\\"),
+                )
+
             if cursor is None and page is None and limit is None:
                 # Backward compatibility: return tuples (no pagination requested)
                 query = (
@@ -1036,6 +1059,8 @@ class TeamManagementService:
                     .where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
                     .order_by(EmailUser.full_name, EmailUser.email)
                 )
+                if search_filter is not None:
+                    query = query.where(search_filter)
                 result = self.db.execute(query)
                 members = list(result.all())
                 self.db.commit()
@@ -1048,6 +1073,8 @@ class TeamManagementService:
                 .where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
                 .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
             )
+            if search_filter is not None:
+                query = query.where(search_filter)
 
             # PAGE-BASED PAGINATION (Admin UI) - use unified_paginate
             if page is not None:

@@ -853,6 +853,43 @@ class TestTeamManagementService:
         assert len(members) == 2
         assert next_cursor is None  # No more results
 
+    def test_escape_like(self, service):
+        """Test that _escape_like escapes LIKE wildcards."""
+        assert service._escape_like("hello") == "hello"
+        assert service._escape_like("50%") == "50\\%"
+        assert service._escape_like("a_b") == "a\\_b"
+        assert service._escape_like("c:\\path") == "c:\\\\path"
+        assert service._escape_like("%_\\") == "\\%\\_\\\\"
+
+    @pytest.mark.asyncio
+    async def test_get_team_members_with_search(self, service, mock_db):
+        """Test getting team members with a search filter."""
+        mock_members = [(MagicMock(spec=EmailUser), MagicMock(spec=EmailTeamMember))]
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = mock_members
+        mock_db.execute.return_value = mock_result
+        mock_db.commit.return_value = None
+
+        result = await service.get_team_members("team123", search="john")
+
+        assert result == mock_members
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_team_members_with_empty_search(self, service, mock_db):
+        """Test that empty/whitespace search is treated as no filter."""
+        mock_members = [(MagicMock(spec=EmailUser), MagicMock(spec=EmailTeamMember)) for _ in range(3)]
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = mock_members
+        mock_db.execute.return_value = mock_result
+        mock_db.commit.return_value = None
+
+        result = await service.get_team_members("team123", search="  ")
+
+        assert result == mock_members
+
     @pytest.mark.asyncio
     async def test_get_user_role_in_team(self, service, mock_db):
         """Test getting user role in team."""
