@@ -8,9 +8,9 @@
 
 ### Overview
 
-This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, and authorization with **12 commits across 8 hardening items** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15):
+This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, and authorization with **12 commits across 9 hardening items** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15, EXTRA-01):
 
-- **🔐 8 Hardening Changes** - SSRF strict defaults, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP transport revocation checks
+- **🔐 9 Hardening Items** - SSRF strict defaults, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP/RPC token-scope enforcement, MCP transport revocation checks
 - **🧪 4 Testing** - Full regression coverage for hardened paths, token scope MCP/RPC coverage, locust load test alignment
 
 > **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. Cancellation, OAuth DCR, and token scoping paths enforce proper authorization gates.
@@ -120,15 +120,15 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 ### Fixed
 
-#### **🔐 Security** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15)
+#### **🔐 Security** (S-01, O-01, O-05, U-05, C-03, C-09, C-10, C-15, EXTRA-01)
 * **SSRF defaults inverted to strict** - localhost, private networks blocked; DNS fail-closed by default (S-01)
 * **OIDC id_token now verified** - cryptographic signature validation in SSO callback (O-01)
 * **OAuth DCR admin gate** - non-admin users denied access to client management endpoints (O-05)
 * **MCP transport revocation checks** - JTI revocation and user status validated in streamable HTTP auth (U-05)
 * **Bearer scheme case-insensitive** - `bearer` and `Bearer` both accepted in token scoping (C-03)
 * **Token scoping default deny** - unmapped paths now denied instead of allowed (C-15)
-* **WebSocket relay authentication** - `/ws` requires auth and MCP interaction permissions (C-10)
-* **Reverse proxy WebSocket auth** - `/reverse-proxy/ws` requires server management permissions (C-10)
+* **WebSocket relay authentication** - `/ws` requires auth and MCP interaction permissions (EXTRA-01)
+* **Reverse proxy WebSocket auth** - `/reverse-proxy/ws` requires server management permissions (EXTRA-01)
 * **Cancellation authorization** - only run owner, shared-team members, or admins can cancel (C-10)
 * **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
 
@@ -139,7 +139,8 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **O-05**: OAuth DCR management endpoints restricted to admin users
 * **U-05**: MCP transport now validates token revocation status and user active state
 * **C-03**: Bearer scheme parsing normalized to case-insensitive matching
-* **C-10**: WebSocket relay, reverse proxy, and cancellation endpoints gated with proper authorization
+* **EXTRA-01**: WebSocket relay and reverse proxy endpoints gated with proper authorization
+* **C-10**: Cancellation endpoints gated with proper authorization
 * **C-15**: Token scoping defaults to deny for unmapped API paths
 
 ### Chores
