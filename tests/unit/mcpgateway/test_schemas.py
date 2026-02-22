@@ -13,7 +13,7 @@ defined in the models.py module.
 from datetime import datetime, timedelta, timezone
 import json
 import os
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 # Third-Party
 from pydantic import ValidationError
@@ -1169,3 +1169,34 @@ class TestSchemaValidators:
             gateway_mode="direct_proxy",
         )
         assert gateway.gateway_mode == "direct_proxy"
+
+    def test_resource_subscription_rejects_empty_subscriber_id(self):
+        """ResourceSubscription should reject empty subscriber IDs."""
+        from mcpgateway.schemas import ResourceSubscription
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResourceSubscription(uri="resource://one", subscriber_id="")
+
+        assert "Subscriber ID cannot be empty" in str(exc_info.value)
+
+    def test_resource_subscription_rejects_unsafe_email_like_subscriber_id(self):
+        """Email-like IDs should still honor unsafe-character validation pattern."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.schemas import ResourceSubscription
+
+        with patch.object(SecurityValidator, "VALIDATION_UNSAFE_URI_PATTERN", "@"):
+            with pytest.raises(ValidationError) as exc_info:
+                ResourceSubscription(uri="resource://one", subscriber_id="user@example.com")
+
+        assert "Subscriber ID cannot contain HTML special characters" in str(exc_info.value)
+
+    def test_resource_subscription_rejects_too_long_email_like_subscriber_id(self):
+        """Email-like IDs should respect max-length limits."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.schemas import ResourceSubscription
+
+        long_subscriber = "a" * (SecurityValidator.MAX_NAME_LENGTH + 1)
+        with pytest.raises(ValidationError) as exc_info:
+            ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
+
+        assert "Subscriber ID exceeds maximum length" in str(exc_info.value)

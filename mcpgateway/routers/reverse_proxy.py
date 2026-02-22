@@ -162,7 +162,7 @@ _REVERSE_PROXY_CONNECT_PERMISSIONS = [
 
 
 def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
-    """Extract bearer token from WebSocket query params or headers.
+    """Extract bearer token from WebSocket Authorization headers.
 
     Args:
         websocket: Incoming WebSocket connection.
@@ -248,7 +248,6 @@ async def websocket_endpoint(
 
     Supports:
     - Bearer token in Authorization header
-    - Token in query parameter (?token=...)
     - Proxy authentication (when trust_proxy_auth is True and mcp_client_auth_enabled is False)
 
     Args:

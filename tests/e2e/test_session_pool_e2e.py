@@ -344,7 +344,7 @@ class TestPoolMetricsE2E:
         """Verify circuit breaker trips are tracked in metrics."""
         pool = MCPSessionPool(
             circuit_breaker_threshold=2,
-            circuit_breaker_reset_seconds=0.1,
+            circuit_breaker_reset_seconds=0.05,
         )
 
         try:
@@ -358,8 +358,8 @@ class TestPoolMetricsE2E:
             # Circuit should be open
             assert pool._is_circuit_open("http://failing:8080")
 
-            # Wait for reset
-            await asyncio.sleep(0.15)
+            # Wait for reset (wide margin to avoid flakiness under CI load)
+            await asyncio.sleep(0.3)
 
             # Circuit should be closed again
             assert not pool._is_circuit_open("http://failing:8080")

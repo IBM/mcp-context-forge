@@ -10154,6 +10154,22 @@ async def admin_unified_search(
         }
 
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
+        """Execute entity search and return empty results on auth denials.
+
+        This keeps unified search resilient when one entity type is not visible
+        to the caller due to authorization boundaries.
+
+        Args:
+            search_callable: Async entity search function to execute.
+            empty_key: Entity collection key used for fallback empty payloads.
+            **kwargs: Parameters forwarded to ``search_callable``.
+
+        Returns:
+            Search result payload or an empty payload for auth-denied entities.
+
+        Raises:
+            HTTPException: Re-raised when the failure is not an auth-denied status.
+        """
         try:
             return await search_callable(**kwargs)
         except HTTPException as exc:

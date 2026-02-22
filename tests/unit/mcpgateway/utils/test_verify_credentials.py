@@ -186,6 +186,22 @@ async def test_verify_credentials_enriches(monkeypatch):
     assert enriched["token"] == tok
 
 
+def test_extract_websocket_bearer_token_uses_authorization_header_only():
+    token = vc.extract_websocket_bearer_token(
+        {"token": "query-token"},
+        {"authorization": "Bearer header-token"},
+    )
+    assert token == "header-token"
+
+
+def test_extract_websocket_bearer_token_rejects_query_only_token():
+    token = vc.extract_websocket_bearer_token(
+        {"token": "query-token"},
+        {},
+    )
+    assert token is None
+
+
 # ---------------------------------------------------------------------------
 # require_auth
 # ---------------------------------------------------------------------------
