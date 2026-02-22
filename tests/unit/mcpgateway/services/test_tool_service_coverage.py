@@ -8,6 +8,7 @@ branch coverage beyond the current 63%.
 # Standard
 import asyncio
 import base64
+import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import time
@@ -2528,6 +2529,55 @@ class TestInvokeA2AToolCoverage:
         assert result.content[0].text == "raw-response"
 
     @pytest.mark.asyncio
+    async def test_success_with_dict_response_value(self, tool_service):
+        """When response value is a dict, it should be serialized as valid JSON, not Python repr."""
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": {"has_chart": False, "tracking_system": "IPP", "sql_queries": []}})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {"query": "hi"})
+        assert result.is_error is False
+        text = result.content[0].text
+        # Must be valid JSON, not Python repr
+        parsed = json.loads(text)
+        assert parsed["has_chart"] is False
+        assert "False" not in text  # Python repr would have capital False
+
+    @pytest.mark.asyncio
+    async def test_success_without_response_key_dict(self, tool_service):
+        """When entire response is a dict without 'response' key, it should be valid JSON."""
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "custom"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"id": 1, "jsonrpc": "2.0", "result": {"has_chart": False}})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        text = result.content[0].text
+        parsed = json.loads(text)
+        assert parsed["result"]["has_chart"] is False
+        assert "False" not in text
+
+    @pytest.mark.asyncio
     async def test_exception_returns_error_result(self, tool_service):
         tool = self._make_a2a_tool()
         agent = MagicMock()
@@ -4705,6 +4755,69 @@ class TestInvokeToolRestSuccess:
 
 
 class TestInvokeToolRestErrorResponse:
+    async def _invoke_with_error_response(self, tool_service, status_code, json_return, text_body):
+        """Helper to invoke a REST GET tool with a mocked error response."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json = MagicMock(return_value=json_return)
+        mock_response.text = text_body
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            return await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_rest_error_dict_serialized_as_json(self, tool_service):
+        """When REST error field is a dict, it should be serialized as valid JSON, not Python repr."""
+        result = await self._invoke_with_error_response(
+            tool_service,
+            status_code=400,
+            json_return={"error": {"code": "INVALID", "details": {"field": "name", "required": True}}},
+            text_body="Bad Request",
+        )
+        assert result.is_error is True
+        text = result.content[0].text
+        # Must be valid JSON, not Python repr
+        parsed = json.loads(text)
+        assert parsed["code"] == "INVALID"
+        assert parsed["details"]["required"] is True
+        assert "True" not in text  # Python repr would have capital True
+
+    @pytest.mark.asyncio
+    async def test_rest_error_string_passed_through(self, tool_service):
+        """When REST error field is a string, it should be passed through as-is."""
+        result = await self._invoke_with_error_response(
+            tool_service,
+            status_code=500,
+            json_return={"error": "Internal server error"},
+            text_body="Internal Server Error",
+        )
+        assert result.is_error is True
+        assert result.content[0].text == "Internal server error"
+
     @pytest.mark.asyncio
     async def test_rest_non_standard_status_non_json(self, tool_service):
         """REST tool 207 Multi-Status with non-JSON body."""
@@ -5108,6 +5221,67 @@ class TestInvokeToolPluginContext:
         assert gc.server_id == "old-server"
         # user already set -> should not overwrite
         assert gc.user == "already@test.com"
+
+
+class TestInvokeToolPluginPostInvokeSerialization:
+    @pytest.mark.asyncio
+    async def test_plugin_post_invoke_dict_result_serialized_as_json(self, tool_service):
+        """When plugin post-invoke returns a dict without 'content' key, it should be serialized as valid JSON."""
+        # First-Party
+        from mcpgateway.plugins.framework import ToolHookType
+
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        # Plugin post-invoke returns a modified_payload whose result is a dict without "content" key
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        plugin_manager.invoke_hook = AsyncMock(
+            side_effect=[
+                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False})), {}),  # post-invoke
+            ]
+        )
+        tool_service._plugin_manager = plugin_manager
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result.is_error is False
+        text = result.content[0].text
+        # Must be valid JSON, not Python repr
+        parsed = json.loads(text)
+        assert parsed["status"] == "transformed"
+        assert parsed["valid"] is False
+        assert "False" not in text  # Python repr would have capital False
+
+        # Cleanup
+        tool_service._plugin_manager = None
 
 
 class TestInvokeToolPluginMetadataFromPayload:

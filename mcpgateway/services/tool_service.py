@@ -3202,8 +3202,9 @@ class ToolService:
                             result = response.json()
                         except orjson.JSONDecodeError:
                             result = {"response_text": response.text} if response.text else {}
+                        error_val = result["error"] if "error" in result else "Tool error encountered"
                         tool_result = ToolResult(
-                            content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
+                            content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
                             is_error=True,
                         )
                         # Don't mark as successful for error responses - success remains False
@@ -3807,9 +3808,10 @@ class ToolService:
                     if http_response.status_code == 200:
                         response_data = http_response.json()
                         if isinstance(response_data, dict) and "response" in response_data:
-                            content = [TextContent(type="text", text=str(response_data["response"]))]
+                            val = response_data["response"]
+                            content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
                         else:
-                            content = [TextContent(type="text", text=str(response_data))]
+                            content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
                         tool_result = ToolResult(content=content, is_error=False)
                         success = True
                     else:
@@ -3840,7 +3842,7 @@ class ToolService:
                             tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
                         else:
                             # If result is not in expected format, convert it to text content
-                            tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+                            tool_result = ToolResult(content=[TextContent(type="text", text=modified_result if isinstance(modified_result, str) else orjson.dumps(modified_result).decode())])
 
                 return tool_result
             except (PluginError, PluginViolationError):
@@ -4762,9 +4764,10 @@ class ToolService:
 
             # Convert A2A response to MCP ToolResult format
             if isinstance(response_data, dict) and "response" in response_data:
-                content = [TextContent(type="text", text=str(response_data["response"]))]
+                val = response_data["response"]
+                content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
             else:
-                content = [TextContent(type="text", text=str(response_data))]
+                content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
 
             result = ToolResult(content=content, is_error=False)
 

@@ -22,6 +22,7 @@ have no heavy dependencies.
 from __future__ import annotations
 
 # Standard
+import json
 from contextlib import asynccontextmanager
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8838,3 +8839,149 @@ async def test_local_affinity_post_no_injection_without_server_url(monkeypatch):
                     assert "server_id" not in posted_json.get("params", {})
 
     await wrapper.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# _rehydrate_content_items and content serialization — JSON correctness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_tool_rehydrate_unknown_type_produces_valid_json(monkeypatch):
+    """When _rehydrate_content_items encounters an unknown content type dict, it should serialize as valid JSON."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        call_tool,
+        request_headers_var,
+        types,
+        user_context_var,
+    )
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={
+        "result": {
+            "content": [
+                {"type": "custom_widget", "data": {"enabled": False, "count": 42}},
+            ],
+        },
+    })
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value={"status": "active", "gateway": {"url": "http://gw:9000", "id": "g1", "transport": "streamablehttp"}})
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
+            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {"arg": "val"})
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], types.TextContent)
+        text = result[0].text
+        parsed = json.loads(text)
+        assert parsed["data"]["enabled"] is False
+        assert "False" not in text
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_rehydrate_fallback_on_validation_error(monkeypatch):
+    """When model_validate fails for a known type, fallback should produce valid JSON."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        call_tool,
+        request_headers_var,
+        types,
+        user_context_var,
+    )
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={
+        "result": {
+            "content": [
+                {"type": "image", "invalid_field": True, "nested": {"active": False}},
+            ],
+        },
+    })
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value={"status": "active", "gateway": {"url": "http://gw:9000", "id": "g1", "transport": "streamablehttp"}})
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
+            patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], types.TextContent)
+        text = result[0].text
+        parsed = json.loads(text)
+        assert parsed["invalid_field"] is True
+        assert parsed["nested"]["active"] is False
+        assert "False" not in text
+        assert "True" not in text
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_unknown_content_type_local_path(monkeypatch):
+    """When local invoke returns unknown content type, it should serialize as valid JSON via orjson."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+
+    # Create a mock content object with unknown type
+    mock_content = MagicMock()
+    mock_content.type = "unknown_custom_type"
+    mock_content.model_dump = MagicMock(return_value={"type": "unknown_custom_type", "payload": {"active": False, "items": [1, 2]}})
+    mock_content.annotations = None
+    mock_content.meta = None
+
+    mock_result = MagicMock()
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    text = result[0].text
+    parsed = json.loads(text)
+    assert parsed["payload"]["active"] is False
+    assert "False" not in text
