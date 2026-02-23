@@ -87,6 +87,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -1418,7 +1419,9 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
              violation details.
 
     Returns:
-        JSONResponse: A 200 response with error details in JSON-RPC format.
+        JSONResponse: A response with error details in JSON-RPC format.
+                     Uses HTTP status code from violation if present (e.g., 429 for rate limiting),
+                     otherwise defaults to 200 for JSON-RPC compliance.
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginViolationError
@@ -1436,7 +1439,7 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         ... ))
         >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
         >>> result.status_code
-        200
+        422
         >>> content = orjson.loads(result.body.decode())
         >>> content["error"]["code"]
         -32602
@@ -1460,7 +1463,23 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         if exc.violation.plugin_name:
             violation_details["plugin_name"] = exc.violation.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
-    return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+
+    # Use HTTP status code from violation if present (e.g., 429 for rate limiting)
+    http_status = exc.violation.http_status_code if exc.violation and exc.violation.http_status_code else None
+    if http_status and not 100 <= http_status <= 599:
+        logger.warning(f"Invalid HTTP status code {http_status} from violation, defaulting to 200")
+        http_status = None
+    if not http_status:
+        logger.info("Using Plugin violation code mapping for lack of http_status_code")
+        http_status = PLUGIN_VIOLATION_CODE_MAPPING.get(exc.violation.code, 200) if exc.violation and exc.violation.code else 200
+
+    # Collect HTTP headers from violation if present
+    headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
+
+    response = ORJSONResponse(status_code=http_status, content={"error": json_rpc_error.model_dump()})
+    if headers:
+        response.headers.update(headers)
+    return response
 
 
 @app.exception_handler(PluginError)
