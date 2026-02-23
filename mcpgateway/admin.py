@@ -1478,13 +1478,13 @@ async def get_overview_partial(
 @rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> GlobalConfigRead:
     """Get the global passthrough headers configuration.
 
     Args:
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         GlobalConfigRead: The current global passthrough headers configuration
@@ -1499,6 +1499,7 @@ async def get_global_passthrough_headers(
         >>> inspect.iscoroutinefunction(get_global_passthrough_headers)
         True
     """
+    _ = current_user_ctx
     # Use cache for reads (Issue #1715)
     # Pass env defaults so env/merge modes return correct headers
     passthrough_headers = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
@@ -1512,7 +1513,7 @@ async def update_global_passthrough_headers(
     request: Request,  # pylint: disable=unused-argument
     config_update: GlobalConfigUpdate,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> GlobalConfigRead:
     """Update the global passthrough headers configuration.
 
@@ -1520,7 +1521,7 @@ async def update_global_passthrough_headers(
         request: HTTP request object
         config_update: The new configuration
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Raises:
         HTTPException: If there is a conflict or validation error
@@ -1538,6 +1539,7 @@ async def update_global_passthrough_headers(
         >>> inspect.iscoroutinefunction(update_global_passthrough_headers)
         True
     """
+    _ = current_user_ctx
     try:
         config = db.query(GlobalConfig).first()
         if not config:
@@ -1564,7 +1566,7 @@ async def update_global_passthrough_headers(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=10)  # Strict limit for cache operations
 async def invalidate_passthrough_headers_cache(
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Invalidate the GlobalConfig cache.
@@ -1574,7 +1576,7 @@ async def invalidate_passthrough_headers_cache(
     changes to propagate immediately across all workers.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1590,6 +1592,7 @@ async def invalidate_passthrough_headers_cache(
         >>> inspect.iscoroutinefunction(invalidate_passthrough_headers_cache)
         True
     """
+    _ = current_user_ctx
     global_config_cache.invalidate()
     stats = global_config_cache.stats()
     return {
@@ -1603,7 +1606,7 @@ async def invalidate_passthrough_headers_cache(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=30)
 async def get_passthrough_headers_cache_stats(
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get GlobalConfig cache statistics.
@@ -1612,7 +1615,7 @@ async def get_passthrough_headers_cache_stats(
     Useful for monitoring cache effectiveness and debugging.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1628,6 +1631,7 @@ async def get_passthrough_headers_cache_stats(
         >>> inspect.iscoroutinefunction(get_passthrough_headers_cache_stats)
         True
     """
+    _ = current_user_ctx
     return global_config_cache.stats()
 
 
@@ -1640,7 +1644,7 @@ async def get_passthrough_headers_cache_stats(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=10)
 async def invalidate_a2a_stats_cache(
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Invalidate the A2A stats cache.
@@ -1650,7 +1654,7 @@ async def invalidate_a2a_stats_cache(
     changes to propagate immediately.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1664,6 +1668,7 @@ async def invalidate_a2a_stats_cache(
         >>> inspect.iscoroutinefunction(invalidate_a2a_stats_cache)
         True
     """
+    _ = current_user_ctx
     a2a_stats_cache.invalidate()
     stats = a2a_stats_cache.stats()
     return {
@@ -1677,7 +1682,7 @@ async def invalidate_a2a_stats_cache(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 @rate_limit(requests_per_minute=30)
 async def get_a2a_stats_cache_stats(
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get A2A stats cache statistics.
@@ -1686,7 +1691,7 @@ async def get_a2a_stats_cache_stats(
     Useful for monitoring cache effectiveness and debugging.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1700,6 +1705,7 @@ async def get_a2a_stats_cache_stats(
         >>> inspect.iscoroutinefunction(get_a2a_stats_cache_stats)
         True
     """
+    _ = current_user_ctx
     return a2a_stats_cache.stats()
 
 
@@ -1708,7 +1714,7 @@ async def get_a2a_stats_cache_stats(
 @rate_limit(requests_per_minute=60)
 async def get_mcp_session_pool_metrics(
     request: Request,  # pylint: disable=unused-argument
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get MCP session pool metrics.
@@ -1719,7 +1725,7 @@ async def get_mcp_session_pool_metrics(
 
     Args:
         request: HTTP request object (required by rate_limit decorator)
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1747,6 +1753,7 @@ async def get_mcp_session_pool_metrics(
         >>> inspect.iscoroutinefunction(get_mcp_session_pool_metrics)
         True
     """
+    _ = current_user_ctx
     if not settings.mcp_session_pool_enabled:
         return {"enabled": False, "message": "MCP session pool is disabled"}
 
@@ -1762,7 +1769,7 @@ async def get_mcp_session_pool_metrics(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_configuration_settings(
     _db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Get application configuration settings grouped by category.
 
@@ -1770,11 +1777,12 @@ async def get_configuration_settings(
 
     Args:
         _db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Dict with configuration groups and their settings
     """
+    _ = current_user_ctx
 
     def mask_sensitive(value: Any, key: str) -> Any:
         """Mask sensitive configuration values.
@@ -5264,17 +5272,19 @@ async def admin_get_team_edit(
     team_id: str,
     _request: Request,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get team edit form via admin UI.
 
     Args:
         team_id: ID of the team to edit
         db: Database session
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         HTMLResponse: Rendered team edit form
     """
+    _ = current_user_ctx
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -6923,17 +6933,19 @@ async def admin_get_user_edit(
     user_email: str,
     _request: Request,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get user edit form via admin UI.
 
     Args:
         user_email: Email of user to edit
         db: Database session
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         HTMLResponse: User edit form HTML
     """
+    _ = current_user_ctx
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7085,7 +7097,7 @@ async def admin_update_user(
     user_email: str,
     request: Request,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Update user via admin UI.
 
@@ -7093,10 +7105,12 @@ async def admin_update_user(
         user_email: Email of user to update
         request: FastAPI request object
         db: Database session
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         HTMLResponse: Success message or error response
     """
+    _ = current_user_ctx
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -12344,7 +12358,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_aggregated_metrics(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Retrieve aggregated metrics and top performers for all entity types.
 
@@ -12354,6 +12368,7 @@ async def get_aggregated_metrics(
 
     Args:
         db (Session): Database session dependency for querying metrics.
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         Dict[str, Any]: A dictionary containing aggregated metrics and top performers
@@ -12365,6 +12380,7 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with all tools, resources, prompts,
               and servers with their metrics.
     """
+    _ = current_user_ctx
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
@@ -12655,7 +12671,7 @@ async def admin_test_gateway(
 # Event Streaming via SSE to the Admin UI
 @admin_router.get("/events")
 @require_permission("admin.events", allow_admin_bypass=False)
-async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
+async def admin_events(request: Request, current_user_ctx=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """
     Stream admin events from all services via SSE (Server-Sent Events).
 
@@ -12665,7 +12681,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
     Args:
         request (Request): The FastAPI request object, used to detect client disconnection.
-        _user (Any): Authenticated user dependency (ensures admin permissions).
+        current_user_ctx (Any): Authenticated user dependency (ensures admin permissions).
         _db: Database session for permission checks.
 
     Returns:
@@ -15445,7 +15461,7 @@ async def list_catalog_servers(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> CatalogListResponse:
     """Get list of catalog servers with filtering.
 
@@ -15461,7 +15477,7 @@ async def list_catalog_servers(
         limit: Maximum results
         offset: Pagination offset
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         List of catalog servers matching filters
@@ -15469,6 +15485,7 @@ async def list_catalog_servers(
     Raises:
         HTTPException: If the catalog feature is disabled.
     """
+    _ = current_user_ctx
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
@@ -15494,7 +15511,7 @@ async def register_catalog_server(
     http_request: Request,
     request: Optional[CatalogServerRegisterRequest] = None,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> Union[CatalogServerRegisterResponse, HTMLResponse]:
     """Register a catalog server.
 
@@ -15503,7 +15520,7 @@ async def register_catalog_server(
         http_request: FastAPI request object (for HTMX detection)
         request: Optional registration parameters
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Registration response with success status (JSON or HTML)
@@ -15511,6 +15528,7 @@ async def register_catalog_server(
     Raises:
         HTTPException: If the catalog feature is disabled.
     """
+    _ = current_user_ctx
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
@@ -15593,14 +15611,14 @@ async def register_catalog_server(
 async def check_catalog_server_status(
     server_id: str,
     _db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> CatalogServerStatusResponse:
     """Check catalog server availability.
 
     Args:
         server_id: Catalog server ID to check
         _db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Server status including availability and response time
@@ -15608,6 +15626,7 @@ async def check_catalog_server_status(
     Raises:
         HTTPException: If the catalog feature is disabled.
     """
+    _ = current_user_ctx
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
@@ -15619,14 +15638,14 @@ async def check_catalog_server_status(
 async def bulk_register_catalog_servers(
     request: CatalogBulkRegisterRequest,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> CatalogBulkRegisterResponse:
     """Register multiple catalog servers at once.
 
     Args:
         request: Bulk registration request with server IDs
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Bulk registration response with success/failure details
@@ -15634,6 +15653,7 @@ async def bulk_register_catalog_servers(
     Raises:
         HTTPException: If the catalog feature is disabled.
     """
+    _ = current_user_ctx
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
@@ -15649,7 +15669,7 @@ async def catalog_partial(
     search: Optional[str] = None,
     page: int = 1,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get HTML partial for catalog servers (used by HTMX).
 
@@ -15660,7 +15680,7 @@ async def catalog_partial(
         search: Search term
         page: Page number (1-indexed)
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         HTML partial with filtered catalog servers
@@ -15668,6 +15688,7 @@ async def catalog_partial(
     Raises:
         HTTPException: If the catalog feature is disabled.
     """
+    _ = current_user_ctx
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
@@ -15894,9 +15915,9 @@ async def admin_generate_support_bundle(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_maintenance_partial(
     request: Request,
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Render the maintenance dashboard partial (platform admin only).
 
     This endpoint returns the maintenance UI panel which includes:
@@ -15908,7 +15929,7 @@ async def get_maintenance_partial(
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user with admin permissions
+        current_user_ctx: Authenticated user with admin permissions
         _db: Database session for permission checks.
 
     Returns:
@@ -15942,12 +15963,12 @@ async def get_maintenance_partial(
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
+async def get_observability_partial(request: Request, current_user_ctx=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Render the observability dashboard partial.
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user with admin permissions (required by dependency)
+        current_user_ctx: Authenticated user with admin permissions (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -15959,12 +15980,12 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
+async def get_observability_metrics_partial(request: Request, current_user_ctx=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Render the advanced metrics dashboard partial.
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user with admin permissions (required by dependency)
+        current_user_ctx: Authenticated user with admin permissions (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -15976,13 +15997,13 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), current_user_ctx=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Get observability statistics for the dashboard.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back for statistics (1-168)
-        _user: Authenticated user with admin permissions (required by dependency)
+        current_user_ctx: Authenticated user with admin permissions (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16033,9 +16054,9 @@ async def get_observability_traces(
     name_search: Optional[str] = Query(None),
     attribute_search: Optional[str] = Query(None),
     tool_name: Optional[str] = Query(None),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get list of traces for the dashboard.
 
     Args:
@@ -16050,7 +16071,7 @@ async def get_observability_traces(
         name_search: Trace name search
         attribute_search: Full-text attribute search
         tool_name: Filter by tool name (shows traces that invoked this tool)
-        _user: Authenticated user with admin permissions (required by dependency)
+        current_user_ctx: Authenticated user with admin permissions (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16122,13 +16143,13 @@ async def get_observability_traces(
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_observability_trace_detail(request: Request, trace_id: str, current_user_ctx=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Get detailed trace information with spans.
 
     Args:
         request: FastAPI request object
         trace_id: UUID of the trace to retrieve
-        _user: Authenticated user with admin permissions (required by dependency)
+        current_user_ctx: Authenticated user with admin permissions (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16470,16 +16491,16 @@ async def get_latency_percentiles(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get latency percentiles (p50, p90, p95, p99) over time.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         interval_minutes: Aggregation interval in minutes (5-1440)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16634,16 +16655,16 @@ async def get_timeseries_metrics(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get time-series metrics (request rate, error rate, throughput).
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         interval_minutes: Aggregation interval in minutes (5-1440)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16961,16 +16982,16 @@ async def get_top_slow_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(10, ge=1, le=100, description="Number of results"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get top N slowest endpoints by average duration.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17030,16 +17051,16 @@ async def get_top_volume_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(10, ge=1, le=100, description="Number of results"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get top N highest volume endpoints by request count.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17097,16 +17118,16 @@ async def get_top_error_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(10, ge=1, le=100, description="Number of results"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get top N error-prone endpoints by error count and rate.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17168,9 +17189,9 @@ async def get_latency_heatmap(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     time_buckets: int = Query(24, ge=10, le=100, description="Number of time buckets"),
     latency_buckets: int = Query(20, ge=5, le=50, description="Number of latency buckets"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get latency distribution heatmap data.
 
     Uses PostgreSQL SQL aggregation for efficient computation when available,
@@ -17181,7 +17202,7 @@ async def get_latency_heatmap(
         hours: Number of hours to look back (1-168)
         time_buckets: Number of time buckets (10-100)
         latency_buckets: Number of latency buckets (5-50)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17216,16 +17237,16 @@ async def get_tool_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get tool usage frequency statistics.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17289,16 +17310,16 @@ async def get_tool_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get tool performance metrics (avg, min, max duration).
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17341,16 +17362,16 @@ async def get_tool_errors(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get tool error rates and statistics.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17413,16 +17434,16 @@ async def get_tool_chains(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of chains to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get tool chain analysis (which tools are invoked together in the same trace).
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of chains to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17491,14 +17512,14 @@ async def get_tool_chains(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_tools_partial(
     request: Request,
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Render the tool invocation metrics dashboard HTML partial.
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -17526,16 +17547,16 @@ async def get_prompt_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get prompt rendering frequency statistics.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of prompts to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17599,16 +17620,16 @@ async def get_prompt_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get prompt performance metrics (avg, min, max duration).
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of prompts to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17650,15 +17671,15 @@ async def get_prompt_performance(
 async def get_prompts_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get prompt error rates.
 
     Args:
         hours: Time range in hours to analyze
         limit: Maximum number of prompts to return
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17713,14 +17734,14 @@ async def get_prompts_errors(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_prompts_partial(
     request: Request,
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Render the prompt rendering metrics dashboard HTML partial.
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -17748,16 +17769,16 @@ async def get_resource_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get resource fetch frequency statistics.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of resources to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17821,16 +17842,16 @@ async def get_resource_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get resource performance metrics (avg, min, max duration).
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of resources to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17872,15 +17893,15 @@ async def get_resource_performance(
 async def get_resources_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Get resource error rates.
 
     Args:
         hours: Time range in hours to analyze
         limit: Maximum number of resources to return
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -17935,14 +17956,14 @@ async def get_resources_errors(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_resources_partial(
     request: Request,
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
     _db: Session = Depends(get_db),
-):
+):  # pylint: disable=unused-argument
     """Render the resource fetch metrics dashboard HTML partial.
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -17969,8 +17990,8 @@ async def get_resources_partial(
 async def get_performance_stats(
     request: Request,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    current_user_ctx=Depends(get_current_user_with_permissions),
+):  # pylint: disable=unused-argument
     """Get comprehensive performance metrics for the dashboard.
 
     Returns either an HTML partial for HTMX requests or JSON for API requests.
@@ -17979,7 +18000,7 @@ async def get_performance_stats(
     Args:
         request: FastAPI request object
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         HTMLResponse or JSONResponse: Performance dashboard data
@@ -18031,13 +18052,13 @@ async def get_performance_stats(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_performance_system(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    current_user_ctx=Depends(get_current_user_with_permissions),
+):  # pylint: disable=unused-argument
     """Get current system resource metrics.
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: System metrics (CPU, memory, disk, network)
@@ -18057,13 +18078,13 @@ async def get_performance_system(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_performance_workers(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    current_user_ctx=Depends(get_current_user_with_permissions),
+):  # pylint: disable=unused-argument
     """Get metrics for all worker processes.
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: List of worker metrics
@@ -18083,13 +18104,13 @@ async def get_performance_workers(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_performance_requests(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    current_user_ctx=Depends(get_current_user_with_permissions),
+):  # pylint: disable=unused-argument
     """Get HTTP request performance metrics.
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: Request metrics from Prometheus
@@ -18109,13 +18130,13 @@ async def get_performance_requests(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_performance_cache(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    current_user_ctx=Depends(get_current_user_with_permissions),
+):  # pylint: disable=unused-argument
     """Get Redis cache metrics.
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: Redis cache metrics
@@ -18137,15 +18158,15 @@ async def get_performance_history(
     period_type: str = Query("hourly", description="Aggregation period: hourly or daily"),
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    current_user_ctx=Depends(get_current_user_with_permissions),
+):  # pylint: disable=unused-argument
     """Get historical performance aggregates.
 
     Args:
         period_type: Aggregation type (hourly, daily)
         hours: Hours of history to retrieve
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: Historical performance aggregates
