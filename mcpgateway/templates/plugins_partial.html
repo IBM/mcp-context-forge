@@ -215,6 +215,7 @@
         >
           <option value="">All Modes</option>
           <option value="enforce">Enforce</option>
+          <option value="enforce_ignore_error">Enforce Ignore Error</option>
           <option value="permissive">Permissive</option>
           <option value="disabled">Disabled</option>
         </select>
@@ -306,7 +307,13 @@
         </div>
 
         <!-- Mode Badge -->
-        {% if plugin.mode == 'enforce' %}
+        {% if plugin.mode == 'enforce_ignore_error' %}
+        <span
+          class="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded dark:bg-red-900 dark:text-red-200"
+        >
+          Enforce Ignore Error
+        </span>
+        {% elif plugin.mode == 'enforce_ignore_error' %}
         <span
           class="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded dark:bg-red-900 dark:text-red-200"
         >

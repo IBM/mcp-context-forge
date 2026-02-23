@@ -24496,7 +24496,7 @@ function initializePluginFunctions() {
                             <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
                             <p class="mt-1">
                                 <span class="px-2 py-1 text-xs rounded-full ${
-                                    plugin.mode === "enforce"
+                                    plugin.mode === "enforce" || plugin.mode === "enforce_ignore_error"
                                         ? "bg-red-100 text-red-800"
                                         : plugin.mode === "permissive"
                                           ? "bg-yellow-100 text-yellow-800"

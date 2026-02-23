@@ -64,7 +64,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled | enforce_ignore_error
     priority: 50  # Lower number = higher priority (runs first)
     conditions:
       - prompts: []  # Empty list = apply to all prompts
@@ -99,7 +99,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled | enforce_ignore_error
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -121,7 +121,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "enforce_ignore_error"  # enforce | permissive | disabled | enforce_ignore_error
     priority: 100
     conditions:
       # Apply to specific tools/servers
@@ -817,7 +817,7 @@ plugins:
     author: "Adrian Popa"
     hooks: ["tool_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled | enforce_ignore_error
     priority: 10
     conditions:
       - prompts: []
@@ -940,7 +940,7 @@ plugins:
     author: "Jason Tsay"
     hooks: ["tool_post_invoke"]
     tags: ["plugin"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled | enforce_ignore_error
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -970,7 +970,7 @@ plugins:
     author: "Bar Haim"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["telemetry", "observability", "opentelemetry", "monitoring"]
-    mode: "disabled" # enforce | permissive | disabled
+    mode: "disabled" # enforce | permissive | disabled | enforce_ignore_error
     priority: 200  # Run late to capture all context
     conditions: []  # Apply to all tools
     config:
@@ -985,7 +985,7 @@ plugins:
     author: "Joe Stein"
     hooks: ["tool_post_invoke"]
     tags: ["optimization", "tokens", "encoding", "toon", "llm"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled | enforce_ignore_error
     priority: 900  # Run very late, after all other post-processing
     conditions: []  # Apply to all tools
     config:
