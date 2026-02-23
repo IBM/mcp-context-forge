@@ -18,8 +18,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
