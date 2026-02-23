@@ -35,7 +35,7 @@ class TestMetricsRollupService:
         """Test service initialization with defaults."""
         service = MetricsRollupService()
 
-        assert service.enabled is True
+        assert service.enabled is False
         assert service.rollup_interval_hours == 1
         assert service.delete_raw_after_rollup is True
         assert service.delete_raw_after_rollup_hours == 1
