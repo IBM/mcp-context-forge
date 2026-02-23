@@ -63,18 +63,19 @@ class Scenario:
     """Single benchmark scenario."""
 
     name: str
-    payload: str
+    payloads: list[str]
 
 
-def _make_object_json(target_kb: int, repairable: bool) -> str:
+def _make_object_json(target_kb: int, repairable: bool, seed: int = 0) -> str:
     """Create deterministic object-like JSON-ish text around target size."""
     parts = []
     idx = 0
     while len(",".join(parts)) < target_kb * 1024:
+        key = f"k{seed}_{idx}"
         if repairable:
-            parts.append(f"'k{idx}': 'value_{idx}'")
+            parts.append(f"'{key}': 'value_{seed}_{idx}'")
         else:
-            parts.append(f'"k{idx}": "value_{idx}"')
+            parts.append(f'"{key}": "value_{seed}_{idx}"')
         idx += 1
 
     body = ",".join(parts)
@@ -83,46 +84,61 @@ def _make_object_json(target_kb: int, repairable: bool) -> str:
     return "{" + body + "}"
 
 
-def generate_scenarios() -> list[Scenario]:
+def _build_payload_variants(target_kb: int, repairable: bool, variants: int) -> list[str]:
+    """Create multiple payload variants with distinct keys to reduce parser key-cache effects."""
+    return [_make_object_json(target_kb, repairable=repairable, seed=i) for i in range(variants)]
+
+
+def generate_scenarios(payload_variants: int) -> list[Scenario]:
     """Build benchmark scenarios with realistic payload sizes."""
+    if payload_variants < 1:
+        raise ValueError("payload_variants must be >= 1")
+
+    def _missing_braces_variant(i: int) -> str:
+        return f'"a_{i}": {i + 1}, "b_{i}": {i + 2}'
+
     return [
-        Scenario("small_valid_1kb", _make_object_json(1, repairable=False)),
-        Scenario("small_repairable_1kb", _make_object_json(1, repairable=True)),
-        Scenario("medium_valid_5kb", _make_object_json(5, repairable=False)),
-        Scenario("medium_repairable_5kb", _make_object_json(5, repairable=True)),
-        Scenario("large_valid_50kb", _make_object_json(50, repairable=False)),
-        Scenario("large_repairable_50kb", _make_object_json(50, repairable=True)),
-        Scenario("xlarge_valid_500kb", _make_object_json(500, repairable=False)),
-        Scenario("xlarge_repairable_500kb", _make_object_json(500, repairable=True)),
-        Scenario("xxlarge_valid_1024kb", _make_object_json(1024, repairable=False)),
-        Scenario("xxlarge_repairable_1024kb", _make_object_json(1024, repairable=True)),
-        Scenario("unrepairable_text", "not-json-at-all " * 200),
-        Scenario("missing_braces", '"a": 1, "b": 2'),
+        Scenario("small_valid_1kb", _build_payload_variants(1, repairable=False, variants=payload_variants)),
+        Scenario("small_repairable_1kb", _build_payload_variants(1, repairable=True, variants=payload_variants)),
+        Scenario("medium_valid_5kb", _build_payload_variants(5, repairable=False, variants=payload_variants)),
+        Scenario("medium_repairable_5kb", _build_payload_variants(5, repairable=True, variants=payload_variants)),
+        Scenario("large_valid_50kb", _build_payload_variants(50, repairable=False, variants=payload_variants)),
+        Scenario("large_repairable_50kb", _build_payload_variants(50, repairable=True, variants=payload_variants)),
+        Scenario("xlarge_valid_500kb", _build_payload_variants(500, repairable=False, variants=payload_variants)),
+        Scenario("xlarge_repairable_500kb", _build_payload_variants(500, repairable=True, variants=payload_variants)),
+        Scenario("xxlarge_valid_1024kb", _build_payload_variants(1024, repairable=False, variants=payload_variants)),
+        Scenario("xxlarge_repairable_1024kb", _build_payload_variants(1024, repairable=True, variants=payload_variants)),
+        Scenario("unrepairable_text", [f"not-json-at-all {i} " * 200 for i in range(payload_variants)]),
+        Scenario("missing_braces", [_missing_braces_variant(i) for i in range(payload_variants)]),
     ]
 
 
-def benchmark_python(payload: str, iterations: int, warmup: int) -> tuple[list[float], str | None]:
+def benchmark_python(payloads: list[str], iterations: int, warmup: int) -> tuple[list[float], str | None]:
     """Benchmark Python repair function."""
-    for _ in range(warmup):
+    for i in range(warmup):
+        payload = payloads[i % len(payloads)]
         PY_IMPL._repair(payload)
 
     times: list[float] = []
     output: str | None = None
-    for _ in range(iterations):
+    for i in range(iterations):
+        payload = payloads[i % len(payloads)]
         start = time.perf_counter()
         output = PY_IMPL._repair(payload)
         times.append(time.perf_counter() - start)
     return times, output
 
 
-def benchmark_rust(payload: str, iterations: int, warmup: int, rust_repair: Callable[[str], str | None]) -> tuple[list[float], str | None]:
+def benchmark_rust(payloads: list[str], iterations: int, warmup: int, rust_repair: Callable[[str], str | None]) -> tuple[list[float], str | None]:
     """Benchmark Rust repair function."""
-    for _ in range(warmup):
+    for i in range(warmup):
+        payload = payloads[i % len(payloads)]
         rust_repair(payload)
 
     times: list[float] = []
     output: str | None = None
-    for _ in range(iterations):
+    for i in range(iterations):
+        payload = payloads[i % len(payloads)]
         start = time.perf_counter()
         output = rust_repair(payload)
         times.append(time.perf_counter() - start)
@@ -150,7 +166,7 @@ def run_scenario(scenario: Scenario, iterations: int, warmup: int, rust_repair: 
     print(f"Scenario: {scenario.name}")
     print("=" * 72)
 
-    py_times, py_output = benchmark_python(scenario.payload, iterations, warmup)
+    py_times, py_output = benchmark_python(scenario.payloads, iterations, warmup)
     py_mean, py_median, py_stdev = _summarize(py_times)
     print(f"Python: {py_mean:.3f} ms ±{py_stdev:.3f} (median: {py_median:.3f})")
 
@@ -158,7 +174,7 @@ def run_scenario(scenario: Scenario, iterations: int, warmup: int, rust_repair: 
         print("Rust: not available")
         return
 
-    rust_times, rust_output = benchmark_rust(scenario.payload, iterations, warmup, rust_repair)
+    rust_times, rust_output = benchmark_rust(scenario.payloads, iterations, warmup, rust_repair)
     rust_mean, rust_median, rust_stdev = _summarize(rust_times)
     speedup = py_mean / rust_mean if rust_mean > 0 else 0.0
     print(f"Rust:   {rust_mean:.3f} ms ±{rust_stdev:.3f} (median: {rust_median:.3f})")
@@ -173,8 +189,14 @@ def run_scenario(scenario: Scenario, iterations: int, warmup: int, rust_repair: 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="json_repair Python vs Rust benchmark")
-    parser.add_argument("--iterations", type=int, default=10000, help="Iterations per scenario")
+    parser.add_argument("--iterations", type=int, default=3000, help="Iterations per scenario")
     parser.add_argument("--warmup", type=int, default=100, help="Warmup iterations per scenario")
+    parser.add_argument(
+        "--payload-variants",
+        type=int,
+        default=32,
+        help="Number of distinct payload variants to rotate per scenario (1 keeps the original same-input loop).",
+    )
     return parser.parse_args()
 
 
@@ -193,8 +215,9 @@ def main() -> int:
     print(f"Python: {sys.version.split()[0]}")
     print(f"Rust available: {'yes' if rust_repair is not None else 'no'}")
     print(f"Iterations: {args.iterations} (+{args.warmup} warmup)")
+    print(f"Payload variants per scenario: {args.payload_variants}")
 
-    for scenario in generate_scenarios():
+    for scenario in generate_scenarios(args.payload_variants):
         run_scenario(scenario, args.iterations, args.warmup, rust_repair)
 
     print("\n" + "=" * 72)
