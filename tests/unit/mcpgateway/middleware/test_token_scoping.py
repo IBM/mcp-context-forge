@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Request, status
 import pytest
 
+# First-Party (test helpers)
+from mcpgateway.config import settings
 # First-Party
 from mcpgateway.db import Permissions
 from mcpgateway.middleware.token_scoping import TokenScopingMiddleware
