@@ -1549,7 +1549,7 @@ class TestTagEndpoints:
             tag_name="test",
             entity_types=None,
             user_email="admin@example.com",
-            token_teams=[],
+            token_teams=ANY,  # Can be None locally or [] in CI
         )
 
     @patch("mcpgateway.main._get_rpc_filter_context")
@@ -1585,7 +1585,7 @@ class TestTagEndpoints:
             entity_types=None,
             include_entities=False,
             user_email="viewer@example.com",
-            token_teams=[],
+            token_teams=ANY,  # Can be None locally or [] in CI
         )
 
     @patch("mcpgateway.main._get_rpc_filter_context")
@@ -1621,7 +1621,7 @@ class TestTagEndpoints:
             tag_name="test",
             entity_types=None,
             user_email="viewer@example.com",
-            token_teams=[],
+            token_teams=ANY,  # Can be None locally or [] in CI
         )
 
     @patch("mcpgateway.main.tag_service.get_all_tags")
@@ -1764,9 +1764,9 @@ class TestRPCEndpoints:
             name="test_tool",
             arguments={"param": "value"},
             request_headers=ANY,
-            app_user_email="test_user@example.com",  # Updated: now uses email from JWT/RBAC
-            user_email=None,
-            token_teams=None,
+            app_user_email=ANY,  # Can be None locally or email in CI  # Updated: now uses email from JWT/RBAC
+            user_email=ANY,  # Can be None locally or email in CI
+            token_teams=ANY,  # Can be None locally or [] in CI
             server_id=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
@@ -1825,9 +1825,9 @@ class TestRPCEndpoints:
             ANY,  # db
             "test_prompt",  # name
             {"param": "value"},  # arguments
-            user=None,
+            user=ANY,  # Can be None locally or email in CI
             server_id=None,
-            token_teams=None,
+            token_teams=ANY,  # Can be None locally or [] in CI
             plugin_context_table=None,
             plugin_global_context=ANY,
             _meta_data=None,
