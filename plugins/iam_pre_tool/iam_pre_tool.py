@@ -134,7 +134,7 @@ class IamPreToolPlugin(Plugin):
 
         # Extract server/tool ID from context
         server_id = context.state.get("server_id") or context.state.get("tool_id")
-        
+
         if not server_id:
             logger.debug("No server_id or tool_id in context, skipping auth injection")
             return PluginResult(modified_payload=payload.headers)
@@ -146,21 +146,21 @@ class IamPreToolPlugin(Plugin):
 
         # Get or acquire access token
         access_token = await self._get_access_token(server_id, context)
-        
+
         if not access_token:
             logger.warning(f"Failed to acquire access token for server: {server_id}")
             return PluginResult(modified_payload=payload.headers)
 
         # Inject token into Authorization header
-        modified_headers = HttpHeaderPayload(dict(payload.headers))
+        modified_headers = HttpHeaderPayload(root=dict(payload.headers))
         modified_headers["authorization"] = f"Bearer {access_token}"
-        
+
         logger.info(f"Injected bearer token for server: {server_id}")
         return PluginResult(modified_payload=modified_headers)
 
     async def _get_access_token(
-        self, 
-        server_id: str, 
+        self,
+        server_id: str,
         context: PluginContext
     ) -> Optional[str]:
         """Get access token for a server (from cache or acquire new).
@@ -182,7 +182,7 @@ class IamPreToolPlugin(Plugin):
         # Acquire new token
         if self._cfg.oauth2_client_credentials_enabled:
             return await self._acquire_token_client_credentials(server_id, context)
-        
+
         # No token acquisition method enabled
         logger.warning("No token acquisition method enabled")
         return None
@@ -204,6 +204,6 @@ class IamPreToolPlugin(Plugin):
         # TODO: Implement OAuth2 client credentials flow
         # This is a placeholder for Phase 1
         # Will be implemented in conjunction with Issue #1434 (OAuth2 library)
-        
+
         logger.info(f"OAuth2 client credentials flow not yet implemented for: {server_id}")
         return None
