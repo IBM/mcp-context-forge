@@ -105,8 +105,8 @@ async function generateSchemasFromOpenAPI() {
             return;
         }
 
-        const url = urlField.value;
-        const requestType = requestTypeField ? requestTypeField.value : "GET";
+        const newUrl = urlField.value.trim();
+        const requestType = requestTypeField ? requestTypeField.value : "POST";
 
         // Show loading state
         const button = safeGetElement("generate-schemas-from-openapi-btn");
@@ -115,74 +115,135 @@ async function generateSchemasFromOpenAPI() {
             button.textContent = "Generating...";
         }
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools/generate-schemas-from-openapi`,
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    url: url,
-                    request_type: requestType,
-                }),
-            },
-        );
+        // Extract base URL and path
+        const urlObj = new URL(newUrl);
+        const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+        const pathTemplate = urlObj.pathname;
 
-        const result = await response.json();
+        // Fetch OpenAPI spec via backend proxy
+        const proxyUrl = `${window.ROOT_PATH}/admin/fetch-openapi-spec?base_url=${encodeURIComponent(baseUrl)}`;
+        console.log(`Fetching OpenAPI spec via: ${proxyUrl}`);
 
-        if (result.success) {
-            // Switch to JSON Input mode
-            const jsonRadio = document.querySelector(
-                'input[name="schema_input_mode"][value="json"]',
-            );
-            if (jsonRadio) {
-                jsonRadio.checked = true;
-                // Trigger change event to show JSON input container
-                const event = new Event("change", { bubbles: true });
-                jsonRadio.dispatchEvent(event);
+        const response = await fetchWithTimeout(proxyUrl, {
+            timeout: 15000,
+        });
+
+        if (!response.ok) {
+            const errorData = await response
+                .json()
+                .catch(() => ({ error: response.statusText }));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+
+        const spec = await response.json();
+
+        if (!spec || !spec.paths) {
+            throw new Error("Invalid OpenAPI spec: missing 'paths'");
+        }
+
+        // Find matching path in spec
+        const normalizedPath = pathTemplate.replace(/^\/+/, "");
+        let matchingPath = null;
+
+        for (const pathKey in spec.paths) {
+            if (pathKey.replace(/^\/+/, "") === normalizedPath) {
+                matchingPath = pathKey;
+                break;
             }
+        }
 
-            // Populate input schema
-            const schemaField = safeGetElement("schema-editor");
-            if (schemaField && result.input_schema) {
-                schemaField.value = JSON.stringify(
-                    result.input_schema,
-                    null,
-                    2,
-                );
-                // Update CodeMirror if it exists
-                if (window.schemaEditor) {
-                    window.schemaEditor.setValue(
-                        JSON.stringify(result.input_schema, null, 2),
-                    );
-                    window.schemaEditor.refresh();
+        if (!matchingPath) {
+            console.warn(`Path '${pathTemplate}' not found in OpenAPI spec`);
+            alert(`Path '${pathTemplate}' not found in OpenAPI spec`);
+            return;
+        }
+
+        const pathItem = spec.paths[matchingPath];
+        const method = requestType.toLowerCase();
+
+        if (!pathItem[method]) {
+            console.warn(`Method '${requestType}' not found for path '${matchingPath}'`);
+            alert(`Method '${requestType}' not found for path '${matchingPath}'`);
+            return;
+        }
+
+        const operation = pathItem[method];
+
+        // Extract input schema from requestBody
+        let inputSchema = { type: "object", properties: {} };
+        if (operation.requestBody?.content?.["application/json"]?.schema) {
+            const schemaDef = operation.requestBody.content["application/json"].schema;
+
+            // Resolve $ref if present
+            if (schemaDef.$ref) {
+                const schemaName = schemaDef.$ref.split("/").pop();
+                if (spec.components?.schemas?.[schemaName]) {
+                    inputSchema = spec.components.schemas[schemaName];
                 }
+            } else {
+                inputSchema = schemaDef;
             }
+        }
 
-            // Populate output schema
-            const outputSchemaField = safeGetElement("output-schema-editor");
-            if (outputSchemaField && result.output_schema) {
-                outputSchemaField.value = JSON.stringify(
-                    result.output_schema,
-                    null,
-                    2,
-                );
-                // Update CodeMirror if it exists
+        // Extract output schema from responses - ONLY if it has $ref
+        let outputSchema = null;
+        for (const statusCode of ["200", "201", "default"]) {
+            if (operation.responses?.[statusCode]?.content?.["application/json"]?.schema) {
+                const schemaDef = operation.responses[statusCode].content["application/json"].schema;
+
+                // ONLY accept schemas with $ref (explicit response_model)
+                if (schemaDef.$ref) {
+                    const schemaName = schemaDef.$ref.split("/").pop();
+                    if (spec.components?.schemas?.[schemaName]) {
+                        outputSchema = spec.components.schemas[schemaName];
+                        break;
+                    }
+                }
+                // Ignore inline schemas (auto-generated by FastAPI)
+            }
+        }
+
+        // Switch to JSON Input mode
+        const jsonRadio = document.querySelector(
+            'input[name="schema_input_mode"][value="json"]',
+        );
+        if (jsonRadio) {
+            jsonRadio.checked = true;
+            const event = new Event("change", { bubbles: true });
+            jsonRadio.dispatchEvent(event);
+        }
+
+        // Populate input schema
+        const schemaField = safeGetElement("schema-editor");
+        if (schemaField) {
+            schemaField.value = JSON.stringify(inputSchema, null, 2);
+            if (window.schemaEditor) {
+                window.schemaEditor.setValue(JSON.stringify(inputSchema, null, 2));
+                window.schemaEditor.refresh();
+            }
+        }
+
+        // Populate output schema only if it exists
+        const outputSchemaField = safeGetElement("output-schema-editor");
+        if (outputSchemaField) {
+            if (outputSchema) {
+                outputSchemaField.value = JSON.stringify(outputSchema, null, 2);
                 if (window.outputSchemaEditor) {
-                    window.outputSchemaEditor.setValue(
-                        JSON.stringify(result.output_schema, null, 2),
-                    );
+                    window.outputSchemaEditor.setValue(JSON.stringify(outputSchema, null, 2));
+                    window.outputSchemaEditor.refresh();
+                }
+            } else {
+                // Clear output schema if not present
+                outputSchemaField.value = "";
+                if (window.outputSchemaEditor) {
+                    window.outputSchemaEditor.setValue("");
                     window.outputSchemaEditor.refresh();
                 }
             }
-
-            alert(
-                `Schemas generated successfully from OpenAPI spec!\n\nSpec URL: ${result.spec_url}\n\nPlease review the generated schemas before saving.`,
-            );
-        } else {
-            alert(`Failed to generate schemas: ${result.message}`);
         }
+
+        console.log("✓ Schemas populated from OpenAPI spec");
+        alert("Schemas generated successfully from OpenAPI spec!\n\nPlease review the generated schemas before saving.");
     } catch (error) {
         console.error("Error generating schemas from OpenAPI:", error);
         alert(`Error: ${error.message}`);
@@ -215,85 +276,141 @@ async function generateSchemasFromOpenAPIEdit() {
             return;
         }
 
-        const url = urlField.value;
-        const requestType = requestTypeField ? requestTypeField.value : "GET";
+        const newUrl = urlField.value.trim();
+        const requestType = requestTypeField ? requestTypeField.value : "POST";
 
         // Show loading state
-        const button = safeGetElement(
-            "edit-generate-schemas-from-openapi-btn",
-        );
+        const button = safeGetElement("edit-generate-schemas-from-openapi-btn");
         if (button) {
             button.disabled = true;
             button.textContent = "Generating...";
         }
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools/generate-schemas-from-openapi`,
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    url: url,
-                    request_type: requestType,
-                }),
-            },
-        );
+        // Extract base URL and path
+        const urlObj = new URL(newUrl);
+        const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+        const pathTemplate = urlObj.pathname;
 
-        const result = await response.json();
+        // Fetch OpenAPI spec via backend proxy
+        const proxyUrl = `${window.ROOT_PATH}/admin/fetch-openapi-spec?base_url=${encodeURIComponent(baseUrl)}`;
+        console.log(`Fetching OpenAPI spec via: ${proxyUrl}`);
 
-        if (result.success) {
-            // Populate input schema
-            const schemaField = safeGetElement("edit-tool-schema");
-            if (schemaField && result.input_schema) {
-                schemaField.value = JSON.stringify(
-                    result.input_schema,
-                    null,
-                    2,
-                );
-                // Update CodeMirror if it exists
-                if (window.editToolSchemaEditor) {
-                    window.editToolSchemaEditor.setValue(
-                        JSON.stringify(result.input_schema, null, 2),
-                    );
-                    window.editToolSchemaEditor.refresh();
-                }
+        const response = await fetchWithTimeout(proxyUrl, {
+            timeout: 15000,
+        });
+
+        if (!response.ok) {
+            const errorData = await response
+                .json()
+                .catch(() => ({ error: response.statusText }));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+
+        const spec = await response.json();
+
+        if (!spec || !spec.paths) {
+            throw new Error("Invalid OpenAPI spec: missing 'paths'");
+        }
+
+        // Find matching path in spec
+        const normalizedPath = pathTemplate.replace(/^\/+/, "");
+        let matchingPath = null;
+
+        for (const pathKey in spec.paths) {
+            if (pathKey.replace(/^\/+/, "") === normalizedPath) {
+                matchingPath = pathKey;
+                break;
             }
+        }
 
-            // Populate output schema
-            const outputSchemaField = safeGetElement(
-                "edit-tool-output-schema",
-            );
-            if (outputSchemaField && result.output_schema) {
-                outputSchemaField.value = JSON.stringify(
-                    result.output_schema,
-                    null,
-                    2,
-                );
-                // Update CodeMirror if it exists
+        if (!matchingPath) {
+            console.warn(`Path '${pathTemplate}' not found in OpenAPI spec`);
+            alert(`Path '${pathTemplate}' not found in OpenAPI spec`);
+            return;
+        }
+
+        const pathItem = spec.paths[matchingPath];
+        const method = requestType.toLowerCase();
+
+        if (!pathItem[method]) {
+            console.warn(`Method '${requestType}' not found for path '${matchingPath}'`);
+            alert(`Method '${requestType}' not found for path '${matchingPath}'`);
+            return;
+        }
+
+        const operation = pathItem[method];
+
+        // Extract input schema from requestBody
+        let inputSchema = { type: "object", properties: {} };
+        if (operation.requestBody?.content?.["application/json"]?.schema) {
+            const schemaDef = operation.requestBody.content["application/json"].schema;
+
+            // Resolve $ref if present
+            if (schemaDef.$ref) {
+                const schemaName = schemaDef.$ref.split("/").pop();
+                if (spec.components?.schemas?.[schemaName]) {
+                    inputSchema = spec.components.schemas[schemaName];
+                }
+            } else {
+                inputSchema = schemaDef;
+            }
+        }
+
+        // Extract output schema from responses - ONLY if it has $ref
+        let outputSchema = null;
+        for (const statusCode of ["200", "201", "default"]) {
+            if (operation.responses?.[statusCode]?.content?.["application/json"]?.schema) {
+                const schemaDef = operation.responses[statusCode].content["application/json"].schema;
+
+                // ONLY accept schemas with $ref (explicit response_model)
+                if (schemaDef.$ref) {
+                    const schemaName = schemaDef.$ref.split("/").pop();
+                    if (spec.components?.schemas?.[schemaName]) {
+                        outputSchema = spec.components.schemas[schemaName];
+                        break;
+                    }
+                }
+                // Ignore inline schemas (auto-generated by FastAPI)
+            }
+        }
+
+        // Populate input schema
+        const schemaField = safeGetElement("edit-tool-schema");
+        if (schemaField) {
+            schemaField.value = JSON.stringify(inputSchema, null, 2);
+            if (window.editToolSchemaEditor) {
+                window.editToolSchemaEditor.setValue(JSON.stringify(inputSchema, null, 2));
+                window.editToolSchemaEditor.refresh();
+            }
+        }
+
+        // Populate output schema only if it exists
+        const outputSchemaField = safeGetElement("edit-tool-output-schema");
+        if (outputSchemaField) {
+            if (outputSchema) {
+                outputSchemaField.value = JSON.stringify(outputSchema, null, 2);
                 if (window.editToolOutputSchemaEditor) {
-                    window.editToolOutputSchemaEditor.setValue(
-                        JSON.stringify(result.output_schema, null, 2),
-                    );
+                    window.editToolOutputSchemaEditor.setValue(JSON.stringify(outputSchema, null, 2));
+                    window.editToolOutputSchemaEditor.refresh();
+                }
+            } else {
+                // Clear output schema if not present
+                outputSchemaField.value = "";
+                if (window.editToolOutputSchemaEditor) {
+                    window.editToolOutputSchemaEditor.setValue("");
                     window.editToolOutputSchemaEditor.refresh();
                 }
             }
-
-            alert(
-                `Schemas generated successfully from OpenAPI spec!\n\nSpec URL: ${result.spec_url}\n\nPlease review the generated schemas before saving.`,
-            );
-        } else {
-            alert(`Failed to generate schemas: ${result.message}`);
         }
+
+        console.log("✓ Schemas updated from OpenAPI spec");
+        alert("Schemas generated successfully from OpenAPI spec!\n\nPlease review the generated schemas before saving.");
     } catch (error) {
         console.error("Error generating schemas from OpenAPI:", error);
         alert(`Error: ${error.message}`);
     } finally {
         // Restore button state
-        const button = safeGetElement(
-            "edit-generate-schemas-from-openapi-btn",
-        );
+        const button = safeGetElement("edit-generate-schemas-from-openapi-btn");
         if (button) {
             button.disabled = false;
             button.innerHTML = `
