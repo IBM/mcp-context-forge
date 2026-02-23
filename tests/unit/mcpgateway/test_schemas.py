@@ -1200,3 +1200,78 @@ class TestSchemaValidators:
             ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
 
         assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
+
+
+class TestTitleSchemas:
+    """Test title field in schema models."""
+
+    def test_tool_schemas_with_title(self):
+        """Test ToolCreate, ToolUpdate, and ToolRead pass title field."""
+        tool_create = ToolCreate(name="test-tool", url="http://example.com", title="My Custom Tool Title")
+        assert tool_create.title == "My Custom Tool Title"
+
+        tool_update = ToolUpdate(title="Updated Title")
+        assert tool_update.title == "Updated Title"
+
+        tool_read = ToolRead(
+            id="1",
+            name="test-tool",
+            url="http://example.com",
+            title="Read Tool Title",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=ServerMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0
+            )
+        )
+        assert tool_read.title == "Read Tool Title"
+
+    def test_resource_schemas_with_title(self):
+        """Test ResourceCreate, ResourceUpdate, and ResourceRead pass title field."""
+        resource_create = ResourceCreate(uri="test://uri", name="test-resource", content="data", title="My Custom Resource Title")
+        assert resource_create.title == "My Custom Resource Title"
+        
+        resource_update = ResourceUpdate(title="Updated Resource Title")
+        assert resource_update.title == "Updated Resource Title"
+
+        resource_read = ResourceRead(
+            id="1",
+            uri="test://uri",
+            name="test-resource",
+            title="Read Resource Title",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=ResourceMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0
+            )
+        )
+        assert resource_read.title == "Read Resource Title"
+
+    def test_prompt_schemas_with_title(self):
+        """Test PromptCreate, PromptUpdate, and PromptRead pass title field."""
+        prompt_create = PromptCreate(name="test-prompt", title="My Custom Prompt Title")
+        assert prompt_create.title == "My Custom Prompt Title"
+
+        prompt_update = PromptUpdate(title="Updated Prompt Title")
+        assert prompt_update.title == "Updated Prompt Title"
+
+        prompt_read = PromptRead(
+            id="1",
+            name="test-prompt",
+            title="Read Prompt Title",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=PromptMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0
+            )
+        )
+        assert prompt_read.title == "Read Prompt Title"
