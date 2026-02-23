@@ -32,7 +32,7 @@ class TestIamPreToolPlugin:
             config={}
         )
         plugin = IamPreToolPlugin(config)
-        
+
         assert plugin._cfg.enabled is True
         assert plugin._cfg.token_cache_ttl_seconds == 3600
         assert plugin._cfg.inject_bearer_token is True
@@ -53,7 +53,7 @@ class TestIamPreToolPlugin:
             config=custom_config
         )
         plugin = IamPreToolPlugin(config)
-        
+
         assert plugin._cfg.enabled is False
         assert plugin._cfg.token_cache_ttl_seconds == 7200
         assert plugin._cfg.oauth2_client_credentials_enabled is True
@@ -70,7 +70,7 @@ class TestIamPreToolPlugin:
             config={"enabled": False}
         )
         plugin = IamPreToolPlugin(config)
-        
+
         headers = HttpHeaderPayload({"content-type": "application/json"})
         payload = HttpPreRequestPayload(
             path="/api/tool",
@@ -79,9 +79,9 @@ class TestIamPreToolPlugin:
         )
         global_ctx = GlobalContext(request_id="test-req-1")
         context = PluginContext(global_context=global_ctx, state={})
-        
+
         result = await plugin.http_pre_request(payload, context)
-        
+
         assert result.modified_payload == headers
         assert "authorization" not in result.modified_payload
 
@@ -97,7 +97,7 @@ class TestIamPreToolPlugin:
             config={}
         )
         plugin = IamPreToolPlugin(config)
-        
+
         headers = HttpHeaderPayload({"content-type": "application/json"})
         payload = HttpPreRequestPayload(
             path="/api/tool",
@@ -106,9 +106,9 @@ class TestIamPreToolPlugin:
         )
         global_ctx = GlobalContext(request_id="test-req-2")
         context = PluginContext(global_context=global_ctx, state={})
-        
+
         result = await plugin.http_pre_request(payload, context)
-        
+
         assert "authorization" not in result.modified_payload
 
     @pytest.mark.asyncio
@@ -123,7 +123,7 @@ class TestIamPreToolPlugin:
             config={}
         )
         plugin = IamPreToolPlugin(config)
-        
+
         headers = HttpHeaderPayload({"content-type": "application/json"})
         payload = HttpPreRequestPayload(
             path="/api/tool",
@@ -132,16 +132,16 @@ class TestIamPreToolPlugin:
         )
         global_ctx = GlobalContext(request_id="test-req-3")
         context = PluginContext(global_context=global_ctx, state={"server_id": "server-1"})
-        
+
         result = await plugin.http_pre_request(payload, context)
-        
+
         assert "authorization" not in result.modified_payload
 
     @pytest.mark.asyncio
     async def test_token_cache_entry_expiration(self):
         """Test token cache entry expiration logic."""
         from plugins.iam_pre_tool.iam_pre_tool import TokenCacheEntry
-        
+
         # Not expired
         future = datetime.now(timezone.utc) + timedelta(seconds=120)
         entry = TokenCacheEntry(
@@ -149,7 +149,7 @@ class TestIamPreToolPlugin:
             expires_at=future,
         )
         assert not entry.is_expired()
-        
+
         # Expired
         past = datetime.now(timezone.utc) - timedelta(seconds=1)
         entry = TokenCacheEntry(
@@ -157,7 +157,7 @@ class TestIamPreToolPlugin:
             expires_at=past,
         )
         assert entry.is_expired()
-        
+
         # About to expire (within 60s buffer)
         soon = datetime.now(timezone.utc) + timedelta(seconds=30)
         entry = TokenCacheEntry(
