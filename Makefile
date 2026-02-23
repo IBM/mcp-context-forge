@@ -244,7 +244,8 @@ serve-granian-http2: certs       ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
-	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	$(MAKE) watch-css & \
+	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 dev-echo:                        ## Run dev server with SQL query logging enabled
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
@@ -258,6 +259,31 @@ stop:                            ## Stop all mcpgateway server processes
 	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
 	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
 	@echo "Done."
+# -----------------------------------------------------------------------------
+# 🎨 CSS BUILD TARGETS
+# -----------------------------------------------------------------------------
+# help: 🎨 CSS BUILD TARGETS
+# help: build-css            - Build Tailwind CSS (pre-compiled, no JIT)
+# help: watch-css            - Watch and rebuild Tailwind CSS on changes
+# help: dev-css              - Run dev server with CSS watching in parallel
+
+.PHONY: build-css
+build-css:                       ## Build pre-compiled Tailwind CSS
+	@echo "🎨 Building Tailwind CSS..."
+	@npm run build:css
+	@echo "✅ Tailwind CSS built successfully"
+
+.PHONY: watch-css
+watch-css:                       ## Watch and rebuild Tailwind CSS on changes
+	@echo "👀 Watching Tailwind CSS for changes..."
+	@npm run watch:css
+
+.PHONY: dev-css
+dev-css:                         ## Alias for 'make dev' (kept for backward compatibility)
+	@echo "ℹ️  Note: 'make dev' now includes CSS watching by default"
+	@echo "ℹ️  Use 'make dev-no-css' if you don't want CSS watching"
+	@$(MAKE) dev
+
 
 stop-dev:                        ## Stop uvicorn dev server (port 8000)
 	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
