@@ -598,7 +598,7 @@ async def test_admin_get_update_delete_user():
             password="newPassword123!",
             admin_origin_source="api",
         )
-        assert response_input.headers["deprecation"] == "@1771977599"
+        assert response_input.headers["deprecation"] == "@1775001599"
         assert response_input.headers["sunset"] == "Sun, 16 Aug 2026 23:59:59 UTC"
         #----------->
 
