@@ -1,2 +1,4 @@
 [run]
-omit = tests/*
+omit = 
+    tests/*
+    cache_tokenizers.py
