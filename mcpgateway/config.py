@@ -2031,7 +2031,7 @@ Disallow: /
                 return self.internal_rpc_host
         except ValueError:
             logger.error("Invalid internal RPC host: %s", self.internal_rpc_host)
-            
+
         return f"http://{self.internal_rpc_host}:{self.port}{self.app_root_path}/rpc"
 
     class DatabaseSettings(TypedDict):

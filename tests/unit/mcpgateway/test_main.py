@@ -3566,5 +3566,3 @@ class TestGetRpcFilterContext:
         assert email == "plugin_user@example.com"
         assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False
-
-

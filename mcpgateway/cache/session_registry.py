@@ -56,7 +56,6 @@ import logging
 import time
 import traceback
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
 import uuid
 
 # Third-Party
@@ -2309,8 +2308,6 @@ class SessionRegistry(SessionBackend):
                 # The internal_rpc_url uses localhost/127.0.0.1 by default, which always
                 # works for self-calls, or can be configured for custom networking scenarios.
                 rpc_url = settings.internal_rpc_url
-
-
 
                 logger.info(f"SSE RPC: Making internal call to {rpc_url} with method={method}, params={params}")
 
