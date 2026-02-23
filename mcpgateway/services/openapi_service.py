@@ -18,7 +18,6 @@ import httpx
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +38,8 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
         httpx.HTTPError: If the request fails
     """
     # SSRF Protection: Validate the spec URL before making request
+    # validate_url already handles SSRF validation internally when ssrf_protection_enabled is True
     SecurityValidator.validate_url(spec_url, "OpenAPI spec URL")
-    parsed_spec = urllib.parse.urlparse(spec_url)
-    if parsed_spec.hostname and settings.ssrf_protection_enabled:
-        SecurityValidator._validate_ssrf(parsed_spec.hostname, "OpenAPI spec URL")
 
     # Fetch the spec
     async with httpx.AsyncClient(timeout=timeout) as client:
