@@ -47,6 +47,8 @@ TEAM_ADMIN_PERMISSIONS = sorted(
         "tools.execute",
         "resources.read",
         "prompts.read",
+        "llm.read",
+        "llm.invoke",
         "a2a.read",
         "gateways.create",
         "servers.create",
@@ -81,6 +83,8 @@ DEVELOPER_PERMISSIONS = sorted(
         "tools.execute",
         "resources.read",
         "prompts.read",
+        "llm.read",
+        "llm.invoke",
         "a2a.read",
         "gateways.create",
         "servers.create",
@@ -113,6 +117,7 @@ VIEWER_PERMISSIONS = sorted(
         "tools.read",
         "resources.read",
         "prompts.read",
+        "llm.read",
         "a2a.read",
     ]
 )
@@ -126,6 +131,7 @@ PLATFORM_VIEWER_PERMISSIONS = sorted(
         "tools.read",
         "resources.read",
         "prompts.read",
+        "llm.read",
         "a2a.read",
     ]
 )

@@ -95,6 +95,22 @@ The `teams` claim in JWT tokens determines resource visibility:
 - Admin bypass requires BOTH `teams: null` AND `is_admin: true`
 - `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth
 
+### Security Invariants (Required)
+
+- Treat `public` as platform-public scope, not internet-anonymous scope.
+- Explicit exception: when `MCP_REQUIRE_AUTH=false`, unauthenticated `/mcp` requests are allowed with public-only visibility.
+- Keep the two-layer model on every path:
+  - Layer 1: token scoping controls what a caller can see.
+  - Layer 2: RBAC controls what a caller can do.
+- Do not re-implement token team interpretation logic; always use `normalize_token_teams()` in `mcpgateway/auth.py`.
+- Do not accept inbound client auth tokens via URL query parameters.
+- Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
+- High-risk transports must be feature-flagged and disabled by default.
+- Transport/session endpoints must authenticate before session establishment (or message forwarding) and enforce RBAC before processing actions.
+- Token-scoped route authorization must be default-deny for unmapped protected paths.
+- Never trust client-provided ownership fields (`owner_email`, `team_id`, session owner); derive authorization from authenticated identity and server-side state.
+- Security-sensitive changes must include deny-path regression tests (unauthenticated, wrong team, insufficient permissions, feature disabled).
+
 ### Built-in Roles
 
 | Role | Scope | Key Permissions |

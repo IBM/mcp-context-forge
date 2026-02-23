@@ -53,6 +53,23 @@ def _index_exists(table_name: str, index_name: str) -> bool:
         return False
 
 
+def _table_exists(table_name: str) -> bool:
+    """Check if a table exists.
+
+    Args:
+        table_name: Name of the table to check.
+
+    Returns:
+        True if table exists, False otherwise.
+    """
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    try:
+        return table_name in inspector.get_table_names()
+    except Exception:
+        return False
+
+
 def _create_index_safe(index_name: str, table_name: str, columns: list[str], unique: bool = False) -> bool:
     """Create an index only if it doesn't already exist.
 
@@ -65,6 +82,10 @@ def _create_index_safe(index_name: str, table_name: str, columns: list[str], uni
     Returns:
         True if index was created, False if it already existed
     """
+    if not _table_exists(table_name):
+        print(f"⚠️  Skipping {index_name}: Table '{table_name}' does not exist")
+        return False
+
     if _index_exists(table_name, index_name):
         print(f"⚠️  Skipping {index_name}: Index already exists on {table_name}")
         return False
@@ -84,6 +105,10 @@ def _drop_index_safe(index_name: str, table_name: str) -> bool:
     Returns:
         True if index was dropped, False if it didn't exist
     """
+    if not _table_exists(table_name):
+        print(f"⚠️  Skipping drop of {index_name}: Table '{table_name}' does not exist")
+        return False
+
     if not _index_exists(table_name, index_name):
         print(f"⚠️  Skipping drop of {index_name}: Index does not exist on {table_name}")
         return False
