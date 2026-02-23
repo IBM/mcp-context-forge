@@ -273,13 +273,14 @@ def aggregate_metrics_combined(
     db: Session,
     metric_type: str,
     entity_id: Optional[str] = None,
+    include_current_hour: bool = True,
 ) -> AggregatedMetrics:
     """Aggregate metrics combining three data sources for complete coverage.
 
     This function queries:
     1. Hourly rollup table (for data older than retention cutoff)
     2. Raw metrics table (for completed hours within retention period)
-    3. Current hour raw metrics (for the incomplete current hour)
+    3. Current hour raw metrics (for the incomplete current hour) - optional
 
     This three-source approach ensures metrics are available immediately during
     benchmarks, even before the hourly rollup job has processed the current hour.
@@ -288,6 +289,8 @@ def aggregate_metrics_combined(
         db: Database session
         metric_type: Type of metric ('tool', 'resource', 'prompt', 'server', 'a2a_agent')
         entity_id: Optional entity ID to filter by (e.g., specific tool_id)
+        include_current_hour: If False, excludes current incomplete hour for stability.
+                            Defaults to True for backward compatibility.
 
     Returns:
         AggregatedMetrics: Combined metrics from all three sources
@@ -360,31 +363,42 @@ def aggregate_metrics_combined(
 
     # Query 3: Current hour raw metrics (timestamp >= current_hour_start)
     # This provides immediate visibility into metrics that haven't been rolled up yet
-    current_filters = [raw_model.timestamp >= current_hour_start]
-    if entity_id is not None:
-        current_filters.append(getattr(raw_model, id_col) == entity_id)
+    # Can be disabled for stable historical totals (exclude volatile current hour)
+    if include_current_hour:
+        current_filters = [raw_model.timestamp >= current_hour_start]
+        if entity_id is not None:
+            current_filters.append(getattr(raw_model, id_col) == entity_id)
 
-    current_result = db.execute(
-        select(
-            func.count(raw_model.id).label("total"),
-            func.sum(case((raw_model.is_success.is_(True), 1), else_=0)).label("successful"),
-            func.sum(case((raw_model.is_success.is_(False), 1), else_=0)).label("failed"),
-            func.min(raw_model.response_time).label("min_rt"),
-            func.max(raw_model.response_time).label("max_rt"),
-            func.avg(raw_model.response_time).label("avg_rt"),
-            func.max(raw_model.timestamp).label("last_time"),
-        ).where(and_(*current_filters))
-    ).one()
+        current_result = db.execute(
+            select(
+                func.count(raw_model.id).label("total"),
+                func.sum(case((raw_model.is_success.is_(True), 1), else_=0)).label("successful"),
+                func.sum(case((raw_model.is_success.is_(False), 1), else_=0)).label("failed"),
+                func.min(raw_model.response_time).label("min_rt"),
+                func.max(raw_model.response_time).label("max_rt"),
+                func.avg(raw_model.response_time).label("avg_rt"),
+                func.max(raw_model.timestamp).label("last_time"),
+            ).where(and_(*current_filters))
+        ).one()
 
-    current_total = current_result.total or 0
-    current_successful = current_result.successful or 0
-    current_failed = current_result.failed or 0
-    current_min_rt = current_result.min_rt
-    current_max_rt = current_result.max_rt
-    current_avg_rt = current_result.avg_rt
-    current_last_time = current_result.last_time
+        current_total = current_result.total or 0
+        current_successful = current_result.successful or 0
+        current_failed = current_result.failed or 0
+        current_min_rt = current_result.min_rt
+        current_max_rt = current_result.max_rt
+        current_avg_rt = current_result.avg_rt
+        current_last_time = current_result.last_time
+    else:
+        # Exclude current hour from totals for stability
+        current_total = 0
+        current_successful = 0
+        current_failed = 0
+        current_min_rt = None
+        current_max_rt = None
+        current_avg_rt = None
+        current_last_time = None
 
-    # Merge all three sources
+    # Merge all three sources (current_total=0 if include_current_hour=False)
     total = rollup_total + raw_total + current_total
     successful = rollup_successful + raw_successful + current_successful
     failed = rollup_failed + raw_failed + current_failed

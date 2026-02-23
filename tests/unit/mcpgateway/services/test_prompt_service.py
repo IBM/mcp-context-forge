@@ -225,8 +225,8 @@ class TestPromptService:
             mock_cache.invalidate_prompts = AsyncMock()
             mock_cache_fn.return_value = mock_cache
             mock_admin_cache.invalidate_tags = AsyncMock()
-            mock_metrics_cache.invalidate_prefix = Mock()
-            mock_metrics_cache.invalidate = Mock()
+            mock_metrics_cache.invalidate_prefix_async = AsyncMock()
+            mock_metrics_cache.invalidate_async = AsyncMock()
 
             pc = PromptCreate(
                 name="hello",
@@ -265,8 +265,8 @@ class TestPromptService:
             mock_cache.invalidate_prompts = AsyncMock()
             mock_cache_fn.return_value = mock_cache
             mock_admin_cache.invalidate_tags = AsyncMock()
-            mock_metrics_cache.invalidate_prefix = Mock()
-            mock_metrics_cache.invalidate = Mock()
+            mock_metrics_cache.invalidate_prefix_async = AsyncMock()
+            mock_metrics_cache.invalidate_async = AsyncMock()
 
             pc = PromptCreate(
                 name="hello",
@@ -971,7 +971,7 @@ class TestPromptService:
         cached = {"total_executions": 123}
         with (
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.get", return_value=cached),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.get_async", return_value=cached),
             patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined") as mock_agg,
         ):
             result = await prompt_service.aggregate_metrics(test_db)
@@ -997,8 +997,8 @@ class TestPromptService:
 
         with (
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=False),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.get") as mock_get,
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.set") as mock_set,
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.get_async") as mock_get,
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.set_async") as mock_set,
             patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result),
         ):
             result = await prompt_service.aggregate_metrics(test_db)
@@ -1600,7 +1600,7 @@ class TestGetTopPrompts:
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
             patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
         ):
-            mock_cache.get.return_value = [{"id": 1, "name": "cached"}]
+            mock_cache.get_async = AsyncMock(return_value=[{"id": 1, "name": "cached"}])
             result = await prompt_service.get_top_prompts(db)
         assert result == [{"id": 1, "name": "cached"}]
 
@@ -1614,10 +1614,11 @@ class TestGetTopPrompts:
             patch("mcpgateway.services.metrics_query_service.get_top_performers_combined", return_value=mock_results),
             patch("mcpgateway.services.prompt_service.build_top_performers", return_value=["top1"]),
         ):
-            mock_cache.get.return_value = None
+            mock_cache.get_async = AsyncMock(return_value=None)
+            mock_cache.set_async = AsyncMock()
             result = await prompt_service.get_top_prompts(db, limit=3)
         assert result == ["top1"]
-        mock_cache.set.assert_called_once()
+        mock_cache.set_async.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cache_disabled(self, prompt_service):

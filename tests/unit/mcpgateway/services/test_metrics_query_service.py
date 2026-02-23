@@ -534,3 +534,127 @@ class TestGetTopEntitiesCombined:
         db.execute.return_value = _Result()
 
         assert mqs.get_top_entities_combined(db, "tool", entity_model=Tool, order_by="avg_response_time") == []
+
+    def test_default_execution_count_order(self):
+        """Cover the default execution_count ordering branch (line 605)."""
+        from mcpgateway.db import Tool
+
+        db = MagicMock()
+
+        row = SimpleNamespace(
+            id="tool-1",
+            name="Tool One",
+            execution_count=10,
+            successful=10,
+            failed=0,
+            avg_response_time=0.1,
+            last_execution=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            is_deleted=False,
+        )
+
+        class _Result:
+            def fetchall(self):
+                return [row]
+
+        db.execute.return_value = _Result()
+
+        results = mqs.get_top_entities_combined(db, "tool", entity_model=Tool, order_by="execution_count")
+
+        assert results[0]["id"] == "tool-1"
+        assert results[0]["execution_count"] == 10
+        assert "is_deleted" not in results[0]  # Non-deleted entities don't have this key
+
+
+class TestAggregateMetricsCombinedExcludeCurrentHour:
+    """Tests for aggregate_metrics_combined with include_current_hour=False."""
+
+    def test_exclude_current_hour(self):
+        """Test that include_current_hour=False excludes current hour data (lines 392-399)."""
+        db = MagicMock()
+
+        # Rollup: has data
+        rollup_result = MagicMock()
+        rollup_result.total = 100
+        rollup_result.successful = 90
+        rollup_result.failed = 10
+        rollup_result.min_rt = 0.05
+        rollup_result.max_rt = 2.0
+        rollup_result.avg_rt = 0.5
+        rollup_result.last_time = datetime(2024, 1, 14, 12, 0, tzinfo=timezone.utc)
+
+        # Raw completed hours: has data
+        raw_result = MagicMock()
+        raw_result.total = 50
+        raw_result.successful = 45
+        raw_result.failed = 5
+        raw_result.min_rt = 0.03
+        raw_result.max_rt = 1.5
+        raw_result.avg_rt = 0.3
+        raw_result.last_time = datetime(2024, 1, 15, 9, 30, tzinfo=timezone.utc)
+
+        # Only 2 queries should be made (rollup + raw), current hour skipped
+        db.execute.return_value.one.side_effect = [rollup_result, raw_result]
+
+        result = mqs.aggregate_metrics_combined(db, "tool", include_current_hour=False)
+
+        # Should only combine rollup + raw (no current hour)
+        assert result.total_executions == 150  # 100 + 50
+        assert result.successful_executions == 135  # 90 + 45
+        assert result.failed_executions == 15  # 10 + 5
+        assert result.min_response_time == 0.03
+        assert result.max_response_time == 2.0
+        assert result.raw_count == 50  # Only completed hours
+        assert result.rollup_count == 100
+
+
+class TestGetTopPerformersCombined:
+    """Tests for get_top_performers_combined wrapper (lines 658-668)."""
+
+    def test_returns_top_performer_results(self):
+        """Test that get_top_performers_combined returns TopPerformerResult objects."""
+        from mcpgateway.db import Tool
+
+        db = MagicMock()
+
+        row = SimpleNamespace(
+            id="tool-1",
+            name="Tool One",
+            execution_count=10,
+            successful=8,
+            failed=2,
+            avg_response_time=0.5,
+            last_execution=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            is_deleted=False,
+        )
+
+        class _Result:
+            def fetchall(self):
+                return [row]
+
+        db.execute.return_value = _Result()
+
+        results = mqs.get_top_performers_combined(db, "tool", entity_model=Tool, limit=5)
+
+        assert len(results) == 1
+        assert isinstance(results[0], mqs.TopPerformerResult)
+        assert results[0].id == "tool-1"
+        assert results[0].name == "Tool One"
+        assert results[0].execution_count == 10
+        assert results[0].avg_response_time == 0.5
+        assert results[0].success_rate == pytest.approx(80.0)
+
+    def test_returns_empty_list_when_no_data(self):
+        """Test that get_top_performers_combined returns empty list when no data."""
+        from mcpgateway.db import Tool
+
+        db = MagicMock()
+
+        class _Result:
+            def fetchall(self):
+                return []
+
+        db.execute.return_value = _Result()
+
+        results = mqs.get_top_performers_combined(db, "tool", entity_model=Tool)
+
+        assert results == []
