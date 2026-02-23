@@ -198,7 +198,9 @@ check-env-dev:
 	@echo "🔎  Validating .env (dev, warnings do not fail)..."
 	@python -c "import sys; from mcpgateway.scripts import validate_env as ve; sys.exit(ve.main(env_file='.env', exit_on_warnings=False))"
 
-
+.PHONY: init-secrets
+init-secrets: ## Generate secure secrets for the gateway (US-3)
+	python3 -m mcpgateway.scripts.init_secrets
 
 # =============================================================================
 # ▶️ SERVE
