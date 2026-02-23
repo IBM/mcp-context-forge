@@ -1166,7 +1166,7 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
+        mock_subscribe.assert_called_once_with(user_email='test_user@example.com', token_teams=[])
 
 
 # ----------------------------------------------------- #
