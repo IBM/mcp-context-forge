@@ -144,7 +144,7 @@ async def test_redis_broadcast_integration():
     await reg_a.add_session("sid-integ", transport)
 
     # Start respond listener on reg_a
-    task = asyncio.create_task(reg_a.respond(None, {"token": "t"}, "sid-integ", rpc_url))
+    task = asyncio.create_task(reg_a.respond(None, {"token": "t"}, "sid-integ"))
 
     # allow subscription to be established
     await asyncio.sleep(0.1)
