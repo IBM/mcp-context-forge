@@ -183,9 +183,14 @@ class OAuthManager:
             >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
             'tok'
 
-            Authorization code fallback to client credentials:
-            >>> asyncio.run(mgr.get_access_token({'grant_type': 'authorization_code'}))
-            'tok'
+            Authorization code flow requires interactive completion:
+            >>> def _auth_code_requires_consent():
+            ...     try:
+            ...         asyncio.run(mgr.get_access_token({'grant_type': 'authorization_code'}))
+            ...     except OAuthError:
+            ...         return True
+            >>> _auth_code_requires_consent()
+            True
 
             Unsupported grant type raises ValueError:
             >>> def _unsupported():
@@ -204,21 +209,8 @@ class OAuthManager:
         if grant_type == "password":
             return await self._password_flow(credentials)
         if grant_type == "authorization_code":
-            # For authorization code flow in gateway initialization, we need to handle this differently
-            # Since this is called during gateway setup, we'll try to use client credentials as fallback
-            # or provide a more helpful error message
-            logger.warning("Authorization code flow requires user interaction. " + "For gateway initialization, consider using 'client_credentials' grant type instead.")
-            # Try to use client credentials flow if possible (some OAuth providers support this)
-            try:
-                return await self._client_credentials_flow(credentials)
-            except Exception as e:
-                raise OAuthError(
-                    f"Authorization code flow cannot be used for automatic gateway initialization. "
-                    f"Please use 'client_credentials' grant type or complete the OAuth flow manually first. "
-                    f"Error: {str(e)}"
-                )
-        else:
-            raise ValueError(f"Unsupported grant type: {grant_type}")
+            raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
+        raise ValueError(f"Unsupported grant type: {grant_type}")
 
     async def _client_credentials_flow(self, credentials: Dict[str, Any]) -> str:
         """Machine-to-machine authentication using client credentials.

@@ -74,17 +74,11 @@ async def test_get_access_token_password(oauth_manager):
 
 
 @pytest.mark.asyncio
-async def test_get_access_token_authorization_code_fallback(oauth_manager):
-    with patch.object(oauth_manager, "_client_credentials_flow", new_callable=AsyncMock, return_value="fallback-tok"):
-        result = await oauth_manager.get_access_token({"grant_type": "authorization_code"})
-    assert result == "fallback-tok"
-
-
-@pytest.mark.asyncio
-async def test_get_access_token_authorization_code_failure(oauth_manager):
-    with patch.object(oauth_manager, "_client_credentials_flow", new_callable=AsyncMock, side_effect=Exception("no creds")):
-        with pytest.raises(OAuthError, match="Authorization code flow cannot be used"):
+async def test_get_access_token_authorization_code_requires_consent(oauth_manager):
+    with patch.object(oauth_manager, "_client_credentials_flow", new_callable=AsyncMock) as mock_client_flow:
+        with pytest.raises(OAuthError, match="requires user consent"):
             await oauth_manager.get_access_token({"grant_type": "authorization_code"})
+    mock_client_flow.assert_not_called()
 
 
 @pytest.mark.asyncio
