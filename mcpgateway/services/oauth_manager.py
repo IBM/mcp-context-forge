@@ -593,12 +593,14 @@ class OAuthManager:
             return await self.token_storage.get_user_token(gateway_id, app_user_email)
         return None
 
-    def _generate_state(self, gateway_id: str, app_user_email: str = None) -> str:
+    def _generate_state(self, _gateway_id: str, _app_user_email: str = None) -> str:
         """Generate an opaque state token for CSRF protection.
 
         Args:
-            gateway_id: ID of the gateway
-            app_user_email: ContextForge user email (stored server-side)
+            _gateway_id: Gateway identifier (reserved for compatibility with
+                prior embedded-state call sites).
+            _app_user_email: ContextForge user email (reserved for
+                compatibility with prior embedded-state call sites).
 
         Returns:
             Opaque random state token

@@ -59,7 +59,15 @@ ROLE_PERMISSION_ADDITIONS: Dict[str, List[str]] = {
 
 
 def _load_permissions(raw_permissions: object) -> List[str]:
-    """Normalize stored permissions into a list of strings."""
+    """Normalize stored permissions into a list of strings.
+
+    Args:
+        raw_permissions: Permissions persisted in the database. May be ``None``,
+            JSON text, bytes, or a Python list.
+
+    Returns:
+        List[str]: A normalized list containing only string permission entries.
+    """
     if not raw_permissions:
         return []
 
@@ -80,7 +88,12 @@ def _load_permissions(raw_permissions: object) -> List[str]:
 
 
 def _apply_permission_updates(additions_by_role: Dict[str, List[str]]) -> None:
-    """Apply role permission additions idempotently."""
+    """Apply role permission additions idempotently.
+
+    Args:
+        additions_by_role: Mapping of role name to permissions that must be
+            present after migration.
+    """
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     existing_tables = inspector.get_table_names()
