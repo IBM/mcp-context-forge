@@ -4,7 +4,7 @@ ContextForge: Full Project Overview
 - Tech: FastAPI + Pydantic + SQLAlchemy; optional Redis; Alembic migrations; hybrid plugin framework (native + external MCP).
 
 **Core Capabilities**
-- Unified gateway for MCP servers: tools, prompts, and resources via HTTP/SSE/WebSocket/STDIO/streamable HTTP.
+- AI gateway, registry, and proxy exposing a unified control plane for MCP servers: tools, prompts, and resources via HTTP/SSE/WebSocket/STDIO/streamable HTTP.
 - Plugin framework: AI safety, content filtering, policy enforcement, and transformations with pre/post hooks (42 built-in plugins).
 - Federation and administration: register servers, list tools/prompts/resources, manage teams/tokens, admin UI.
 - Agent-to-Agent (A2A) communication between MCP agents.

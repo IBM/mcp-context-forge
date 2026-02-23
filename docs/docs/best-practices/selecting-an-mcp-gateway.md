@@ -6,7 +6,7 @@ A practical framework for evaluating MCP gateways, and how ContextForge addresse
 
 ## Why ContextForge?
 
-Organizations deploying AI agents face fragmented tool ecosystems, inconsistent security controls, and no centralized governance across agent interactions. An MCP gateway provides the unified control plane: federating tools, enforcing policy, and delivering visibility across your AI infrastructure.
+Organizations deploying AI agents face fragmented tool ecosystems, inconsistent security controls, and no centralized governance across agent interactions. What's needed is a unified control plane: federating tools, enforcing policy, and delivering visibility across your AI infrastructure. ContextForge is that control plane — an AI gateway, registry, and proxy that centralizes governance, discovery, routing, and observability for MCP, A2A, and REST/gRPC services while optimizing agent and tool calling.
 
 This framework outlines what to evaluate and why each criterion matters.
 
