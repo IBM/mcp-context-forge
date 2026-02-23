@@ -417,6 +417,7 @@ async def test_list_prompts_with_server_id(monkeypatch):
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "prompt1"
+    mock_prompt.title = None
     mock_prompt.description = "test prompt"
     mock_prompt.arguments = [PromptArgument(name="arg1", description="desc1", required=None)]
 
@@ -448,6 +449,7 @@ async def test_list_prompts_no_server_id(monkeypatch):
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "global_prompt"
+    mock_prompt.title = None
     mock_prompt.description = "global test prompt"
     mock_prompt.arguments = []
 
@@ -652,6 +654,7 @@ async def test_list_resources_with_server_id(monkeypatch):
     mock_resource = MagicMock()
     mock_resource.uri = "file:///test.txt"
     mock_resource.name = "test resource"
+    mock_resource.title = None
     mock_resource.description = "test description"
     mock_resource.mime_type = "text/plain"
 
@@ -683,6 +686,7 @@ async def test_list_resources_no_server_id(monkeypatch):
     mock_resource = MagicMock()
     mock_resource.uri = "http://example.com/resource"
     mock_resource.name = "global resource"
+    mock_resource.title = None
     mock_resource.description = "global description"
     mock_resource.mime_type = "application/json"
 
