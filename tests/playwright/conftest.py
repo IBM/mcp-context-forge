@@ -9,6 +9,7 @@ This assumes environment variables are loaded by the Makefile.
 """
 
 # Standard
+import logging
 import os
 import re
 from typing import Dict, Generator, Optional
@@ -84,6 +85,7 @@ def _parse_video_size(size: str) -> Optional[Dict[str, int]]:
 
 VIDEO_SIZE = _parse_video_size(PLAYWRIGHT_VIDEO_SIZE)
 VIEWPORT_SIZE = _parse_video_size(PLAYWRIGHT_VIEWPORT_SIZE)
+logger = logging.getLogger(__name__)
 
 
 def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -> None:
@@ -91,13 +93,13 @@ def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -
     try:
         page.wait_for_load_state("domcontentloaded", timeout=10000)
     except PlaywrightTimeoutError:
-        pass  # Page may already be loaded
+        logger.warning("Admin transition: domcontentloaded timed out (url=%s)", page.url)
     if previous_url and page.url == previous_url:
         # URL hasn't changed yet; wait for navigation to complete
         try:
-            page.wait_for_url(lambda url: url != previous_url, timeout=5000)
+            page.wait_for_url(lambda url: url != previous_url, timeout=10000)
         except PlaywrightTimeoutError:
-            pass  # May not navigate (e.g., auth not required)
+            logger.warning("Admin transition: URL unchanged after wait (still %s)", page.url)
 
 
 def _submit_login_and_wait(page: Page, login_page, email: str, password: str) -> Optional[int]:
@@ -152,7 +154,10 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     login_page = LoginPage(page, base_url)
 
     # Go directly to admin
-    page.goto("/admin", wait_until="domcontentloaded")
+    page.goto("/admin", wait_until="networkidle")
+    landing_url = page.url
+    if re.search(r"/admin/?(?:[?#].*)?$", landing_url):
+        _wait_for_admin_transition(page, previous_url=landing_url)
 
     # Handle password change requirement
     if login_page.is_on_change_password_page():
@@ -189,10 +194,14 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             if DISABLE_JWT_FALLBACK:
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
             _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
+            page.goto("/admin/", wait_until="networkidle")
             _wait_for_admin_transition(page)
 
     # Verify we're on the admin page
+    if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
+        _set_admin_jwt_cookie(page, admin_email)
+        page.goto("/admin/", wait_until="networkidle")
+        _wait_for_admin_transition(page)
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
 
     # Wait for the application shell to load
@@ -202,7 +211,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
             # Recovery path for intermittent auth redirects during shell load.
             _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
+            page.goto("/admin/", wait_until="networkidle")
             _wait_for_admin_transition(page)
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
             return

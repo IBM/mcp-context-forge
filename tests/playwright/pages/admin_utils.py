@@ -79,7 +79,8 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
                     return item
         else:
             logger.warning("find_entity_by_name: %s returned status=%d: %s", endpoint, response.status, response.text()[:200])
-        page.wait_for_timeout(500)
+        # Back off linearly under DB contention in full-suite runs.
+        page.wait_for_timeout(500 * (attempt + 1))
     return None
 
 
