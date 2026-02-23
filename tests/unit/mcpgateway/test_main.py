@@ -375,7 +375,7 @@ def test_client(app_with_temp_db):
 
     # Override get_current_user_with_permissions for RBAC system
     def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None):
-        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test"}
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "permissions": ["*"]}
 
     app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
@@ -410,7 +410,7 @@ def test_client(app_with_temp_db):
 @pytest.fixture
 def mock_jwt_token():
     """Create a valid JWT token for testing."""
-    payload = {"sub": "test_user@example.com", "email": "test_user@example.com", "iss": "mcpgateway", "aud": "mcpgateway-api"}
+    payload = {"sub": "test_user@example.com", "email": "test_user@example.com", "iss": "mcpgateway", "aud": "mcpgateway-api", "permissions": ["*"], "is_admin": True, "teams": None}
     secret = settings.jwt_secret_key
     if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
         secret = secret.get_secret_value()
@@ -1166,7 +1166,7 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-        mock_subscribe.assert_called_once_with(user_email='test_user@example.com', token_teams=[])
+        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
 
 
 # ----------------------------------------------------- #
@@ -1765,8 +1765,8 @@ class TestRPCEndpoints:
             arguments={"param": "value"},
             request_headers=ANY,
             app_user_email="test_user@example.com",  # Updated: now uses email from JWT/RBAC
-            user_email="test_user@example.com",
-            token_teams=[],
+            user_email=None,
+            token_teams=None,
             server_id=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
@@ -1825,9 +1825,9 @@ class TestRPCEndpoints:
             ANY,  # db
             "test_prompt",  # name
             {"param": "value"},  # arguments
-            user="test_user@example.com",
+            user=None,
             server_id=None,
-            token_teams=[],
+            token_teams=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
             _meta_data=None,
