@@ -12428,6 +12428,28 @@ async def test_admin_team_non_members_partial_html_empty_search(monkeypatch, moc
 
 
 @pytest.mark.asyncio
+async def test_admin_team_non_members_partial_html_short_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-members endpoint requires at least 2 characters before querying users."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    auth_service = MagicMock()
+    auth_service.list_users_not_in_team = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="a", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert "type at least 2 characters" in response.body.decode().lower()
+    auth_service.list_users_not_in_team.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_admin_team_non_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     response = await admin_team_non_members_partial_html("team-1", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
