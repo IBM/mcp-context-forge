@@ -12,6 +12,7 @@ and time-based restrictions.
 
 # Standard
 from datetime import datetime, timezone
+from functools import lru_cache
 import ipaddress
 import re
 from typing import List, Optional, Pattern, Tuple
@@ -22,6 +23,7 @@ from fastapi.security import HTTPBearer
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.config import settings
 from mcpgateway.db import Permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -196,6 +198,41 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
         Permissions.ADMIN_SYSTEM_CONFIG,
     ),
 ]
+
+
+def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
+    """Normalize llm_api_prefix to a canonical path prefix.
+
+    Args:
+        prefix: Raw LLM API prefix setting value.
+
+    Returns:
+        str: Normalized path prefix, or empty string when prefix is empty or "/".
+    """
+    if not prefix:
+        return ""
+    normalized = "/" + str(prefix).strip().strip("/")
+    return "" if normalized == "/" else normalized
+
+
+@lru_cache(maxsize=16)
+def _get_llm_permission_patterns(prefix: str) -> Tuple[Tuple[str, Pattern[str], str], ...]:
+    """Build precompiled permission patterns for LLM proxy endpoints.
+
+    Args:
+        prefix: LLM API prefix used to mount proxy routes.
+
+    Returns:
+        Tuple[Tuple[str, Pattern[str], str], ...]: Method/path regex to required permission mappings.
+    """
+    normalized_prefix = _normalize_llm_api_prefix(prefix)
+    escaped_prefix = re.escape(normalized_prefix)
+    return (
+        # LLM proxy routes are exact endpoints (optionally with a trailing slash),
+        # unlike many REST resources that intentionally include sub-resources.
+        ("POST", re.compile(rf"^{escaped_prefix}/chat/completions/?$"), Permissions.LLM_INVOKE),
+        ("GET", re.compile(rf"^{escaped_prefix}/models/?$"), Permissions.LLM_READ),
+    )
 
 
 class TokenScopingMiddleware:
@@ -493,6 +530,11 @@ class TokenScopingMiddleware:
 
         # Check each permission mapping (uses precompiled regex patterns)
         for method, path_pattern, required_permission in _PERMISSION_PATTERNS:
+            if request_method == method and path_pattern.match(request_path):
+                return required_permission in permissions
+
+        # LLM proxy permissions (respect configured llm_api_prefix).
+        for method, path_pattern, required_permission in _get_llm_permission_patterns(settings.llm_api_prefix):
             if request_method == method and path_pattern.match(request_path):
                 return required_permission in permissions
 
