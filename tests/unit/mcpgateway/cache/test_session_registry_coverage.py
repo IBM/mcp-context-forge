@@ -2472,104 +2472,7 @@ class TestReapStuckTasksDoneException:
         assert "Reaped 1 completed stuck tasks" in caplog.text
 
 
-# ---------------------------------------------------------------------------
-# generate_response: servers path where root_path == "/" (lines 1965-1966)
-# ---------------------------------------------------------------------------
-class TestGenerateResponseServersPath:
-    """Cover the /servers/ path extraction edge case."""
 
-    @pytest.mark.asyncio
-    async def test_generate_response_servers_at_root(self, registry, stub_db, stub_services):
-        """Lines 1965-1966: root_path == '/' becomes empty string."""
-        tr = FakeSSETransport("root_srv")
-        await registry.add_session("root_srv", tr)
-
-        mock_response = Mock()
-        mock_response.json.return_value = {"result": {}, "id": 55}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-
-        class MockAsyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        msg = {"method": "ping", "id": 55, "params": {}}
-
-        with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-            with patch("mcpgateway.config.settings.internal_rpc_url", None):
-                await registry.generate_response(
-                    message=msg,
-                    transport=tr,
-                    server_id=None,
-                    user={"auth_token": "tok"},
-                    base_url="http://host/servers/abc123",
-                )
-
-        call_args = mock_client.post.call_args
-        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert url == "http://host/rpc"
-
-    @pytest.mark.asyncio
-    async def test_generate_response_servers_index_value_error(self, registry, stub_db, stub_services):
-        """Lines 1966-1967: ValueError in path_parts.index('servers') falls back to empty root_path."""
-        tr = FakeSSETransport("valerr_srv")
-        await registry.add_session("valerr_srv", tr)
-
-        mock_response = Mock()
-        mock_response.json.return_value = {"result": {}, "id": 56}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-
-        class MockAsyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        class _Parts(list):
-            def index(self, *_args, **_kwargs):  # noqa: A003 - match list.index signature
-                raise ValueError("servers not found")
-
-        class _Path(str):
-            def split(self, sep=None, maxsplit=-1):  # noqa: D401
-                return _Parts(super().split(sep, maxsplit))
-
-        class _Parsed:
-            scheme = "http"
-            netloc = "host"
-            path = _Path("/servers/abc123")
-
-        def fake_urlparse(_url: str):  # noqa: D401
-            return _Parsed()
-
-        msg = {"method": "ping", "id": 56, "params": {}}
-
-        with patch("mcpgateway.cache.session_registry.urlparse", fake_urlparse):
-            with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-                with patch("mcpgateway.config.settings.internal_rpc_url", None):
-                    await registry.generate_response(
-                        message=msg,
-                        transport=tr,
-                        server_id=None,
-                        user={"auth_token": "tok"},
-                        base_url="http://ignored/servers/abc123",
-                    )
-
-        call_args = mock_client.post.call_args
-        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert url == "http://host/rpc"
 
 
 # ---------------------------------------------------------------------------
@@ -2611,8 +2514,7 @@ class TestGenerateResponseInternalRPCURL:
                     message=msg,
                     transport=tr,
                     server_id=None,
-                    user={"auth_token": "tok"},
-                    base_url="http://original-base-url.com/servers/test",
+                    user={"auth_token": "tok"}
                 )
 
         # Verify the client was called with the custom internal URL, NOT the base_url derived one
