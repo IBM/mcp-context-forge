@@ -451,6 +451,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -501,6 +502,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -524,6 +526,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -537,6 +540,28 @@ class TestOAuthRouter:
                 # Assert
                 assert isinstance(result, HTMLResponse)
                 assert "✅ OAuth Authorization Successful" in result.body.decode()
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_opaque_state_lookup(self, mock_db, mock_request, mock_gateway):
+        """Test OAuth callback resolves gateway via opaque state mapping."""
+        state = "opaque-state-token"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00"}
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 200
+        mock_oauth_manager.resolve_gateway_id_from_state.assert_awaited_once_with("opaque-state-token")
 
     @pytest.mark.asyncio
     async def test_oauth_callback_provider_error_response(self, mock_db, mock_request):
@@ -678,6 +703,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(side_effect=OAuthError("Invalid authorization code"))
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -709,6 +735,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(side_effect=RuntimeError("boom"))
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -1526,6 +1553,7 @@ class TestOAuthRouterAdditionalCoverage:
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
             mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=result_payload)
             mock_oauth_mgr.return_value = mock_mgr
 

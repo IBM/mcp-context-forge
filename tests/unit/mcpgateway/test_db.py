@@ -1108,6 +1108,9 @@ def test_permissions_helpers():
     assert "tools.read" in permissions
     assert "llm.read" in permissions
     assert "llm.invoke" in permissions
+    assert "admin.metrics" in permissions
+    assert "admin.sso_providers:read" in permissions
+    assert "logs:read" in permissions
     assert db.Permissions.ALL_PERMISSIONS not in permissions
 
     by_resource = db.Permissions.get_permissions_by_resource()
@@ -1115,6 +1118,8 @@ def test_permissions_helpers():
     assert "tools.read" in by_resource["tools"]
     assert "llm" in by_resource
     assert "llm.read" in by_resource["llm"]
+    assert "logs" in by_resource
+    assert "logs:read" in by_resource["logs"]
 
 
 # --- Email user helpers ---

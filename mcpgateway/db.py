@@ -975,6 +975,19 @@ class Permissions:
     ADMIN_EVENTS = "admin.events"
     ADMIN_GRPC = "admin.grpc"
     ADMIN_PLUGINS = "admin.plugins"
+    ADMIN_METRICS = "admin.metrics"
+    ADMIN_EXPORT = "admin.export"
+    ADMIN_IMPORT = "admin.import"
+    ADMIN_SSO_PROVIDERS_CREATE = "admin.sso_providers:create"
+    ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
+    ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
+    ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
+
+    # Observability and audit read permissions
+    LOGS_READ = "logs:read"
+    METRICS_READ = "metrics:read"
+    AUDIT_READ = "audit:read"
+    SECURITY_READ = "security:read"
 
     # A2A Agent permissions
     A2A_CREATE = "a2a.create"
@@ -1003,7 +1016,7 @@ class Permissions:
         for attr_name in dir(cls):
             if not attr_name.startswith("_") and attr_name.isupper() and attr_name != "ALL_PERMISSIONS":
                 attr_value = getattr(cls, attr_name)
-                if isinstance(attr_value, str) and "." in attr_value:
+                if isinstance(attr_value, str):
                     permissions.append(attr_value)
         return sorted(permissions)
 
@@ -1016,7 +1029,12 @@ class Permissions:
         """
         resource_permissions = {}
         for permission in cls.get_all_permissions():
-            resource_type = permission.split(".")[0]
+            if "." in permission:
+                resource_type = permission.split(".", 1)[0]
+            elif ":" in permission:
+                resource_type = permission.split(":", 1)[0]
+            else:
+                resource_type = permission
             if resource_type not in resource_permissions:
                 resource_permissions[resource_type] = []
             resource_permissions[resource_type].append(permission)
@@ -4854,6 +4872,7 @@ class OAuthState(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
+    app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

@@ -269,7 +269,7 @@ class TestExchangeCodeForTokensWithPKCE:
         mock_client.post = AsyncMock(return_value=mock_response_obj)
 
         with patch.object(manager, "_get_client", return_value=mock_client):
-            result = await manager._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
+            await manager._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
 
         # Verify code_verifier was included in request
         call_kwargs = mock_client.post.call_args[1]
@@ -327,7 +327,7 @@ class TestInitiateAuthorizationCodeFlowWithPKCE:
             mock_store.return_value = None
             mock_create_url.return_value = "https://as.example.com/authorize?..."
 
-            result = await manager.initiate_authorization_code_flow(gateway_id, credentials)
+            await manager.initiate_authorization_code_flow(gateway_id, credentials)
 
         # Verify PKCE was generated
         mock_pkce.assert_called_once()
@@ -360,7 +360,7 @@ class TestCompleteAuthorizationCodeFlowWithPKCE:
             mock_exchange.return_value = {"access_token": "token", "expires_in": 3600}
             mock_extract.return_value = "user-123"
 
-            result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+            await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
         # Verify code_verifier was passed to token exchange
         mock_exchange.assert_called_once()
@@ -1177,8 +1177,8 @@ class TestCompleteFlowHMACBranches:
                 assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_gateway_mismatch_falls_back(self):
-        """Gateway mismatch triggers OAuthError caught in except (line 580)."""
+    async def test_gateway_mismatch_is_rejected(self):
+        """Legacy state with mismatched gateway_id is rejected."""
         import base64
         import hashlib
         import hmac as hmac_mod
@@ -1203,10 +1203,8 @@ class TestCompleteFlowHMACBranches:
             state = base64.urlsafe_b64encode(state_bytes + sig).decode()
 
             with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
-                # Gateway mismatch raises OAuthError which is caught in the except block,
-                # so app_user_email becomes None, but no token_storage so it proceeds
-                result = await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
-                assert result["success"] is True
+                with pytest.raises(OAuthError, match="gateway mismatch"):
+                    await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
 
     @pytest.mark.asyncio
     async def test_no_email_with_storage_raises(self):
@@ -1229,6 +1227,50 @@ class TestCompleteFlowHMACBranches:
             with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
                 with pytest.raises(OAuthError, match="User context required"):
                     await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
+
+
+@pytest.mark.asyncio
+async def test_complete_flow_uses_server_side_user_context_without_state_decoding():
+    """Opaque states should use user context loaded from state storage."""
+    manager = OAuthManager(token_storage=MagicMock())
+    manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
+
+    with patch.object(
+        manager,
+        "_validate_and_retrieve_state",
+        return_value={"code_verifier": "v", "app_user_email": "user@test.com"},
+    ), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok", "expires_in": 3600}), patch.object(manager, "_extract_user_id", return_value="user-1"):
+        result = await manager.complete_authorization_code_flow(
+            "gw1",
+            "code",
+            "opaque-state-token",
+            {"client_id": "cid"},
+        )
+
+    assert result["success"] is True
+    manager.token_storage.store_tokens.assert_awaited_once()
+    assert manager.token_storage.store_tokens.await_args.kwargs["app_user_email"] == "user@test.com"
+
+
+@pytest.mark.asyncio
+async def test_store_and_resolve_state_in_memory_preserves_gateway_mapping(monkeypatch):
+    """State lookup must resolve gateway IDs for opaque callback states."""
+    manager = OAuthManager()
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
+
+    await manager._store_authorization_state(
+        "gw-memory",
+        "opaque-state-token",
+        code_verifier="verifier",
+        app_user_email="user@test.com",
+    )
+
+    gateway_id = await manager.resolve_gateway_id_from_state("opaque-state-token")
+    assert gateway_id == "gw-memory"
+
+    state_data = await manager._validate_and_retrieve_state("gw-memory", "opaque-state-token")
+    assert state_data is not None
+    assert state_data.get("app_user_email") == "user@test.com"
 
 
 class _MockColumn:
@@ -1299,9 +1341,7 @@ class TestValidateAuthorizationStateRedisEdgeCases:
 
         manager = OAuthManager()
         redis = AsyncMock()
-        # Use a datetime format that fromisoformat can't parse but strptime can
-        state_data = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "2099-01-01T00:00:00", "used": False}
-        # This should work with fromisoformat, so use something that doesn't
+        # Use a datetime string that forces parser failure paths.
         bad_state = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "not-a-date", "used": False}
         redis.getdel = AsyncMock(return_value=orjson.dumps(bad_state))
 
