@@ -38,6 +38,12 @@ window.safeReplaceState =
         }
     };
 
+// Ensure UI base path and root path have sane defaults when this script
+// is executed outside the full templated admin page (e.g. unit tests).
+// Tests expect the admin UI base path to be "/admin" by default.
+window.UI_BASE_PATH = window.UI_BASE_PATH || "/admin";
+window.ROOT_PATH = window.ROOT_PATH || "";
+
 // ===================================================================
 // GLOBAL CHART.JS INSTANCE REGISTRY
 // ===================================================================
