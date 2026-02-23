@@ -1233,7 +1233,7 @@ class TestTitleSchemas:
         """Test ResourceCreate, ResourceUpdate, and ResourceRead pass title field."""
         resource_create = ResourceCreate(uri="test://uri", name="test-resource", content="data", title="My Custom Resource Title")
         assert resource_create.title == "My Custom Resource Title"
-        
+
         resource_update = ResourceUpdate(title="Updated Resource Title")
         assert resource_update.title == "Updated Resource Title"
 
