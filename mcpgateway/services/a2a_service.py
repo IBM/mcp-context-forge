@@ -389,9 +389,6 @@ class A2AAgentService:
                 # Standard
                 from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
                     raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
@@ -1065,9 +1062,6 @@ class A2AAgentService:
                 # Standard
                 from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
                     # Grandfather clause: Allow updates to existing query_param agents
@@ -1100,8 +1094,6 @@ class A2AAgentService:
                     is_masked_placeholder = False
                     if param_value and hasattr(param_value, "get_secret_value"):
                         raw_value = param_value.get_secret_value()
-                        # First-Party
-                        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
                         is_masked_placeholder = raw_value == settings.masked_auth_value
                     elif param_value:
