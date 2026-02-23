@@ -118,7 +118,7 @@ class TestAuthentication:
         if re.search(r"/admin/change-password-required", page.url):
             pytest.skip("Admin password change required; configure a final password and retry.")
         expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
-        expect(page.locator("h1")).to_contain_text("Gateway Administration")
+        expect(page).to_have_title(re.compile(r".*Gateway Administration.*"))
 
         # Check that we can see admin tabs
         admin_ui = AdminPage(page, BASE_URL)

@@ -6863,6 +6863,9 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
         user={"email": current_user_email, "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+    assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
 
 
 @pytest.mark.asyncio
@@ -6888,6 +6891,9 @@ async def test_admin_users_partial_html_controls(monkeypatch, mock_request, mock
         user={"email": "admin@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+    assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
 
 
 @pytest.mark.asyncio
@@ -6973,6 +6979,9 @@ async def test_admin_users_partial_html_default_render(monkeypatch, mock_request
         user={"email": "admin@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+    assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "users_partial.html"
 
@@ -17328,15 +17337,16 @@ class TestLoadSriHashes:
 
             assert result == test_hashes
 
-    def test_load_sri_hashes_contains_tailwind_hash(self):
-        """Tailwind CDN script must be pinned via SRI."""
+    def test_load_sri_hashes_excludes_tailwind_play_cdn(self):
+        """Tailwind Play CDN is intentionally excluded from SRI hash map."""
         # First-Party
         from mcpgateway import admin as admin_mod
 
         admin_mod.load_sri_hashes.cache_clear()
         hashes = admin_mod.load_sri_hashes()
-        assert "tailwindcss" in hashes
-        assert hashes["tailwindcss"].startswith("sha384-")
+        assert "tailwindcss" not in hashes
+        assert "htmx" in hashes
+        assert hashes["htmx"].startswith("sha384-")
 
 
 class TestAdminCsrfProtection:

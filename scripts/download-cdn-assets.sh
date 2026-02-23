@@ -19,9 +19,9 @@ mkdir -p "${STATIC_DIR}/fontawesome/webfonts"
 
 echo "📦 Downloading CDN assets for airgapped deployment..."
 
-# Download Tailwind CSS standalone build
+# Download Tailwind Play CDN (version-pinned v3 for window.tailwind.config compatibility)
 echo "  ⬇️  Tailwind CSS..."
-curl -fsSL "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.1/dist/index.global.js" \
+curl -fsSL "https://cdn.tailwindcss.com/3.4.17" \
   -o "${STATIC_DIR}/tailwindcss/tailwind.min.js"
 
 # Download HTMX

@@ -6757,7 +6757,7 @@ async def admin_users_partial_html(
         db.commit()
 
         if render == "selector":
-            return request.app.state.templates.TemplateResponse(
+            response = request.app.state.templates.TemplateResponse(
                 request,
                 "team_members_selector.html",
                 {
@@ -6772,10 +6772,9 @@ async def admin_users_partial_html(
                     "team_id": team_id,
                 },
             )
-
-        if render == "controls":
+        elif render == "controls":
             base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
-            return request.app.state.templates.TemplateResponse(
+            response = request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
                 {
@@ -6789,19 +6788,25 @@ async def admin_users_partial_html(
                     "root_path": request.scope.get("root_path", ""),
                 },
             )
+        else:
+            # Render template with paginated data
+            response = request.app.state.templates.TemplateResponse(
+                request,
+                "users_partial.html",
+                {
+                    "request": request,
+                    "data": users_data,
+                    "pagination": pagination.model_dump(),
+                    "root_path": request.scope.get("root_path", ""),
+                    "current_user_email": current_user_email,
+                },
+            )
 
-        # Render template with paginated data
-        return request.app.state.templates.TemplateResponse(
-            request,
-            "users_partial.html",
-            {
-                "request": request,
-                "data": users_data,
-                "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
-                "current_user_email": current_user_email,
-            },
-        )
+        # Prevent stale partials after create/update/delete actions.
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error loading users partial for admin {user}: {e}")
