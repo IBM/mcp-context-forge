@@ -523,7 +523,16 @@ def get_encryption_service(encryption_secret: Union[SecretStr, str]) -> Encrypti
 
 
 async def _encrypt_oauth_secret_value(value: Any, existing_value: Any, encryption: EncryptionService) -> Any:
-    """Encrypt a sensitive oauth value while preserving masked placeholders."""
+    """Encrypt a sensitive oauth value while preserving masked placeholders.
+
+    Args:
+        value: Incoming oauth value to protect.
+        existing_value: Existing stored value used for masked placeholder preservation.
+        encryption: Encryption service instance.
+
+    Returns:
+        Any: Protected value suitable for persistence.
+    """
     if isinstance(value, dict):
         return await _protect_oauth_config_value(value, existing_value, encryption)
 
@@ -553,7 +562,16 @@ async def _encrypt_oauth_secret_value(value: Any, existing_value: Any, encryptio
 
 
 async def _protect_oauth_config_value(value: Any, existing_value: Any, encryption: EncryptionService) -> Any:
-    """Recursively encrypt sensitive oauth_config values."""
+    """Recursively encrypt sensitive oauth_config values.
+
+    Args:
+        value: Incoming oauth_config fragment.
+        existing_value: Existing oauth_config fragment for masked placeholder preservation.
+        encryption: Encryption service instance.
+
+    Returns:
+        Any: Protected oauth_config fragment.
+    """
     if isinstance(value, dict):
         existing_dict = existing_value if isinstance(existing_value, dict) else {}
         protected: dict[str, Any] = {}
@@ -577,7 +595,15 @@ async def _protect_oauth_config_value(value: Any, existing_value: Any, encryptio
 
 
 async def protect_oauth_config_for_storage(oauth_config: Any, existing_oauth_config: Any = None) -> Any:
-    """Recursively encrypt sensitive oauth_config values before persistence."""
+    """Recursively encrypt sensitive oauth_config values before persistence.
+
+    Args:
+        oauth_config: Incoming oauth_config payload.
+        existing_oauth_config: Existing oauth_config payload, if any.
+
+    Returns:
+        Any: Protected oauth_config payload.
+    """
     if oauth_config is None:
         return None
 
@@ -586,7 +612,15 @@ async def protect_oauth_config_for_storage(oauth_config: Any, existing_oauth_con
 
 
 async def _decrypt_oauth_config_value(value: Any, encryption: EncryptionService) -> Any:
-    """Recursively decrypt sensitive oauth_config values for runtime use."""
+    """Recursively decrypt sensitive oauth_config values for runtime use.
+
+    Args:
+        value: oauth_config fragment.
+        encryption: Encryption service instance.
+
+    Returns:
+        Any: Decrypted oauth_config fragment.
+    """
     if isinstance(value, dict):
         decrypted: dict[str, Any] = {}
         for key, item in value.items():
@@ -607,7 +641,14 @@ async def _decrypt_oauth_config_value(value: Any, encryption: EncryptionService)
 
 
 async def decrypt_oauth_config_for_runtime(oauth_config: Any) -> Any:
-    """Recursively decrypt sensitive oauth_config values only when runtime plaintext is required."""
+    """Recursively decrypt sensitive oauth_config values only at runtime use-sites.
+
+    Args:
+        oauth_config: Stored oauth_config payload.
+
+    Returns:
+        Any: Runtime-ready oauth_config payload.
+    """
     if oauth_config is None:
         return None
 

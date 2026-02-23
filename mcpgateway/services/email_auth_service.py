@@ -350,18 +350,30 @@ class EmailAuthService:
 
     @staticmethod
     def _minimum_login_failure_seconds() -> float:
-        """Get minimum failed-login response duration."""
+        """Get minimum failed-login response duration.
+
+        Returns:
+            float: Minimum failure response duration in seconds.
+        """
         min_ms = max(0, int(getattr(settings, "failed_login_min_response_ms", 250)))
         return min_ms / 1000.0
 
     async def _apply_failed_login_floor(self, start_time: float) -> None:
-        """Apply minimum failed-login response duration."""
+        """Apply minimum failed-login response duration.
+
+        Args:
+            start_time: Monotonic timestamp when login processing started.
+        """
         remaining = self._minimum_login_failure_seconds() - (time.monotonic() - start_time)
         if remaining > 0:
             await asyncio.sleep(remaining)
 
     async def _verify_dummy_password_for_timing(self, password: str) -> None:
-        """Run a dummy Argon2 verification to reduce observable timing differences."""
+        """Run dummy Argon2 verification to reduce observable timing differences.
+
+        Args:
+            password: User-supplied password candidate.
+        """
         try:
             await self.password_service.verify_password_async(password, _DUMMY_PASSWORD_HASH)
         except Exception as exc:  # nosec B110

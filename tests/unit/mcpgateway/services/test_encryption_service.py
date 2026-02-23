@@ -773,3 +773,32 @@ class TestOAuthConfigProtection:
         assert decrypted["password"] == "pw"
         assert decrypted["client_id"] == "cid"
         assert decrypted["masked"] == settings.masked_auth_value
+
+    @pytest.mark.asyncio
+    async def test_protect_oauth_config_for_storage_sensitive_value_shape_branches(self):
+        """Sensitive keys handle dict/list/None/non-string/masked placeholder branches."""
+        oauth_config = {
+            "secret": {"inner": "nested-value"},
+            "token": ["tok-1", {"password": "tok-pw"}],
+            "client_secret": None,
+            "refresh_token": "",
+            "password": 12345,
+            "id_token": settings.masked_auth_value,
+        }
+
+        protected = await protect_oauth_config_for_storage(oauth_config)
+
+        # Sensitive dict/list values should recurse into branch handlers.
+        assert protected["secret"]["inner"] == "nested-value"
+        assert isinstance(protected["token"], list)
+        assert len(protected["token"]) == 2
+
+        # None and empty string should be preserved.
+        assert protected["client_secret"] is None
+        assert protected["refresh_token"] == ""
+
+        # Non-string values should be passed through unchanged.
+        assert protected["password"] == 12345
+
+        # Masked placeholders without existing values should become None.
+        assert protected["id_token"] is None

@@ -4145,7 +4145,11 @@ class ServerRead(BaseModelWithConfigDict):
         return data
 
     def masked(self) -> "ServerRead":
-        """Return a masked version of the model with oauth_config secrets redacted."""
+        """Return a masked model with oauth_config secrets redacted.
+
+        Returns:
+            ServerRead: Masked server model.
+        """
         masked_data = self.model_dump()
         if masked_data.get("oauth_config"):
             masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])

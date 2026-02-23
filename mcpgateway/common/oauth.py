@@ -20,5 +20,12 @@ OAUTH_SENSITIVE_KEYS: frozenset[str] = frozenset(
 
 
 def is_sensitive_oauth_key(key: Any) -> bool:
-    """Return True when an oauth_config key should be treated as secret."""
+    """Return whether an oauth_config key should be treated as secret.
+
+    Args:
+        key: Candidate oauth_config key.
+
+    Returns:
+        bool: True when key maps to sensitive OAuth material.
+    """
     return isinstance(key, str) and key.lower() in OAUTH_SENSITIVE_KEYS

@@ -1704,6 +1704,69 @@ class TestServerService:
         assert mock_server.oauth_config["client_secret"] == existing_secret
 
     @pytest.mark.asyncio
+    async def test_update_server_oauth_config_legacy_object_without_model_fields_set(self, server_service, mock_server, test_db):
+        """Legacy update objects without model_fields_set still update oauth_config."""
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = None
+
+        test_db.get = Mock(return_value=mock_server)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=True,
+                oauth_config={"authorization_server": "https://auth.example.com", "client_secret": settings.masked_auth_value},
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        class LegacyServerUpdate:
+            id = None
+            name = None
+            description = None
+            icon = None
+            visibility = None
+            team_id = None
+            owner_email = None
+            associated_tools = None
+            associated_resources = None
+            associated_prompts = None
+            tags = None
+            oauth_enabled = None
+            oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": "legacy-secret"}
+
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            await server_service.update_server(test_db, "1", LegacyServerUpdate(), "user@example.com")
+
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(mock_server.oauth_config["client_secret"])
+
+    @pytest.mark.asyncio
     async def test_server_oauth_config_in_read(self, server_service, mock_server, test_db):
         """Test that OAuth config is included in server read response."""
         # Setup server with OAuth config
