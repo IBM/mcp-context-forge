@@ -67,7 +67,7 @@ tests:
       6. Click on each server to verify details are accessible
       7. Take screenshot of server list showing all servers
       8. Record server names, creation dates, and visibility settings
-    expected: "ALL pre-migration servers visible in admin UI server list, details accessible"
+      expected: "ALL pre-migration servers visible in UI server list, details accessible"
     sqlite_support: true
     postgresql_support: true
     main_test: true
@@ -104,7 +104,7 @@ tests:
       6. Click Login/Submit button
       7. Verify successful redirect to admin dashboard
       8. Check user menu/profile shows correct email address
-    expected: "Email authentication successful, dashboard loads, correct email displayed"
+      expected: "Email authentication successful, dashboard loads, correct email displayed"
     sqlite_support: true
     postgresql_support: true
 
@@ -119,7 +119,7 @@ tests:
       4. Verify access is granted
       5. Navigate to different admin sections
       6. Test admin functionality works
-    expected: "Basic auth continues to work, no conflicts with email auth system"
+      expected: "Basic auth continues to work, no conflicts with email auth system"
     sqlite_support: true
     postgresql_support: true
 

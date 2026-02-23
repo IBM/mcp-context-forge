@@ -161,7 +161,7 @@
 
   <!-- 2. Pagination controls, also swapped OOB -->
   <div id="tools-pagination-controls" hx-swap-oob="true">
-    {% set base_url = root_path + '/admin/tools/partial' %}
+    {% set base_url = root_path + ui_base_path + '/tools/partial' %}
     {% set hx_target = '#tools-table-body' %}
     {% set hx_indicator = '#tools-loading' %}
     {% set table_name = 'tools' %}

@@ -147,8 +147,8 @@ tests:
 
   - step: "15"
     action: "Access Admin UI"
-    command: "Open http://localhost:4444/admin in browser"
-    expected: "Admin login page loads successfully"
+    command: "Open http://localhost:4444/ui in browser"
+    expected: "Admin (UI) login page loads successfully"
     troubleshooting: "Try both http:// and https:// if needed"
     required: true
     notes: "Web interface access"

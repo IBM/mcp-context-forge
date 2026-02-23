@@ -674,7 +674,7 @@ function registerServerWithApiKey() {
 
   // Use HTMX to post the registration
   const rootPath = document.querySelector('[data-root-path]')?.dataset.rootPath || window.ROOT_PATH || '';
-  fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
+  fetch(`${rootPath}${window.UI_BASE_PATH}/mcp-registry/${serverId}/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -688,7 +688,7 @@ function registerServerWithApiKey() {
       closeApiKeyModal();
       // Refresh the server list
       if (window.htmx && window.htmx.ajax) {
-        window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
+      window.htmx.ajax('GET', `${rootPath}${window.UI_BASE_PATH}/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
       } else {
         location.reload();
       }
@@ -713,7 +713,7 @@ function getCookie(name) {
 function refreshCatalog() {
   const rootPath = window.ROOT_PATH || '';
   if (window.htmx && window.htmx.ajax) {
-    window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
+    window.htmx.ajax('GET', `${rootPath}${window.UI_BASE_PATH}/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
   } else {
     location.reload();
   }

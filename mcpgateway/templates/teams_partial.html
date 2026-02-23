@@ -126,7 +126,7 @@
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="teams-pagination-controls" hx-swap-oob="true">
-    {% set base_url = root_path + '/admin/teams/partial' %}
+    {% set base_url = root_path + ui_base_path + '/teams/partial' %}
     {% set hx_target = '#unified-teams-list' %}
     {% set hx_indicator = '#teams-loading' %}
     {% set table_name = 'teams' %}

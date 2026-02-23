@@ -43,7 +43,7 @@ class TestObservabilitySkip:
             ("/health/security", True),
             ("/healthz/check", True),
             ("/tools", True),
-            ("/admin", True),
+            (settings.mcpgateway_ui_base_path, True),
             ("/api/v1/tools", True),
             ("/", True),
             ("/docs", True),
@@ -91,7 +91,7 @@ class TestAuthContextSkip:
             ("/.well-known/openid-configuration", False),
             # Normal paths not skipped
             ("/tools", False),
-            ("/admin", False),
+            (settings.mcpgateway_ui_base_path, False),
         ],
     )
     def test_should_skip_auth_context(self, path: str, expected: bool):
@@ -119,7 +119,7 @@ class TestLoggingSkip:
             ("/ready", False),  # Not in request logging skip list
             ("/metrics", False),  # Not in request logging skip list
             ("/tools", False),
-            ("/admin", False),
+            (settings.mcpgateway_ui_base_path, False),
             ("/api/v1/tools", False),
             ("/", False),
         ],
@@ -149,7 +149,7 @@ class TestDbQueryLoggingSkip:
             ("/metrics", False),
             # Normal paths not skipped
             ("/tools", False),
-            ("/admin", False),
+            (settings.mcpgateway_ui_base_path, False),
             ("/api/v1/tools", False),
         ],
     )
@@ -293,11 +293,11 @@ class TestObservabilityIncludeExclude:
 
     def test_custom_include_overrides_default(self, monkeypatch: pytest.MonkeyPatch):
         """Custom include list should allow only matching paths."""
-        monkeypatch.setattr(settings, "observability_include_paths", [r"^/admin$"], raising=False)
+        monkeypatch.setattr(settings, "observability_include_paths", [fr"^{settings.mcpgateway_ui_base_path}$"], raising=False)
         monkeypatch.setattr(settings, "observability_exclude_paths", [], raising=False)
         clear_all_caches()
 
-        assert should_skip_observability("/admin") is False
+        assert should_skip_observability(settings.mcpgateway_ui_base_path) is False
         assert should_skip_observability("/rpc") is True
 
         clear_all_caches()

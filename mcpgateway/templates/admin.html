@@ -4449,7 +4449,7 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
-            <!-- HTMX container: will be replaced by /admin/resources/partial -->
+            <!-- HTMX container: will be replaced by {{ ui_base_path }}/resources/partial -->
             <div id="resources-list-container"
               x-init="$el.setAttribute('hx-get', buildTableUrl('resources', '{{ root_path }}{{ ui_base_path }}/resources/partial', {include_inactive: (document.getElementById('show-inactive-resources')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load"
@@ -4692,7 +4692,7 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
-            <!-- HTMX container: will be replaced by /admin/prompts/partial -->
+            <!-- HTMX container: will be replaced by {{ ui_base_path }}/prompts/partial -->
             <div id="prompts-list-container"
               x-init="$el.setAttribute('hx-get', buildTableUrl('prompts', '{{ root_path }}{{ ui_base_path }}/prompts/partial', {include_inactive: (document.getElementById('show-inactive-prompts')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load, refreshUsers"

@@ -1499,7 +1499,7 @@ async function loadMetricsInternal() {
         showMetricsLoading();
 
         const result = await fetchWithTimeoutAndRetry(
-            `${window.ROOT_PATH}/admin/metrics`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/metrics`,
             {}, // options
             (window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000) * 1.5, // Use 1.5x configurable timeout for metrics
             MAX_METRICS_RETRIES,
@@ -3280,7 +3280,7 @@ async function editTool(toolId) {
         console.log(`Editing tool ID: ${toolId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/${toolId}`,
         );
         if (!response.ok) {
             // If the response is not OK, throw an error
@@ -3306,7 +3306,7 @@ async function editTool(toolId) {
         // Set form action and populate basic fields with validation
         const editForm = safeGetElement("edit-tool-form");
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
+            editForm.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/${toolId}/edit`;
         }
 
         // Validate and set fields
@@ -3732,7 +3732,7 @@ async function viewAgent(agentId) {
         console.log(`Viewing agent ID: ${agentId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/a2a/${agentId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/a2a/${agentId}`,
         );
 
         if (!response.ok) {
@@ -3963,7 +3963,7 @@ async function editA2AAgent(agentId) {
         console.log(`Editing A2A Agent ID: ${agentId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/a2a/${agentId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/a2a/${agentId}`,
         );
 
         if (!response.ok) {
@@ -3996,7 +3996,7 @@ async function editA2AAgent(agentId) {
         // Set form action and populate fields with validation
 
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/a2a/${agentId}/edit`;
+            editForm.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/a2a/${agentId}/edit`;
             editForm.method = "POST"; // ensure method is POST
         }
 
@@ -4344,7 +4344,7 @@ async function testResource(resourceId) {
         console.log(`Testing the resource: ${resourceId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/${encodeURIComponent(resourceId)}`,
         );
 
         if (!response.ok) {
@@ -4441,7 +4441,7 @@ async function runResourceTest() {
     console.log("Final URI:", finalUri);
 
     const response = await fetchWithTimeout(
-        `${window.ROOT_PATH}/admin/resources/test/${encodeURIComponent(finalUri)}`,
+        `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/test/${encodeURIComponent(finalUri)}`,
     );
 
     const json = await response.json();
@@ -4631,7 +4631,7 @@ async function viewResource(resourceId) {
         console.log(`Viewing resource: ${resourceId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/${encodeURIComponent(resourceId)}`,
         );
 
         if (!response.ok) {
@@ -4925,7 +4925,7 @@ async function editResource(resourceId) {
         console.log(`Editing resource: ${resourceId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/${encodeURIComponent(resourceId)}`,
         );
 
         if (!response.ok) {
@@ -5001,7 +5001,7 @@ async function editResource(resourceId) {
 
         // Set form action and populate fields with validation
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}/edit`;
+            editForm.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/${encodeURIComponent(resourceId)}/edit`;
         }
 
         // Validate inputs
@@ -5096,7 +5096,7 @@ async function viewPrompt(promptName) {
         console.log(`Viewing prompt: ${promptName}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/${encodeURIComponent(promptName)}`,
         );
 
         if (!response.ok) {
@@ -5434,7 +5434,7 @@ async function editPrompt(promptId) {
         console.log(`Editing prompt: ${promptId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/${encodeURIComponent(promptId)}`,
         );
 
         if (!response.ok) {
@@ -5501,7 +5501,7 @@ async function editPrompt(promptId) {
         // Set form action and populate fields with validation
         const editForm = safeGetElement("edit-prompt-form");
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}/edit`;
+            editForm.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/${encodeURIComponent(promptId)}/edit`;
             // Add or update hidden team_id input if present in URL
             const teamId = new URL(window.location.href).searchParams.get(
                 "team_id",
@@ -5615,7 +5615,7 @@ async function viewGateway(gatewayId) {
         console.log(`Viewing gateway ID: ${gatewayId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/gateways/${gatewayId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/gateways/${gatewayId}`,
         );
 
         if (!response.ok) {
@@ -5822,7 +5822,7 @@ async function editGateway(gatewayId) {
         console.log(`Editing gateway ID: ${gatewayId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/gateways/${gatewayId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/gateways/${gatewayId}`,
         );
 
         if (!response.ok) {
@@ -5850,7 +5850,7 @@ async function editGateway(gatewayId) {
         // Set form action and populate fields with validation
         const editForm = safeGetElement("edit-gateway-form");
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/gateways/${gatewayId}/edit`;
+            editForm.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/gateways/${gatewayId}/edit`;
         }
 
         const nameValidation = validateInputName(gateway.name, "gateway");
@@ -6180,7 +6180,7 @@ async function viewServer(serverId) {
         console.log(`Viewing server ID: ${serverId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/servers/${serverId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/servers/${serverId}`,
         );
 
         if (!response.ok) {
@@ -6683,7 +6683,7 @@ async function editServer(serverId) {
         console.log(`Editing server ID: ${serverId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/servers/${serverId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/servers/${serverId}`,
         );
 
         if (!response.ok) {
@@ -6768,7 +6768,7 @@ async function editServer(serverId) {
 
         // Set form action and populate fields with validation
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/servers/${serverId}/edit`;
+            editForm.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/servers/${serverId}/edit`;
         }
 
         const nameValidation = validateInputName(server.name, "server");
@@ -7088,7 +7088,7 @@ async function editServer(serverId) {
 async function viewRoot(uri) {
     try {
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/roots/${encodeURIComponent(uri)}`,
         );
 
         if (!response.ok) {
@@ -7146,7 +7146,7 @@ async function viewRoot(uri) {
 async function editRoot(uri) {
     try {
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/roots/${encodeURIComponent(uri)}`,
         );
 
         if (!response.ok) {
@@ -7181,7 +7181,7 @@ async function editRoot(uri) {
 
         // Set form action and populate fields with validation
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}/update`;
+            editForm.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/roots/${encodeURIComponent(uri)}/update`;
         }
 
         // Validate inputs
@@ -7218,7 +7218,7 @@ async function editRoot(uri) {
 async function exportRoot(uri) {
     try {
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/roots/export?uri=${encodeURIComponent(uri)}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/roots/export?uri=${encodeURIComponent(uri)}`,
         );
 
         if (!response.ok) {
@@ -8429,7 +8429,7 @@ function showTab(tabName) {
                                 window.htmx
                                     .ajax(
                                         "GET",
-                                        `${rootPath}/admin/mcp-registry/partial`,
+                                        `${rootPath}${window.UI_BASE_PATH}/mcp-registry/partial`,
                                         {
                                             target: "#mcp-registry-servers",
                                             swap: "innerHTML",
@@ -8443,7 +8443,7 @@ function showTab(tabName) {
                                     });
                             } else {
                                 // Fallback to fetch if HTMX is not available
-                                fetch(`${rootPath}/admin/mcp-registry/partial`)
+                                fetch(`${rootPath}${window.UI_BASE_PATH}/mcp-registry/partial`)
                                     .then((response) => response.text())
                                     .then((html) => {
                                         registryContent.innerHTML = html;
@@ -8486,7 +8486,7 @@ function showTab(tabName) {
                             } else {
                                 // Fallback: reload the page section via fetch
                                 const rootPath = window.ROOT_PATH || "";
-                                fetch(`${rootPath}/admin`)
+                                fetch(`${rootPath}${window.UI_BASE_PATH}`)
                                     .then((response) => response.text())
                                     .then((html) => {
                                         // Parse the HTML and extract just the gateways table
@@ -8530,7 +8530,7 @@ function showTab(tabName) {
                     if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
                         const rootPath = window.ROOT_PATH || "";
                         fetchWithTimeout(
-                            `${rootPath}/admin/plugins/partial`,
+                            `${rootPath}${window.UI_BASE_PATH}/plugins/partial`,
                             {
                                 method: "GET",
                                 credentials: "same-origin",
@@ -8615,7 +8615,7 @@ function showTab(tabName) {
                         maintenancePanel.innerHTML.trim() === ""
                     ) {
                         fetchWithTimeout(
-                            `${window.ROOT_PATH}/admin/maintenance/partial`,
+                            `${window.ROOT_PATH}${window.UI_BASE_PATH}/maintenance/partial`,
                             {},
                             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
                         )
@@ -9402,7 +9402,7 @@ function initToolSelect(
                     }
                     const queryString = params.toString();
                     const response = await fetch(
-                        `${window.ROOT_PATH}/admin/tools/ids${queryString ? `?${queryString}` : ""}`,
+                        `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!response.ok) {
                         throw new Error("Failed to fetch tool IDs");
@@ -9830,7 +9830,7 @@ function initResourceSelect(
                     }
                     const queryString = params.toString();
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/resources/ids${queryString ? `?${queryString}` : ""}`,
+                        `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch resource IDs");
@@ -10244,7 +10244,7 @@ function initPromptSelect(
                     }
                     const queryString = params.toString();
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/prompts/ids${queryString ? `?${queryString}` : ""}`,
+                        `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch prompt IDs");
@@ -10601,7 +10601,7 @@ function initGatewaySelect(
                 }
                 const queryString = params.toString();
                 const response = await fetch(
-                    `${window.ROOT_PATH}/admin/gateways/ids${queryString ? `?${queryString}` : ""}`,
+                    `${window.ROOT_PATH}${window.UI_BASE_PATH}/gateways/ids${queryString ? `?${queryString}` : ""}`,
                 );
                 if (!response.ok) {
                     throw new Error("Failed to fetch gateway IDs");
@@ -10916,11 +10916,17 @@ function reloadAssociatedItems() {
     // Reload tools
     const toolsContainer = document.getElementById(toolsContainerId);
     if (toolsContainer) {
+<<<<<<< HEAD
         let toolsUrl = `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
         if (gatewayIdParam) {
             toolsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
         }
         toolsUrl += teamIdSuffix;
+=======
+        const toolsUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
         console.log(
             "[Filter Update DEBUG] Tools URL:",
@@ -10983,11 +10989,17 @@ function reloadAssociatedItems() {
     // Reload resources - use fetch directly to avoid HTMX race conditions
     const resourcesContainer = document.getElementById(resourcesContainerId);
     if (resourcesContainer) {
+<<<<<<< HEAD
         let resourcesUrl = `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
         if (gatewayIdParam) {
             resourcesUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
         }
         resourcesUrl += teamIdSuffix;
+=======
+        const resourcesUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
         console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
 
@@ -11186,11 +11198,17 @@ function reloadAssociatedItems() {
     // Reload prompts
     const promptsContainer = document.getElementById(promptsContainerId);
     if (promptsContainer) {
+<<<<<<< HEAD
         let promptsUrl = `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
         if (gatewayIdParam) {
             promptsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
         }
         promptsUrl += teamIdSuffix;
+=======
+        const promptsUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
         // Flush current DOM state into the Map store before HTMX replaces the container
         if (promptsContainerId === "associatedPrompts") {
@@ -11455,7 +11473,7 @@ async function testTool(toolId) {
 
         // 6. MAKE REQUEST with increased timeout
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/${toolId}`,
             {
                 signal: controller.signal,
                 headers: {
@@ -11782,7 +11800,7 @@ async function loadTools() {
                     <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
                 </tr>
                 `;
-            const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
+            const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/tools`, {
                 method: "GET",
             });
 
@@ -12415,7 +12433,7 @@ async function validateTool(toolId) {
 
         // 6. MAKE REQUEST with increased timeout
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/${toolId}`,
             {
                 signal: controller.signal,
                 headers: {
@@ -13928,7 +13946,7 @@ async function testPrompt(promptId) {
         try {
             // Fetch prompt details from the prompts endpoint (view mode)
             const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}`,
+                `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/${encodeURIComponent(promptId)}`,
                 {
                     method: "GET",
                     headers: {
@@ -14346,7 +14364,7 @@ async function testGateway(gatewayURL) {
         const urlInput = safeGetElement("gateway-test-url");
 
         if (form) {
-            form.action = `${window.ROOT_PATH}/admin/gateways/test`;
+            form.action = `${window.ROOT_PATH}${window.UI_BASE_PATH}/gateways/test`;
         }
         if (urlInput) {
             urlInput.value = urlValidation.value;
@@ -14601,7 +14619,7 @@ async function viewTool(toolId) {
         console.log(`Fetching tool details for ID: ${toolId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/${toolId}`,
         );
 
         if (!response.ok) {
@@ -15184,7 +15202,7 @@ async function handleGatewayFormSubmit(e) {
         );
         teamId && formData.append("team_id", teamId);
 
-        const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
+        const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/gateways`, {
             method: "POST",
             body: formData,
         });
@@ -15209,7 +15227,7 @@ async function handleGatewayFormSubmit(e) {
             }
 
             const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
+            const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#gateways`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -15271,7 +15289,7 @@ async function handleResourceFormSubmit(e) {
             "team_id",
         );
         teamId && formData.append("team_id", teamId);
-        const response = await fetch(`${window.ROOT_PATH}/admin/resources`, {
+        const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/resources`, {
             method: "POST",
             body: formData,
         });
@@ -15294,7 +15312,7 @@ async function handleResourceFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
             const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
+            const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#resources`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -15343,7 +15361,7 @@ async function handlePromptFormSubmit(e) {
             "team_id",
         );
         teamId && formData.append("team_id", teamId);
-        const response = await fetch(`${window.ROOT_PATH}/admin/prompts`, {
+        const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts`, {
             method: "POST",
             body: formData,
         });
@@ -15363,7 +15381,7 @@ async function handlePromptFormSubmit(e) {
             searchParams.set("team_id", teamId);
         }
         const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
+        const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#prompts`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Error:", error);
@@ -15480,6 +15498,7 @@ async function handleServerFormSubmit(e) {
         );
         teamId && formData.append("team_id", teamId);
 
+<<<<<<< HEAD
         // Build tools selection from Map (includes selections across pagination + search)
         const toolsContainer = document.getElementById("associatedTools");
         if (toolsContainer) {
@@ -15533,6 +15552,9 @@ async function handleServerFormSubmit(e) {
         }
 
         const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
+=======
+        const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/servers`, {
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
             method: "POST",
             body: formData,
         });
@@ -15557,7 +15579,7 @@ async function handleServerFormSubmit(e) {
             }
 
             const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
+            const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#catalog`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -15663,7 +15685,7 @@ async function handleA2AFormSubmit(e) {
         // specifically log agentType only
         console.log("agentType:", formData.get("agentType"));
 
-        const response = await fetch(`${window.ROOT_PATH}/admin/a2a`, {
+        const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/a2a`, {
             method: "POST",
             body: formData,
         });
@@ -15686,7 +15708,7 @@ async function handleA2AFormSubmit(e) {
             }
 
             const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
+            const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#a2a-agents`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -15763,7 +15785,7 @@ async function handleToolFormSubmit(event) {
         );
         teamId && formData.append("team_id", teamId);
 
-        const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
+        const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/tools`, {
             method: "POST",
             body: formData,
         });
@@ -15786,7 +15808,7 @@ async function handleToolFormSubmit(event) {
                 searchParams.set("team_id", teamId);
             }
             const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
+            const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#tools`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -15951,7 +15973,7 @@ async function handleEditGatewayFormSubmit(e) {
             searchParams.set("team_id", teamId);
         }
         const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
+        const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#gateways`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Error:", error);
@@ -16052,7 +16074,7 @@ async function handleEditA2AAgentFormSubmit(e) {
             searchParams.set("team_id", teamId);
         }
         const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
+        const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#a2a-agents`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Error:", error);
@@ -16147,7 +16169,7 @@ async function handleEditServerFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
             const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
+            const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#catalog`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -16222,7 +16244,7 @@ async function handleEditResFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
             const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
+            const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#resources`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -16294,7 +16316,7 @@ async function handleGrpcServiceFormSubmit(e) {
             payload.team_id = teamId;
         }
 
-        const response = await fetch(`${window.ROOT_PATH}/admin/grpc`, {
+        const response = await fetch(`${window.ROOT_PATH}${window.UI_BASE_PATH}/grpc`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -16318,7 +16340,7 @@ async function handleGrpcServiceFormSubmit(e) {
         }
 
         const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
+        const redirectUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}${queryString ? `?${queryString}` : ""}#grpc-services`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Add gRPC Service Error:", error);
@@ -17973,7 +17995,7 @@ function loadSearchablePanel(entityType) {
         params.set("team_id", currentTeamId);
     }
 
-    const url = `${window.ROOT_PATH}/admin/${panelConfig.partialPath}?${params.toString()}`;
+    const url = `${window.ROOT_PATH}${window.UI_BASE_PATH}/${panelConfig.partialPath}?${params.toString()}`;
     if (window.htmx && window.htmx.ajax) {
         window.htmx.ajax("GET", url, {
             target: panelConfig.targetSelector,
@@ -18271,7 +18293,7 @@ async function runGlobalSearch(query) {
 
     try {
         const response = await fetchWithAuth(
-            `${window.ROOT_PATH}/admin/search?${params.toString()}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/search?${params.toString()}`,
         );
         if (!response.ok) {
             throw new Error(
@@ -18726,7 +18748,7 @@ function initializeTabState() {
             const panel = safeGetElement("maintenance-panel");
             if (panel && panel.innerHTML.trim() === "") {
                 fetchWithTimeout(
-                    `${window.ROOT_PATH}/admin/maintenance/partial`,
+                    `${window.ROOT_PATH}${window.UI_BASE_PATH}/maintenance/partial`,
                 )
                     .then((resp) => {
                         if (!resp.ok) {
@@ -18925,7 +18947,7 @@ async function generateAndShowConfig(configType) {
 
         // First, fetch the server details
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/servers/${currentServerId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/servers/${currentServerId}`,
         );
 
         if (!response.ok) {
@@ -18964,7 +18986,7 @@ async function exportServerConfig(serverId, configType) {
 
         // First, fetch the server details
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/servers/${serverId}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/servers/${serverId}`,
         );
 
         if (!response.ok) {
@@ -20070,7 +20092,7 @@ function setupBulkImportModal() {
 
                 // Submit to backend
                 const response = await fetchWithTimeout(
-                    `${window.ROOT_PATH}/admin/tools/import`,
+                    `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/import`,
                     {
                         method: "POST",
                         body: formData,
@@ -20231,7 +20253,7 @@ async function handleExportAll() {
         }
 
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/export/configuration?${params}`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/export/configuration?${params}`,
             {
                 method: "GET",
                 headers: {
@@ -20538,7 +20560,7 @@ async function previewImport() {
         showImportProgress(true);
 
         const response = await fetch(
-            (window.ROOT_PATH || "") + "/admin/import/preview",
+            (window.ROOT_PATH || "") + window.UI_BASE_PATH + "/import/preview",
             {
                 method: "POST",
                 headers: {
@@ -20596,7 +20618,7 @@ async function handleImport(dryRun = false) {
         };
 
         const response = await fetch(
-            (window.ROOT_PATH || "") + "/admin/import/configuration",
+            (window.ROOT_PATH || "") + window.UI_BASE_PATH + "/import/configuration",
             {
                 method: "POST",
                 headers: {
@@ -20752,7 +20774,7 @@ function showImportProgress(show) {
 async function loadRecentImports() {
     try {
         const response = await fetch(
-            (window.ROOT_PATH || "") + "/admin/import/status",
+            (window.ROOT_PATH || "") + window.UI_BASE_PATH + "/import/status",
             {
                 headers: {
                     Authorization: `Bearer ${await getAuthToken()}`,
@@ -21084,7 +21106,7 @@ async function handleA2ATestSubmit(e) {
 
         // Send test request with user query
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/a2a/${agentId}/test`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/a2a/${agentId}/test`,
             {
                 method: "POST",
                 headers,
@@ -21221,7 +21243,7 @@ async function loadTokensList(resetToFirstPage) {
     let url;
     if (resetToFirstPage) {
         const baseUrl = new URL(
-            `${window.ROOT_PATH}/admin/tokens/partial`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/tokens/partial`,
             window.location.origin,
         );
         baseUrl.searchParams.set("page", "1");
@@ -21242,7 +21264,7 @@ async function loadTokensList(resetToFirstPage) {
     } else {
         url = buildTableUrl(
             "tokens",
-            `${window.ROOT_PATH}/admin/tokens/partial`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/tokens/partial`,
             params,
         );
     }
@@ -21299,7 +21321,7 @@ async function performTokenSearch(searchTerm) {
         params.set("q", searchTerm.trim());
     }
 
-    const url = `${window.ROOT_PATH}/admin/tokens/partial?${params.toString()}`;
+    const url = `${window.ROOT_PATH}${window.UI_BASE_PATH}/tokens/partial?${params.toString()}`;
     console.log(`[Token Search] Searching tokens with URL: ${url}`);
 
     try {
@@ -22432,7 +22454,7 @@ async function showUserEditModal(userEmail) {
     }
 
     const rootPath = window.ROOT_PATH || "";
-    const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit`;
+    const url = `${rootPath}${window.UI_BASE_PATH}/users/${encodeURIComponent(userEmail)}/edit`;
 
     try {
         if (window.htmx && typeof window.htmx.ajax === "function") {
@@ -22503,7 +22525,7 @@ window.hideUserEditModal = hideUserEditModal;
 async function showTeamEditModal(teamId) {
     // Get the root path by extracting it from the current pathname
     let rootPath = window.location.pathname;
-    const adminIndex = rootPath.lastIndexOf("/admin");
+    const adminIndex = rootPath.lastIndexOf(window.UI_BASE_PATH);
     if (adminIndex !== -1) {
         rootPath = rootPath.substring(0, adminIndex);
     } else {
@@ -22511,7 +22533,7 @@ async function showTeamEditModal(teamId) {
     }
 
     // Construct the full URL - ensure it starts with /
-    const url = (rootPath || "") + "/admin/teams/" + teamId + "/edit";
+    const url = (rootPath || "") + window.UI_BASE_PATH + "/teams/" + teamId + "/edit";
 
     // Load the team edit form via HTMX
     fetch(url, {
@@ -22566,7 +22588,7 @@ window.hideAddMemberForm = hideAddMemberForm;
 
 // Reset team creation form after successful HTMX actions
 function resetTeamCreateForm() {
-    const form = document.querySelector('form[hx-post*="/admin/teams"]');
+    const form = document.querySelector(`form[hx-post*="${window.UI_BASE_PATH}/teams"]`);
     if (form) {
         form.reset();
     }
@@ -22658,10 +22680,10 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
         </div>
     `;
 
-    // Step 3: If query is empty, reload default list from /admin/users/partial
+    // Step 3: If query is empty, reload default list from ${window.UI_BASE_PATH}/users/partial
     if (query === "") {
         try {
-            const usersUrl = `${window.ROOT_PATH}/admin/users/partial?page=1&per_page=50&render=selector&team_id=${encodeURIComponent(teamId)}`;
+            const usersUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/users/partial?page=1&per_page=50&render=selector&team_id=${encodeURIComponent(teamId)}`;
             console.log(
                 `[Team ${teamId}] Loading default users with URL: ${usersUrl}`,
             );
@@ -22688,9 +22710,9 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
         return;
     }
 
-    // Step 4: Call /admin/users/search API
+    // Step 4: Call ${window.UI_BASE_PATH}/users/search API
     try {
-        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(query)}&limit=50`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/users/search?q=${encodeURIComponent(query)}&limit=50`;
         console.log(`[Team ${teamId}] Searching users with URL: ${searchUrl}`);
 
         const response = await fetchWithAuth(searchUrl);
@@ -23172,7 +23194,7 @@ function handleAdminTeamAction(event) {
                 ) {
                     params.set("relationship", currentTeamRelationshipFilter);
                 }
-                const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
+                const url = `${window.ROOT_PATH || ""}${window.UI_BASE_PATH}/teams/partial?${params.toString()}`;
                 window.htmx.ajax("GET", url, {
                     target: "#unified-teams-list",
                     swap: "innerHTML",
@@ -23189,7 +23211,7 @@ function handleAdminTeamAction(event) {
                 if (modalContent) {
                     window.htmx.ajax(
                         "GET",
-                        `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
+                        `${window.ROOT_PATH || ""}${window.UI_BASE_PATH}/teams/${detail.teamId}/members`,
                         {
                             target: "#team-edit-modal-content",
                             swap: "innerHTML",
@@ -23205,7 +23227,7 @@ function handleAdminTeamAction(event) {
             if (joinRequests) {
                 window.htmx.ajax(
                     "GET",
-                    `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/join-requests`,
+                    `${window.ROOT_PATH || ""}${window.UI_BASE_PATH}/teams/${detail.teamId}/join-requests`,
                     {
                         target: "#team-join-requests-modal-content",
                         swap: "innerHTML",
@@ -24487,7 +24509,7 @@ function resetImportSelection() {
 
             // Build server partial URL (server should return the *full HTML fragment* for the section)
             // Server endpoint pattern: /admin/sections/{section}?partial=true
-            let url = `${window.ROOT_PATH}/admin/sections/${section}?partial=true`;
+            let url = `${window.ROOT_PATH}${window.UI_BASE_PATH}/sections/${section}?partial=true`;
             if (teamId && teamId !== "") {
                 url += `&team_id=${encodeURIComponent(teamId)}`;
             }
@@ -25279,7 +25301,7 @@ async function loadVirtualServersForChat() {
 
     try {
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/servers`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/servers`,
             {
                 method: "GET",
                 credentials: "same-origin",
@@ -27245,9 +27267,15 @@ async function serverSideToolSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool list with gateway filter
         try {
+<<<<<<< HEAD
             let toolsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+=======
+            const toolsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
             // Respect View Public checkbox state: include team_id only when unchecked
             const viewPublicCb = document.getElementById(
@@ -27340,7 +27368,7 @@ async function serverSideToolSearch(searchTerm) {
         if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
             params.set("team_id", selectedTeamId);
         }
-        const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/search?${params.toString()}`;
 
         console.log(`[Tool Search] Searching tools with URL: ${searchUrl}`);
 
@@ -27561,9 +27589,15 @@ async function serverSidePromptSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompt selector with gateway filter
         try {
+<<<<<<< HEAD
             let promptsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+=======
+            const promptsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
             // Respect View Public checkbox state: include team_id only when unchecked
             const viewPublicCb = document.getElementById(
@@ -27655,7 +27689,7 @@ async function serverSidePromptSearch(searchTerm) {
         if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
             params.set("team_id", selectedTeamId);
         }
-        const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/search?${params.toString()}`;
 
         console.log(`[Prompt Search] Searching prompts with URL: ${searchUrl}`);
 
@@ -27796,9 +27830,15 @@ async function serverSideResourceSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default resource selector with gateway filter
         try {
+<<<<<<< HEAD
             let resourcesUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+=======
+            const resourcesUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
             // Respect View Public checkbox state: include team_id only when unchecked
             const viewPublicCb = document.getElementById(
@@ -27886,7 +27926,7 @@ async function serverSideResourceSearch(searchTerm) {
         if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
             params.set("team_id", selectedTeamId);
         }
-        const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/search?${params.toString()}`;
 
         console.log(
             `[Resource Search] Searching resources with URL: ${searchUrl}`,
@@ -28042,9 +28082,15 @@ async function serverSideEditToolSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool selector partial with gateway filter
         try {
+<<<<<<< HEAD
             let toolsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+=======
+            const toolsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
             // Respect View Public checkbox state: include team_id only when unchecked
             const viewPublicCb = document.getElementById(
@@ -28183,7 +28229,7 @@ async function serverSideEditToolSearch(searchTerm) {
         ) {
             params.set("team_id", selectedTeamId);
         }
-        const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/tools/search?${params.toString()}`;
 
         const response = await fetch(searchUrl);
 
@@ -28367,9 +28413,15 @@ async function serverSideEditPromptsSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompts selector partial with gateway filter
         try {
+<<<<<<< HEAD
             let promptsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+=======
+            const promptsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
             // Respect View Public checkbox state: include team_id only when unchecked
             const viewPublicCb = document.getElementById(
@@ -28496,7 +28548,7 @@ async function serverSideEditPromptsSearch(searchTerm) {
         ) {
             params.set("team_id", selectedTeamId);
         }
-        const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/prompts/search?${params.toString()}`;
 
         console.log(
             `[Edit Prompt Search] Searching prompts with URL: ${searchUrl}`,
@@ -28682,9 +28734,15 @@ async function serverSideEditResourcesSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default resources selector partial with gateway filter
         try {
+<<<<<<< HEAD
             let resourcesUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+=======
+            const resourcesUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/partial?page=1&per_page=50&render=selector`;
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
             // Respect View Public checkbox state: include team_id only when unchecked
             const viewPublicCb = document.getElementById(
@@ -28808,7 +28866,7 @@ async function serverSideEditResourcesSearch(searchTerm) {
         ) {
             params.set("team_id", selectedTeamId);
         }
-        const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/resources/search?${params.toString()}`;
 
         console.log(
             `[Edit Resource Search] Searching resources with URL: ${searchUrl}`,
@@ -29372,7 +29430,7 @@ function initializeRealTimeMonitoring() {
     }
 
     // Connect to the admin events endpoint
-    const eventSource = new EventSource(`${window.ROOT_PATH}/admin/events`);
+    const eventSource = new EventSource(`${window.ROOT_PATH}${window.UI_BASE_PATH}/events`);
 
     // --- Gateway Events ---
     // Handlers for specific states
@@ -30845,7 +30903,7 @@ async function loadLLMProviderDefaults() {
     }
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/llm/provider-defaults`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/provider-defaults`,
             {
                 headers: {
                     Authorization: `Bearer ${await getAuthToken()}`,
@@ -30960,7 +31018,7 @@ async function renderProviderSpecificFields(providerType, isEditing = false) {
     try {
         // Fetch provider configurations
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/llm/provider-configs`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/provider-configs`,
             {
                 headers: {
                     Authorization: `Bearer ${await getAuthToken()}`,
@@ -31142,7 +31200,7 @@ function closeLLMProviderModal() {
 async function fetchLLMProviderModels(providerId) {
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/providers/${providerId}/fetch-models`,
             {
                 method: "POST",
                 headers: {
@@ -31186,7 +31244,7 @@ async function syncLLMProviderModels(providerId) {
         showToast("Syncing models...", "info");
 
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/sync-models`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/providers/${providerId}/sync-models`,
             {
                 method: "POST",
                 headers: {
@@ -31457,7 +31515,7 @@ async function toggleLLMProvider(providerId) {
 async function checkLLMProviderHealth(providerId) {
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/health`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/providers/${providerId}/health`,
             {
                 method: "POST",
                 headers: {
@@ -31502,7 +31560,7 @@ async function checkLLMProviderHealth(providerId) {
 function refreshLLMProviders() {
     const container = document.getElementById("llm-providers-container");
     if (container) {
-        htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/providers/html`, {
+        htmx.ajax("GET", `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/providers/html`, {
             target: "#llm-providers-container",
             swap: "innerHTML",
         });
@@ -31602,7 +31660,7 @@ async function fetchModelsForModelModal() {
 
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
+            `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/providers/${providerId}/fetch-models`,
             {
                 method: "POST",
                 headers: {
@@ -31840,7 +31898,7 @@ async function toggleLLMModel(modelId) {
 function refreshLLMModels() {
     const container = document.getElementById("llm-models-container");
     if (container) {
-        htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/models/html`, {
+        htmx.ajax("GET", `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/models/html`, {
             target: "#llm-models-container",
             swap: "innerHTML",
         });
@@ -31852,8 +31910,8 @@ function refreshLLMModels() {
  */
 function filterModelsByProvider(providerId) {
     const url = providerId
-        ? `${window.ROOT_PATH}/admin/llm/models/html?provider_id=${providerId}`
-        : `${window.ROOT_PATH}/admin/llm/models/html`;
+        ? `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/models/html?provider_id=${providerId}`
+        : `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/models/html`;
 
     htmx.ajax("GET", url, {
         target: "#llm-models-container",
@@ -31933,7 +31991,7 @@ function llmApiInfoApp() {
                 const startTime = performance.now();
 
                 const response = await fetch(
-                    `${window.ROOT_PATH}/admin/llm/test`,
+                    `${window.ROOT_PATH}${window.UI_BASE_PATH}/llm/test`,
                     {
                         method: "POST",
                         headers: {
@@ -32086,7 +32144,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
         try {
             // Reload members - use fetchWithAuth for bearer token support
             const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
+                `${window.ROOT_PATH}${window.UI_BASE_PATH}/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
             );
             if (membersResponse.ok) {
                 membersContainer.innerHTML = await membersResponse.text();
@@ -32098,7 +32156,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
 
             // Reload non-members
             const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
+                `${window.ROOT_PATH}${window.UI_BASE_PATH}/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
             );
             if (nonMembersResponse.ok) {
                 nonMembersContainer.innerHTML = await nonMembersResponse.text();
@@ -32160,7 +32218,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
         if (Object.keys(memberDataFromDom).length === 0) {
             try {
                 const membersResp = await fetchWithAuth(
-                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
+                    `${window.ROOT_PATH}${window.UI_BASE_PATH}/teams/${teamId}/members/partial?page=1&per_page=100`,
                 );
                 if (membersResp.ok) {
                     const tempDiv = document.createElement("div");
@@ -32182,7 +32240,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
         }
 
         // Search all users - use fetchWithAuth for bearer token support
-        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        const searchUrl = `${window.ROOT_PATH}${window.UI_BASE_PATH}/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
         const response = await fetchWithAuth(searchUrl);
 
         if (!response.ok) {
@@ -32407,7 +32465,7 @@ async function performTeamSearch(searchTerm) {
         params.set("relationship", currentTeamRelationshipFilter);
     }
 
-    const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
+    const url = `${window.ROOT_PATH || ""}${window.UI_BASE_PATH}/teams/partial?${params.toString()}`;
 
     console.log(`[Team Search] Searching teams with URL: ${url}`);
 

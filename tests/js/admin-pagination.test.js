@@ -116,7 +116,11 @@ afterAll(() => {
 beforeEach(() => {
     doc.body.textContent = "";
     // Reset URL to clean state
+<<<<<<< HEAD
     win.history.replaceState({}, "", "/admin");
+=======
+    win.history.replaceState({}, '', '/ui');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 });
 
 // ---------------------------------------------------------------------------
@@ -134,21 +138,33 @@ describe("getTeamsCurrentPaginationState", () => {
     });
 
     test("returns page from teams_page URL parameter", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=3&teams_size=10");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=3&teams_size=10');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state.page).toBe(3);
         expect(state.perPage).toBe(10);
     });
 
     test("returns perPage from teams_size URL parameter", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=1&teams_size=25");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=1&teams_size=25');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state.page).toBe(1);
         expect(state.perPage).toBe(25);
     });
 
     test("returns both page and perPage from URL parameters", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=5&teams_size=50");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=5&teams_size=50');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state).toEqual({
             page: 5,
@@ -157,25 +173,37 @@ describe("getTeamsCurrentPaginationState", () => {
     });
 
     test("returns defaults when only teams_page is present", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=2");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=2');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state.page).toBe(2);
         expect(state.perPage).toBe(10);
     });
 
     test("returns defaults when only teams_size is present", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_size=20");
+=======
+        win.history.replaceState({}, '', '/ui?teams_size=20');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state.page).toBe(1);
         expect(state.perPage).toBe(20);
     });
 
     test("ignores other URL parameters", () => {
+<<<<<<< HEAD
         win.history.replaceState(
             {},
             "",
             "/admin?teams_page=4&teams_size=15&other=value&foo=bar",
         );
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=4&teams_size=15&other=value&foo=bar');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state).toEqual({
             page: 4,
@@ -184,11 +212,15 @@ describe("getTeamsCurrentPaginationState", () => {
     });
 
     test("handles URL with hash fragment", () => {
+<<<<<<< HEAD
         win.history.replaceState(
             {},
             "",
             "/admin?teams_page=2&teams_size=20#teams",
         );
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=2&teams_size=20#teams');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state).toEqual({
             page: 2,
@@ -197,7 +229,11 @@ describe("getTeamsCurrentPaginationState", () => {
     });
 
     test("handles empty string values in URL params", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=&teams_size=");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=&teams_size=');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state).toEqual({
             page: 1,
@@ -206,11 +242,15 @@ describe("getTeamsCurrentPaginationState", () => {
     });
 
     test("handles non-numeric values in URL params", () => {
+<<<<<<< HEAD
         win.history.replaceState(
             {},
             "",
             "/admin?teams_page=abc&teams_size=xyz",
         );
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=abc&teams_size=xyz');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state).toEqual({
             page: 1,
@@ -219,19 +259,31 @@ describe("getTeamsCurrentPaginationState", () => {
     });
 
     test("clamps negative page to 1", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=-1&teams_size=10");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=-1&teams_size=10');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state.page).toBe(1);
     });
 
     test("clamps negative perPage to 1", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=1&teams_size=-5");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=1&teams_size=-5');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state.perPage).toBe(1);
     });
 
     test("clamps zero page to 1", () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin?teams_page=0&teams_size=10");
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=0&teams_size=10');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
         const state = getPaginationState()();
         expect(state.page).toBe(1);
     });
@@ -263,11 +315,15 @@ describe("handleAdminTeamAction pagination preservation", () => {
     });
 
     test("preserves pagination state when refreshing teams list", async () => {
+<<<<<<< HEAD
         win.history.replaceState(
             {},
             "",
             "/admin?teams_page=3&teams_size=25#teams",
         );
+=======
+        win.history.replaceState({}, '', '/ui?teams_page=3&teams_size=25#teams');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
         const event = new win.CustomEvent("adminTeamAction", {
             detail: {
@@ -287,7 +343,11 @@ describe("handleAdminTeamAction pagination preservation", () => {
     });
 
     test("uses default pagination when URL params are missing", async () => {
+<<<<<<< HEAD
         win.history.replaceState({}, "", "/admin#teams");
+=======
+        win.history.replaceState({}, '', '/ui#teams');
+>>>>>>> 884663321 (Testing the admin-to-UI flow logically)
 
         const event = new win.CustomEvent("adminTeamAction", {
             detail: {

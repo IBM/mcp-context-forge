@@ -1154,7 +1154,7 @@ async def require_admin_auth(
                             if "text/html" in accept_header:
                                 # Redirect browser to login page with error
                                 root_path = request.scope.get("root_path", "")
-                                raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Admin privileges required", headers={"Location": f"{root_path}/admin/login?error=admin_required"})
+                                raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Admin privileges required", headers={"Location": f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=admin_required"})
                             else:
                                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
                         else:
@@ -1171,7 +1171,7 @@ async def require_admin_auth(
             accept_header = request.headers.get("accept", "")
             if "text/html" in accept_header:
                 root_path = request.scope.get("root_path", "")
-                raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{root_path}/admin/login"})
+                raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{root_path}{settings.mcpgateway_ui_base_path}/login"})
             # If JWT auth fails, fall back to basic auth for backward compatibility
         except Exception:
             # If there's any other error with email auth, fall back to basic auth
@@ -1201,7 +1201,7 @@ async def require_admin_auth(
             is_htmx = request.headers.get("hx-request") == "true"
             if "text/html" in accept_header or is_htmx:
                 root_path = request.scope.get("root_path", "")
-                raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{root_path}/admin/login"})
+                raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{root_path}{settings.mcpgateway_ui_base_path}/login"})
             else:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required. Please login with email/password or use basic auth.", headers={"WWW-Authenticate": "Bearer"}

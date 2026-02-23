@@ -114,7 +114,7 @@
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="gateways-pagination-controls" hx-swap-oob="true">
-  {% set base_url = root_path + '/admin/gateways/partial' %}
+  {% set base_url = root_path + ui_base_path + '/gateways/partial' %}
   {% set hx_target = '#gateways-table' %}
   {% set hx_indicator = '#gateways-loading' %}
   {% set table_name = 'gateways' %}

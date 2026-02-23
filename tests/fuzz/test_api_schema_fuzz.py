@@ -46,7 +46,7 @@ class TestAPIFuzzingCustom:
 
         for auth in auth_variants:
             headers = {"Authorization": auth} if auth else {}
-            response = client.get("/admin/tools", headers=headers)
+            response = client.get("/ui/tools", headers=headers)
             # Should return 401 or handle gracefully
             assert response.status_code in [401, 400, 422], f"Unexpected status for auth '{auth}': {response.status_code}"
 
@@ -63,7 +63,7 @@ class TestAPIFuzzingCustom:
             "tags": [f"tag_{i}" for i in range(1000)],  # Many tags
         }
 
-        response = client.post("/admin/tools", json=large_payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
+        response = client.post("/ui/tools", json=large_payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
         # Should handle large payloads gracefully (may reject or accept)
         assert response.status_code in [200, 201, 400, 401, 413, 422]
@@ -86,7 +86,7 @@ class TestAPIFuzzingCustom:
         ]
 
         for malformed in malformed_json_cases:
-            response = client.post("/admin/tools", data=malformed, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU=", "Content-Type": "application/json"})
+            response = client.post("/ui/tools", data=malformed, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU=", "Content-Type": "application/json"})
 
             # Should handle malformed JSON gracefully
             assert response.status_code in [400, 401, 422], f"Unexpected status for malformed JSON: {response.status_code}"
@@ -105,7 +105,7 @@ class TestAPIFuzzingCustom:
         ]
 
         for test_case in unicode_test_cases:
-            response = client.post("/admin/tools", json=test_case, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
+            response = client.post("/ui/tools", json=test_case, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should handle unicode gracefully
             assert response.status_code in [200, 201, 400, 401, 422]
@@ -121,7 +121,11 @@ class TestAPIFuzzingCustom:
 
         def make_request():
             try:
-                response = client.post("/admin/tools", json={"name": f"tool_{time.time()}", "url": "http://example.com"}, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
+                response = client.post(
+                    "/ui/tools",
+                    json={"name": f"tool_{time.time()}", "url": "http://example.com"},
+                    headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="},
+                )
                 results.append(response.status_code)
             except Exception as e:
                 results.append(f"Exception: {e}")
@@ -171,7 +175,7 @@ class TestAPIFuzzingCustom:
             if content_type is not None:
                 headers["Content-Type"] = content_type
 
-            response = client.post("/admin/tools", data=test_data, headers=headers)
+                response = client.post("/ui/tools", data=test_data, headers=headers)
 
             # Should handle various content types gracefully
             assert response.status_code in [200, 201, 400, 401, 415, 422]

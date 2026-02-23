@@ -131,7 +131,7 @@
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="users-pagination-controls" hx-swap-oob="true">
-  {% set base_url = root_path + '/admin/users/partial' %}
+  {% set base_url = root_path + ui_base_path + '/users/partial' %}
   {% set hx_target = '#users-list-container' %}
   {% set hx_indicator = '#users-loading' %}
   {% set hx_swap = 'outerHTML' %}

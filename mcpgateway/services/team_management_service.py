@@ -1060,7 +1060,7 @@ class TeamManagementService:
                     per_page=per_page or 30,
                     cursor=None,
                     limit=None,
-                    base_url=f"/admin/teams/{team_id}/members",
+                    base_url=f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/teams/{team_id}/members",
                     query_params={},
                 )
                 self.db.commit()
@@ -1278,7 +1278,7 @@ class TeamManagementService:
 
         # Base URL for pagination links (default to admin partial if not provided)
         if not base_url:
-            base_url = f"{settings.app_root_path}/admin/teams/partial"
+            base_url = f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/teams/partial"
 
         # Apply offset manually for legacy offset-based pagination if not using page or cursor
         if not page and not cursor and offset > 0:
