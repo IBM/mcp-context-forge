@@ -263,7 +263,7 @@
       data-name="{{ plugin.name | lower }}"
       data-description="{{ plugin.description | decode_html | lower }}"
       data-author="{{ plugin.author | lower }}"
-      data-mode="{{ plugin.mode }}"
+      data-mode="{{ plugin.mode | lower }}"
       data-status="{{ plugin.status }}"
       data-hooks="{{ plugin.hooks | join(',') if plugin.hooks else '' }}"
       data-tags="{{ plugin.tags | join(',') if plugin.tags else '' }}"
