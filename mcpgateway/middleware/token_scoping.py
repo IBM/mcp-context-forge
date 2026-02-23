@@ -25,7 +25,6 @@ from fastapi.security import HTTPBearer
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
-from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
