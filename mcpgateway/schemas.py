@@ -1124,6 +1124,12 @@ class ToolUpdate(BaseModelWithConfigDict):
             if not values.get("path_template"):
                 values["path_template"] = path_template
 
+        # Set default empty input_schema for REST tools if it's an empty dict
+        # This ensures consistency with ToolCreate behavior
+        input_schema = values.get("input_schema")
+        if input_schema is not None and isinstance(input_schema, dict) and not input_schema:
+            values["input_schema"] = {"type": "object", "properties": {}}
+
         return values
 
     @field_validator("displayName")
