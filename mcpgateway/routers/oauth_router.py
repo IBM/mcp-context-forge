@@ -745,9 +745,9 @@ async def oauth_callback(
 @oauth_router.get("/status/{gateway_id}")
 async def get_oauth_status(
     gateway_id: str,
+    request: Request,
     current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-    request: Request = None,
 ) -> dict:
     """Get OAuth status for a gateway.
 
@@ -758,7 +758,7 @@ async def get_oauth_status(
         gateway_id: ID of the gateway
         current_user: Authenticated user (enforces authentication)
         db: Database session
-        request: Optional request with token-scoping context.
+        request: Request with token-scoping context.
 
     Returns:
         OAuth status information

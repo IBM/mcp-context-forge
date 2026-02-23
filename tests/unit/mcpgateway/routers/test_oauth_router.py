@@ -722,7 +722,7 @@ class TestOAuthRouter:
         assert "OAuth Authorization Failed" in result.body.decode()
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_success(self, mock_db, mock_gateway, mock_current_user):
+    async def test_get_oauth_status_success(self, mock_db, mock_gateway, mock_current_user, mock_request):
         """Test successful OAuth status retrieval."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
@@ -731,7 +731,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute (now requires current_user for authentication)
-        result = await get_oauth_status("gateway123", mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
 
         # Assert
         assert result["oauth_enabled"] is True
@@ -740,7 +740,7 @@ class TestOAuthRouter:
         assert result["scopes"] == ["read", "write"]
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_no_oauth_config(self, mock_db, mock_current_user):
+    async def test_get_oauth_status_no_oauth_config(self, mock_db, mock_current_user, mock_request):
         """Test OAuth status when gateway has no OAuth config."""
         # Setup
         mock_gateway = Mock(spec=Gateway)
@@ -753,25 +753,25 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute (now requires current_user for authentication)
-        result = await get_oauth_status("gateway123", mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
 
         # Assert
         assert result["oauth_enabled"] is False
         assert "Gateway is not configured for OAuth" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_gateway_not_found(self, mock_db, mock_current_user):
+    async def test_get_oauth_status_gateway_not_found(self, mock_db, mock_current_user, mock_request):
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status("gateway123", mock_current_user, mock_db)
+            await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
 
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_non_authorization_code(self, mock_db, mock_current_user):
+    async def test_get_oauth_status_non_authorization_code(self, mock_db, mock_current_user, mock_request):
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.visibility = "public"
         mock_gateway.team_id = None
@@ -780,19 +780,19 @@ class TestOAuthRouter:
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
-        result = await get_oauth_status("gateway123", mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
 
         assert result["grant_type"] == "client_credentials"
         assert "configured for client_credentials" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_exception(self, mock_db, mock_current_user):
+    async def test_get_oauth_status_exception(self, mock_db, mock_current_user, mock_request):
         mock_db.execute.side_effect = Exception("boom")
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status("gateway123", mock_current_user, mock_db)
+            await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
 
         assert exc_info.value.status_code == 500
 
@@ -1373,7 +1373,7 @@ class TestOAuthRouterAdditionalCoverage:
         assert exc_info.value.status_code == 500
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_team_access_denied(self, mock_db):
+    async def test_get_oauth_status_team_access_denied(self, mock_db, mock_request):
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.visibility = "team"
@@ -1394,7 +1394,7 @@ class TestOAuthRouterAdditionalCoverage:
             from mcpgateway.routers.oauth_router import get_oauth_status
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_oauth_status("gateway123", {"email": "user@example.com"}, mock_db)
+                await get_oauth_status("gateway123", mock_request, {"email": "user@example.com"}, mock_db)
 
         assert exc_info.value.status_code == 403
 
@@ -1438,9 +1438,9 @@ class TestOAuthRouterAdditionalCoverage:
         with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
             result = await get_oauth_status(
                 "gateway123",
+                mock_request,
                 current_user={"email": "owner@example.com", "is_admin": False},
                 db=mock_db,
-                request=mock_request,
             )
 
         assert result["oauth_enabled"] is True
@@ -1461,9 +1461,9 @@ class TestOAuthRouterAdditionalCoverage:
             with pytest.raises(HTTPException) as exc_info:
                 await get_oauth_status(
                     "gateway123",
+                    mock_request,
                     current_user={"email": "intruder@example.com", "is_admin": False},
                     db=mock_db,
-                    request=mock_request,
                 )
 
         assert exc_info.value.status_code == 403
