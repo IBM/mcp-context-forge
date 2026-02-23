@@ -281,6 +281,22 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is False
         assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
 
+    def test_permission_restrictions_llm_proxy_default_prefix(self, middleware):
+        """LLM proxy endpoints should enforce llm.read/llm.invoke with default /v1 prefix."""
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_INVOKE]) is False
+
+        assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
+        assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_READ]) is False
+
+    def test_permission_restrictions_llm_proxy_custom_prefix(self, middleware, monkeypatch):
+        """LLM proxy path mapping should follow settings.llm_api_prefix."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.llm_api_prefix", "/gateway-llm")
+
+        assert middleware._check_permission_restrictions("/gateway-llm/models", "GET", [Permissions.LLM_READ]) is True
+        assert middleware._check_permission_restrictions("/gateway-llm/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_READ]) is False
+
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""
         payload = {"sub": "user@example.com", "teams": ["team-1"]}
