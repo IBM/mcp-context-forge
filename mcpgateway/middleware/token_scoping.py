@@ -203,7 +203,11 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
 def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     """Normalize llm_api_prefix to a canonical path prefix.
 
-    Returns empty string when prefix is empty or "/".
+    Args:
+        prefix: Raw LLM API prefix setting value.
+
+    Returns:
+        str: Normalized path prefix, or empty string when prefix is empty or "/".
     """
     if not prefix:
         return ""
@@ -213,7 +217,14 @@ def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
 
 @lru_cache(maxsize=16)
 def _get_llm_permission_patterns(prefix: str) -> Tuple[Tuple[str, Pattern[str], str], ...]:
-    """Build precompiled permission patterns for LLM proxy endpoints."""
+    """Build precompiled permission patterns for LLM proxy endpoints.
+
+    Args:
+        prefix: LLM API prefix used to mount proxy routes.
+
+    Returns:
+        Tuple[Tuple[str, Pattern[str], str], ...]: Method/path regex to required permission mappings.
+    """
     normalized_prefix = _normalize_llm_api_prefix(prefix)
     escaped_prefix = re.escape(normalized_prefix)
     return (

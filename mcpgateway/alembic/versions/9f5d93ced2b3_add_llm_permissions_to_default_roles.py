@@ -37,7 +37,14 @@ ROLE_PERMISSION_ADDITIONS = {
 
 
 def _load_permissions(raw_permissions: object) -> list[str]:
-    """Normalize stored role permissions into a list of strings."""
+    """Normalize stored role permissions into a list of strings.
+
+    Args:
+        raw_permissions: Raw permissions value from the role row.
+
+    Returns:
+        list[str]: Normalized list of permission strings.
+    """
     if not raw_permissions:
         return []
 
@@ -58,7 +65,14 @@ def _load_permissions(raw_permissions: object) -> list[str]:
 
 
 def _update_role_permissions(conn, role_name: str, permissions: list[str], add: bool) -> None:
-    """Add or remove permissions from a role, idempotently."""
+    """Add or remove permissions from a role, idempotently.
+
+    Args:
+        conn: Active Alembic connection.
+        role_name: Role name to update.
+        permissions: Permission values to add or remove.
+        add: When True, add permissions; when False, remove permissions.
+    """
     row = conn.execute(
         text("SELECT id, permissions FROM roles WHERE name = :name LIMIT 1"),
         {"name": role_name},
