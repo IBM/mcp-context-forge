@@ -1001,6 +1001,141 @@ class TestOAuthRouter:
         assert result is None
 
 
+class TestOAuthAccessHelpers:
+    def test_resolve_token_teams_for_scope_check_invalid_state_value_fails_closed(self):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams="team-1")
+
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result == []
+
+    def test_extract_user_email_missing_returns_none(self):
+        from mcpgateway.routers.oauth_router import _extract_user_email
+
+        assert _extract_user_email(SimpleNamespace()) is None
+
+    def test_extract_is_admin_unknown_context_returns_false(self):
+        from mcpgateway.routers.oauth_router import _extract_is_admin
+
+        assert _extract_is_admin(SimpleNamespace()) is False
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_requires_email(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _enforce_gateway_access("gateway123", gateway, {"is_admin": False}, mock_db, request=None)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_non_admin_null_token_teams_fails_closed(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False) as ownership_check:
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=request)
+
+        assert exc_info.value.status_code == 403
+        assert ownership_check.call_args.args[1] == []
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_admin_null_token_teams_short_circuit(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership") as ownership_check:
+            await _enforce_gateway_access("gateway123", gateway, {"email": "admin@example.com", "is_admin": True}, mock_db, request=request)
+
+        ownership_check.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_admin_short_circuit(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+        await _enforce_gateway_access("gateway123", gateway, {"email": "admin@example.com", "is_admin": True}, mock_db, request=None)
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_team_visibility_missing_team_id_denied(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id=None)
+        with pytest.raises(HTTPException) as exc_info:
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_team_visibility_member_allowed(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        class _User:
+            def is_team_member(self, _team_id):
+                return True
+
+        class _AuthService:
+            async def get_user_by_email(self, _email):
+                return _User()
+
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_unknown_visibility_owner_allowed(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="internal", owner_email="owner@example.com", team_id=None)
+        await _enforce_gateway_access("gateway123", gateway, {"email": "owner@example.com", "is_admin": False}, mock_db, request=None)
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_unknown_visibility_team_member_allowed(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        class _User:
+            def is_team_member(self, _team_id):
+                return True
+
+        class _AuthService:
+            async def get_user_by_email(self, _email):
+                return _User()
+
+        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_unknown_visibility_team_non_member_denied(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        class _User:
+            def is_team_member(self, _team_id):
+                return False
+
+        class _AuthService:
+            async def get_user_by_email(self, _email):
+                return _User()
+
+        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+
+        assert exc_info.value.status_code == 403
+
+
 class TestRFC8707ResourceNormalization:
     """Test cases for RFC 8707 resource URL normalization."""
 

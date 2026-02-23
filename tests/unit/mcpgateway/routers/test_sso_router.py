@@ -140,6 +140,27 @@ async def test_initiate_sso_login_provider_not_found(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+async def test_initiate_sso_login_invalid_scopes(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+    monkeypatch.setattr(sso_router, "_validate_redirect_uri", lambda *_args, **_kwargs: True)
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        def get_authorization_url(self, *_args, **_kwargs):
+            raise ValueError("Invalid scopes requested: admin")
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", scopes="admin", db=MagicMock())
+
+    assert excinfo.value.status_code == 400
+    assert "Invalid scopes requested: admin" in str(excinfo.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_initiate_sso_login_success(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
     monkeypatch.setattr(sso_router, "_validate_redirect_uri", lambda *_args, **_kwargs: True)
