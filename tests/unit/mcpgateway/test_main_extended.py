@@ -6288,6 +6288,102 @@ class TestHardeningHelperCoverage:
         assert excinfo.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_bypass(monkeypatch):
+    """Direct call should preserve admin bypass semantics for completion endpoint."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    payload = {"ref": {"type": "ref/prompt", "name": "test"}}
+    db = object()
+
+    monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    completion_mock = AsyncMock(return_value={"result": "ok"})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_completion(request=request, db=db, user={"email": "admin@example.com"})
+    assert result == {"result": "ok"}
+    assert completion_mock.await_args.args[0] is db
+    assert completion_mock.await_args.args[1] == payload
+    assert completion_mock.await_args.kwargs["user_email"] is None
+    assert completion_mock.await_args.kwargs["token_teams"] is None
+
+
+@pytest.mark.asyncio
+async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_public_only(monkeypatch):
+    """Direct call should normalize non-admin teams=None to public-only scope."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    payload = {"ref": {"type": "ref/prompt", "name": "test"}}
+    db = object()
+
+    monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    completion_mock = AsyncMock(return_value={"result": "ok"})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_completion(request=request, db=db, user={"email": "viewer@example.com"})
+    assert result == {"result": "ok"}
+    assert completion_mock.await_args.args[0] is db
+    assert completion_mock.await_args.args[1] == payload
+    assert completion_mock.await_args.kwargs["user_email"] == "viewer@example.com"
+    assert completion_mock.await_args.kwargs["token_teams"] == []
+
+
+@pytest.mark.asyncio
+async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(monkeypatch):
+    """RPC completion direct path should preserve admin bypass context."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    request.body = AsyncMock(
+        return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode()
+    )
+    request.headers = {}
+    request.query_params = {}
+    db = MagicMock()
+
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    completion_mock = AsyncMock(return_value={"done": True})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_rpc(request=request, db=db, user={"email": "admin@example.com"})
+    assert result["jsonrpc"] == "2.0"
+    assert result["id"] == "rpc-id"
+    assert result["result"] == {"done": True}
+    assert completion_mock.await_args.kwargs["user_email"] is None
+    assert completion_mock.await_args.kwargs["token_teams"] is None
+
+
+@pytest.mark.asyncio
+async def test_handle_rpc_completion_direct_non_admin_none_teams_becomes_public_only(monkeypatch):
+    """RPC completion direct path should normalize teams=None for non-admin callers."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    request.body = AsyncMock(
+        return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode()
+    )
+    request.headers = {}
+    request.query_params = {}
+    db = MagicMock()
+
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    completion_mock = AsyncMock(return_value={"done": True})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_rpc(request=request, db=db, user={"email": "viewer@example.com"})
+    assert result["jsonrpc"] == "2.0"
+    assert result["id"] == "rpc-id"
+    assert result["result"] == {"done": True}
+    assert completion_mock.await_args.kwargs["user_email"] == "viewer@example.com"
+    assert completion_mock.await_args.kwargs["token_teams"] == []
+
+
 @pytest.fixture
 def auth_headers():
     """Default auth headers for testing."""
