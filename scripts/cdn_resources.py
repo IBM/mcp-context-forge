@@ -10,8 +10,8 @@ verify-sri-hashes.py import from this module to prevent configuration drift.
 # Format: "key": "url"
 # IMPORTANT: URLs must be canonical (not redirect URLs) for reliable SRI verification
 CDN_RESOURCES = {
-    # Tailwind CSS (JIT - special handling, no SRI for dynamic content)
-    # "tailwindcss": "https://cdn.tailwindcss.com",  # Excluded: JIT compiler
+    # Tailwind browser build (pinned version for stable SRI + CORS compatibility)
+    "tailwindcss": "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.1/dist/index.global.js",
 
     # HTMX - Use canonical /dist/ path, not redirect URL
     "htmx": "https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js",

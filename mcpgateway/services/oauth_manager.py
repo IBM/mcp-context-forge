@@ -603,8 +603,6 @@ class OAuthManager:
         Returns:
             Opaque random state token
         """
-        _ = gateway_id
-        _ = app_user_email
         return secrets.token_urlsafe(48)
 
     @staticmethod
@@ -679,6 +677,13 @@ class OAuthManager:
                 logger.warning(f"Failed to resolve state gateway in database: {e}")
 
         async with _state_lock:
+            now = datetime.now(timezone.utc)
+            expired_keys = [key for key, data in _oauth_states.items() if datetime.fromisoformat(data["expires_at"]) < now]
+            for key in expired_keys:
+                expired_state = _oauth_states[key].get("state")
+                del _oauth_states[key]
+                if expired_state:
+                    _oauth_state_lookup.pop(expired_state, None)
             gateway_id = _oauth_state_lookup.get(state)
             if gateway_id:
                 return gateway_id

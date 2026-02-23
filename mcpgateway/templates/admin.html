@@ -23,15 +23,17 @@
     <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
     {% else %}
     <script
-      src="https://cdn.tailwindcss.com"
+      src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.1/dist/index.global.js"
       integrity="{{ sri_hashes.tailwindcss }}"
       crossorigin="anonymous">
     </script>
     {% endif %}
     <script>
-      tailwind.config = {
-        darkMode: "class",
-      };
+      if (window.tailwind && typeof window.tailwind === "object") {
+        window.tailwind.config = {
+          darkMode: "class",
+        };
+      }
     </script>
     <!-- HTMX for dynamic interactions -->
     {% if ui_airgapped %}

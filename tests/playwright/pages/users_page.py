@@ -98,7 +98,7 @@ class UsersPage(BasePage):
     # ==================== Navigation ====================
 
     def navigate_to_users_tab(self) -> None:
-        """Navigate to Users tab and wait for panel to be visible."""
+        """Navigate to Users tab and wait for the user list to finish loading."""
         self.sidebar.click_users_tab()
         self.wait_for_users_loaded()
 

@@ -21,7 +21,7 @@ echo "📦 Downloading CDN assets for airgapped deployment..."
 
 # Download Tailwind CSS standalone build
 echo "  ⬇️  Tailwind CSS..."
-curl -fsSL "https://cdn.tailwindcss.com" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.1/dist/index.global.js" \
   -o "${STATIC_DIR}/tailwindcss/tailwind.min.js"
 
 # Download HTMX

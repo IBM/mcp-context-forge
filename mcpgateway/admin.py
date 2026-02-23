@@ -1034,6 +1034,11 @@ def _request_origin_matches(request: Request) -> bool:
 
     Returns:
         ``True`` when candidate origin exactly matches request origin; otherwise ``False``.
+
+    Note:
+        When the service is deployed behind a reverse proxy, this check relies on
+        ``X-Forwarded-Proto`` / ``X-Forwarded-Host`` values emitted by that proxy.
+        The deployment boundary must sanitize and overwrite forwarded headers.
     """
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")

@@ -145,6 +145,18 @@ def test_mask_sensitive_headers_masks_api_key_variants():
     assert masked["X-Api-Key"] == "******"
     assert masked["X-Token-Count"] == "5"
 
+def test_mask_sensitive_headers_masks_auth_like_names():
+    headers = {"X-Auth-Device": "device-secret", "X-Custom-JWT": "tokenish"}
+    masked = mask_sensitive_headers(headers)
+    assert masked["X-Auth-Device"] == "******"
+    assert masked["X-Custom-JWT"] == "******"
+
+def test_mask_sensitive_headers_respects_non_sensitive_suffixes():
+    headers = {"X-Auth-Count": "5", "X-JWT_Status_Count": "7"}
+    masked = mask_sensitive_headers(headers)
+    assert masked["X-Auth-Count"] == "5"
+    assert masked["X-JWT_Status_Count"] == "7"
+
 # --- RequestLoggingMiddleware tests ---
 
 @pytest.mark.asyncio

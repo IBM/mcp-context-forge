@@ -113,6 +113,7 @@ _SENSITIVE_KEY_PATTERN = re.compile(
     r"(^|_)(password|passphrase|secret|token|apikey|api_key|access_token|refresh_token|client_secret|authorization|auth_token|jwt_token|private_key)($|_)",
     re.IGNORECASE,
 )
+_AUTHENTICATION_KEYWORD_PATTERN = re.compile(r"(^|_)(auth|authorization|jwt)(_|\Z)")
 
 
 def _normalize_key_for_masking(key: str) -> str:
@@ -142,10 +143,15 @@ def _is_sensitive_key(key: str) -> bool:
     if not normalized_key:
         return False
 
+    has_nonsensitive_suffix = any(normalized_key.endswith(suffix) for suffix in _NON_SENSITIVE_KEY_SUFFIXES)
+
     if normalized_key in SENSITIVE_KEYS:
         return True
 
-    if any(normalized_key.endswith(suffix) for suffix in _NON_SENSITIVE_KEY_SUFFIXES):
+    if _AUTHENTICATION_KEYWORD_PATTERN.search(normalized_key) and not has_nonsensitive_suffix:
+        return True
+
+    if has_nonsensitive_suffix:
         return False
 
     return bool(_SENSITIVE_KEY_PATTERN.search(normalized_key))
