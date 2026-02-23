@@ -79,6 +79,13 @@ def test_check_server_and_permission_restrictions():
     assert middleware._check_permission_restrictions("/tools", "POST", ["tools.read"]) is False
 
 
+def test_check_restrictions_normalize_app_root_path(monkeypatch):
+    middleware = TokenScopingMiddleware()
+    monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.app_root_path", "/forge")
+    assert middleware._check_server_restriction("/forge/servers/abc/tools", "abc") is True
+    assert middleware._check_permission_restrictions("/forge/tools", "GET", ["tools.read"]) is True
+
+
 @pytest.mark.asyncio
 async def test_extract_token_scopes_handles_exceptions(monkeypatch):
     middleware = TokenScopingMiddleware()

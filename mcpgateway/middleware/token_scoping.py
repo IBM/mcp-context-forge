@@ -55,6 +55,7 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
+_AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
 
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
@@ -215,6 +216,26 @@ def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     return "" if normalized == "/" else normalized
 
 
+def _normalize_scope_path(scope_path: str, root_path: str) -> str:
+    """Strip ``root_path`` from ``scope_path`` when the incoming path includes it.
+
+    Args:
+        scope_path: Request path observed by middleware.
+        root_path: Application root path prefix, if configured.
+
+    Returns:
+        Path value normalized for permission and scope pattern matching.
+    """
+    if root_path and len(root_path) > 1:
+        root_path = root_path.rstrip("/")
+    if root_path and len(root_path) > 1 and scope_path.startswith(root_path):
+        rest = scope_path[len(root_path) :]
+        # root_path="/app" must not strip from "/application/..."
+        if rest == "" or rest.startswith("/"):
+            return rest or "/"
+    return scope_path
+
+
 @lru_cache(maxsize=16)
 def _get_llm_permission_patterns(prefix: str) -> Tuple[Tuple[str, Pattern[str], str], ...]:
     """Build precompiled permission patterns for LLM proxy endpoints.
@@ -279,15 +300,55 @@ class TokenScopingMiddleware:
                 normalized.append(team)
         return normalized
 
-    async def _extract_token_scopes(self, request: Request) -> Optional[dict]:
-        """Extract token scopes from JWT in request.
+    def _normalize_path_for_matching(self, request_path: str) -> str:
+        """Normalize a path for team scoping and permission matching.
 
         Args:
-            request: FastAPI request object
+            request_path: Raw request path.
 
         Returns:
-            Dict containing token scopes or None if no valid token
+            Normalized absolute path suitable for route matching.
         """
+        normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
+        if not normalized.startswith("/"):
+            return f"/{normalized}"
+        return normalized
+
+    def _get_normalized_request_path(self, request: Request) -> str:
+        """Resolve request path with APP_ROOT_PATH-aware normalization.
+
+        Args:
+            request: Request object containing scope and URL data.
+
+        Returns:
+            Normalized request path suitable for permission checks.
+        """
+        scope = getattr(request, "scope", {}) or {}
+        if not isinstance(scope, dict):
+            scope = {}
+        scope_path = request.url.path or scope.get("path") or "/"
+        root_path = scope.get("root_path") or settings.app_root_path or ""
+        normalized = _normalize_scope_path(scope_path, root_path)
+        if not normalized.startswith("/"):
+            return f"/{normalized}"
+        return normalized
+
+    def _extract_jwt_token_from_request(self, request: Request) -> Optional[str]:
+        """Extract JWT token from supported cookie names or Bearer auth header.
+
+        Args:
+            request: Request object carrying cookies and headers.
+
+        Returns:
+            JWT string when present and validly formatted; otherwise ``None``.
+        """
+        cookies = getattr(request, "cookies", None)
+        if cookies and hasattr(cookies, "get"):
+            for cookie_name in _AUTH_COOKIE_NAMES:
+                cookie_token = cookies.get(cookie_name)
+                if isinstance(cookie_token, str) and cookie_token.strip():
+                    return cookie_token.strip()
+
         # Get authorization header and parse bearer scheme case-insensitively.
         auth_header = request.headers.get("Authorization")
         if not auth_header:
@@ -298,6 +359,18 @@ class TokenScopingMiddleware:
             return None
 
         token = parts[1].strip()
+        return token or None
+
+    async def _extract_token_scopes(self, request: Request) -> Optional[dict]:
+        """Extract token scopes from JWT in request.
+
+        Args:
+            request: FastAPI request object
+
+        Returns:
+            Dict containing token scopes or None if no valid token
+        """
+        token = self._extract_jwt_token_from_request(request)
         if not token:
             return None
 
@@ -459,6 +532,8 @@ class TokenScopingMiddleware:
             >>> m._check_server_restriction('/', 'abc')
             True
         """
+        request_path = self._normalize_path_for_matching(request_path)
+
         if not server_id:
             return True  # No server restriction
 
@@ -517,6 +592,8 @@ class TokenScopingMiddleware:
             >>> m._check_permission_restrictions('/tools', 'POST', ['tools.read'])
             False
         """
+        request_path = self._normalize_path_for_matching(request_path)
+
         if not permissions or "*" in permissions:
             return True  # No restrictions or full access
 
@@ -666,6 +743,8 @@ class TokenScopingMiddleware:
         Returns:
             bool: True if resource access is allowed, False otherwise
         """
+        request_path = self._normalize_path_for_matching(request_path)
+
         # Normalize token_teams: extract team IDs from dict objects (backward compatibility)
         token_team_ids = []
         for team in token_teams:
@@ -982,6 +1061,8 @@ class TokenScopingMiddleware:
             # Mark as scoped before doing any work
             request.state._token_scoping_done = True
 
+            normalized_path = self._get_normalized_request_path(request)
+
             # Skip scoping for certain paths (truly public endpoints only)
             skip_paths = [
                 "/health",
@@ -995,14 +1076,14 @@ class TokenScopingMiddleware:
             ]
 
             # Check exact root path separately
-            if request.url.path == "/":
+            if normalized_path == "/":
                 return await call_next(request)
 
-            if any(request.url.path.startswith(path) for path in skip_paths):
+            if any(normalized_path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
             # Skip server-specific well-known endpoints (RFC 9728)
-            if re.match(r"^/servers/[^/]+/\.well-known/", request.url.path):
+            if re.match(r"^/servers/[^/]+/\.well-known/", normalized_path):
                 return await call_next(request)
 
             # Extract full token payload (not just scopes)
@@ -1051,7 +1132,7 @@ class TokenScopingMiddleware:
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
                     # Check resource team ownership with shared session
-                    if not self._check_resource_team_ownership(request.url.path, token_teams, db=db, _user_email=user_email):
+                    if not self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email):
                         logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
                 finally:
@@ -1066,7 +1147,7 @@ class TokenScopingMiddleware:
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
-                if not self._check_resource_team_ownership(request.url.path, token_teams, _user_email=user_email):
+                if not self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email):
                     logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
 
@@ -1075,7 +1156,7 @@ class TokenScopingMiddleware:
 
             # Check server ID restriction
             server_id = scopes.get("server_id")
-            if not self._check_server_restriction(request.url.path, server_id):
+            if not self._check_server_restriction(normalized_path, server_id):
                 logger.warning(f"Token not authorized for this server. Required: {server_id}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Token not authorized for this server. Required: {server_id}")
 
@@ -1095,7 +1176,7 @@ class TokenScopingMiddleware:
 
             # Check permission restrictions
             permissions = scopes.get("permissions", [])
-            if not self._check_permission_restrictions(request.url.path, request.method, permissions):
+            if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this operation")
 
