@@ -114,6 +114,20 @@ from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
+def _resolve_tool_title(tool) -> Optional[str]:
+    """Resolve tool title with annotations.title precedence per MCP spec.
+
+    Priority:
+    1. annotations.title (if annotations dict has 'title' key)
+    2. tool.title (top-level BaseMetadata field)
+    3. None
+    """
+    annotations_title = None
+    if hasattr(tool, "annotations") and isinstance(tool.annotations, dict):
+        annotations_title = tool.annotations.get("title")
+    return annotations_title or getattr(tool, "title", None)
+
+
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
 _TOOL_LOOKUP_CACHE = None
@@ -4066,6 +4080,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             custom_name=tool.name,
             custom_name_slug=slugify(tool.name),
             display_name=generate_display_name(tool.name),
+            title=_resolve_tool_title(tool),
             url=gateway.url,
             original_description=tool.description,
             description=tool.description,
@@ -4149,7 +4164,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Check authentication and visibility changes
                     auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway.auth_value or existing_tool.visibility != gateway.visibility
 
-                    if basic_fields_changed or schema_fields_changed or auth_fields_changed:
+                    title_changed = existing_tool.title != _resolve_tool_title(tool)
+
+                    if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed:
                         fields_to_update = True
                     if fields_to_update:
                         existing_tool.url = gateway.url
@@ -4164,6 +4181,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_tool.input_schema = tool.input_schema
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
+                        existing_tool.title = _resolve_tool_title(tool)
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = gateway.auth_value
                         existing_tool.visibility = gateway.visibility
@@ -4231,6 +4249,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
                         or existing_resource.visibility != gateway.visibility
+                        or existing_resource.title != getattr(resource, "title", None)
                     ):
                         fields_to_update = True
 
@@ -4239,6 +4258,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
+                        existing_resource.title = getattr(resource, "title", None)
                         existing_resource.visibility = gateway.visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
                 else:
@@ -4246,6 +4266,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db_resource = DbResource(
                         uri=resource.uri,
                         name=resource.name,
+                        title=getattr(resource, "title", None),
                         description=resource.description,
                         mime_type=resource.mime_type,
                         uri_template=resource.uri_template,
@@ -4305,12 +4326,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_prompt.description != prompt.description
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
                         or existing_prompt.visibility != gateway.visibility
+                        or existing_prompt.title != getattr(prompt, "title", None)
                     ):
                         fields_to_update = True
 
                     if fields_to_update:
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
+                        existing_prompt.title = getattr(prompt, "title", None)
                         existing_prompt.visibility = gateway.visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
                 else:
@@ -4320,6 +4343,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         original_name=prompt.name,
                         custom_name=prompt.name,
                         display_name=prompt.name,
+                        title=getattr(prompt, "title", None),
                         description=prompt.description,
                         template=prompt.template if hasattr(prompt, "template") else "",
                         argument_schema={},  # Use argument_schema instead of arguments
