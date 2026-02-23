@@ -63,7 +63,8 @@ PLUGIN_VIOLATION_CODE_MAPPING = {
     "PII_DETECTED": 422,  # Used when PII is detected in content (pii_filter plugin)
     "SENSITIVE_CONTENT": 422,  # Used when sensitive information is detected
     # Authentication & Authorization
-    "INVALID_TOKEN": 401,  # Used for invalid/expired tokens (simple_token_auth example)
+    "INVALID_TOKEN": 401,  # nosec B105 - Not a password; INVALID_TOKEN is a HTTP Status Code
+    # Used for invalid/expired tokens (simple_token_auth example)
     "API_KEY_REVOKED": 401,  # Used when API key has been revoked (custom_auth_example)
     "AUTH_REQUIRED": 401,  # Used when authentication is missing
     # Generic Violation Codes
