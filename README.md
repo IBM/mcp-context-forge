@@ -1,6 +1,6 @@
 # ContextForge AI Gateway
 
-> A unified gateway for Tools, Agents, Models, and APIs — with federation, virtual servers, retries, security, and an optional admin UI.
+> An AI Gateway, registry, and proxy that sits in front of any MCP, A2A, or REST/gRPC APIs, exposing a unified control plane with centralized governance, discovery, and observability for all your AI needs. Optimizes Agent & Tool calling, and supports plugins.
 
 ![](docs/docs/images/contextforge-banner.png)
 
@@ -23,7 +23,7 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
 
 
-**ContextForge** is a production-grade AI gateway that federates tools, agents, models, and APIs into one clean endpoint for your AI clients:
+**ContextForge** is a production-grade AI gateway, registry, and proxy that federates tools, agents, models, and APIs into one clean endpoint for your AI clients. It exposes a unified control plane with centralized governance, discovery, and observability across your entire AI infrastructure:
 
 - **Tools Gateway** — MCP, REST, gRPC-to-MCP translation, and TOON compression
 - **Agent Gateway** — A2A protocol, OpenAI-compatible and Anthropic agent routing
@@ -71,7 +71,7 @@ It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scal
 
 ## Overview & Goals
 
-**ContextForge** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server or REST API-exposing a unified endpoint for all your AI clients. See the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for more details.
+**ContextForge** is an AI gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server, or REST/gRPC API, exposing a unified control plane with centralized governance, discovery, and observability for all your AI needs. It optimizes agent and tool calling, and supports plugins. See the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for more details.
 
 It currently supports:
 

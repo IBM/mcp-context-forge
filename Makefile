@@ -1,13 +1,13 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #   🐍 ContextForge AI Gateway - Makefile
-#   (A unified gateway for Tools, Agents, Models, and APIs)
+#   (AI Gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
 # Authors: Mihai Criveti, Manav Gupta
 # Description: Build & automation helpers for ContextForge project
 # Usage: run `make` or `make help` to view available targets
 #
-# help: 🐍 ContextForge AI Gateway  (A unified gateway for Tools, Agents, Models, and APIs)
+# help: 🐍 ContextForge AI Gateway  (AI Gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs)
 #
 # ──────────────────────────────────────────────────────────────────────────
 SHELL := /bin/bash
