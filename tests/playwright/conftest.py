@@ -456,7 +456,7 @@ def test_agent_data():
 # These are real, publicly available MCP servers that can be used for testing
 VALID_MCP_SERVER_URLS = [
     "https://docs.mcp.cloudflare.com/sse",
-    "https://www.javadocs.dev/mcp",
+    "https://mcp.deepwiki.com/sse",
     "https://mcp.openzeppelin.com/contracts/cairo/mcp",
     "https://mcp.openzeppelin.com/contracts/stylus/mcp",
     "https://mcp.openzeppelin.com/contracts/stellar/mcp",

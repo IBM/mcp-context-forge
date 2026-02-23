@@ -446,7 +446,7 @@ Admin.hideUserEditModal = hideUserEditModal;
 import "./app.js";
 import "./events.js";
 
-console.log("🚀 ContextForge MCP Gateway Admin API initialized");
+console.log("🚀 ContextForge AI Gateway Admin API initialized");
 
 // Backward-compatible global aliases for functions that tests and
 // inline template handlers expect on the window object.

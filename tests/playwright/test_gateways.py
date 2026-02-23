@@ -661,6 +661,9 @@ class TestGatewayActions:
         if gateways_page.delete_gateway_by_name(gateway_data["name"]):
             logger.info("Deleted existing gateway '%s' before test", gateway_data["name"])
 
+        if gateways_page.delete_gateway_by_url(gateway_data["url"]):                                                                                                                         
+            logger.info("Deleted existing gateway with URL '%s' before test", gateway_data["url"]) 
+
         # Fill and submit form, wait for POST (skips on 502)
         gateways_page.fill_gateway_form(
             name=gateway_data["name"],
@@ -694,9 +697,9 @@ class TestGatewayActions:
         gateways_page.page.reload(wait_until="domcontentloaded")
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
-        gateways_page.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=20000)
+        
+        # Search for the deleted gateway to verify it's gone
         gateways_page.search_gateways(gateway_data["name"])
-        gateways_page.page.wait_for_timeout(500)
 
         assert not gateways_page.gateway_exists(gateway_data["name"]), f"Gateway '{gateway_data['name']}' should not exist after deletion"
         logger.info("Gateway '%s' deleted successfully", gateway_data["name"])

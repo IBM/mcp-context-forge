@@ -49,7 +49,6 @@ import { initPromptSelect } from "./prompts.js";
 import { initResourceSelect } from "./resources.js";
 import { escapeHtml, safeSetInnerHTML } from "./security.js";
 import {
-  ADMIN_ONLY_TABS,
   getDefaultTabName,
   getUiHiddenSections,
   getVisibleSidebarTabs,

@@ -16,7 +16,6 @@ import {
 } from "./initialization.js";
 import { closeModal } from "./modals.js";
 import { initializeRealTimeMonitoring } from "./monitoring.js";
-import { paginationData } from "./pagination.js";
 import { initializeTagFiltering } from "./tags.js";
 import { hideTeamEditModal, initializeAddMembersForms, initializePasswordValidation, updateDefaultVisibility } from "./teams.js";
 import { initializeTeamScopingMonitor } from "./tokens.js";
