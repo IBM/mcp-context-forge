@@ -1261,7 +1261,7 @@ class A2AAgentService:
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     if agent.tool and agent.tool.name:
-                        await tool_lookup_cache.invalidate(agent.tool.name)
+                        await tool_lookup_cache.invalidate(agent.tool.name, gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None)
             except Exception:
                 logger.warning("Failed to cascade tool state for A2A agent %s (tool_id=%s)", agent.id, agent.tool_id, exc_info=True)
 
