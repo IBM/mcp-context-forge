@@ -772,7 +772,7 @@ class ServerService:
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
-                cached_servers = [ServerRead.model_validate(s) for s in cached["servers"]]
+                cached_servers = [ServerRead.model_validate(s).masked() for s in cached["servers"]]
                 return (cached_servers, cached.get("next_cursor"))
 
         # Build base query with ordering and eager load relationships to avoid N+1

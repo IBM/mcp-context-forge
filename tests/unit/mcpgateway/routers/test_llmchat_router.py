@@ -307,7 +307,7 @@ async def test_connect_rejects_ssrf_server_url(monkeypatch: pytest.MonkeyPatch):
         await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
 
     assert excinfo.value.status_code == 400
-    assert "Invalid server URL" in excinfo.value.detail
+    assert excinfo.value.detail == "Invalid server URL"
 
 
 @pytest.mark.asyncio
@@ -335,7 +335,7 @@ async def test_connect_rejects_private_server_url_in_strict_ssrf_mode(monkeypatc
         await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
 
     assert excinfo.value.status_code == 400
-    assert "Invalid server URL" in excinfo.value.detail
+    assert excinfo.value.detail == "Invalid server URL"
 
 
 @pytest.mark.asyncio

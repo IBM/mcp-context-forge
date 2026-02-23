@@ -12515,8 +12515,9 @@ async def admin_test_gateway(
     try:
         validated_base_url = SecurityValidator.validate_url(str(request.base_url), "Gateway test URL")
     except ValueError as e:
+        LOGGER.warning("Gateway test URL validation failed for %s: %s", request.base_url, e)
         latency_ms = int((time.monotonic() - start_time) * 1000)
-        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL", "details": str(e)})
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 
     full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")

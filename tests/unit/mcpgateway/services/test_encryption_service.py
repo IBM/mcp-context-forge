@@ -775,6 +775,27 @@ class TestOAuthConfigProtection:
         assert decrypted["masked"] == settings.masked_auth_value
 
     @pytest.mark.asyncio
+    async def test_decrypt_oauth_config_for_runtime_handles_plain_sensitive_nested_values(self):
+        """Runtime helper preserves non-encrypted sensitive values and traverses nested lists."""
+        oauth_config = {
+            "client_secret": "plaintext-secret",
+            "token": [{"password": "plain-password"}, "raw-token"],
+            "metadata": ["a", "b"],
+        }
+
+        decrypted = await decrypt_oauth_config_for_runtime(oauth_config)
+
+        assert decrypted["client_secret"] == "plaintext-secret"
+        assert decrypted["token"][0]["password"] == "plain-password"
+        assert decrypted["token"][1] == "raw-token"
+        assert decrypted["metadata"] == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_decrypt_oauth_config_for_runtime_none_returns_none(self):
+        """Runtime helper returns None unchanged."""
+        assert await decrypt_oauth_config_for_runtime(None) is None
+
+    @pytest.mark.asyncio
     async def test_protect_oauth_config_for_storage_sensitive_value_shape_branches(self):
         """Sensitive keys handle dict/list/None/non-string/masked placeholder branches."""
         oauth_config = {

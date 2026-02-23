@@ -770,24 +770,38 @@ class TestEmailAuthServiceUserManagement:
         assert verify_args[1].startswith("$argon2id$")
 
     @pytest.mark.asyncio
-    async def test_authenticate_user_inactive(self, service, mock_db, mock_user):
-        """Test authentication when user account is inactive."""
+    async def test_authenticate_user_inactive(self, service, mock_db, mock_user, mock_password_service):
+        """Inactive-user login path runs dummy verify and failed-login floor."""
+        service.password_service = mock_password_service
         mock_user.is_active = False
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        result = await service.authenticate_user(email="test@example.com", password="password")
+        with (
+            patch.object(service, "_verify_dummy_password_for_timing", new=AsyncMock()) as dummy_verify_mock,
+            patch.object(service, "_apply_failed_login_floor", new=AsyncMock()) as floor_mock,
+        ):
+            result = await service.authenticate_user(email="test@example.com", password="password")
 
         assert result is None
+        dummy_verify_mock.assert_awaited_once_with("password")
+        floor_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_authenticate_user_account_locked(self, service, mock_db, mock_user):
-        """Test authentication when account is locked."""
+    async def test_authenticate_user_account_locked(self, service, mock_db, mock_user, mock_password_service):
+        """Locked-account login path runs dummy verify and failed-login floor."""
+        service.password_service = mock_password_service
         mock_user.is_account_locked.return_value = True
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        result = await service.authenticate_user(email="test@example.com", password="password")
+        with (
+            patch.object(service, "_verify_dummy_password_for_timing", new=AsyncMock()) as dummy_verify_mock,
+            patch.object(service, "_apply_failed_login_floor", new=AsyncMock()) as floor_mock,
+        ):
+            result = await service.authenticate_user(email="test@example.com", password="password")
 
         assert result is None
+        dummy_verify_mock.assert_awaited_once_with("password")
+        floor_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_authenticate_user_wrong_password(self, service, mock_db, mock_user, mock_password_service):
@@ -841,6 +855,17 @@ class TestEmailAuthServiceUserManagement:
 
         sleep_mock.assert_awaited_once()
         assert sleep_mock.await_args.args[0] == pytest.approx(0.1, abs=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_verify_dummy_password_for_timing_swallows_verify_errors(self, service, mock_password_service):
+        """Dummy-verify helper swallows password-service errors for timing hardening."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(side_effect=RuntimeError("verify failed"))
+
+        with patch("mcpgateway.services.email_auth_service.logger") as mock_logger:
+            await service._verify_dummy_password_for_timing("pw")
+
+        mock_logger.debug.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_authenticate_user_lockout_after_failures(self, service, mock_db, mock_user, mock_password_service):

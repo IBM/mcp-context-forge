@@ -1444,6 +1444,13 @@ class TestOAuthRouterAdditionalCoverage:
             async def decrypt_secret_async(self, _value):
                 return "decrypted"
 
+            async def encrypt_secret_async(self, value):
+                return f"enc::{value}"
+
+            @staticmethod
+            def is_encrypted(value):
+                return isinstance(value, str) and value.startswith("enc::")
+
         with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
             with patch("mcpgateway.services.encryption_service.get_encryption_service", return_value=_Encryption()):
                 with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
@@ -1463,7 +1470,8 @@ class TestOAuthRouterAdditionalCoverage:
                             result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
 
         assert isinstance(result, RedirectResponse)
-        assert mock_gateway.oauth_config["client_secret"] == "decrypted"
+        assert mock_gateway.oauth_config["client_secret"] != "decrypted"
+        assert mock_gateway.oauth_config["client_secret"].startswith("enc::")
 
     @pytest.mark.asyncio
     async def test_oauth_callback_invalid_state_json(self, mock_db, mock_request):

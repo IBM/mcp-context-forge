@@ -11607,6 +11607,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
 
     assert response.status_code == 400
     assert response.body["error"] == "Invalid gateway URL"
+    assert "details" not in response.body
 
 
 @pytest.mark.asyncio

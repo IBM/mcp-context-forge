@@ -1555,6 +1555,31 @@ class TestListAgentsAdvanced:
         await service.list_agents(mock_db)
         cache.set.assert_awaited_once()
 
+    async def test_list_cache_read_reconstructs_and_masks(self, service, mock_db, monkeypatch):
+        """Cached A2A entries are reconstructed and re-masked before returning."""
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="h"),
+            get=AsyncMock(return_value={"agents": [{"id": "a1"}], "next_cursor": "cursor-1"}),
+            set=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: cache)
+
+        class CachedAgentRead:
+            def __init__(self):
+                self.masked_called = False
+
+            def masked(self):
+                self.masked_called = True
+                return self
+
+        cached_agent_read = CachedAgentRead()
+        with patch("mcpgateway.services.a2a_service.A2AAgentRead.model_validate", return_value=cached_agent_read):
+            result, cursor = await service.list_agents(mock_db)
+
+        assert result == [cached_agent_read]
+        assert result[0].masked_called is True
+        assert cursor == "cursor-1"
+
 
 class TestListAgentsForUser:
     """Cover the deprecated list_agents_for_user method."""

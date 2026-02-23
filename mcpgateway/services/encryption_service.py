@@ -640,11 +640,12 @@ async def _decrypt_oauth_config_value(value: Any, encryption: EncryptionService)
     return value
 
 
-async def decrypt_oauth_config_for_runtime(oauth_config: Any) -> Any:
+async def decrypt_oauth_config_for_runtime(oauth_config: Any, encryption: Optional[EncryptionService] = None) -> Any:
     """Recursively decrypt sensitive oauth_config values only at runtime use-sites.
 
     Args:
         oauth_config: Stored oauth_config payload.
+        encryption: Optional shared encryption service instance.
 
     Returns:
         Any: Runtime-ready oauth_config payload.
@@ -652,5 +653,5 @@ async def decrypt_oauth_config_for_runtime(oauth_config: Any) -> Any:
     if oauth_config is None:
         return None
 
-    encryption = get_encryption_service(settings.auth_encryption_secret)
-    return await _decrypt_oauth_config_value(oauth_config, encryption)
+    active_encryption = encryption or get_encryption_service(settings.auth_encryption_secret)
+    return await _decrypt_oauth_config_value(oauth_config, active_encryption)

@@ -2936,12 +2936,23 @@ class TestServerServiceCoverageMissingBranches:
         mock_cache.hash_filters.return_value = "h"
         mock_cache.get = AsyncMock(return_value={"servers": [{"id": "1"}], "next_cursor": "n"})
 
+        class CachedServerRead:
+            def __init__(self):
+                self.masked_called = False
+
+            def masked(self):
+                self.masked_called = True
+                return self
+
+        cached_server_read = CachedServerRead()
+
         with patch("mcpgateway.services.server_service._get_registry_cache", return_value=mock_cache), patch(
-            "mcpgateway.services.server_service.ServerRead.model_validate", return_value="server_read"
+            "mcpgateway.services.server_service.ServerRead.model_validate", return_value=cached_server_read
         ):
             servers, next_cursor = await server_service.list_servers(db, token_teams=[])
 
-        assert servers == ["server_read"]
+        assert servers == [cached_server_read]
+        assert servers[0].masked_called is True
         assert next_cursor == "n"
 
     @pytest.mark.asyncio

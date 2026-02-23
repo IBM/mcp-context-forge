@@ -684,7 +684,8 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
             try:
                 input_data.server.url = SecurityValidator.validate_url(str(input_data.server.url), "MCP server URL")
             except ValueError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid server URL: {str(e)}")
+                logger.warning("LLM chat connect URL validation failed for user %s and URL %s: %s", user_id, input_data.server.url, e)
+                raise HTTPException(status_code=400, detail="Invalid server URL")
 
         # Handle authentication token
         empty_token = ""  # nosec B105

@@ -624,7 +624,7 @@ class A2AAgentService:
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
-                cached_agents = [A2AAgentRead.model_validate(a) for a in cached["agents"]]
+                cached_agents = [A2AAgentRead.model_validate(a).masked() for a in cached["agents"]]
                 return (cached_agents, cached.get("next_cursor"))
 
         # Build base query with ordering

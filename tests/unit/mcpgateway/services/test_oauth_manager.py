@@ -616,6 +616,23 @@ async def test_refresh_token_http_error(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_refresh_token_http_error_retries_with_backoff(oauth_manager):
+    """HTTP errors trigger retry backoff before final failure."""
+    oauth_manager.max_retries = 2
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = httpx.HTTPError("timeout")
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.asyncio.sleep", new=AsyncMock()) as sleep_mock,
+    ):
+        with pytest.raises(OAuthError, match="Failed to refresh token after 2 attempts"):
+            await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
+
+    sleep_mock.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
 async def test_refresh_token_with_resource_string(oauth_manager):
     mock_response = MagicMock()
     mock_response.status_code = 200
