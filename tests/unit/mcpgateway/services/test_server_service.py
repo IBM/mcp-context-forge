@@ -3159,6 +3159,86 @@ class TestServerServiceCoverageMissingBranches:
         assert mock_server.version == 1
 
     @pytest.mark.asyncio
+    async def test_update_server_team_reassignment_requires_owner_membership(self, server_service, mock_server):
+        """Changing team_id must validate ownership in the destination team."""
+        db = MagicMock()
+        db.rollback = Mock()
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+
+        mock_server.team_id = "team-old"
+
+        mock_team = MagicMock()
+        team_query = MagicMock()
+        team_query.filter.return_value.first.return_value = mock_team
+
+        member_query = MagicMock()
+        member_query.filter.return_value.first.return_value = None
+
+        def query_side_effect(model):
+            if model.__name__ == "EmailTeam":
+                return team_query
+            if model.__name__ == "EmailTeamMember":
+                return member_query
+            return MagicMock()
+
+        db.query.side_effect = query_side_effect
+
+        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch(
+            "mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)
+        ):
+            with pytest.raises(ServerError) as exc_info:
+                await server_service.update_server(db, "srv-1", ServerUpdate(team_id="team-new"), user_email="user@example.com")
+
+        assert "User membership in team not sufficient" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_server_team_reassignment_owner_succeeds(self, server_service, mock_server):
+        """Changing team_id succeeds when the caller owns the destination team."""
+        db = MagicMock()
+        db.commit = Mock()
+        db.refresh = Mock()
+        db.rollback = Mock()
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = MagicMock(return_value="server_read")
+
+        mock_server.team_id = "team-old"
+
+        mock_team = MagicMock()
+        team_query = MagicMock()
+        team_query.filter.return_value.first.return_value = mock_team
+
+        mock_member = MagicMock()
+        mock_member.role = "owner"
+        member_query = MagicMock()
+        member_query.filter.return_value.first.return_value = mock_member
+
+        def query_side_effect(model):
+            if model.__name__ == "EmailTeam":
+                return team_query
+            if model.__name__ == "EmailTeamMember":
+                return member_query
+            return MagicMock()
+
+        db.query.side_effect = query_side_effect
+
+        cache = AsyncMock()
+        cache.invalidate_servers = AsyncMock()
+
+        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch(
+            "mcpgateway.services.server_service._get_registry_cache", return_value=cache
+        ), patch(
+            "mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)
+        ), patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            result = await server_service.update_server(db, "srv-1", ServerUpdate(team_id="team-new"), user_email="owner@example.com")
+
+        assert result == "server_read"
+        assert mock_server.team_id == "team-new"
+
+    @pytest.mark.asyncio
     async def test_set_server_state_not_found_reraises(self, server_service):
         db = MagicMock()
         server_service._structured_logger = MagicMock()
