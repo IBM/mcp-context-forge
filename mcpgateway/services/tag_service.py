@@ -18,7 +18,7 @@ import logging
 from typing import Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -73,7 +73,14 @@ class TagService:
         True
     """
 
-    async def get_all_tags(self, db: Session, entity_types: Optional[List[str]] = None, include_entities: bool = False) -> List[TagInfo]:
+    async def get_all_tags(
+        self,
+        db: Session,
+        entity_types: Optional[List[str]] = None,
+        include_entities: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[TagInfo]:
         """Retrieve all unique tags across specified entity types.
 
         This method aggregates tags from multiple entity types and returns comprehensive
@@ -87,6 +94,8 @@ class TagService:
                          If None, returns tags from all entity types.
             include_entities: Whether to include the list of entities that have each tag.
                              If False, only statistics are returned for better performance.
+            user_email: Caller email used for owner/team visibility checks
+            token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
 
         Returns:
             List of TagInfo objects containing tag details, sorted alphabetically by tag name.
@@ -148,8 +157,13 @@ class TagService:
         entity_types_key = ":".join(sorted(entity_types)) if entity_types else "all"
         cache_key = f"{entity_types_key}:{include_entities}"
 
-        # Check cache first (only for non-entity queries as entity data is large)
-        if not include_entities:
+        # SECURITY: Only use cache for unrestricted (admin-bypass) queries.
+        # Scoped queries (public-only/team/user) are user/token specific and must not
+        # reuse global cached results.
+        is_scoped_query = user_email is not None or token_teams is not None
+
+        # Check cache first (only for non-entity + unrestricted queries)
+        if not include_entities and not is_scoped_query:
             cache = _get_admin_stats_cache()
             cached = await cache.get_tags(cache_key)
             if cached is not None:
@@ -171,6 +185,8 @@ class TagService:
         if entity_types is None:
             entity_types = list(entity_map.keys())
 
+        team_ids = await self._resolve_team_ids(db, user_email, token_teams)
+
         # Collect tags from each requested entity type
         for entity_type in entity_types:
             if entity_type not in entity_map:
@@ -182,6 +198,7 @@ class TagService:
             if include_entities:
                 # Get full entity details
                 stmt = select(model).where(model.tags.isnot(None))
+                stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
                 result = db.execute(stmt)
 
                 for entity in result.scalars():
@@ -223,6 +240,7 @@ class TagService:
             else:
                 # Just get tags without entity details
                 stmt = select(model.tags).where(model.tags.isnot(None))
+                stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
                 result = db.execute(stmt)
 
                 for row in result:
@@ -238,8 +256,8 @@ class TagService:
         # Convert to TagInfo list
         tags = [TagInfo(name=tag, stats=data["stats"], entities=data["entities"] if include_entities else []) for tag, data in sorted(tag_data.items())]
 
-        # Store in cache (only for non-entity queries)
-        if not include_entities:
+        # Store in cache (only for non-entity + unrestricted queries)
+        if not include_entities and not is_scoped_query:
             cache = _get_admin_stats_cache()
             await cache.set_tags([t.model_dump() for t in tags], cache_key)
 
@@ -316,7 +334,70 @@ class TagService:
             return tag.get("id") or tag.get("label") or str(tag)
         return str(tag)
 
-    async def get_entities_by_tag(self, db: Session, tag_name: str, entity_types: Optional[List[str]] = None) -> List[TaggedEntity]:
+    async def _resolve_team_ids(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> List[str]:
+        """Resolve effective team IDs for scoped visibility checks.
+
+        Args:
+            db: Database session
+            user_email: Caller email for DB-based team lookup when token teams are not explicit
+            token_teams: Explicit token team scope when present
+
+        Returns:
+            Effective team IDs used to build visibility filters.
+        """
+        if token_teams is not None:
+            return token_teams
+        if not user_email:
+            return []
+
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email)
+        return [team.id for team in user_teams]
+
+    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str]):
+        """Apply token/user visibility scope to a SQLAlchemy statement.
+
+        Semantics mirror list/read endpoints:
+        - token_teams is None and user_email is None -> unrestricted (admin bypass)
+        - token_teams == [] -> public-only
+        - token_teams == [...] -> public + matching-team (+ owner if user_email present)
+        - token_teams is None and user_email present -> use DB team memberships
+
+        Args:
+            stmt: SQLAlchemy statement to constrain
+            model: ORM model that includes visibility/team/owner columns
+            user_email: Caller email used for owner visibility
+            token_teams: Explicit token team scope when present
+            team_ids: Effective team IDs for team visibility
+
+        Returns:
+            Scoped SQLAlchemy statement.
+        """
+        if token_teams is None and user_email is None:
+            return stmt
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        access_conditions = [model.visibility == "public"]
+
+        if not is_public_only_token and user_email:
+            access_conditions.append(model.owner_email == user_email)
+
+        if team_ids:
+            access_conditions.append(and_(model.team_id.in_(team_ids), model.visibility.in_(["team", "public"])))
+
+        return stmt.where(or_(*access_conditions))
+
+    async def get_entities_by_tag(
+        self,
+        db: Session,
+        tag_name: str,
+        entity_types: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[TaggedEntity]:
         """Get all entities that have a specific tag.
 
         This method searches across specified entity types to find all entities
@@ -329,6 +410,8 @@ class TagService:
             entity_types: Optional list of entity types to search within.
                          Valid types: ['tools', 'resources', 'prompts', 'servers', 'gateways']
                          If None, searches all entity types
+            user_email: Caller email used for owner/team visibility checks
+            token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
 
         Returns:
             List of TaggedEntity objects containing basic entity information.
@@ -392,6 +475,8 @@ class TagService:
         if entity_types is None:
             entity_types = list(entity_map.keys())
 
+        team_ids = await self._resolve_team_ids(db, user_email, token_teams)
+
         for entity_type in entity_types:
             if entity_type not in entity_map:
                 continue
@@ -401,6 +486,7 @@ class TagService:
             # Query entities that have this tag
             # Using json_contains_tag_expr for cross-database compatibility (PostgreSQL/SQLite)
             stmt = select(model).where(json_contains_tag_expr(db, model.tags, [tag_name], match_any=True))
+            stmt = self._apply_visibility_scope(stmt, model, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
             result = db.execute(stmt)
 
             for entity in result.scalars():

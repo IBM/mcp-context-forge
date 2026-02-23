@@ -11802,6 +11802,34 @@ async def test_admin_list_tags(monkeypatch, mock_db):
     result = await admin_list_tags(entity_types="tools,resources", include_entities=True, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert result[0]["name"] == "alpha"
     assert result[0]["entities"][0]["id"] == "tool-1"
+    tag_service.get_all_tags.assert_awaited_once_with(
+        mock_db,
+        entity_types=["tools", "resources"],
+        include_entities=True,
+        user_email="admin@example.com",
+        token_teams=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_list_tags_admin_bypass_context(monkeypatch, mock_db):
+    """Admin context without token scoping should pass unrestricted visibility context."""
+    stats = SimpleNamespace(tools=0, resources=0, prompts=0, servers=0, gateways=0, total=0)
+    tag = SimpleNamespace(name="alpha", stats=stats, entities=[])
+
+    tag_service = MagicMock()
+    tag_service.get_all_tags = AsyncMock(return_value=[tag])
+    monkeypatch.setattr("mcpgateway.admin.TagService", lambda: tag_service)
+
+    await admin_list_tags(entity_types=None, include_entities=False, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
+
+    tag_service.get_all_tags.assert_awaited_once_with(
+        mock_db,
+        entity_types=None,
+        include_entities=False,
+        user_email=None,
+        token_teams=None,
+    )
 
 
 @pytest.mark.asyncio

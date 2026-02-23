@@ -1614,6 +1614,18 @@ async def complete(
             logs the exception and returns an empty completion structure.
     """
     try:
+        # Derive caller visibility scope from the current request context.
+        _, _, user_context = await _get_request_context_or_default()
+        user_email = user_context.get("email") if user_context else None
+        token_teams = user_context.get("teams") if user_context else None
+        is_admin = user_context.get("is_admin", False) if user_context else False
+
+        # Admin bypass only for explicit unrestricted context; otherwise secure default.
+        if is_admin and token_teams is None:
+            user_email = None
+        elif token_teams is None:
+            token_teams = []  # Non-admin without explicit teams -> public-only
+
         async with get_db() as db:
             params = {
                 "ref": ref.model_dump() if hasattr(ref, "model_dump") else ref,
@@ -1621,7 +1633,12 @@ async def complete(
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
             }
 
-            result = await completion_service.handle_completion(db, params)
+            result = await completion_service.handle_completion(
+                db,
+                params,
+                user_email=user_email,
+                token_teams=token_teams,
+            )
 
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):

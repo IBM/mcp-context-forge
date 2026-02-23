@@ -3308,6 +3308,114 @@ async def test_complete_dict_result(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_complete_defaults_non_admin_without_teams_to_public_only_scope(monkeypatch):
+    """Completion should use public-only scope when non-admin context has teams=None."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {"email": "viewer@example.com", "teams": None, "is_admin": False})),
+    )
+
+    mock_result = {"completion": {"values": ["public"], "total": 1, "hasMore": False}}
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value=mock_result)
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        result = await complete(ref, argument)
+        assert isinstance(result, mcp_types.Completion)
+        assert result.values == ["public"]
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "viewer@example.com"
+        assert mock_cs.handle_completion.await_args.kwargs["token_teams"] == []
+
+
+@pytest.mark.asyncio
+async def test_complete_preserves_admin_bypass_for_null_teams_context(monkeypatch):
+    """Admin completion with explicit teams=None keeps unrestricted bypass semantics."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {"email": "admin@example.com", "teams": None, "is_admin": True})),
+    )
+
+    mock_result = {"completion": {"values": ["all"], "total": 1, "hasMore": False}}
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value=mock_result)
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        result = await complete(ref, argument)
+        assert isinstance(result, mcp_types.Completion)
+        assert result.values == ["all"]
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] is None
+        assert mock_cs.handle_completion.await_args.kwargs["token_teams"] is None
+
+
+@pytest.mark.asyncio
+async def test_complete_preserves_explicit_team_scope(monkeypatch):
+    """Completion should preserve explicit token team scope from user context."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {"email": "member@example.com", "teams": ["team-1"], "is_admin": False})),
+    )
+
+    mock_result = {"completion": {"values": ["team"], "total": 1, "hasMore": False}}
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value=mock_result)
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        result = await complete(ref, argument)
+        assert isinstance(result, mcp_types.Completion)
+        assert result.values == ["team"]
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "member@example.com"
+        assert mock_cs.handle_completion.await_args.kwargs["token_teams"] == ["team-1"]
+
+
+@pytest.mark.asyncio
 async def test_complete_nested_completion(monkeypatch):
     """Test complete handles nested completion result (line 1200-1202)."""
     # Third-Party

@@ -12900,7 +12900,21 @@ async def admin_list_tags(
     LOGGER.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
+        user_email = user.get("email") if isinstance(user, dict) else None
+        token_teams = user.get("token_teams") if isinstance(user, dict) else None
+        is_admin = bool(user.get("is_admin")) if isinstance(user, dict) else False
+
+        # Preserve admin bypass only when token/user context is unrestricted.
+        if is_admin and token_teams is None:
+            user_email = None
+
+        tags = await tag_service.get_all_tags(
+            db,
+            entity_types=entity_types_list,
+            include_entities=include_entities,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
 
         # Convert to list of dicts for admin UI
         result: List[Dict[str, Any]] = []

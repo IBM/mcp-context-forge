@@ -101,11 +101,100 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/tokens/teams/[^/]+(?:$|/)"), Permissions.TOKENS_CREATE),
     ("PUT", re.compile(r"^/tokens/[^/]+(?:$|/)"), Permissions.TOKENS_UPDATE),
     ("DELETE", re.compile(r"^/tokens/[^/]+(?:$|/)"), Permissions.TOKENS_REVOKE),
-    # Admin permissions
-    ("GET", re.compile(r"^/admin(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
-    ("POST", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
-    ("PUT", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
-    ("DELETE", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+]
+
+# Admin route permission map (granular by route group).
+# IMPORTANT: Unmatched /admin/* paths are denied by default (fail-secure).
+_ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
+    # Dashboard/overview surfaces
+    ("GET", re.compile(r"^/admin/?$"), Permissions.ADMIN_DASHBOARD),
+    ("GET", re.compile(r"^/admin/search(?:$|/)"), Permissions.ADMIN_DASHBOARD),
+    ("GET", re.compile(r"^/admin/overview(?:$|/)"), Permissions.ADMIN_OVERVIEW),
+    # User management
+    ("GET", re.compile(r"^/admin/users(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+    ("POST", re.compile(r"^/admin/users(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+    ("DELETE", re.compile(r"^/admin/users(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+    # Team management
+    ("POST", re.compile(r"^/admin/teams/?$"), Permissions.TEAMS_CREATE),
+    ("DELETE", re.compile(r"^/admin/teams/[^/]+/join-request/[^/]+(?:$|/)"), Permissions.TEAMS_JOIN),
+    ("DELETE", re.compile(r"^/admin/teams/[^/]+(?:$|/)"), Permissions.TEAMS_DELETE),
+    ("GET", re.compile(r"^/admin/teams/[^/]+/edit(?:$|/)"), Permissions.TEAMS_UPDATE),
+    ("POST", re.compile(r"^/admin/teams/[^/]+/update(?:$|/)"), Permissions.TEAMS_UPDATE),
+    ("GET", re.compile(r"^/admin/teams/[^/]+/(?:members/add|members/partial|non-members/partial|join-requests)(?:$|/)"), Permissions.TEAMS_MANAGE_MEMBERS),
+    ("POST", re.compile(r"^/admin/teams/[^/]+/(?:add-member|update-member-role|remove-member|join-requests/[^/]+/(?:approve|reject))(?:$|/)"), Permissions.TEAMS_MANAGE_MEMBERS),
+    ("POST", re.compile(r"^/admin/teams/[^/]+/(?:leave|join-request(?:/[^/]+)?)(?:$|/)"), Permissions.TEAMS_JOIN),
+    ("GET", re.compile(r"^/admin/teams(?:$|/)"), Permissions.TEAMS_READ),
+    # Tool management
+    ("POST", re.compile(r"^/admin/tools/?$"), Permissions.TOOLS_CREATE),
+    ("POST", re.compile(r"^/admin/tools/import(?:$|/)"), Permissions.TOOLS_CREATE),
+    ("POST", re.compile(r"^/admin/tools/[^/]+/delete(?:$|/)"), Permissions.TOOLS_DELETE),
+    ("POST", re.compile(r"^/admin/tools/[^/]+/(?:edit|state)(?:$|/)"), Permissions.TOOLS_UPDATE),
+    ("GET", re.compile(r"^/admin/tools(?:$|/)"), Permissions.TOOLS_READ),
+    # Resource management
+    ("POST", re.compile(r"^/admin/resources/?$"), Permissions.RESOURCES_CREATE),
+    ("POST", re.compile(r"^/admin/resources/[^/]+/delete(?:$|/)"), Permissions.RESOURCES_DELETE),
+    ("POST", re.compile(r"^/admin/resources/[^/]+/(?:edit|state)(?:$|/)"), Permissions.RESOURCES_UPDATE),
+    ("GET", re.compile(r"^/admin/resources(?:$|/)"), Permissions.RESOURCES_READ),
+    # Prompt management
+    ("POST", re.compile(r"^/admin/prompts/?$"), Permissions.PROMPTS_CREATE),
+    ("POST", re.compile(r"^/admin/prompts/[^/]+/delete(?:$|/)"), Permissions.PROMPTS_DELETE),
+    ("POST", re.compile(r"^/admin/prompts/[^/]+/(?:edit|state)(?:$|/)"), Permissions.PROMPTS_UPDATE),
+    ("GET", re.compile(r"^/admin/prompts(?:$|/)"), Permissions.PROMPTS_READ),
+    # Gateway management
+    ("POST", re.compile(r"^/admin/gateways/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    ("POST", re.compile(r"^/admin/gateways/?$"), Permissions.GATEWAYS_CREATE),
+    ("POST", re.compile(r"^/admin/gateways/[^/]+/delete(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    ("POST", re.compile(r"^/admin/gateways/[^/]+/(?:edit|state)(?:$|/)"), Permissions.GATEWAYS_UPDATE),
+    ("GET", re.compile(r"^/admin/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
+    # Server management
+    ("POST", re.compile(r"^/admin/servers/?$"), Permissions.SERVERS_CREATE),
+    ("POST", re.compile(r"^/admin/servers/[^/]+/delete(?:$|/)"), Permissions.SERVERS_DELETE),
+    ("POST", re.compile(r"^/admin/servers/[^/]+/(?:edit|state)(?:$|/)"), Permissions.SERVERS_UPDATE),
+    ("GET", re.compile(r"^/admin/servers(?:$|/)"), Permissions.SERVERS_READ),
+    # Token/tag read surfaces
+    ("GET", re.compile(r"^/admin/tokens(?:$|/)"), Permissions.TOKENS_READ),
+    ("GET", re.compile(r"^/admin/tags(?:$|/)"), Permissions.TAGS_READ),
+    # A2A management
+    ("POST", re.compile(r"^/admin/a2a/?$"), Permissions.A2A_CREATE),
+    ("POST", re.compile(r"^/admin/a2a/[^/]+/delete(?:$|/)"), Permissions.A2A_DELETE),
+    ("POST", re.compile(r"^/admin/a2a/[^/]+/(?:edit|state)(?:$|/)"), Permissions.A2A_UPDATE),
+    ("POST", re.compile(r"^/admin/a2a/[^/]+/test(?:$|/)"), Permissions.A2A_INVOKE),
+    ("GET", re.compile(r"^/admin/a2a(?:$|/)"), Permissions.A2A_READ),
+    # Section partials
+    ("GET", re.compile(r"^/admin/sections/resources(?:$|/)"), Permissions.RESOURCES_READ),
+    ("GET", re.compile(r"^/admin/sections/prompts(?:$|/)"), Permissions.PROMPTS_READ),
+    ("GET", re.compile(r"^/admin/sections/servers(?:$|/)"), Permissions.SERVERS_READ),
+    ("GET", re.compile(r"^/admin/sections/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
+    # Specialized admin domains
+    ("GET", re.compile(r"^/admin/events(?:$|/)"), Permissions.ADMIN_EVENTS),
+    ("GET", re.compile(r"^/admin/grpc(?:$|/)"), Permissions.ADMIN_GRPC),
+    ("POST", re.compile(r"^/admin/grpc(?:$|/)"), Permissions.ADMIN_GRPC),
+    ("PUT", re.compile(r"^/admin/grpc(?:$|/)"), Permissions.ADMIN_GRPC),
+    ("GET", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
+    ("POST", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
+    ("PUT", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
+    ("DELETE", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
+    # System configuration/admin operations
+    (
+        "GET",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
+    (
+        "POST",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
+    (
+        "PUT",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
+    (
+        "DELETE",
+        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        Permissions.ADMIN_SYSTEM_CONFIG,
+    ),
 ]
 
 
@@ -393,6 +482,14 @@ class TokenScopingMiddleware:
         """
         if not permissions or "*" in permissions:
             return True  # No restrictions or full access
+
+        # Handle admin routes with granular route-group mapping.
+        # Unmapped /admin/* paths are denied by default (fail-secure).
+        if request_path.startswith("/admin"):
+            for method, path_pattern, required_permission in _ADMIN_PERMISSION_PATTERNS:
+                if request_method == method and path_pattern.match(request_path):
+                    return required_permission in permissions
+            return False
 
         # Check each permission mapping (uses precompiled regex patterns)
         for method, path_pattern, required_permission in _PERMISSION_PATTERNS:

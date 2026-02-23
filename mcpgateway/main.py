@@ -66,7 +66,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, _resolve_teams_from_db, get_current_user, get_user_team_roles, normalize_token_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -1729,6 +1729,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 jwt_token = token.split(" ", 1)[1]
 
             username = None
+            token_teams = None
 
             if jwt_token:
                 # Try JWT authentication first
@@ -1750,6 +1751,16 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         except Exception as revoke_error:
                             logger.warning(f"Token revocation check failed: {revoke_error}")
                             # Continue - don't fail auth if revocation check fails
+
+                    # SECURITY: Apply token scope semantics for admin paths.
+                    # Use the same token_use-aware resolution as auth.py.
+                    token_use = payload.get("token_use")
+                    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                        is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                        token_teams = await _resolve_teams_from_db(username, {"is_admin": is_admin})
+                    else:
+                        # API token or legacy path: embedded teams claim semantics
+                        token_teams = normalize_token_teams(payload)
                 except Exception:
                     # JWT validation failed, try API token
                     token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
@@ -1779,6 +1790,12 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             if not username:
                 # No authentication method succeeded - redirect to login or return 401
                 return self._error_response(request, root_path, 401, "Authentication required")
+
+            # SECURITY: Public-only tokens (teams=[]) never grant admin-path access,
+            # even for admin identities. Admin bypass requires explicit teams=null + is_admin=true.
+            if token_teams is not None and len(token_teams) == 0:
+                logger.warning(f"Admin access denied for public-only token: {username}")
+                return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
 
             # Check if user exists, is active, and has admin permissions
             db = next(get_db())
@@ -2596,7 +2613,12 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
     """
     body = await _read_request_json(request)
     logger.debug(f"User {user['email']} sent a completion request")
-    return await completion_service.handle_completion(db, body)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    if is_admin and token_teams is None:
+        user_email = None
+    elif token_teams is None:
+        token_teams = []
+    return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
 
 
 @protocol_router.post("/sampling/createMessage")
@@ -6493,7 +6515,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "completion/complete":
             # MCP spec-compliant completion endpoint
-            result = await completion_service.handle_completion(db, params)
+            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            if is_admin and token_teams is None:
+                user_email = None
+            elif token_teams is None:
+                token_teams = []
+            result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
@@ -7124,6 +7151,7 @@ async def security_health(request: Request):
 @tag_router.get("/", response_model=List[TagInfo])
 @require_permission("tags.read")
 async def list_tags(
+    request: Request,
     entity_types: Optional[str] = None,
     include_entities: bool = False,
     db: Session = Depends(get_db),
@@ -7133,6 +7161,7 @@ async def list_tags(
     Retrieve all unique tags across specified entity types.
 
     Args:
+        request: FastAPI request object used to derive token/team visibility scope
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns tags from all entity types.
@@ -7154,7 +7183,19 @@ async def list_tags(
     logger.debug(f"User {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            user_email = None
+        elif token_teams is None:
+            token_teams = []
+
+        tags = await tag_service.get_all_tags(
+            db,
+            entity_types=entity_types_list,
+            include_entities=include_entities,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
         return tags
     except Exception as e:
         logger.error(f"Failed to retrieve tags: {str(e)}")
@@ -7164,6 +7205,7 @@ async def list_tags(
 @tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
 @require_permission("tags.read")
 async def get_entities_by_tag(
+    request: Request,
     tag_name: str,
     entity_types: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -7173,6 +7215,7 @@ async def get_entities_by_tag(
     Get all entities that have a specific tag.
 
     Args:
+        request: FastAPI request object used to derive token/team visibility scope
         tag_name: The tag to search for
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
@@ -7194,7 +7237,19 @@ async def get_entities_by_tag(
     logger.debug(f"User {user} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
 
     try:
-        entities = await tag_service.get_entities_by_tag(db, tag_name=tag_name, entity_types=entity_types_list)
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            user_email = None
+        elif token_teams is None:
+            token_teams = []
+
+        entities = await tag_service.get_entities_by_tag(
+            db,
+            tag_name=tag_name,
+            entity_types=entity_types_list,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
         return entities
     except Exception as e:
         logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
