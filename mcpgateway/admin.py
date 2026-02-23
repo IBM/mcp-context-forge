@@ -133,6 +133,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.openapi_service import fetch_and_extract_schemas, fetch_openapi_spec
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -10881,83 +10882,45 @@ async def generate_schemas_from_openapi(
                 status_code=400,
             )
 
-        # Determine OpenAPI spec URL from base URL
-        if openapi_url:
-            spec_url = openapi_url
-        else:
-            parsed = urllib.parse.urlparse(tool_url)
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            spec_url = urllib.parse.urljoin(base_url, "/openapi.json")
+        # Determine base URL and path
+        parsed = urllib.parse.urlparse(tool_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        tool_path = parsed.path
 
-        # Fetch OpenAPI spec
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                response = await client.get(spec_url)
-                response.raise_for_status()
-                spec = response.json()
-            except Exception as e:
-                return ORJSONResponse(
-                    content={"message": f"Failed to fetch OpenAPI spec from {spec_url}: {str(e)}", "success": False},
-                    status_code=404,
-                )
-
-        # Extract path from tool URL (e.g., /calculate from http://localhost:8100/calculate)
-        tool_path = urllib.parse.urlparse(tool_url).path
-        method = request_type.lower()
-
-        # Check if path and method exist in spec
-        if tool_path not in spec.get("paths", {}):
+        # Use the service to fetch and extract schemas with SSRF protection
+        try:
+            input_schema, output_schema, spec_url = await fetch_and_extract_schemas(
+                base_url=base_url,
+                path=tool_path,
+                method=request_type,
+                openapi_url=openapi_url,
+                timeout=10.0,
+            )
+        except ValueError as e:
+            # Security validation failed
             return ORJSONResponse(
-                content={"message": f"Path '{tool_path}' not found in OpenAPI spec", "success": False},
+                content={"message": f"Security validation failed: {str(e)}", "success": False},
+                status_code=400,
+            )
+        except KeyError as e:
+            # Path or method not found in spec
+            return ORJSONResponse(
+                content={"message": str(e), "success": False},
                 status_code=404,
             )
-
-        if method not in spec["paths"][tool_path]:
+        except httpx.HTTPError as e:
+            # HTTP request failed
             return ORJSONResponse(
-                content={"message": f"Method '{request_type}' not found for path '{tool_path}'", "success": False},
+                content={"message": f"Failed to fetch OpenAPI spec: {str(e)}", "success": False},
                 status_code=404,
             )
-
-        operation = spec["paths"][tool_path][method]
-        components_schemas = spec.get("components", {}).get("schemas", {})
-
-        # Helper function to resolve $ref
-        def get_schema(schema_obj):
-            """
-            Get schema from $ref or return inline schema.
-
-            Args:
-                schema_obj: Schema object that may contain a $ref or inline schema
-
-            Returns:
-                Resolved schema dictionary or None if no valid schema found
-            """
-            if isinstance(schema_obj, dict) and "$ref" in schema_obj:
-                # Step 1: Get reference (e.g., "#/components/schemas/CalculateRequest")
-                schema_ref = schema_obj["$ref"]
-                # Step 2: Extract schema name (e.g., "CalculateRequest")
-                schema_name = schema_ref.split("/")[-1]
-                # Step 3: Fetch actual schema
-                return components_schemas.get(schema_name)
-            # Return inline schema only if it has properties, otherwise None
-            return schema_obj if schema_obj else None
-
-        # Extract input schema
-        input_schema = None
-        request_body = operation.get("requestBody", {})
-        if request_body:
-            json_content = request_body.get("content", {}).get("application/json", {})
-            if "schema" in json_content:
-                input_schema = get_schema(json_content["schema"])
-
-        # Extract output schema
-        output_schema = None
-        responses = operation.get("responses", {})
-        success_response = responses.get("200") or responses.get("201")
-        if success_response:
-            json_content = success_response.get("content", {}).get("application/json", {})
-            if "schema" in json_content:
-                output_schema = get_schema(json_content["schema"])
+        except Exception as e:
+            # Other errors
+            LOGGER.error(f"Error fetching OpenAPI spec: {str(e)}", exc_info=True)
+            return ORJSONResponse(
+                content={"message": f"Error: {str(e)}", "success": False},
+                status_code=500,
+            )
 
         return ORJSONResponse(
             content={
@@ -11040,7 +11003,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 
 @admin_router.get("/fetch-openapi-spec")
 @require_permission("tools.read", allow_admin_bypass=False)
-async def fetch_openapi_spec(
+async def admin_fetch_openapi_spec(
     base_url: str = Query(..., description="Base URL to fetch OpenAPI spec from"),
     _user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
@@ -11057,19 +11020,25 @@ async def fetch_openapi_spec(
         JSONResponse with the OpenAPI spec or error message
     """
     try:
-        # Validate URL
-        if not base_url.startswith(("http://", "https://")):
-            return ORJSONResponse(content={"error": "Invalid URL: must start with http:// or https://"}, status_code=400)
-
         # Construct OpenAPI spec URL
         openapi_url = f"{base_url.rstrip('/')}/openapi.json"
         LOGGER.info(f"Fetching OpenAPI spec from {openapi_url}")
 
-        # Fetch the spec with timeout
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(openapi_url)
-            response.raise_for_status()
-            spec = response.json()
+        # Use the service to fetch with SSRF protection
+        try:
+            spec = await fetch_openapi_spec(openapi_url, timeout=10.0)
+        except ValueError as e:
+            # Security validation failed
+            return ORJSONResponse(content={"error": f"Security validation failed: {str(e)}"}, status_code=400)
+        except httpx.TimeoutException:
+            LOGGER.warning(f"Timeout fetching OpenAPI spec from {base_url}")
+            return ORJSONResponse(content={"error": f"Timeout fetching OpenAPI spec from {base_url}"}, status_code=504)
+        except httpx.HTTPStatusError as e:
+            LOGGER.warning(f"HTTP error fetching OpenAPI spec: {e}")
+            return ORJSONResponse(content={"error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}"}, status_code=e.response.status_code)
+        except httpx.HTTPError as e:
+            LOGGER.error(f"HTTP error fetching OpenAPI spec: {e}")
+            return ORJSONResponse(content={"error": f"Failed to fetch OpenAPI spec: {str(e)}"}, status_code=500)
 
         # Validate basic structure
         if not isinstance(spec, dict) or "paths" not in spec:
@@ -11077,12 +11046,6 @@ async def fetch_openapi_spec(
 
         return ORJSONResponse(content=spec, status_code=200)
 
-    except httpx.TimeoutException:
-        LOGGER.warning(f"Timeout fetching OpenAPI spec from {base_url}")
-        return ORJSONResponse(content={"error": f"Timeout fetching OpenAPI spec from {base_url}"}, status_code=504)
-    except httpx.HTTPStatusError as e:
-        LOGGER.warning(f"HTTP error fetching OpenAPI spec: {e}")
-        return ORJSONResponse(content={"error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}"}, status_code=e.response.status_code)
     except Exception as e:
         LOGGER.error(f"Error fetching OpenAPI spec: {e}")
         return ORJSONResponse(content={"error": f"Failed to fetch OpenAPI spec: {str(e)}"}, status_code=500)
