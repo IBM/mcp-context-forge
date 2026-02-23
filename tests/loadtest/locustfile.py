@@ -481,6 +481,8 @@ def _generate_jwt_token() -> str:
     - aud: Audience (JWT_AUDIENCE)
     - iss: Issuer (JWT_ISSUER)
     - jti: JWT ID - unique identifier for cache keying and token revocation
+    - token_use: "session" to use session-token semantics
+    - user: nested user profile with is_admin for admin route authorization
     """
     try:
         # Standard
@@ -490,6 +492,8 @@ def _generate_jwt_token() -> str:
         import jwt  # pylint: disable=import-outside-toplevel
 
         jti = str(uuid.uuid4())
+        platform_admin_email = _get_config("PLATFORM_ADMIN_EMAIL", "admin@example.com")
+        is_admin_user = JWT_USERNAME == platform_admin_email
         payload = {
             "sub": JWT_USERNAME,
             "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
@@ -497,9 +501,25 @@ def _generate_jwt_token() -> str:
             "aud": JWT_AUDIENCE,
             "iss": JWT_ISSUER,
             "jti": jti,  # JWT ID for auth cache keying and token revocation support
+            # Match gateway session tokens used by email authentication.
+            "token_use": "session",  # nosec B105 - Token type marker, not a password
+            "user": {
+                "email": JWT_USERNAME,
+                "full_name": "Locust Load Test",
+                "is_admin": is_admin_user,
+                "auth_provider": "local",
+            },
         }
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (aud={JWT_AUDIENCE}, iss={JWT_ISSUER}, jti={jti[:8]}..., expires_in={JWT_TOKEN_EXPIRY_HOURS}h)")
+        logger.info(
+            "Generated JWT token for user: %s (admin=%s, aud=%s, iss=%s, jti=%s..., expires_in=%sh)",
+            JWT_USERNAME,
+            is_admin_user,
+            JWT_AUDIENCE,
+            JWT_ISSUER,
+            jti[:8],
+            JWT_TOKEN_EXPIRY_HOURS,
+        )
         return token
     except ImportError:
         logger.warning("PyJWT not installed, falling back to basic auth. Install with: pip install pyjwt")
@@ -519,7 +539,7 @@ def _get_auth_headers() -> dict[str, str]:
     Priority:
     1. MCPGATEWAY_BEARER_TOKEN env var (if set)
     2. Auto-generated JWT token (if PyJWT available)
-    3. Basic auth fallback (for admin UI only)
+    3. Basic auth fallback (best-effort only; often rejected when API_ALLOW_BASIC_AUTH=false)
     """
     global _CACHED_TOKEN  # pylint: disable=global-statement
     headers = {"Accept": "application/json"}
@@ -534,13 +554,13 @@ def _get_auth_headers() -> dict[str, str]:
         if _CACHED_TOKEN:
             headers["Authorization"] = f"Bearer {_CACHED_TOKEN}"
         else:
-            # Fallback to basic auth (works for admin UI but not REST API)
+            # Fallback to basic auth (best-effort only; many deployments reject it)
             # Standard
             import base64  # pylint: disable=import-outside-toplevel
 
             credentials = base64.b64encode(f"{BASIC_AUTH_USER}:{BASIC_AUTH_PASSWORD}".encode()).decode()
             headers["Authorization"] = f"Basic {credentials}"
-            logger.warning("Using basic auth - REST API endpoints may fail. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
+            logger.warning("Using basic auth - API/admin endpoints may fail. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
 
     return headers
 
