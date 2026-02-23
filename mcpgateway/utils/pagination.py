@@ -335,7 +335,16 @@ async def offset_paginate(
     if total_count is not None:
         total_items = total_count
     else:
-        count_query = select(func.count()).select_from(query.alias())
+        # Build a safe COUNT(*) over the provided select query by wrapping
+        # it as a subquery. Using .subquery() avoids DB-specific COUNT(*)
+        # anomalies when the incoming `query` is a Select object with joins.
+        try:
+            subq = query.subquery()
+        except Exception:
+            # SQLAlchemy selectable may not support .subquery() in some versions;
+            # fall back to alias() which is compatible with most drivers.
+            subq = query.alias()
+        count_query = select(func.count()).select_from(subq)
         total_items = db.execute(count_query).scalar() or 0
 
     # Calculate pagination metadata

@@ -677,6 +677,15 @@ class TokenScopingMiddleware:
         # as admin routes for permission mapping purposes.
         is_admin_path = request_path.startswith("/admin") or request_path.startswith(settings.mcpgateway_ui_base_path)
         if is_admin_path:
+            # If the token includes a top-level admin permission, allow access
+            # to admin routes regardless of the more granular required_permission.
+            # This treats `ADMIN_USER_MANAGEMENT` as a superset/admin bypass.
+            try:
+                admin_perm = Permissions.ADMIN_USER_MANAGEMENT
+            except Exception:
+                admin_perm = "admin.user_management"
+            if admin_perm in permissions or "*" in permissions:
+                return True
             # Normalize path for pattern matching: convert configured UI base path to '/admin'
             normalized_path = request_path
             if request_path.startswith(settings.mcpgateway_ui_base_path):

@@ -389,18 +389,25 @@ class A2AAgentService:
                 # Standard
                 from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
+                # Read settings dynamically from mcpgateway.config so tests that
+                # patch mcpgateway.config.settings are respected.
+                import mcpgateway.config as cfg  # pylint: disable=import-outside-toplevel
+
                 # Service-layer enforcement: Check feature flag
-                if not settings.insecure_allow_queryparam_auth:
+                if not getattr(cfg.settings, "insecure_allow_queryparam_auth", False):
                     raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
 
                 # Service-layer enforcement: Check host allowlist
-                if settings.insecure_queryparam_auth_allowed_hosts:
+                allowed_hosts_cfg = getattr(cfg.settings, "insecure_queryparam_auth_allowed_hosts", []) or []
+                if allowed_hosts_cfg:
                     parsed = urlparse(str(agent_data.endpoint_url))
                     hostname = (parsed.hostname or "").lower()
-                    allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
+                    allowed_hosts = [h.lower() for h in allowed_hosts_cfg]
                     if hostname not in allowed_hosts:
-                        allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. " f"Allowed: {allowed}")
+                        allowed = ", ".join(allowed_hosts_cfg)
+                        raise ValueError(
+                            f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}"
+                        )
 
                 # Extract and encrypt query param auth
                 param_key = getattr(agent_data, "auth_query_param_key", None)
