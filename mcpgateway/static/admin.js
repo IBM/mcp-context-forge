@@ -18515,7 +18515,8 @@ function initializeTabState() {
         }
     });
 
-    // Enable toggles after HTMX swaps complete
+    // Enable toggles after HTMX swaps complete and re-initialize Alpine.js
+    // components on OOB-swapped pagination controls.
     document.body.addEventListener("htmx:afterSettle", (event) => {
         document
             .querySelectorAll(".show-inactive-toggle[disabled]")
@@ -18525,6 +18526,27 @@ function initializeTabState() {
                     checkbox.disabled = false;
                 }
             });
+
+        // Re-initialize Alpine.js components on pagination controls after
+        // HTMX OOB swaps.  When htmx.ajax() swaps a table partial that
+        // includes an out-of-band pagination-controls div, Alpine may not
+        // automatically detect the new x-data element (race with
+        // MutationObserver).  This ensures the page-info text, navigation
+        // buttons and per-page selector all render correctly after every
+        // settle.
+        if (window.Alpine && typeof window.Alpine.initTree === "function") {
+            document
+                .querySelectorAll('[id$="-pagination-controls"]')
+                .forEach(function (el) {
+                    // Only act on elements that contain an uninitialised
+                    // Alpine component (i.e. x-data present but no
+                    // _x_dataStack yet).
+                    const xDataEl = el.querySelector("[x-data]");
+                    if (xDataEl && !xDataEl._x_dataStack) {
+                        window.Alpine.initTree(el);
+                    }
+                });
+        }
     });
 }
 

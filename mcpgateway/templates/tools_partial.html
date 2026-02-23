@@ -214,6 +214,7 @@
 <div id="tools-pagination-controls" hx-swap-oob="true">
   {% set base_url = root_path + '/admin/tools/partial' %}
   {% set hx_target = '#tools-table' %}
+  {% set hx_swap = 'outerHTML' %}
   {% set hx_indicator = '#tools-loading' %}
   {% set table_name = 'tools' %}
   {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}

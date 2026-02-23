@@ -2429,6 +2429,7 @@
             {# helpers used by pagination_controls.html #}
             {% set base_url = root_path + '/admin/servers/partial' %}
             {% set hx_target = '#servers-table' %}
+            {% set hx_swap = 'outerHTML' %}
             {% set hx_indicator = '#servers-loading' %}
             {% set table_name = 'servers' %}
             {% set query_params = {'include_inactive': include_inactive} %}
@@ -3377,6 +3378,7 @@
             {# helpers used by pagination_controls.html #}
             {% set base_url = root_path + '/admin/tools/partial' %}
             {% set hx_target = '#tools-table' %}
+            {% set hx_swap = 'outerHTML' %}
             {% set hx_indicator = '#tools-loading' %}
             {% set table_name = 'tools' %}
             {% set query_params = {'include_inactive': include_inactive} %}
@@ -4918,6 +4920,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             {# helpers used by pagination_controls.html #}
             {% set base_url = root_path + '/admin/gateways/partial' %}
             {% set hx_target = '#gateways-table' %}
+            {% set hx_swap = 'outerHTML' %}
             {% set hx_indicator = '#gateways-loading' %}
             {% set table_name = 'gateways' %}
             {% set query_params = {'include_inactive': include_inactive} %}
@@ -6597,6 +6600,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {# helpers used by pagination_controls.html #}
               {% set base_url = root_path + '/admin/tokens/partial' %}
               {% set hx_target = '#tokens-table' %}
+              {% set hx_swap = 'outerHTML' %}
               {% set hx_indicator = '#tokens-loading' %}
               {% set table_name = 'tokens' %}
               {% set query_params = {'include_inactive': include_inactive} %}
@@ -6741,6 +6745,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {# helpers used by pagination_controls.html #}
               {% set base_url = root_path + '/admin/a2a/partial' %}
               {% set hx_target = '#agents-table' %}
+              {% set hx_swap = 'outerHTML' %}
               {% set hx_indicator = '#agents-loading' %}
               {% set table_name = 'agents' %}
               {% set query_params = {'include_inactive': include_inactive} %}
