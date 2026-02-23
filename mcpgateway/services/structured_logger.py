@@ -20,7 +20,8 @@ from typing import Any, Dict, List, Optional, Union
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, StructuredLogEntry
+# Expose SessionLocal so test fixtures can monkeypatch it (tests expect this symbol).
+from mcpgateway.db import fresh_db_session, StructuredLogEntry, SessionLocal
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.utils.correlation_id import get_correlation_id
 

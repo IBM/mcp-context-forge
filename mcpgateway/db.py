@@ -896,8 +896,9 @@ class UserRole(Base):
         """
         if not self.expires_at:
             return False
+        now = _ensure_aware_utc(utc_now())
         expires = _ensure_aware_utc(self.expires_at)
-        return utc_now() > expires
+        return now > expires
 
 
 class PermissionAuditLog(Base):
@@ -1154,7 +1155,9 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        if utc_now() >= self.locked_until:
+        now = _ensure_aware_utc(utc_now())
+        locked_until = _ensure_aware_utc(self.locked_until)
+        if now >= locked_until:
             # Lockout expired: reset counters so users get a fresh attempt window.
             self.failed_login_attempts = 0
             self.locked_until = None
@@ -1467,7 +1470,11 @@ class PasswordResetToken(Base):
         Returns:
             bool: True when `expires_at` is in the past.
         """
-        return self.expires_at <= utc_now()
+        now = _ensure_aware_utc(utc_now())
+        expires = _ensure_aware_utc(self.expires_at)
+        if expires is None:
+            return False
+        return expires <= now
 
     def is_used(self) -> bool:
         """Return whether the reset token was already consumed.
@@ -1841,7 +1848,7 @@ class EmailTeamInvitation(Base):
             >>> invitation.is_expired()
             False
         """
-        now = utc_now()
+        now = _ensure_aware_utc(utc_now())
         expires_at = _ensure_aware_utc(self.expires_at)
 
         if expires_at is None:
@@ -1932,7 +1939,7 @@ class EmailTeamJoinRequest(Base):
         Returns:
             bool: True if the request has expired, False otherwise.
         """
-        now = utc_now()
+        now = _ensure_aware_utc(utc_now())
         expires_at = _ensure_aware_utc(self.expires_at)
 
         if expires_at is None:
@@ -2021,7 +2028,7 @@ class PendingUserApproval(Base):
         Returns:
             bool: True if the approval request has expired
         """
-        now = utc_now()
+        now = _ensure_aware_utc(utc_now())
         expires_at = _ensure_aware_utc(self.expires_at)
 
         if expires_at is None:
@@ -5050,8 +5057,9 @@ class EmailApiToken(Base):
         """
         if not self.expires_at:
             return False
+        now = _ensure_aware_utc(utc_now())
         expires = _ensure_aware_utc(self.expires_at)
-        return utc_now() > expires
+        return now > expires
 
     def is_valid(self) -> bool:
         """Check if token is valid (active and not expired).
@@ -5295,7 +5303,7 @@ class SSOAuthSession(Base):
         Returns:
             True if the session has expired, False otherwise
         """
-        now = utc_now()
+        now = _ensure_aware_utc(utc_now())
         expires = _ensure_aware_utc(self.expires_at)
 
         if expires is None:

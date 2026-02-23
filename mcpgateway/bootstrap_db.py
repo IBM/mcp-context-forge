@@ -213,13 +213,15 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             )
 
             # Mark admin user as email verified and require password change on first login
-            # Use module-level `utc_now` imported at top to avoid re-importing
-            admin_user.email_verified_at = utc_now()
+            # Import `utc_now` from the db module at runtime so tests can monkeypatch mcpgateway.db.utc_now
+            from mcpgateway import db as _db  # imported here to allow test monkeypatching
+
+            admin_user.email_verified_at = _db.utc_now()
             # Respect configuration: only require password change on bootstrap when enabled
             if getattr(settings, "password_change_enforcement_enabled", True) and getattr(settings, "admin_require_password_change_on_bootstrap", True):
                 admin_user.password_change_required = True  # Force admin to change default password
             try:
-                admin_user.password_changed_at = utc_now()
+                admin_user.password_changed_at = _db.utc_now()
             except Exception as exc:
                 logger.debug("Failed to set admin password_changed_at: %s", exc)
             db.commit()
