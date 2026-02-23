@@ -10848,8 +10848,8 @@ async def admin_edit_tool(
 @require_permission("tools.create", allow_admin_bypass=False)
 async def generate_schemas_from_openapi(
     request: Request,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    _db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """
     Generate input_schema and output_schema from OpenAPI specification URL.
@@ -10859,6 +10859,9 @@ async def generate_schemas_from_openapi(
       - request_type: HTTP method (GET, POST, etc.)
       - openapi_url: (optional) Direct OpenAPI spec URL
 
+    Args:
+        request: FastAPI Request object containing JSON body
+
     Returns:
         JSONResponse with generated schemas or error message.
 
@@ -10867,16 +10870,10 @@ async def generate_schemas_from_openapi(
         True
     """
     try:
-        LOGGER.info("request %s", request)
-        
         body = await request.json()
         tool_url = body.get("url", "")
         request_type = body.get("request_type", "GET")
         openapi_url = body.get("openapi_url", "")
-        LOGGER.info("Generating schemas for tool: %s", tool_url)
-        LOGGER.info("Fetching OpenAPI spec from: %s", openapi_url)
-        LOGGER.info("Frequest_type %s", request_type)
-     
 
         if not tool_url and not openapi_url:
             return ORJSONResponse(
@@ -10884,17 +10881,13 @@ async def generate_schemas_from_openapi(
                 status_code=400,
             )
 
-        # Third-Party
-        import httpx
-        from urllib.parse import urlparse, urljoin
-
         # Determine OpenAPI spec URL from base URL
         if openapi_url:
             spec_url = openapi_url
         else:
-            parsed = urlparse(tool_url)
+            parsed = urllib.parse.urlparse(tool_url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
-            spec_url = urljoin(base_url, "/openapi.json")
+            spec_url = urllib.parse.urljoin(base_url, "/openapi.json")
 
         # Fetch OpenAPI spec
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -10909,7 +10902,7 @@ async def generate_schemas_from_openapi(
                 )
 
         # Extract path from tool URL (e.g., /calculate from http://localhost:8100/calculate)
-        tool_path = urlparse(tool_url).path
+        tool_path = urllib.parse.urlparse(tool_url).path
         method = request_type.lower()
 
         # Check if path and method exist in spec
@@ -10930,7 +10923,15 @@ async def generate_schemas_from_openapi(
 
         # Helper function to resolve $ref
         def get_schema(schema_obj):
-            """Get schema from $ref or return inline schema"""
+            """
+            Get schema from $ref or return inline schema.
+
+            Args:
+                schema_obj: Schema object that may contain a $ref or inline schema
+
+            Returns:
+                Resolved schema dictionary or None if no valid schema found
+            """
             if isinstance(schema_obj, dict) and "$ref" in schema_obj:
                 # Step 1: Get reference (e.g., "#/components/schemas/CalculateRequest")
                 schema_ref = schema_obj["$ref"]
@@ -10957,9 +10958,7 @@ async def generate_schemas_from_openapi(
             json_content = success_response.get("content", {}).get("application/json", {})
             if "schema" in json_content:
                 output_schema = get_schema(json_content["schema"])
-        LOGGER.info(f"input_schema##{input_schema}")
-        LOGGER.info(f"output_schema##{output_schema}")
-        LOGGER.info(f"spec_url##{spec_url}")    
+
         return ORJSONResponse(
             content={
                 "message": "Schemas generated successfully from OpenAPI spec",
@@ -11043,7 +11042,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 @require_permission("tools.read", allow_admin_bypass=False)
 async def fetch_openapi_spec(
     base_url: str = Query(..., description="Base URL to fetch OpenAPI spec from"),
-    user=Depends(get_current_user_with_permissions),
+    _user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """
     Fetch OpenAPI spec from a given base URL.
@@ -11053,7 +11052,6 @@ async def fetch_openapi_spec(
 
     Args:
         base_url: The base URL to fetch the OpenAPI spec from
-        user: Authenticated user dependency
 
     Returns:
         JSONResponse with the OpenAPI spec or error message
