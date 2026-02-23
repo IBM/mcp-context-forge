@@ -1823,7 +1823,7 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [types.Tool(name=tool.name, title=getattr(tool, "title", None), description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -1831,7 +1831,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [types.Tool(name=tool.name, title=getattr(tool, "title", None), description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
             return []
@@ -2089,7 +2089,7 @@ async def list_resources() -> List[types.Resource]:
 
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
+                return [types.Resource(uri=resource.uri, name=resource.name, title=resource.title, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
             logger.exception("Error listing Resources:%s", e)
             return []
@@ -2097,7 +2097,7 @@ async def list_resources() -> List[types.Resource]:
         try:
             async with get_db() as db:
                 resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
+                return [types.Resource(uri=resource.uri, name=resource.name, title=resource.title, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
             logger.exception("Error listing resources:%s", e)
             return []

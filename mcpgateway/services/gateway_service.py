@@ -119,6 +119,20 @@ from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
+def _resolve_tool_title(tool) -> Optional[str]:
+    """Resolve tool title with annotations.title precedence per MCP spec.
+
+    Priority:
+    1. annotations.title (if annotations dict has 'title' key)
+    2. tool.title (top-level BaseMetadata field)
+    3. None
+    """
+    annotations_title = None
+    if hasattr(tool, "annotations") and isinstance(tool.annotations, dict):
+        annotations_title = tool.annotations.get("title")
+    return annotations_title or getattr(tool, "title", None)
+
+
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
 _TOOL_LOOKUP_CACHE = None
@@ -4281,6 +4295,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             custom_name=tool.name,
             custom_name_slug=slugify(tool.name),
             display_name=generate_display_name(tool.name),
+            title=_resolve_tool_title(tool),
             url=gateway.url,
             original_description=tool.description,
             description=tool.description,
@@ -4383,7 +4398,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or (update_visibility and upstream_tool_visibility is not None and existing_tool.visibility != upstream_tool_visibility)
                     )
 
-                    if basic_fields_changed or schema_fields_changed or auth_fields_changed:
+                    title_changed = existing_tool.title != _resolve_tool_title(tool)
+
+                    if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed:
                         fields_to_update = True
                     if fields_to_update:
                         existing_tool.url = gateway.url
@@ -4398,6 +4415,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.input_schema = tool.input_schema
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
+                        existing_tool.title = _resolve_tool_title(tool)
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         if update_visibility and upstream_tool_visibility is not None:
@@ -4468,6 +4486,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
                         or (update_visibility and upstream_visibility is not None and existing_resource.visibility != upstream_visibility)
+                        or existing_resource.title != getattr(resource, "title", None)
                     ):
                         fields_to_update = True
 
@@ -4476,6 +4495,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
+                        existing_resource.title = getattr(resource, "title", None)
                         if update_visibility and upstream_visibility is not None:
                             existing_resource.visibility = upstream_visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
@@ -4484,6 +4504,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db_resource = DbResource(
                         uri=resource.uri,
                         name=resource.name,
+                        title=getattr(resource, "title", None),
                         description=resource.description,
                         mime_type=resource.mime_type,
                         uri_template=resource.uri_template,
@@ -4574,6 +4595,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
                         or (update_visibility and upstream_prompt_visibility is not None and existing_prompt.visibility != upstream_prompt_visibility)
                         or (existing_prompt.argument_schema or {}) != new_argument_schema
+                        or existing_prompt.title != getattr(prompt, "title", None)
                     ):
                         fields_to_update = True
 
@@ -4581,6 +4603,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
                         existing_prompt.argument_schema = new_argument_schema
+                        existing_prompt.title = getattr(prompt, "title", None)
                         if update_visibility and upstream_prompt_visibility is not None:
                             existing_prompt.visibility = upstream_prompt_visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
@@ -4591,6 +4614,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         original_name=prompt.name,
                         custom_name=prompt.name,
                         display_name=prompt.name,
+                        title=getattr(prompt, "title", None),
                         description=prompt.description,
                         template=prompt.template if hasattr(prompt, "template") else "",
                         argument_schema=self._build_prompt_argument_schema(prompt),
