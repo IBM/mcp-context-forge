@@ -3914,7 +3914,9 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
 
     added_gateway = db.add.call_args[0][0]
     assert len(added_gateway.resources) == 1
+    assert added_gateway.resources[0].title == "Resource Title"
     assert len(added_gateway.prompts) == 1
+    assert added_gateway.prompts[0].title == "Prompt Title"
 
 
 @pytest.mark.asyncio
@@ -4455,6 +4457,7 @@ class TestUpdateOrCreateTools:
         existing.auth_type = None
         existing.auth_value = None
         existing.visibility = "public"
+        existing.title = "old title"
 
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = [existing]
@@ -4468,6 +4471,7 @@ class TestUpdateOrCreateTools:
             headers={},
             annotations=None,
             jsonpath_filter=None,
+            title="new title",
         )
         mock_gateway.url = "http://new-url.com"
         mock_gateway.auth_type = None
@@ -4477,6 +4481,7 @@ class TestUpdateOrCreateTools:
         assert result == []  # updated in-place, no new tools
         assert existing.url == "http://new-url.com"
         assert existing.description == "new desc"
+        assert existing.title == "new title"
 
     def test_none_tool_skipped(self, gateway_service, mock_gateway):
         db = MagicMock()
@@ -7540,3 +7545,28 @@ class TestMtlsDecryptExceptionBranches:
 
         init_call = gateway_service._initialize_gateway.call_args
         assert init_call[1]["client_key"] == "raw-key"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tool_title
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tool_title():
+    from mcpgateway.services.gateway_service import _resolve_tool_title
+    from mcp.types import Tool as MCPTool
+
+    # Case 1: title in annotations takes precedence
+    tool_with_annotations = MCPTool.model_validate({"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}})
+    tool_with_annotations.annotations = {"title": "Annotation Title"}
+    tool_with_annotations.title = "A Title"
+    assert _resolve_tool_title(tool_with_annotations) == "Annotation Title"
+
+    # Case 2: title attribute fallback
+    tool_with_title = MCPTool.model_validate({"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}})
+    tool_with_title.title = "A Title"
+    assert _resolve_tool_title(tool_with_title) == "A Title"
+
+    # Case 3: None of those fields exist
+    tool_no_title = MCPTool.model_validate({"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}})
+    assert _resolve_tool_title(tool_no_title) is None
