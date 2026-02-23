@@ -26,6 +26,7 @@ from sqlalchemy import and_, func, select
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
+from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
@@ -111,8 +112,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
 # IMPORTANT: Unmatched /admin/* paths are denied by default (fail-secure).
 _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Dashboard/overview surfaces
-    ("GET", re.compile(r"^/admin/?$"), Permissions.ADMIN_DASHBOARD),
-    ("GET", re.compile(r"^/admin/search(?:$|/)"), Permissions.ADMIN_DASHBOARD),
+    ("GET", re.compile(r"^/admin/?$"), Permissions.ADMIN_USER_MANAGEMENT),
+    ("GET", re.compile(r"^/admin/search(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
     ("GET", re.compile(r"^/admin/overview(?:$|/)"), Permissions.ADMIN_OVERVIEW),
     # User management
     ("GET", re.compile(r"^/admin/users(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
@@ -671,11 +672,26 @@ class TokenScopingMiddleware:
             return True  # No restrictions or full access
 
         # Handle admin routes with granular route-group mapping.
-        # Unmapped /admin/* paths are denied by default (fail-secure).
-        if request_path.startswith("/admin"):
+        # Unmapped admin UI paths are denied by default (fail-secure).
+        # Treat both literal /admin and the configured UI base path (e.g. /ui)
+        # as admin routes for permission mapping purposes.
+        is_admin_path = request_path.startswith("/admin") or request_path.startswith(settings.mcpgateway_ui_base_path)
+        if is_admin_path:
+            # Normalize path for pattern matching: convert configured UI base path to '/admin'
+            normalized_path = request_path
+            if request_path.startswith(settings.mcpgateway_ui_base_path):
+                normalized_path = request_path.replace(settings.mcpgateway_ui_base_path, "/admin", 1)
+
             for method, path_pattern, required_permission in _ADMIN_PERMISSION_PATTERNS:
-                if request_method == method and path_pattern.match(request_path):
-                    return required_permission in permissions
+                if request_method != method:
+                    continue
+
+                # Try matching against a few normalized variants to be resilient
+                # to trailing slashes or UI-base-path substitutions.
+                variants = [normalized_path, request_path, request_path.rstrip("/")]
+                for variant in variants:
+                    if path_pattern.match(variant):
+                        return required_permission in permissions
             return False
 
         # Check each permission mapping (uses precompiled regex patterns)

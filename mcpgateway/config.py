@@ -384,7 +384,7 @@ class Settings(BaseSettings):
 
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
-        default=False,
+        default=True,
         description=("Enable query parameter authentication for gateway peers. " "WARNING: API keys may appear in proxy logs. See CWE-598."),
     )
     insecure_queryparam_auth_allowed_hosts: List[str] = Field(

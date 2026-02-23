@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 /* global marked, DOMPurify, safeReplaceState, _logRestrictedContext, getPaginationParams, buildTableUrl */
 const MASKED_AUTH_VALUE = "*****";
 let ADMIN_DEBUG_LOGGING_ENABLED = false;

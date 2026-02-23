@@ -261,7 +261,13 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     is_admin_ui_request = False
     if referer:
         base = settings.mcpgateway_ui_base_path.rstrip("/")
+        # Consider configured UI base path (e.g. /ui) and legacy /admin when
+        # `mcpgateway_ui_legacy_redirect` is enabled. Use substring match to
+        # detect browser/admin UI navigations like `/admin#...` or `/ui/...`.
         is_admin_ui_request = f"{base}/" in referer or referer.endswith(base)
+        if not is_admin_ui_request and settings.mcpgateway_ui_legacy_redirect:
+            # Treat legacy /admin referers as admin UI requests when legacy redirect enabled
+            is_admin_ui_request = "/admin/" in referer or referer.endswith("/admin")
     is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
 
     # SECURITY: Reject cookie-only authentication for API requests
