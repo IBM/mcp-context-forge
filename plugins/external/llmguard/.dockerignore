@@ -181,7 +181,9 @@ podman-compose*.yaml
 # 8. Build tools and CI/CD configurations
 #----------------------------------------------------------------------
 # Testing configurations
-.coveragerc
+# since tests are run in the llmguardplugin-testing container, we need 
+# .coveragerc to properly run coverage tests.
+# .coveragerc
 .pylintrc
 .flake8
 pytest.ini
