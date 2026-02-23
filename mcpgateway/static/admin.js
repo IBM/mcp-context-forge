@@ -132,6 +132,17 @@ async function generateSchemasFromOpenAPI() {
         const result = await response.json();
 
         if (result.success) {
+            // Switch to JSON Input mode
+            const jsonRadio = document.querySelector(
+                'input[name="schema_input_mode"][value="json"]',
+            );
+            if (jsonRadio) {
+                jsonRadio.checked = true;
+                // Trigger change event to show JSON input container
+                const event = new Event("change", { bubbles: true });
+                jsonRadio.dispatchEvent(event);
+            }
+
             // Populate input schema
             const schemaField = safeGetElement("schema-editor");
             if (schemaField && result.input_schema) {
