@@ -22824,8 +22824,8 @@ function handleAdminUserAction(event) {
             if (usersList && window.htmx) {
                 // Cache-bust with timestamp to bypass nginx proxy cache after mutation
                 const hxGet = usersList.getAttribute("hx-get") || "";
-                const sep = hxGet.includes("?") ? "&" : "?";
-                const url = `${hxGet}${sep}_t=${Date.now()}`;
+                const separator = hxGet.includes("?") ? "&" : "?";
+                const url = `${hxGet}${separator}_t=${Date.now()}`;
                 window.htmx.ajax("GET", url, {
                     target: "#users-list-container",
                     swap: "outerHTML",
