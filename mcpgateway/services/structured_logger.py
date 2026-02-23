@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 # First-Party
 from mcpgateway.config import settings
 # Expose SessionLocal so test fixtures can monkeypatch it (tests expect this symbol).
-from mcpgateway.db import fresh_db_session, StructuredLogEntry, SessionLocal
+from mcpgateway.db import fresh_db_session, StructuredLogEntry, SessionLocal  # noqa: F401 (exported for test fixtures)
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.utils.correlation_id import get_correlation_id
 
