@@ -230,6 +230,7 @@ async def initiate_sso_login(
     Args:
         provider_id: SSO provider identifier (e.g., 'github', 'google')
         request: FastAPI request object
+        response: FastAPI response object used to set session-binding cookie
         redirect_uri: Callback URI after successful authentication
         scopes: Optional custom OAuth scopes (space-separated)
         db: Database session

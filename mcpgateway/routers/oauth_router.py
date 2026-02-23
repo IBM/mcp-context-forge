@@ -128,7 +128,14 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
 
 
 def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
-    """Extract requester email from typed or dict user contexts."""
+    """Extract requester email from typed or dict user contexts.
+
+    Args:
+        current_user: Authenticated user context.
+
+    Returns:
+        Lowercased email when available, otherwise ``None``.
+    """
     if hasattr(current_user, "email"):
         email = getattr(current_user, "email", None)
         if isinstance(email, str) and email.strip():
@@ -141,7 +148,14 @@ def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
 
 
 def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
-    """Extract admin flag from typed or dict user contexts."""
+    """Extract admin flag from typed or dict user contexts.
+
+    Args:
+        current_user: Authenticated user context.
+
+    Returns:
+        ``True`` when the user context indicates admin privileges.
+    """
     if hasattr(current_user, "is_admin"):
         return bool(getattr(current_user, "is_admin", False))
     if isinstance(current_user, dict):
@@ -156,7 +170,18 @@ async def _enforce_gateway_access(
     db: Session,
     request: Request | None = None,
 ) -> None:
-    """Enforce gateway visibility and ownership checks for OAuth endpoints."""
+    """Enforce gateway visibility and ownership checks for OAuth endpoints.
+
+    Args:
+        gateway_id: Gateway identifier used for scoped ownership checks.
+        gateway: Gateway record being accessed.
+        current_user: Authenticated requester context.
+        db: Active database session.
+        request: Optional request carrying token-scoping context.
+
+    Raises:
+        HTTPException: If authentication is missing or access is not permitted.
+    """
     requester_email = _extract_user_email(current_user)
     if not requester_email:
         raise HTTPException(status_code=401, detail="User authentication required")
@@ -733,6 +758,7 @@ async def get_oauth_status(
         gateway_id: ID of the gateway
         current_user: Authenticated user (enforces authentication)
         db: Database session
+        request: Optional request with token-scoping context.
 
     Returns:
         OAuth status information

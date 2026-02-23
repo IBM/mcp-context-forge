@@ -615,7 +615,14 @@ class SSOService:
 
     @staticmethod
     def _normalize_scope_values(values: Optional[List[str] | str]) -> List[str]:
-        """Normalize scope values to a deduplicated, ordered list."""
+        """Normalize scope values to a deduplicated, ordered list.
+
+        Args:
+            values: Scope input as list or space-delimited string.
+
+        Returns:
+            Ordered, unique scope values.
+        """
         if values is None:
             return []
 
@@ -636,7 +643,18 @@ class SSOService:
         return normalized
 
     def _resolve_login_scopes(self, provider: SSOProvider, requested_scopes: Optional[List[str]]) -> List[str]:
-        """Resolve requested SSO scopes against provider allowlists."""
+        """Resolve requested SSO scopes against provider allowlists.
+
+        Args:
+            provider: SSO provider configuration.
+            requested_scopes: Optional scopes requested by the client.
+
+        Returns:
+            Final scope list to send to the provider.
+
+        Raises:
+            ValueError: If provider scope configuration is invalid or request includes disallowed scopes.
+        """
         configured_scopes = self._normalize_scope_values(getattr(provider, "scope", None))
         if not configured_scopes:
             raise ValueError("Provider has no configured scopes")
@@ -668,28 +686,56 @@ class SSOService:
         return normalized_requested
 
     def _get_state_binding_secret(self) -> bytes:
-        """Resolve secret bytes used for state/session binding HMAC."""
+        """Resolve secret bytes used for state/session binding HMAC.
+
+        Returns:
+            Secret bytes used for HMAC signatures.
+        """
         secret_source = settings.auth_encryption_secret
         if hasattr(secret_source, "get_secret_value"):
             return secret_source.get_secret_value().encode("utf-8")
         return str(secret_source).encode("utf-8")
 
     def _generate_session_bound_state(self, provider_id: str, session_binding: str) -> str:
-        """Generate state value bound to browser session context."""
+        """Generate state value bound to browser session context.
+
+        Args:
+            provider_id: SSO provider identifier.
+            session_binding: Browser-session marker.
+
+        Returns:
+            Signed state token including nonce and HMAC signature.
+        """
         state_nonce = secrets.token_urlsafe(24)
         message = f"{provider_id}:{session_binding}:{state_nonce}".encode("utf-8")
         signature = hmac.new(self._get_state_binding_secret(), message, hashlib.sha256).hexdigest()
         return f"{state_nonce}{self._STATE_BINDING_SEPARATOR}{signature}"
 
     def _is_session_bound_state(self, state: str) -> bool:
-        """Return True when the state appears to carry a session binding signature."""
+        """Return whether state appears to carry a session-binding signature.
+
+        Args:
+            state: State value from OAuth flow.
+
+        Returns:
+            ``True`` when state has expected nonce/signature format.
+        """
         if self._STATE_BINDING_SEPARATOR not in state:
             return False
         nonce, signature = state.rsplit(self._STATE_BINDING_SEPARATOR, 1)
         return bool(nonce) and len(signature) == self._STATE_BINDING_HEX_LEN
 
     def _verify_session_bound_state(self, provider_id: str, state: str, session_binding: str) -> bool:
-        """Verify state HMAC binding against the current browser session marker."""
+        """Verify state HMAC binding against the current browser session marker.
+
+        Args:
+            provider_id: SSO provider identifier.
+            state: State value to validate.
+            session_binding: Current browser-session marker.
+
+        Returns:
+            ``True`` when state signature matches the expected session binding.
+        """
         if not session_binding or not self._is_session_bound_state(state):
             return False
         nonce, signature = state.rsplit(self._STATE_BINDING_SEPARATOR, 1)
@@ -699,7 +745,14 @@ class SSOService:
 
     @staticmethod
     def _is_email_verified_claim(user_info: Dict[str, Any]) -> bool:
-        """Evaluate email verification claim when provided by the IdP."""
+        """Evaluate email verification claim when provided by the IdP.
+
+        Args:
+            user_info: Normalized user-info payload from provider.
+
+        Returns:
+            ``True`` when email is verified or claim is absent.
+        """
         if "email_verified" not in user_info:
             return True
 
@@ -725,6 +778,7 @@ class SSOService:
             provider_id: Provider identifier
             redirect_uri: Callback URI after authorization
             scopes: Optional custom scopes (uses provider default if None)
+            session_binding: Optional browser-session marker for state binding.
 
         Returns:
             Authorization URL or None if provider not found
@@ -737,7 +791,7 @@ class SSOService:
             >>> service.get_provider = lambda _pid: provider
             >>> service.db.add = lambda x: None
             >>> service.db.commit = lambda: None
-            >>> url = service.get_authorization_url('github', 'https://app/callback', ['email'])
+            >>> url = service.get_authorization_url('github', 'https://app/callback', ['user:email'])
             >>> isinstance(url, str) and 'client_id=cid' in url and 'state=' in url
             True
 
@@ -789,6 +843,7 @@ class SSOService:
             provider_id: Provider identifier
             code: Authorization code from callback
             state: CSRF state parameter
+            session_binding: Optional browser-session marker used to verify bound state.
 
         Returns:
             User info dict or None if authentication failed
@@ -854,6 +909,7 @@ class SSOService:
             provider_id: Provider identifier
             code: Authorization code from callback
             state: CSRF state parameter
+            session_binding: Optional browser-session marker used to verify bound state.
 
         Returns:
             Tuple of (user_info, token_data) or None if authentication fails
@@ -1405,14 +1461,11 @@ class SSOService:
                         return None  # Still waiting for approval
                     if pending.status == "rejected":
                         return None  # User was rejected
-                    if pending.status == "approved":
-                        if pending.is_expired():
-                            pending.status = "expired"
-                            self.db.commit()
-                            return None
-                        # User was approved, create account now
-                        pass  # Continue with user creation below
-                    elif pending.status == "expired":
+                    if pending.status == "approved" and pending.is_expired():
+                        pending.status = "expired"
+                        self.db.commit()
+                        return None
+                    if pending.status == "expired":
                         pending.status = "pending"
                         pending.requested_at = utc_now()
                         pending.expires_at = utc_now() + timedelta(days=30)
@@ -1425,25 +1478,22 @@ class SSOService:
                         self.db.commit()
                         logger.info(f"Renewed expired pending approval request for SSO user: {email}")
                         return None
-                    elif pending.status in {"completed"}:
+                    if pending.status in {"completed"}:
                         return None
-                    else:
-                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {email}. Denying by default.")
-                        return None
-                else:
-                    # Create pending approval request
-
-                    pending = PendingUserApproval(
-                        email=email,
-                        full_name=user_info.get("full_name", email),
-                        auth_provider=incoming_provider,
-                        sso_metadata=user_info,
-                        expires_at=utc_now() + timedelta(days=30),  # 30-day approval window
-                    )
-                    self.db.add(pending)
-                    self.db.commit()
-                    logger.info(f"Created pending approval request for SSO user: {email}")
-                    return None  # No token until approved
+                    logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {email}. Denying by default.")
+                    return None
+                # Create pending approval request
+                pending = PendingUserApproval(
+                    email=email,
+                    full_name=user_info.get("full_name", email),
+                    auth_provider=incoming_provider,
+                    sso_metadata=user_info,
+                    expires_at=utc_now() + timedelta(days=30),  # 30-day approval window
+                )
+                self.db.add(pending)
+                self.db.commit()
+                logger.info(f"Created pending approval request for SSO user: {email}")
+                return None  # No token until approved
 
             # Create new user (either no approval required, or approval already granted)
             # Generate a secure random password for SSO users (they won't use it)
