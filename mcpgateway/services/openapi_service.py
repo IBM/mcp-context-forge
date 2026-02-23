@@ -276,9 +276,9 @@ def extract_all_schemas_from_openapi(spec: dict) -> dict:
     """
     components_schemas = spec.get("components", {}).get("schemas", {})
     paths = spec.get("paths", {})
-    
+
     result = {}
-    
+
     def resolve_schema(schema_obj):
         """
         Resolve schema from $ref or return inline schema.
@@ -296,19 +296,19 @@ def extract_all_schemas_from_openapi(spec: dict) -> dict:
             return components_schemas.get(schema_name)
         # Return inline schema or None if empty
         return schema_obj or None
-    
+
     # Iterate through all paths
     for path, path_item in paths.items():
         path_methods = {}
-        
+
         # Iterate through all HTTP methods for this path
         for method in ["get", "post", "put", "patch", "delete", "head", "options"]:
             if method not in path_item:
                 continue
-                
+
             operation = path_item[method]
             method_schemas = {}
-            
+
             # Extract input schema from requestBody
             input_schema = None
             request_body = operation.get("requestBody", {})
@@ -316,9 +316,9 @@ def extract_all_schemas_from_openapi(spec: dict) -> dict:
                 json_content = request_body.get("content", {}).get("application/json", {})
                 if "schema" in json_content:
                     input_schema = resolve_schema(json_content["schema"])
-            
+
             method_schemas["input_schema"] = input_schema
-            
+
             # Extract output schema from responses (200, 201, or default)
             output_schema = None
             responses = operation.get("responses", {})
@@ -327,17 +327,17 @@ def extract_all_schemas_from_openapi(spec: dict) -> dict:
                 json_content = success_response.get("content", {}).get("application/json", {})
                 if "schema" in json_content:
                     output_schema = resolve_schema(json_content["schema"])
-            
+
             method_schemas["output_schema"] = output_schema
-            
+
             # Only add if at least one schema exists
             if input_schema is not None or output_schema is not None:
                 path_methods[method] = method_schemas
-        
+
         # Only add path if it has at least one method with schemas
         if path_methods:
             result[path] = path_methods
-    
+
     return result
 
 
@@ -402,12 +402,11 @@ async def fetch_and_extract_all_schemas(
         httpx.HTTPError: If the request fails
 
     Examples:
-        >>> # Fetch all schemas from an API
-        >>> all_schemas, spec_url = await fetch_and_extract_all_schemas("http://localhost:8100")
-        >>> "/calculate" in all_schemas
-        True
-        >>> "post" in all_schemas["/calculate"]
-        True
+        >>> # Fetch all schemas from an API (async function, cannot be tested in doctest)
+        >>> # all_schemas, spec_url = await fetch_and_extract_all_schemas("http://localhost:8100")
+        >>> # "/calculate" in all_schemas
+        >>> # "post" in all_schemas["/calculate"]
+        >>> pass  # doctest: +SKIP
     """
     # Determine OpenAPI spec URL
     if openapi_url:
