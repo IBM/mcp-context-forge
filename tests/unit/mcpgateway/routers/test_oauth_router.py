@@ -803,7 +803,11 @@ class TestOAuthRouter:
         mock_tools_result = {"tools": [{"name": "tool1", "description": "Test tool 1"}, {"name": "tool2", "description": "Test tool 2"}, {"name": "tool3", "description": "Test tool 3"}]}
         request = Mock(spec=Request)
         request.state = SimpleNamespace(token_teams=["team-1"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -829,7 +833,11 @@ class TestOAuthRouter:
         mock_tools_result = {"tools": []}
         request = Mock(spec=Request)
         request.state = SimpleNamespace(token_teams=["team-1"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -853,7 +861,11 @@ class TestOAuthRouter:
         # Setup
         request = Mock(spec=Request)
         request.state = SimpleNamespace(token_teams=["team-1"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -878,7 +890,11 @@ class TestOAuthRouter:
         mock_tools_result = {"message": "Success"}  # Missing "tools" key
         request = Mock(spec=Request)
         request.state = SimpleNamespace(token_teams=["team-1"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -900,7 +916,11 @@ class TestOAuthRouter:
     async def test_fetch_tools_after_oauth_denies_cross_scope_gateway(self, mock_db, mock_current_user):
         request = Mock(spec=Request)
         request.state = SimpleNamespace(token_teams=["team-2"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "team"
+        gateway.team_id = "team-1"
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
@@ -914,7 +934,11 @@ class TestOAuthRouter:
     async def test_fetch_tools_after_oauth_cached_public_only_admin_token_stays_scoped(self, mock_db):
         request = Mock(spec=Request)
         request.state = SimpleNamespace(_jwt_verified_payload=("token", {"teams": [], "is_admin": True}))
-        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "team"
+        gateway.team_id = "team-1"
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -939,7 +963,11 @@ class TestOAuthRouter:
     async def test_fetch_tools_after_oauth_cached_public_only_admin_token_allow_path(self, mock_db):
         request = Mock(spec=Request)
         request.state = SimpleNamespace(_jwt_verified_payload=("token", {"teams": [], "is_admin": True}))
-        mock_db.execute.return_value.scalar_one_or_none.return_value = Mock(spec=Gateway)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         with patch("mcpgateway.services.gateway_service.GatewayService") as mock_gateway_service_class:
             mock_gateway_service = Mock()
@@ -976,6 +1004,11 @@ class TestOAuthRouter:
     async def test_fetch_tools_after_oauth_requires_gateways_update_permission(self, mock_db):
         request = Mock(spec=Request)
         request.state = SimpleNamespace(token_teams=["team-1"])
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
         from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
@@ -985,6 +1018,30 @@ class TestOAuthRouter:
                     gateway_id="gateway123",
                     request=request,
                     current_user={"email": "test@example.com", "is_admin": False},
+                    db=mock_db,
+                )
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_fails_closed_on_non_admin_null_token_teams(self, mock_db):
+        """Non-admin contexts with null token teams must not bypass ownership checks."""
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "team"
+        gateway.team_id = "team-1"
+        gateway.owner_email = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+        with pytest.raises(HTTPException) as exc_info:
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False):
+                await fetch_tools_after_oauth(
+                    gateway_id="gateway123",
+                    request=request,
+                    current_user={"email": "user@example.com", "is_admin": False},
                     db=mock_db,
                 )
 

@@ -837,16 +837,8 @@ async def fetch_tools_after_oauth(
         if not gateway:
             raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
 
-        token_teams = _resolve_token_teams_for_scope_check(request, current_user)
-
         requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
-        if token_teams is not None and not token_scoping_middleware._check_resource_team_ownership(
-            f"/gateways/{gateway_id}",
-            token_teams,
-            db=db,
-            _user_email=requester_email,
-        ):
-            raise HTTPException(status_code=403, detail="Access denied for requested gateway")
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
         from mcpgateway.services.gateway_service import GatewayService

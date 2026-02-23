@@ -171,7 +171,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **OAuth grant fallback removal** - `authorization_code` no longer falls back to `client_credentials` in non-interactive token retrieval (O-11)
 * **SSO callback session binding** - state is bound to browser session marker and callback requires matching session binding (O-14)
 * **OAuth authorize/status ownership checks** - gateway visibility/team/owner checks now enforced consistently on authorize/status endpoints (O-16)
-* **OAuth fetch-tools verification hardening** - retained RBAC + scope ownership checks with targeted regression coverage; tracker remains verification-only (O-15)
+* **OAuth fetch-tools access hardening** - `/oauth/fetch-tools/{gateway_id}` now reuses centralized gateway access enforcement and fails closed for non-admin null-scope contexts, with targeted regression coverage (O-15)
 * **JWT rich-token teams semantics** - `_create_jwt_token` now preserves explicit `teams=None` as JSON `null` while still allowing omitted teams claims, restoring deterministic admin-token scope behavior for fail-closed ownership checks
 * **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
 * **Health diagnostics auth consistency** - `/health/security` now uses standard bearer JWT validation flow.
