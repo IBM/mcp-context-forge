@@ -202,6 +202,17 @@ def test_internal_rpc_url_hybrid_cloud_mesh():
     assert s.internal_rpc_url == "http://gateway.internal.mesh:4444/gateway/rpc"
 
 
+def test_internal_rpc_url_invalid_url_value_error(caplog):
+    """Test internal_rpc_url falls back gracefully and logs an error when ValueError is raised."""
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        s = Settings(port=4444, app_root_path="/api", internal_rpc_host="http://[::1/rpc", _env_file=None)
+        assert s.internal_rpc_url == "http://http://[::1/rpc:4444/api/rpc"
+
+    assert "Invalid internal RPC host: http://[::1/rpc" in caplog.text
+
+
 # --------------------------------------------------------------------------- #
 #                           get_settings LRU cache                            #
 # --------------------------------------------------------------------------- #
