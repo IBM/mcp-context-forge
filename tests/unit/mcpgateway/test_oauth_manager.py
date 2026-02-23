@@ -185,43 +185,26 @@ class TestOAuthManager:
         assert str(error) == "Test error"
 
     @pytest.mark.asyncio
-    async def test_get_access_token_authorization_code_fallback_success(self):
-        """Test authorization code flow with client credentials fallback."""
+    async def test_get_access_token_authorization_code_requires_consent(self):
+        """Test authorization_code grant is rejected for automatic token retrieval."""
         manager = OAuthManager()
         credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
 
-        # Create mock response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={"access_token": "fallback_token"})
-        mock_response.raise_for_status = MagicMock()
-
-        # Create mock client
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        with patch.object(manager, "_get_client", return_value=mock_client):
-            result = await manager.get_access_token(credentials)
-            assert result == "fallback_token"
+        with patch.object(manager, "_get_client", new_callable=AsyncMock) as mock_get_client:
+            with pytest.raises(OAuthError, match="requires user consent"):
+                await manager.get_access_token(credentials)
+        mock_get_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_access_token_authorization_code_fallback_failure(self):
-        """Test authorization code flow with client credentials fallback failure."""
-        manager = OAuthManager(max_retries=1)  # Reduce retries for faster test execution
+        """Legacy fallback path remains disabled even when token endpoint details exist."""
+        manager = OAuthManager(max_retries=1)
         credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        # Create mock response
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        mock_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=401)))
-
-        # Create mock client
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        with patch.object(manager, "_get_client", return_value=mock_client):
-            with pytest.raises(OAuthError, match="Authorization code flow cannot be used"):
+        with patch.object(manager, "_get_client", new_callable=AsyncMock) as mock_get_client:
+            with pytest.raises(OAuthError, match="requires user consent"):
                 await manager.get_access_token(credentials)
+        mock_get_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_client_credentials_flow_with_encrypted_secret(self):

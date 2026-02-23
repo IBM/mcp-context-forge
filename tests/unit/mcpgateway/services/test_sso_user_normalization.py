@@ -280,6 +280,32 @@ class TestGitHubNormalization:
 
         assert normalized["organizations"] == []  # Default empty list
 
+    def test_github_missing_email_verified_claim_is_omitted(self, sso_service, github_provider):
+        """GitHub /user payloads should not force unverified-email rejection."""
+        user_data = {
+            "email": "user@example.com",
+            "name": "Test User",
+            "login": "testuser",
+            "id": 12345,
+        }
+
+        normalized = sso_service._normalize_user_info(github_provider, user_data)
+
+        assert "email_verified" not in normalized
+
+    def test_github_explicit_email_verified_claim_is_preserved(self, sso_service, github_provider):
+        user_data = {
+            "email": "user@example.com",
+            "name": "Test User",
+            "login": "testuser",
+            "id": 12345,
+            "email_verified": False,
+        }
+
+        normalized = sso_service._normalize_user_info(github_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
 
 class TestGoogleNormalization:
     """Test Google user info normalization."""

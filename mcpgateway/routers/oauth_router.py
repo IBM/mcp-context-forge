@@ -111,6 +111,9 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
             if payload:
                 token_teams = normalize_token_teams(payload)
                 is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
+        # Fail closed when request.state contains an unexpected token_teams value.
+        if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
+            token_teams = _not_set
 
     if token_teams is _not_set:
         token_teams = None if is_admin else []
@@ -122,6 +125,123 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
     if is_admin and token_teams is None:
         return None
     return token_teams
+
+
+def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
+    """Extract requester email from typed or dict user contexts.
+
+    Args:
+        current_user: Authenticated user context.
+
+    Returns:
+        Lowercased email when available, otherwise ``None``.
+    """
+    if hasattr(current_user, "email"):
+        email = getattr(current_user, "email", None)
+        if isinstance(email, str) and email.strip():
+            return email.strip().lower()
+    if isinstance(current_user, dict):
+        email = current_user.get("email") or current_user.get("user", {}).get("email")
+        if isinstance(email, str) and email.strip():
+            return email.strip().lower()
+    return None
+
+
+def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
+    """Extract admin flag from typed or dict user contexts.
+
+    Args:
+        current_user: Authenticated user context.
+
+    Returns:
+        ``True`` when the user context indicates admin privileges.
+    """
+    if hasattr(current_user, "is_admin"):
+        return bool(getattr(current_user, "is_admin", False))
+    if isinstance(current_user, dict):
+        return bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+    return False
+
+
+async def _enforce_gateway_access(
+    gateway_id: str,
+    gateway: Gateway,
+    current_user: EmailUserResponse,
+    db: Session,
+    request: Request | None = None,
+) -> None:
+    """Enforce gateway visibility and ownership checks for OAuth endpoints.
+
+    Args:
+        gateway_id: Gateway identifier used for scoped ownership checks.
+        gateway: Gateway record being accessed.
+        current_user: Authenticated requester context.
+        db: Active database session.
+        request: Optional request carrying token-scoping context.
+
+    Raises:
+        HTTPException: If authentication is missing or access is not permitted.
+    """
+    requester_email = _extract_user_email(current_user)
+    if not requester_email:
+        raise HTTPException(status_code=401, detail="User authentication required")
+
+    requester_is_admin = _extract_is_admin(current_user)
+
+    if request is not None:
+        token_teams = _resolve_token_teams_for_scope_check(request, current_user)
+        if token_teams is None:
+            if requester_is_admin:
+                return
+            token_teams = []
+
+        if not token_scoping_middleware._check_resource_team_ownership(
+            f"/gateways/{gateway_id}",
+            token_teams,
+            db=db,
+            _user_email=requester_email,
+        ):
+            raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+
+    if requester_is_admin:
+        return
+
+    visibility = str(getattr(gateway, "visibility", "team") or "team").lower()
+    gateway_owner = getattr(gateway, "owner_email", None)
+    gateway_team_id = getattr(gateway, "team_id", None)
+
+    if visibility == "public":
+        return
+
+    if visibility == "team":
+        if not gateway_team_id:
+            raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        auth_service = EmailAuthService(db)
+        user = await auth_service.get_user_by_email(requester_email)
+        if not user or not user.is_team_member(gateway_team_id):
+            raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        return
+
+    if visibility in {"private", "user"}:
+        if gateway_owner and gateway_owner.strip().lower() == requester_email:
+            return
+        raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+
+    if gateway_owner and gateway_owner.strip().lower() == requester_email:
+        return
+    if gateway_team_id:
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        auth_service = EmailAuthService(db)
+        user = await auth_service.get_user_by_email(requester_email)
+        if user and user.is_team_member(gateway_team_id):
+            return
+
+    raise HTTPException(status_code=403, detail="You don't have access to this gateway")
 
 
 @oauth_router.get("/authorize/{gateway_id}")
@@ -164,24 +284,7 @@ async def initiate_oauth_flow(
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
 
-        # Check gateway access permission
-        # Admins can access any gateway; otherwise check team membership if gateway has team_id
-        user_email = current_user.email if hasattr(current_user, "email") else current_user.get("email")
-        is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
-
-        # Get team_id safely (may not exist on all gateway objects)
-        gateway_team_id = getattr(gateway, "team_id", None)
-
-        if not is_admin and gateway_team_id:
-            # Import here to avoid circular imports
-            # First-Party
-            from mcpgateway.services.email_auth_service import EmailAuthService
-
-            auth_service = EmailAuthService(db)
-            user = await auth_service.get_user_by_email(user_email)
-            if not user or not user.is_team_member(gateway_team_id):
-                logger.warning(f"OAuth access denied: user {user_email} not member of gateway team {gateway_team_id}")
-                raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         if not gateway.oauth_config:
             raise HTTPException(status_code=400, detail="Gateway is not configured for OAuth")
@@ -285,10 +388,11 @@ async def initiate_oauth_flow(
             raise HTTPException(status_code=400, detail="OAuth configuration missing client_id")
 
         # Initiate OAuth flow with user context (now includes PKCE from existing implementation)
+        requester_email = _extract_user_email(current_user)
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=current_user.get("email"))
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
 
-        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.get('email')}")
+        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {requester_email}")
 
         # Redirect user to OAuth provider
         return RedirectResponse(url=auth_data["authorization_url"])
@@ -641,6 +745,7 @@ async def oauth_callback(
 @oauth_router.get("/status/{gateway_id}")
 async def get_oauth_status(
     gateway_id: str,
+    request: Request,
     current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -653,6 +758,7 @@ async def get_oauth_status(
         gateway_id: ID of the gateway
         current_user: Authenticated user (enforces authentication)
         db: Database session
+        request: Request with token-scoping context.
 
     Returns:
         OAuth status information
@@ -667,23 +773,7 @@ async def get_oauth_status(
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
 
-        # Check team-based authorization (same pattern as initiate_oauth_flow)
-        user_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
-        is_admin = current_user.get("is_admin", False) if isinstance(current_user, dict) else getattr(current_user, "is_admin", False)
-        # Also check nested user.is_admin for JWT tokens
-        if isinstance(current_user, dict) and not is_admin:
-            is_admin = current_user.get("user", {}).get("is_admin", False)
-
-        gateway_team_id = getattr(gateway, "team_id", None)
-
-        if not is_admin and gateway_team_id:
-            # First-Party
-            from mcpgateway.services.email_auth_service import EmailAuthService
-
-            auth_service = EmailAuthService(db)
-            user = await auth_service.get_user_by_email(user_email)
-            if not user or not user.is_team_member(gateway_team_id):
-                raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         if not gateway.oauth_config:
             return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
@@ -747,16 +837,8 @@ async def fetch_tools_after_oauth(
         if not gateway:
             raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
 
-        token_teams = _resolve_token_teams_for_scope_check(request, current_user)
-
         requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
-        if token_teams is not None and not token_scoping_middleware._check_resource_team_ownership(
-            f"/gateways/{gateway_id}",
-            token_teams,
-            db=db,
-            _user_email=requester_email,
-        ):
-            raise HTTPException(status_code=403, detail="Access denied for requested gateway")
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
         from mcpgateway.services.gateway_service import GatewayService

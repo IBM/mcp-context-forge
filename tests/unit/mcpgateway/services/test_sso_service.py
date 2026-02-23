@@ -12,6 +12,7 @@ from __future__ import annotations
 # Standard
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+import urllib.parse
 
 # Third-Party
 import pytest
@@ -217,6 +218,23 @@ class TestAuthFlow:
         assert url is not None
         assert "nonce=" in url
 
+    def test_get_authorization_url_rejects_scope_outside_allowlist(self, sso_service):
+        provider = _make_provider(scope="openid profile email")
+        sso_service.get_provider = lambda _id: provider
+
+        with pytest.raises(ValueError, match="Invalid scopes requested"):
+            sso_service.get_authorization_url("github", "https://app/callback", ["openid", "admin"])
+
+    def test_get_authorization_url_with_session_binding(self, sso_service):
+        provider = _make_provider()
+        sso_service.get_provider = lambda _id: provider
+
+        url = sso_service.get_authorization_url("github", "https://app/callback", ["user:email"], session_binding="browser-session-1")
+        assert url is not None
+        state_value = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+        assert sso_service._is_session_bound_state(state_value) is True
+        assert sso_service._verify_session_bound_state("github", state_value, "browser-session-1") is True
+
     def test_get_authorization_url_not_found(self, sso_service):
         sso_service.get_provider = lambda _id: None
         url = sso_service.get_authorization_url("missing", "https://app/callback")
@@ -227,6 +245,66 @@ class TestAuthFlow:
         sso_service.get_provider = lambda _id: provider
         url = sso_service.get_authorization_url("disabled", "https://app/callback")
         assert url is None
+
+    def test_normalize_scope_values_none_returns_empty_list(self, sso_service):
+        assert sso_service._normalize_scope_values(None) == []
+
+    def test_normalize_scope_values_deduplicates_and_strips(self, sso_service):
+        normalized = sso_service._normalize_scope_values(["openid", " ", "openid", "email"])
+        assert normalized == ["openid", "email"]
+
+    def test_resolve_login_scopes_rejects_missing_provider_scopes(self, sso_service):
+        provider = _make_provider(scope=None)
+
+        with pytest.raises(ValueError, match="Provider has no configured scopes"):
+            sso_service._resolve_login_scopes(provider, requested_scopes=None)
+
+    def test_resolve_login_scopes_applies_metadata_allowlist(self, sso_service):
+        provider = _make_provider(scope="openid profile email", provider_metadata={"allowed_scopes": ["openid", "email"]})
+
+        resolved = sso_service._resolve_login_scopes(provider, requested_scopes=None)
+        assert resolved == ["openid", "email"]
+
+    def test_resolve_login_scopes_rejects_empty_metadata_intersection(self, sso_service):
+        provider = _make_provider(scope="openid profile", provider_metadata={"allowed_scopes": ["admin"]})
+
+        with pytest.raises(ValueError, match="No allowed scopes configured for provider"):
+            sso_service._resolve_login_scopes(provider, requested_scopes=None)
+
+    def test_resolve_login_scopes_empty_requested_after_normalization_returns_allowed(self, sso_service):
+        provider = _make_provider(scope="openid profile")
+        resolved = sso_service._resolve_login_scopes(provider, requested_scopes=[" ", ""])
+        assert resolved == ["openid", "profile"]
+
+    def test_get_state_binding_secret_uses_secret_value_accessor(self, sso_service):
+        class _Secret:
+            def get_secret_value(self):
+                return "from-secret"
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.auth_encryption_secret = _Secret()
+            secret_bytes = sso_service._get_state_binding_secret()
+
+        assert secret_bytes == b"from-secret"
+
+    def test_get_state_binding_secret_falls_back_to_string_encoding(self, sso_service):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.auth_encryption_secret = "plain-secret"
+            secret_bytes = sso_service._get_state_binding_secret()
+
+        assert secret_bytes == b"plain-secret"
+
+    def test_verify_session_bound_state_rejects_legacy_unbound_state(self, sso_service):
+        assert sso_service._verify_session_bound_state("github", "legacy-state", "session-1") is False
+
+    def test_is_email_verified_claim_handles_int_values(self, sso_service):
+        assert sso_service._is_email_verified_claim({"email_verified": 1}) is True
+        assert sso_service._is_email_verified_claim({"email_verified": 0}) is False
+
+    def test_is_email_verified_claim_handles_string_and_unknown_values(self, sso_service):
+        assert sso_service._is_email_verified_claim({"email_verified": "yes"}) is True
+        assert sso_service._is_email_verified_claim({"email_verified": "no"}) is False
+        assert sso_service._is_email_verified_claim({"email_verified": object()}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +350,20 @@ class TestOAuthCallback:
         user_info, token_data = result
         assert user_info["email"] == "user@example.com"
         assert token_data["id_token"] == "id_tok"
+
+    @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_rejects_session_mismatch(self, sso_service, mock_db):
+        session_bound_state = sso_service._generate_session_bound_state("github", "session-1")
+        auth_session = _make_auth_session(state=session_bound_state)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        result = await sso_service.handle_oauth_callback_with_tokens(
+            "github",
+            "code",
+            session_bound_state,
+            session_binding="session-2",
+        )
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_handle_oauth_callback_with_tokens_oidc_rejects_unverified_id_token(self, sso_service, mock_db):
@@ -1757,9 +1849,35 @@ class TestAuthenticateOrCreateUser:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_whitespace_email_returns_none(self, sso_service):
+        result = await sso_service.authenticate_or_create_user({"email": "   ", "provider": "github"})
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_existing_user(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
             email="user@test.com", full_name="Old Name", auth_provider="local",
+            email_verified=False, last_login=None, is_admin=False, admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            result = await sso_service.authenticate_or_create_user({
+                "email": "user@test.com", "full_name": "New Name", "provider": "github",
+            })
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_existing_user_same_provider_allowed(self, sso_service, mock_db):
+        existing_user = SimpleNamespace(
+            email="user@test.com", full_name="Old Name", auth_provider="github",
             email_verified=False, last_login=None, is_admin=False, admin_origin=None,
         )
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
@@ -1984,6 +2102,41 @@ class TestAuthenticateOrCreateUser:
         assert result == "new-jwt"
 
     @pytest.mark.asyncio
+    async def test_new_github_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """GitHub /user payloads without email_verified should not be auto-rejected."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        new_user = SimpleNamespace(
+            email="new@test.com",
+            full_name="New User",
+            auth_provider="github",
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+        normalized_user_info = sso_service._normalize_user_info(
+            _make_provider(id="github"),
+            {
+                "email": "new@test.com",
+                "name": "New User",
+                "login": "new-user",
+                "id": 1234,
+            },
+        )
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "new-jwt"
+            result = await sso_service.authenticate_or_create_user(normalized_user_info)
+
+        assert result == "new-jwt"
+
+    @pytest.mark.asyncio
     async def test_new_user_with_role_assignments_triggers_sync(self, sso_service, mock_db):
         """New user flow should apply role assignments when mapping returns results."""
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
@@ -2139,6 +2292,56 @@ class TestAuthenticateOrCreateUser:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_new_user_admin_approval_expired_pending_renews_request(self, sso_service, mock_db):
+        """Expired pending approvals are renewed and still denied until admin action."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        pending = SimpleNamespace(
+            status="pending",
+            is_expired=lambda: True,
+            requested_at=None,
+            expires_at=None,
+            auth_provider="github",
+            sso_metadata={},
+            approved_by="admin@example.com",
+            approved_at=object(),
+            rejection_reason="reason",
+            admin_notes="notes",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user({
+                "email": "new@test.com", "full_name": "New User", "provider": "github",
+            })
+
+        assert result is None
+        assert pending.status == "pending"
+        assert pending.approved_by is None
+        assert pending.approved_at is None
+        assert pending.rejection_reason is None
+        assert pending.admin_notes is None
+        assert mock_db.commit.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_new_user_rejects_unverified_email_claim(self, sso_service, mock_db):
+        """SSO logins with explicit unverified email claims are rejected."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        result = await sso_service.authenticate_or_create_user(
+            {
+                "email": "new@test.com",
+                "email_verified": False,
+                "full_name": "New User",
+                "provider": "github",
+            }
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_new_user_admin_approval_rejected(self, sso_service, mock_db):
         """Existing pending approval that was rejected."""
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
@@ -2154,6 +2357,106 @@ class TestAuthenticateOrCreateUser:
             })
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_approved_but_expired(self, sso_service, mock_db):
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        pending = SimpleNamespace(status="approved", is_expired=lambda: True)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                }
+            )
+
+        assert result is None
+        assert pending.status == "expired"
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_status_expired_renews_request(self, sso_service, mock_db):
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        pending = SimpleNamespace(
+            status="expired",
+            is_expired=lambda: False,
+            requested_at=None,
+            expires_at=None,
+            auth_provider="google",
+            sso_metadata={"old": "value"},
+            approved_by="admin@example.com",
+            approved_at=object(),
+            rejection_reason="reason",
+            admin_notes="notes",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                }
+            )
+
+        assert result is None
+        assert pending.status == "pending"
+        assert pending.auth_provider == "github"
+        assert pending.approved_by is None
+        assert pending.approved_at is None
+        assert pending.rejection_reason is None
+        assert pending.admin_notes is None
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_completed_denied(self, sso_service, mock_db):
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        pending = SimpleNamespace(status="completed", is_expired=lambda: False)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                }
+            )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_unknown_status_denied(self, sso_service, mock_db):
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        pending = SimpleNamespace(status="mystery", is_expired=lambda: False)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()), \
+             patch("mcpgateway.services.sso_service.logger") as mock_logger:
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                }
+            )
+
+        assert result is None
+        mock_logger.warning.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_approved(self, sso_service, mock_db):
