@@ -660,6 +660,67 @@ class TestToolService:
         tool_service._notify_tool_added.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_register_tool_encrypts_sensitive_headers_at_rest(self, tool_service, test_db):
+        """Sensitive custom headers should be encrypted before persistence."""
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.add = Mock()
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        tool_service._notify_tool_added = AsyncMock()
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
+
+        tool_create = ToolCreate(
+            name="secure-tool",
+            url="http://example.com/tools/secure",
+            description="Tool with custom headers",
+            integration_type="REST",
+            request_type="POST",
+            headers={
+                "Authorization": "Bearer super-secret",
+                "X-Trace-Id": "trace-1",
+            },
+            input_schema={"type": "object"},
+        )
+
+        await tool_service.register_tool(test_db, tool_create)
+
+        stored_tool = test_db.add.call_args.args[0]
+        assert isinstance(stored_tool.headers["Authorization"], dict)
+        assert "_mcpgateway_encrypted_header_value_v1" in stored_tool.headers["Authorization"]
+        assert stored_tool.headers["X-Trace-Id"] == "trace-1"
+
+    @pytest.mark.asyncio
+    async def test_update_tool_keeps_existing_sensitive_header_when_masked(self, tool_service, mock_tool, test_db):
+        """Masked header values should preserve existing encrypted values on update."""
+        existing_encrypted_auth = {
+            "_mcpgateway_encrypted_header_value_v1": encode_auth(
+                {"value": "Bearer existing-secret"},
+            ),
+        }
+        mock_tool.headers = {
+            "Authorization": existing_encrypted_auth,
+            "X-Trace-Id": "trace-1",
+        }
+
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        tool_service._notify_tool_updated = AsyncMock()
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
+            await tool_service.update_tool(
+                test_db,
+                "tool-id",
+                ToolUpdate(headers={"Authorization": settings.masked_auth_value, "X-Trace-Id": "trace-2"}),
+            )
+
+        assert mock_tool.headers["Authorization"] == existing_encrypted_auth
+        assert mock_tool.headers["X-Trace-Id"] == "trace-2"
+
+    @pytest.mark.asyncio
     async def test_create_tool_from_a2a_agent_passes_scope_fields(self, tool_service, test_db):
         """Ensure A2A tool creation carries team/owner/visibility to register_tool."""
         agent = MagicMock()
@@ -1934,6 +1995,49 @@ class TestToolService:
             assert call_kwargs["tool_id"] == str(mock_tool.id)
             assert call_kwargs["success"] is True
             assert call_kwargs["error_message"] is None
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_decrypts_encrypted_custom_headers(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """REST invocation should send decrypted values for encrypted custom headers."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.headers = {
+            "Authorization": {
+                "_mcpgateway_encrypted_header_value_v1": encode_auth(
+                    {"value": "Bearer runtime-secret"},
+                ),
+            },
+            "X-Trace-Id": "trace-1",
+        }
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "REST tool response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch(
+                "mcpgateway.services.tool_service.decode_auth",
+                side_effect=lambda value: (
+                    {"value": "Bearer runtime-secret"}
+                    if value
+                    == mock_tool.headers["Authorization"]["_mcpgateway_encrypted_header_value_v1"]
+                    else {}
+                ),
+            ),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        request_headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert request_headers["Authorization"] == "Bearer runtime-secret"
+        assert request_headers["X-Trace-Id"] == "trace-1"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -5538,6 +5642,31 @@ class TestConvertToolToReadHeaderMasking:
         result = service.convert_tool_to_read(tool_with_headers)
         # When requesting_user_email is None, headers are masked as safe default
         assert result.headers["Authorization"] == "*****"
+
+    def test_encrypted_headers_decrypted_for_owner(self, service, tool_with_headers):
+        """Owners/admins should see decrypted header values even when stored encrypted."""
+        tool_with_headers.headers = {
+            "Authorization": {
+                "_mcpgateway_encrypted_header_value_v1": encode_auth(
+                    {"value": "Bearer secret-token"},
+                ),
+            },
+            "X-Api-Key": {
+                "_mcpgateway_encrypted_header_value_v1": encode_auth(
+                    {"value": "my-api-key"},
+                ),
+            },
+        }
+
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email=tool_with_headers.owner_email,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={},
+        )
+
+        assert result.headers["Authorization"] == "Bearer secret-token"
+        assert result.headers["X-Api-Key"] == "my-api-key"
 
     def test_headers_none_no_masking(self, service, mock_tool):
         """Tool with headers=None does not error."""
