@@ -73,7 +73,7 @@ logger = logging_service.get_logger(__name__)
 _background_tasks: set[asyncio.Task] = set()
 
 _GET_ALL_USERS_LIMIT = 10000
-_DUMMY_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
+_DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
 
 
 @dataclass(frozen=True)
@@ -375,7 +375,7 @@ class EmailAuthService:
             password: User-supplied password candidate.
         """
         try:
-            await self.password_service.verify_password_async(password, _DUMMY_PASSWORD_HASH)
+            await self.password_service.verify_password_async(password, _DUMMY_ARGON2_HASH)
         except Exception as exc:  # nosec B110
             logger.debug("Dummy password verification failed: %s", exc)
 
