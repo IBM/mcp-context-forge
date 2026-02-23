@@ -107,17 +107,42 @@ async def test_set_get_delete_user_config_in_memory():
 
 @pytest.mark.asyncio
 async def test_set_get_delete_user_config_redis(monkeypatch: pytest.MonkeyPatch):
+    config = llmchat_router.build_config(
+        ConnectInput(
+            user_id="u1",
+            llm=LLMInput(model="gpt", config={"api_key": "llm-secret"}),
+            server=ServerInput(url="https://api.example.com/mcp", auth_token="server-secret"),
+        )
+    )
+    redis_mock = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    await llmchat_router.set_user_config("u1", config)
+    redis_mock.set.assert_awaited_once()
+    set_args = redis_mock.set.await_args
+    assert set_args.kwargs["ex"] == llmchat_router.USER_CONFIG_TTL
+    serialized_payload = set_args.args[1]
+    parsed_payload = llmchat_router.orjson.loads(serialized_payload)
+    assert llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY in parsed_payload
+    assert b"llm-secret" not in serialized_payload
+    assert b"server-secret" not in serialized_payload
+
+    redis_mock.get.return_value = serialized_payload
+    assert await llmchat_router.get_user_config("u1") == config
+    await llmchat_router.delete_user_config("u1")
+    redis_mock.get.assert_awaited()
+    redis_mock.delete.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_user_config_redis_supports_legacy_plaintext(monkeypatch: pytest.MonkeyPatch):
     config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
     redis_mock = AsyncMock()
     redis_mock.get.return_value = llmchat_router.orjson.dumps(config.model_dump())
     monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
 
-    await llmchat_router.set_user_config("u1", config)
-    assert await llmchat_router.get_user_config("u1") == config
-    await llmchat_router.delete_user_config("u1")
-    redis_mock.set.assert_awaited()
-    redis_mock.get.assert_awaited()
-    redis_mock.delete.assert_awaited()
+    result = await llmchat_router.get_user_config("u1")
+    assert result == config
 
 
 @pytest.mark.asyncio
@@ -533,13 +558,33 @@ async def test_status_connected(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.asyncio
 async def test_get_config_sanitizes(monkeypatch: pytest.MonkeyPatch):
-    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+    config = llmchat_router.build_config(
+        ConnectInput(
+            user_id="u1",
+            llm=LLMInput(model="gpt"),
+            server=ServerInput(url="https://api.example.com/mcp", auth_token="server-token"),
+        )
+    )
     await llmchat_router.set_user_config("u1", config)
 
     result = await llmchat_router.get_config("u1", user={"id": "u1"})
 
-    assert "api_key" not in result["llm"]["config"]
-    assert "auth_token" not in result["llm"]["config"]
+    assert result["mcp_server"]["auth_token"] == llmchat_router.settings.masked_auth_value
+
+
+def test_mask_sensitive_config_values_masks_nested_fields():
+    data = {
+        "api_key": "k",
+        "nested": {"client_secret": "s"},
+        "list": [{"password": "p"}],
+        "plain": "value",
+    }
+
+    masked = llmchat_router._mask_sensitive_config_values(data)
+    assert masked["api_key"] == llmchat_router.settings.masked_auth_value
+    assert masked["nested"]["client_secret"] == llmchat_router.settings.masked_auth_value
+    assert masked["list"][0]["password"] == llmchat_router.settings.masked_auth_value
+    assert masked["plain"] == "value"
 
 
 @pytest.mark.asyncio
