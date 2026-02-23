@@ -115,102 +115,34 @@ async function generateSchemasFromOpenAPI() {
             button.textContent = "Generating...";
         }
 
-        // Extract base URL and path
-        const urlObj = new URL(newUrl);
-        const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
-        const pathTemplate = urlObj.pathname;
-
-        // Fetch OpenAPI spec via backend proxy
-        const proxyUrl = `${window.ROOT_PATH}/admin/fetch-openapi-spec?base_url=${encodeURIComponent(baseUrl)}`;
-        console.log(`Fetching OpenAPI spec via: ${proxyUrl}`);
-
-        const response = await fetchWithTimeout(proxyUrl, {
+        // Call backend endpoint to generate schemas
+        const response = await fetchWithTimeout(`/admin/tools/generate-schemas-from-openapi`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                url: newUrl,
+                request_type: requestType,
+            }),
             timeout: 15000,
         });
 
         if (!response.ok) {
-            const errorData = await response
-                .json()
-                .catch(() => ({ error: response.statusText }));
-            throw new Error(errorData.error || `HTTP ${response.status}`);
+            const errorData = await response.json().catch(() => ({ message: response.statusText }));
+            throw new Error(errorData.message || `HTTP ${response.status}`);
         }
 
-        const spec = await response.json();
+        const data = await response.json();
 
-        if (!spec || !spec.paths) {
-            throw new Error("Invalid OpenAPI spec: missing 'paths'");
+        if (!data.success) {
+            throw new Error(data.message || "Failed to generate schemas");
         }
 
-        // Find matching path in spec
-        const normalizedPath = pathTemplate.replace(/^\/+/, "");
-        let matchingPath = null;
-
-        for (const pathKey in spec.paths) {
-            if (pathKey.replace(/^\/+/, "") === normalizedPath) {
-                matchingPath = pathKey;
-                break;
-            }
-        }
-
-        if (!matchingPath) {
-            console.warn(`Path '${pathTemplate}' not found in OpenAPI spec`);
-            alert(`Path '${pathTemplate}' not found in OpenAPI spec`);
-            return;
-        }
-
-        const pathItem = spec.paths[matchingPath];
-        const method = requestType.toLowerCase();
-
-        if (!pathItem[method]) {
-            console.warn(`Method '${requestType}' not found for path '${matchingPath}'`);
-            alert(`Method '${requestType}' not found for path '${matchingPath}'`);
-            return;
-        }
-
-        const operation = pathItem[method];
-
-        // Extract input schema from requestBody - only if it exists in the route
-        let inputSchema = null;
-        if (operation.requestBody?.content?.["application/json"]?.schema) {
-            const schemaDef = operation.requestBody.content["application/json"].schema;
-
-            // Resolve $ref if present
-            if (schemaDef.$ref) {
-                const schemaName = schemaDef.$ref.split("/").pop();
-                if (spec.components?.schemas?.[schemaName]) {
-                    inputSchema = spec.components.schemas[schemaName];
-                }
-            } else {
-                // Use inline schema directly
-                inputSchema = schemaDef;
-            }
-        }
-
-        // Extract output schema from responses - accept both $ref and inline schemas
-        let outputSchema = null;
-        for (const statusCode of ["200", "201", "default"]) {
-            if (operation.responses?.[statusCode]?.content?.["application/json"]?.schema) {
-                const schemaDef = operation.responses[statusCode].content["application/json"].schema;
-
-                // Resolve $ref if present
-                if (schemaDef.$ref) {
-                    const schemaName = schemaDef.$ref.split("/").pop();
-                    if (spec.components?.schemas?.[schemaName]) {
-                        outputSchema = spec.components.schemas[schemaName];
-                        break;
-                    }
-                } else {
-                    // Use inline schema directly
-                    outputSchema = schemaDef;
-                    break;
-                }
-            }
-        }
+        const { input_schema, output_schema } = data;
 
         // Switch to JSON Input mode
-        const jsonRadio = document.querySelector(
-            'input[name="schema_input_mode"][value="json"]',
-        );
+        const jsonRadio = document.querySelector('input[name="schema_input_mode"][value="json"]');
         if (jsonRadio) {
             jsonRadio.checked = true;
             const event = new Event("change", { bubbles: true });
@@ -220,14 +152,13 @@ async function generateSchemasFromOpenAPI() {
         // Populate input schema only if it exists
         const schemaField = safeGetElement("schema-editor");
         if (schemaField) {
-            if (inputSchema) {
-                schemaField.value = JSON.stringify(inputSchema, null, 2);
+            if (input_schema) {
+                schemaField.value = JSON.stringify(input_schema, null, 2);
                 if (window.schemaEditor) {
-                    window.schemaEditor.setValue(JSON.stringify(inputSchema, null, 2));
+                    window.schemaEditor.setValue(JSON.stringify(input_schema, null, 2));
                     window.schemaEditor.refresh();
                 }
             } else {
-                // Clear input schema if not present in route
                 schemaField.value = "";
                 if (window.schemaEditor) {
                     window.schemaEditor.setValue("");
@@ -239,17 +170,17 @@ async function generateSchemasFromOpenAPI() {
         // Populate output schema only if it exists
         const outputSchemaField = safeGetElement("output-schema-editor");
         if (outputSchemaField) {
-            if (outputSchema) {
-                outputSchemaField.value = JSON.stringify(outputSchema, null, 2);
+            if (output_schema) {
+                outputSchemaField.value = JSON.stringify(output_schema, null, 2);
                 if (window.outputSchemaEditor) {
-                    window.outputSchemaEditor.setValue(JSON.stringify(outputSchema, null, 2));
+                    window.outputSchemaEditor.setValue(JSON.stringify(output_schema, null, 2));
                     window.outputSchemaEditor.refresh();
                 }
             } else {
-                // Clear output schema if not present in route
                 outputSchemaField.value = "";
                 if (window.outputSchemaEditor) {
                     window.outputSchemaEditor.setValue("");
+                    window.outputSchemaEditor.clearHistory();
                     window.outputSchemaEditor.refresh();
                 }
             }
@@ -299,109 +230,42 @@ async function generateSchemasFromOpenAPIEdit() {
             button.textContent = "Generating...";
         }
 
-        // Extract base URL and path
-        const urlObj = new URL(newUrl);
-        const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
-        const pathTemplate = urlObj.pathname;
-
-        // Fetch OpenAPI spec via backend proxy
-        const proxyUrl = `${window.ROOT_PATH}/admin/fetch-openapi-spec?base_url=${encodeURIComponent(baseUrl)}`;
-        console.log(`Fetching OpenAPI spec via: ${proxyUrl}`);
-
-        const response = await fetchWithTimeout(proxyUrl, {
+        // Call backend endpoint to generate schemas
+        const response = await fetchWithTimeout(`/admin/tools/generate-schemas-from-openapi`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                url: newUrl,
+                request_type: requestType,
+            }),
             timeout: 15000,
         });
 
         if (!response.ok) {
-            const errorData = await response
-                .json()
-                .catch(() => ({ error: response.statusText }));
-            throw new Error(errorData.error || `HTTP ${response.status}`);
+            const errorData = await response.json().catch(() => ({ message: response.statusText }));
+            throw new Error(errorData.message || `HTTP ${response.status}`);
         }
 
-        const spec = await response.json();
+        const data = await response.json();
 
-        if (!spec || !spec.paths) {
-            throw new Error("Invalid OpenAPI spec: missing 'paths'");
+        if (!data.success) {
+            throw new Error(data.message || "Failed to generate schemas");
         }
 
-        // Find matching path in spec
-        const normalizedPath = pathTemplate.replace(/^\/+/, "");
-        let matchingPath = null;
-
-        for (const pathKey in spec.paths) {
-            if (pathKey.replace(/^\/+/, "") === normalizedPath) {
-                matchingPath = pathKey;
-                break;
-            }
-        }
-
-        if (!matchingPath) {
-            console.warn(`Path '${pathTemplate}' not found in OpenAPI spec`);
-            alert(`Path '${pathTemplate}' not found in OpenAPI spec`);
-            return;
-        }
-
-        const pathItem = spec.paths[matchingPath];
-        const method = requestType.toLowerCase();
-
-        if (!pathItem[method]) {
-            console.warn(`Method '${requestType}' not found for path '${matchingPath}'`);
-            alert(`Method '${requestType}' not found for path '${matchingPath}'`);
-            return;
-        }
-
-        const operation = pathItem[method];
-
-        // Extract input schema from requestBody - only if it exists in the route
-        let inputSchema = null;
-        if (operation.requestBody?.content?.["application/json"]?.schema) {
-            const schemaDef = operation.requestBody.content["application/json"].schema;
-
-            // Resolve $ref if present
-            if (schemaDef.$ref) {
-                const schemaName = schemaDef.$ref.split("/").pop();
-                if (spec.components?.schemas?.[schemaName]) {
-                    inputSchema = spec.components.schemas[schemaName];
-                }
-            } else {
-                // Use inline schema directly
-                inputSchema = schemaDef;
-            }
-        }
-
-        // Extract output schema from responses - accept both $ref and inline schemas
-        let outputSchema = null;
-        for (const statusCode of ["200", "201", "default"]) {
-            if (operation.responses?.[statusCode]?.content?.["application/json"]?.schema) {
-                const schemaDef = operation.responses[statusCode].content["application/json"].schema;
-
-                // Resolve $ref if present
-                if (schemaDef.$ref) {
-                    const schemaName = schemaDef.$ref.split("/").pop();
-                    if (spec.components?.schemas?.[schemaName]) {
-                        outputSchema = spec.components.schemas[schemaName];
-                        break;
-                    }
-                } else {
-                    // Use inline schema directly
-                    outputSchema = schemaDef;
-                    break;
-                }
-            }
-        }
+        const { input_schema, output_schema } = data;
 
         // Populate input schema only if it exists
         const schemaField = safeGetElement("edit-tool-schema");
         if (schemaField) {
-            if (inputSchema) {
-                schemaField.value = JSON.stringify(inputSchema, null, 2);
+            if (input_schema) {
+                schemaField.value = JSON.stringify(input_schema, null, 2);
                 if (window.editToolSchemaEditor) {
-                    window.editToolSchemaEditor.setValue(JSON.stringify(inputSchema, null, 2));
+                    window.editToolSchemaEditor.setValue(JSON.stringify(input_schema, null, 2));
                     window.editToolSchemaEditor.refresh();
                 }
             } else {
-                // Clear input schema if not present in route
                 schemaField.value = "";
                 if (window.editToolSchemaEditor) {
                     window.editToolSchemaEditor.setValue("");
@@ -413,17 +277,17 @@ async function generateSchemasFromOpenAPIEdit() {
         // Populate output schema only if it exists
         const outputSchemaField = safeGetElement("edit-tool-output-schema");
         if (outputSchemaField) {
-            if (outputSchema) {
-                outputSchemaField.value = JSON.stringify(outputSchema, null, 2);
+            if (output_schema) {
+                outputSchemaField.value = JSON.stringify(output_schema, null, 2);
                 if (window.editToolOutputSchemaEditor) {
-                    window.editToolOutputSchemaEditor.setValue(JSON.stringify(outputSchema, null, 2));
+                    window.editToolOutputSchemaEditor.setValue(JSON.stringify(output_schema, null, 2));
                     window.editToolOutputSchemaEditor.refresh();
                 }
             } else {
-                // Clear output schema if not present in route
                 outputSchemaField.value = "";
                 if (window.editToolOutputSchemaEditor) {
                     window.editToolOutputSchemaEditor.setValue("");
+                    window.editToolOutputSchemaEditor.clearHistory();
                     window.editToolOutputSchemaEditor.refresh();
                 }
             }
@@ -1145,8 +1009,13 @@ function validateUrl(url, label = "") {
  * SECURITY: Validate JSON input
  */
 function validateJson(jsonString, fieldName = "JSON") {
-    if (!jsonString || !jsonString.trim()) {
+    if (!jsonString || (typeof jsonString === 'string' && !jsonString.trim())) {
         return { valid: true, value: {} }; // Empty is OK, defaults to empty object
+    }
+    
+    // Handle explicit null
+    if (jsonString === null) {
+        return { valid: true, value: null };
     }
 
     try {
@@ -3641,7 +3510,7 @@ async function editTool(toolId) {
             "Schema",
         );
         const outputSchemaValidation = validateJson(
-            tool.outputSchema ? JSON.stringify(tool.outputSchema) : "",
+            tool.outputSchema ? JSON.stringify(tool.outputSchema) : null,
             "Output Schema",
         );
         const annotationsValidation = validateJson(
@@ -15226,7 +15095,7 @@ async function viewTool(toolId) {
             );
             setTextSafely(
                 ".tool-output-schema",
-                JSON.stringify(tool.outputSchema || {}, null, 2),
+                tool.outputSchema ? JSON.stringify(tool.outputSchema, null, 2) : "",
             );
 
             // Set auth fields safely

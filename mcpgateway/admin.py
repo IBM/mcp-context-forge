@@ -10641,7 +10641,7 @@ async def admin_add_tool(
         "integration_type": integration_type,
         "headers": orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
         "input_schema": orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
+        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw.strip() and output_schema_raw.strip() != "{}" else None),
         "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth_type": form.get("auth_type", ""),
@@ -10778,7 +10778,7 @@ async def admin_edit_tool(
         "description": form.get("description"),
         "headers": orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
         "input_schema": orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
+        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2.strip() and output_schema_raw2.strip() != "{}" else None),
         "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth_type": form.get("auth_type", ""),
@@ -10855,9 +10855,9 @@ async def generate_schemas_from_openapi(
     Generate input_schema and output_schema from OpenAPI specification URL.
 
     Expects JSON body with:
-      - url: The tool URL (used to derive OpenAPI spec URL)
+      - url: The tool URL (e.g., http://localhost:8100/calculate)
       - request_type: HTTP method (GET, POST, etc.)
-      - openapi_url: (optional) Direct OpenAPI spec URL, if different from tool URL
+      - openapi_url: (optional) Direct OpenAPI spec URL
 
     Returns:
         JSONResponse with generated schemas or error message.
@@ -10867,10 +10867,16 @@ async def generate_schemas_from_openapi(
         True
     """
     try:
+        LOGGER.info("request %s", request)
+        
         body = await request.json()
         tool_url = body.get("url", "")
         request_type = body.get("request_type", "GET")
         openapi_url = body.get("openapi_url", "")
+        LOGGER.info("Generating schemas for tool: %s", tool_url)
+        LOGGER.info("Fetching OpenAPI spec from: %s", openapi_url)
+        LOGGER.info("Frequest_type %s", request_type)
+     
 
         if not tool_url and not openapi_url:
             return ORJSONResponse(
@@ -10878,175 +10884,89 @@ async def generate_schemas_from_openapi(
                 status_code=400,
             )
 
-        # Determine OpenAPI spec URL
-        # If openapi_url is provided, use it; otherwise derive from tool_url
-        spec_url = openapi_url if openapi_url else tool_url
-
-        # Try common OpenAPI spec paths
-        possible_spec_urls = []
-        if not openapi_url:
-            # Parse base URL
-            from urllib.parse import urlparse, urljoin
-
-            parsed = urlparse(tool_url)
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-
-            # Common OpenAPI spec locations
-            possible_spec_urls = [
-                urljoin(base_url, "/openapi.json"),
-                urljoin(base_url, "/api/openapi.json"),
-                urljoin(base_url, "/swagger.json"),
-                urljoin(base_url, "/api-docs"),
-                urljoin(base_url, "/v1/openapi.json"),
-                tool_url if tool_url.endswith((".json", ".yaml", ".yml")) else None,
-            ]
-            possible_spec_urls = [url for url in possible_spec_urls if url]
-        else:
-            possible_spec_urls = [spec_url]
-
         # Third-Party
         import httpx
+        from urllib.parse import urlparse, urljoin
 
-        spec_data = None
-        used_url = None
+        # Determine OpenAPI spec URL from base URL
+        if openapi_url:
+            spec_url = openapi_url
+        else:
+            parsed = urlparse(tool_url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            spec_url = urljoin(base_url, "/openapi.json")
 
-        # Try to fetch OpenAPI spec
+        # Fetch OpenAPI spec
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for url in possible_spec_urls:
-                try:
-                    LOGGER.info(f"Attempting to fetch OpenAPI spec from: {url}")
-                    response = await client.get(url)
-                    if response.status_code == 200:
-                        spec_data = response.json()
-                        used_url = url
-                        LOGGER.info(f"Successfully fetched OpenAPI spec from: {url}")
-                        break
-                except Exception as e:
-                    LOGGER.debug(f"Failed to fetch from {url}: {e}")
-                    continue
+            try:
+                response = await client.get(spec_url)
+                response.raise_for_status()
+                spec = response.json()
+            except Exception as e:
+                return ORJSONResponse(
+                    content={"message": f"Failed to fetch OpenAPI spec from {spec_url}: {str(e)}", "success": False},
+                    status_code=404,
+                )
 
-        if not spec_data:
+        # Extract path from tool URL (e.g., /calculate from http://localhost:8100/calculate)
+        tool_path = urlparse(tool_url).path
+        method = request_type.lower()
+
+        # Check if path and method exist in spec
+        if tool_path not in spec.get("paths", {}):
             return ORJSONResponse(
-                content={
-                    "message": f"Could not fetch OpenAPI specification from any common location. Tried: {', '.join(possible_spec_urls)}",
-                    "success": False,
-                },
+                content={"message": f"Path '{tool_path}' not found in OpenAPI spec", "success": False},
                 status_code=404,
             )
 
-        # Parse OpenAPI spec and generate schemas
-        # Initialize as None - only populate if route actually has schemas
+        if method not in spec["paths"][tool_path]:
+            return ORJSONResponse(
+                content={"message": f"Method '{request_type}' not found for path '{tool_path}'", "success": False},
+                status_code=404,
+            )
+
+        operation = spec["paths"][tool_path][method]
+        components_schemas = spec.get("components", {}).get("schemas", {})
+
+        # Helper function to resolve $ref
+        def get_schema(schema_obj):
+            """Get schema from $ref or return inline schema"""
+            if isinstance(schema_obj, dict) and "$ref" in schema_obj:
+                # Step 1: Get reference (e.g., "#/components/schemas/CalculateRequest")
+                schema_ref = schema_obj["$ref"]
+                # Step 2: Extract schema name (e.g., "CalculateRequest")
+                schema_name = schema_ref.split("/")[-1]
+                # Step 3: Fetch actual schema
+                return components_schemas.get(schema_name)
+            # Return inline schema only if it has properties, otherwise None
+            return schema_obj if schema_obj else None
+
+        # Extract input schema
         input_schema = None
+        request_body = operation.get("requestBody", {})
+        if request_body:
+            json_content = request_body.get("content", {}).get("application/json", {})
+            if "schema" in json_content:
+                input_schema = get_schema(json_content["schema"])
+
+        # Extract output schema
         output_schema = None
-
-        # Find the matching path and method in OpenAPI spec
-        paths = spec_data.get("paths", {})
-
-        # Try to match the tool URL path with OpenAPI paths
-        tool_path = urlparse(tool_url).path if tool_url else ""
-
-        matching_operation = None
-        matched_path = None
-        
-        # First, try exact path match
-        method_lower = request_type.lower()
-        if tool_path in paths and method_lower in paths[tool_path]:
-            matching_operation = paths[tool_path][method_lower]
-            matched_path = tool_path
-        
-        # If no exact match, try to find a matching path pattern
-        if not matching_operation:
-            for path, path_item in paths.items():
-                # Check if this path matches the tool_path (handle path parameters like {id})
-                if method_lower in path_item:
-                    # Simple pattern matching - could be enhanced
-                    if path == tool_path or tool_path.startswith(path.rstrip("/")):
-                        matching_operation = path_item[method_lower]
-                        matched_path = path
-                        break
-
-        # If still no match, use the first operation found
-        if not matching_operation and paths:
-            for path, path_item in paths.items():
-                for method in ["get", "post", "put", "patch", "delete"]:
-                    if method in path_item:
-                        matching_operation = path_item[method]
-                        matched_path = path
-                        break
-                if matching_operation:
-                    break
-
-        if matching_operation:
-            # Extract input schema from requestBody
-            # Follow the pattern: spec["paths"]["/calculate"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            request_body = matching_operation.get("requestBody", {})
-            if request_body:
-                content = request_body.get("content", {})
-                json_content = content.get("application/json", {})
-                if "schema" in json_content:
-                    # Get the schema (may contain $ref or be inline)
-                    input_schema = json_content["schema"]
-
-            # Extract parameters (query, path, header) - only if no requestBody
-            parameters = matching_operation.get("parameters", [])
-            if parameters and not input_schema:
-                properties = {}
-                required = []
-                for param in parameters:
-                    param_name = param.get("name")
-                    param_schema = param.get("schema", {"type": "string"})
-                    properties[param_name] = param_schema
-                    if param.get("required", False):
-                        required.append(param_name)
-
-                if properties:
-                    # Only set input_schema if parameters exist
-                    input_schema = {"type": "object", "properties": properties, "required": required}
-
-            # Extract output schema from responses
-            # Follow the pattern: spec["paths"]["/calculate"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
-            responses = matching_operation.get("responses", {})
-            success_response = responses.get("200") or responses.get("201") or responses.get("default")
-            if success_response:
-                content = success_response.get("content", {})
-                json_content = content.get("application/json", {})
-                if "schema" in json_content:
-                    # Get the schema (may contain $ref or be inline)
-                    output_schema = json_content["schema"]
-
-        # Resolve $ref references if present
-        def resolve_refs(schema_obj, spec):
-            """Recursively resolve $ref in schema"""
-            if isinstance(schema_obj, dict):
-                if "$ref" in schema_obj:
-                    ref_path = schema_obj["$ref"]
-                    # Parse reference like "#/components/schemas/Pet"
-                    if ref_path.startswith("#/"):
-                        parts = ref_path[2:].split("/")
-                        ref_obj = spec
-                        for part in parts:
-                            ref_obj = ref_obj.get(part, {})
-                        return resolve_refs(ref_obj, spec)
-                    return schema_obj
-                else:
-                    return {k: resolve_refs(v, spec) for k, v in schema_obj.items()}
-            elif isinstance(schema_obj, list):
-                return [resolve_refs(item, spec) for item in schema_obj]
-            return schema_obj
-
-        # Only resolve refs if schemas exist
-        if input_schema:
-            input_schema = resolve_refs(input_schema, spec_data)
-        if output_schema:
-            output_schema = resolve_refs(output_schema, spec_data)
-
+        responses = operation.get("responses", {})
+        success_response = responses.get("200") or responses.get("201")
+        if success_response:
+            json_content = success_response.get("content", {}).get("application/json", {})
+            if "schema" in json_content:
+                output_schema = get_schema(json_content["schema"])
+        LOGGER.info(f"input_schema##{input_schema}")
+        LOGGER.info(f"output_schema##{output_schema}")
+        LOGGER.info(f"spec_url##{spec_url}")    
         return ORJSONResponse(
             content={
                 "message": "Schemas generated successfully from OpenAPI spec",
                 "success": True,
                 "input_schema": input_schema,
                 "output_schema": output_schema,
-                "spec_url": used_url,
+                "spec_url": spec_url,
             },
             status_code=200,
         )
@@ -11057,7 +10977,7 @@ async def generate_schemas_from_openapi(
             status_code=400,
         )
     except Exception as ex:
-        LOGGER.error(f"Error generating schemas from OpenAPI: {str(ex)}")
+        LOGGER.error(f"Error generating schemas from OpenAPI: {str(ex)}", exc_info=True)
         return ORJSONResponse(
             content={"message": f"Error: {str(ex)}", "success": False},
             status_code=500,
