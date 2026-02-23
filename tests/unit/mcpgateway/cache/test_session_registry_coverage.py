@@ -986,7 +986,7 @@ class TestRespondBackends:
         reg._backend = "redis"
         reg._redis = None
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "Redis client not initialized, cannot respond to sid" in caplog.text
 
     @pytest.mark.asyncio
@@ -1038,7 +1038,7 @@ class TestRespondBackends:
 
         reg._redis = _MockRedis()
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert captured["transport"] is tr
         assert captured["message"]["method"] == "ping"
         assert pubsub.unsubscribed == "sid"
@@ -1084,7 +1084,7 @@ class TestRespondBackends:
 
         reg._redis = _MockRedis()
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert pubsub.unsubscribed == "sid"
         assert pubsub.closed is True
 
@@ -1129,7 +1129,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)) as mock_sleep:
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
             mock_sleep.assert_any_await(0.1)
 
         assert pubsub.unsubscribed == "sid"
@@ -1175,7 +1175,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)) as mock_sleep:
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
             mock_sleep.assert_any_await(0.1)
 
         assert pubsub.unsubscribed == "sid"
@@ -1222,7 +1222,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert pubsub.unsubscribed == "sid"
         assert pubsub.closed is True
@@ -1268,7 +1268,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert pubsub.unsubscribed == "sid"
 
@@ -1299,7 +1299,7 @@ class TestRespondBackends:
 
         reg._redis = _MockRedis()
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "PubSub listener error for session sid: boom" in caplog.text
 
     @pytest.mark.asyncio
@@ -1330,7 +1330,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with pytest.raises(asyncio.CancelledError):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "PubSub listener for session sid cancelled" in caplog.text
 
@@ -1364,7 +1364,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Pubsub unsubscribe timed out for session sid" in caplog.text
 
@@ -1397,7 +1397,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Error unsubscribing pubsub for session sid: unsub boom" in caplog.text
 
@@ -1430,7 +1430,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Pubsub close timed out for session sid" in caplog.text
 
@@ -1463,7 +1463,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Error closing pubsub for session sid: close boom" in caplog.text
 
@@ -1475,7 +1475,7 @@ class TestRespondBackends:
         reg._backend = "database"
         reg._closing_sessions.add("sid")
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "closing, stopping poll loop early" in caplog.text
 
     @pytest.mark.asyncio
@@ -1524,7 +1524,7 @@ class TestRespondBackends:
         monkeypatch.setattr(reg, "generate_response", AsyncMock(return_value=None))
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         reg.generate_response.assert_awaited()
         assert mock_db.commit.called
@@ -1559,7 +1559,7 @@ class TestRespondBackends:
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert mock_db.close.called
 
@@ -1574,7 +1574,7 @@ class TestRespondBackends:
             raise RuntimeError("db poll boom")
 
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", boom_to_thread)
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "Message check loop error for session sid" in caplog.text
 
     @pytest.mark.asyncio
@@ -1601,7 +1601,7 @@ class TestRespondBackends:
 
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         mock_db.rollback.assert_called()
         mock_db.close.assert_called()
 
@@ -1648,7 +1648,7 @@ class TestRespondBackends:
 
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
 
         mock_db.rollback.assert_called()
         mock_db.close.assert_called()
@@ -1671,7 +1671,7 @@ class TestRespondBackends:
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", cancel_sleep):
             with pytest.raises(asyncio.CancelledError):
-                await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+                await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Message check loop cancelled for session sid" in caplog.text
         assert "Database respond cancelled for session sid" in caplog.text
@@ -1681,7 +1681,7 @@ class TestRespondBackends:
         """Line 1253->exit: Force respond() backend chain fall-through for branch coverage."""
         reg = SessionRegistry(backend="memory")
         reg._backend = "unknown"
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
 
 
 # ---------------------------------------------------------------------------
@@ -2245,7 +2245,6 @@ class TestGenerateResponseEdgeCases:
                 transport=tr,
                 server_id=None,
                 user={"auth_token": "my_jwt_token", "email": "user@test.com"},
-                base_url="http://host",
             )
 
         assert tr.sent[-1] == {"jsonrpc": "2.0", "result": {}, "id": 77}
@@ -2283,7 +2282,6 @@ class TestGenerateResponseEdgeCases:
                     transport=tr,
                     server_id=None,
                     user={"auth_token": "tok", "email": "u@t.com"},
-                    base_url="http://host",
                 )
 
                 mock_reg.assert_awaited_once()
@@ -2323,7 +2321,6 @@ class TestGenerateResponseEdgeCases:
                 transport=tr,
                 server_id=None,
                 user={"auth_token": "tok"},
-                base_url="http://host/prefix/servers/abc123",
             )
 
         # Verify the RPC URL strips the /servers/ part

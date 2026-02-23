@@ -1473,7 +1473,6 @@ class SessionRegistry(SessionBackend):
         server_id: Optional[str],
         user: Dict[str, Any],
         session_id: str,
-        base_url: str,
     ) -> None:
         """Process and respond to broadcast messages for a session.
 
@@ -1491,7 +1490,6 @@ class SessionRegistry(SessionBackend):
             server_id: Optional server identifier for scoped operations.
             user: User information including authentication token.
             session_id: Session identifier to respond for.
-            base_url: Base URL for API calls (used for RPC endpoints).
 
         Raises:
             asyncio.CancelledError: When the respond task is cancelled (e.g., on session removal).
@@ -1503,7 +1501,7 @@ class SessionRegistry(SessionBackend):
             >>> # This method is typically called internally by the SSE handler
             >>> reg = SessionRegistry()
             >>> user = {'token': 'test-token'}
-            >>> # asyncio.run(reg.respond(None, user, 'session-id', 'http://localhost'))
+            >>> # asyncio.run(reg.respond(None, user, 'session-id'))
         """
 
         if self._backend == "none":
@@ -1519,7 +1517,7 @@ class SessionRegistry(SessionBackend):
                         message = data["message"]
                     else:
                         message = data
-                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
                 else:
                     logger.warning(f"Session message stored but message content is None for session {session_id}")
 
@@ -1564,7 +1562,7 @@ class SessionRegistry(SessionBackend):
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
                     if transport:
-                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
                 raise  # Re-raise to properly complete cancellation
@@ -1792,7 +1790,6 @@ class SessionRegistry(SessionBackend):
                                     transport=transport,
                                     server_id=server_id,
                                     user=user,
-                                    base_url=base_url,
                                 )
 
                                 await asyncio.to_thread(_db_remove, session_id, record.message)
@@ -2220,7 +2217,7 @@ class SessionRegistry(SessionBackend):
                         capable_sessions.append(session_id)
             return capable_sessions
 
-    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
+    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any]) -> None:
         """Generate and send response for incoming MCP protocol message.
 
         Processes MCP protocol messages and generates appropriate responses based on
@@ -2232,7 +2229,6 @@ class SessionRegistry(SessionBackend):
             transport: SSE transport to send responses through.
             server_id: Optional server ID for scoped operations.
             user: User information containing authentication token.
-            base_url: Base URL for constructing RPC endpoints.
 
         Examples:
             >>> import asyncio
@@ -2246,7 +2242,7 @@ class SessionRegistry(SessionBackend):
             >>> transport = MockTransport()
             >>> message = {"method": "ping", "id": 1}
             >>> user = {"token": "test-token"}
-            >>> # asyncio.run(reg.generate_response(message, transport, None, user, "http://localhost"))
+            >>> # asyncio.run(reg.generate_response(message, transport, None, user))
             >>> # Response: {}
         """
         result = {}
