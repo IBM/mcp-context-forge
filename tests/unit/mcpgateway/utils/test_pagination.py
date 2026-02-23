@@ -325,7 +325,7 @@ class TestOffsetPagination:
         result = await offset_paginate(
             db=db_session,
             query=query,
-            page=1,
+            page=10,
             per_page=20,
             base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
@@ -414,7 +414,7 @@ class TestOffsetPagination:
         result = await offset_paginate(
             db=db_session,
             query=query,
-            page=1,
+            page=10,
             per_page=20,
             base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
