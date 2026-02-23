@@ -4,7 +4,7 @@
   Usage:
     Set variables before including this template:
     - pagination: dict with page, per_page, total_items, total_pages, has_next, has_prev
-    - base_url: string like '/admin/tools'
+    - base_url: string like '{{ ui_base_path }}/tools' (e.g. /ui/tools) or computed as `root_path + ui_base_path + '/tools'`
     - hx_target: string like '#tools-list'
     - hx_indicator: string like '#tools-loading'
     - table_name: string like 'tools' (for namespaced URL params)

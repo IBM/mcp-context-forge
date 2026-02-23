@@ -5044,7 +5044,7 @@ async def admin_view_team_members(
                 </div>
 
                 <form id="team-members-form-{team.id}" data-team-id="{team.id}"
-                      hx-post="{root_path}/admin/teams/{team.id}/add-member"
+                      hx-post="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/add-member"
                       hx-target="#team-edit-modal-content"
                       hx-swap="innerHTML"
                       class="px-6 py-4">
@@ -5069,7 +5069,7 @@ async def admin_view_team_members(
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
+                            hx-get="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5085,7 +5085,7 @@ async def admin_view_team_members(
                             id="team-non-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
+                            hx-get="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
                             hx-trigger="load delay:200ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5199,7 +5199,7 @@ async def admin_add_team_members_view(
                 </div>
 
                 <div class="px-6 py-4">
-                    <form id="add-members-form-{team.id}" data-team-id="{team.id}" hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
+                    <form id="add-members-form-{team.id}" data-team-id="{team.id}" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
                         <!-- Search box -->
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Search Users</label>
@@ -5207,7 +5207,7 @@ async def admin_add_team_members_view(
                                 type="text"
                                 id="user-search-{team.id}"
                                 data-team-id="{team.id}"
-                                data-search-url="{root_path}/admin/users/search"
+                                data-search-url="{root_path}{settings.mcpgateway_ui_base_path}/users/search"
                                 data-search-limit="10"
                                 placeholder="Search by name or email..."
                                 class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -5223,7 +5223,7 @@ async def admin_add_team_members_view(
                             <div
                                 id="user-selector-container-{team.id}"
                                 class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                                hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
+                                hx-get="{root_path}{settings.mcpgateway_ui_base_path}/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
                                 hx-target="#user-selector-container-{team.id}"
@@ -5295,7 +5295,7 @@ async def admin_get_team_edit(
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <div id="edit-team-error"></div>
-            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
+            <form method="post" action="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team_id}/update" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input type="text" name="name" value="{safe_team_name}" required
@@ -6336,7 +6336,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
         f'<button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 '
         f"dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 "
         f"dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-        f'focus:ring-blue-500" hx-get="{root_path}/admin/users/{encoded_email}/edit" '
+        f'focus:ring-blue-500" hx-get="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/edit" '
         f'hx-target="#user-edit-modal-content">Edit</button>'
     ]
 
@@ -6346,7 +6346,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 '
                 f"dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 "
                 f"dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-indigo-500" hx-post="{root_path}/admin/users/{encoded_email}/unlock" '
+                f'focus:ring-indigo-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/unlock" '
                 f'hx-confirm="Unlock this user account?" hx-target="closest .user-card" hx-swap="outerHTML">Unlock</button>'
             )
 
@@ -6355,7 +6355,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
                 f"dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 "
                 f"dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-orange-500" hx-post="{root_path}/admin/users/{encoded_email}/deactivate" '
+                f'focus:ring-orange-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/deactivate" '
                 f'hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
             )
         else:
@@ -6363,7 +6363,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 '
                 f"dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 "
                 f"dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-green-500" hx-post="{root_path}/admin/users/{encoded_email}/activate" '
+                f'focus:ring-green-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/activate" '
                 f'hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
             )
 
@@ -6377,7 +6377,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 '
                 f"dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 "
                 f"dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-yellow-500" hx-post="{root_path}/admin/users/{encoded_email}/force-password-change" '
+                f'focus:ring-yellow-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/force-password-change" '
                 f'hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" '
                 f'hx-swap="outerHTML">Force Password Change</button>'
             )
@@ -6386,7 +6386,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
             f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 '
             f"dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 "
             f"dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-            f'focus:ring-red-500" hx-delete="{root_path}/admin/users/{encoded_email}" '
+            f'focus:ring-red-500" hx-delete="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}" '
             f'hx-confirm="Are you sure you want to delete this user? This action cannot be undone." '
             f'hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
         )
@@ -6597,7 +6597,7 @@ async def admin_users_partial_html(
             )
 
         if render == "controls":
-            base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
+            base_url = f"{request.scope.get('root_path', '')}{settings.mcpgateway_ui_base_path}/users/partial"
             return request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -7021,7 +7021,7 @@ async def admin_get_user_edit(
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
             <div id="edit-user-error"></div>
-            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
+            <form hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                     <input type="email" name="email" value="{user_obj.email}" readonly
@@ -7797,7 +7797,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{request.scope.get('root_path', '')}/admin/tool-ops/partial",
+        base_url=f"{request.scope.get('root_path', '')}{settings.mcpgateway_ui_base_path}/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",

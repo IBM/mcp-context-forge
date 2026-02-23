@@ -237,11 +237,16 @@ class TestEmailAuthBasic:
             mock_settings.app_domain = "https://gateway.example.com/"
             mock_settings.app_root_path = "/root/"
 
+            # default ui base path may be '/ui' but tests should rely on configured value
+            mock_settings.mcpgateway_ui_base_path = "/ui"
+
             forgot_url = service._build_forgot_password_url()
             reset_url = service._build_reset_password_url("tok en")
 
-        assert forgot_url == "https://gateway.example.com/root/admin/forgot-password"
-        assert reset_url.endswith("/admin/reset-password/tok%20en")
+        expected_base = "https://gateway.example.com".rstrip("/") + mock_settings.app_root_path.rstrip("/") + mock_settings.mcpgateway_ui_base_path
+
+        assert forgot_url == f"{expected_base}/forgot-password"
+        assert reset_url.endswith(f"{mock_settings.mcpgateway_ui_base_path}/reset-password/tok%20en")
 
     def test_recent_password_reset_request_count(self, service, mock_db):
         """Count helper returns integer count from query scalar."""
@@ -1820,7 +1825,7 @@ class TestEmailAuthServiceUserListing:
         users = [MagicMock(spec=EmailUser, email="a@example.com"), MagicMock(spec=EmailUser, email="b@example.com")]
         pagination = PaginationMeta(page=1, per_page=30, total_items=2, total_pages=1, has_next=False, has_prev=False)
         links = PaginationLinks(
-            self="/admin/teams/team-123/non-members?page=1&per_page=30", first="/admin/teams/team-123/non-members?page=1&per_page=30", last="/admin/teams/team-123/non-members?page=1&per_page=30"
+            self="/ui/teams/team-123/non-members?page=1&per_page=30", first="/ui/teams/team-123/non-members?page=1&per_page=30", last="/ui/teams/team-123/non-members?page=1&per_page=30"
         )
 
         with patch(

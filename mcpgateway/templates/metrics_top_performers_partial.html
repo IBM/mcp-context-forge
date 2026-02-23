@@ -75,7 +75,7 @@
 
 <!-- Out-of-band swap for pagination controls (matches tools pattern) -->
 <div id="top-{{ entity_type }}-pagination-controls-visible" hx-swap-oob="true">
-  {% set base_url = root_path + '/admin/metrics/partial' %}
+  {% set base_url = root_path + ui_base_path + '/metrics/partial' %}
   {% set hx_target = '#top-' + entity_type + '-content-visible' %}
   {% set hx_indicator = '#top-' + entity_type + '-loading-visible' %}
   {% set table_name = 'metrics_' + entity_type %}

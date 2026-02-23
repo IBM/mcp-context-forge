@@ -15696,6 +15696,10 @@ class TestTemplateButtonGating:
             return html.unescape(value)
 
         env.filters["decode_html"] = decode_html_entities
+        # Provide ui_base_path global used by templates (matches main.py behaviour)
+        from mcpgateway import config
+
+        env.globals["ui_base_path"] = config.settings.mcpgateway_ui_base_path
         return env
 
     def _render_tools_partial(self, jinja_env, tool_data, current_user_email, is_admin=False, user_team_roles=None):

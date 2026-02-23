@@ -38,6 +38,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.config import settings
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -667,7 +668,7 @@ class A2AAgentService:
             per_page=per_page,
             cursor=cursor,
             limit=limit,
-            base_url="/admin/a2a",  # Used for page-based links
+            base_url=f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/a2a",  # Used for page-based links
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 

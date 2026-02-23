@@ -5211,7 +5211,7 @@ compose-tls: compose-validate
 	@echo "   Endpoints:"
 	@echo "   ├─ HTTP:     http://localhost:8080"
 	@echo "   ├─ HTTPS:    https://localhost:8443"
-	@echo "   └─ Admin UI: https://localhost:8443/admin"
+	@echo "   └─ Admin UI: https://localhost:8443/ui"
 	@echo ""
 	@echo "💡 Options:"
 	@echo "   Custom certs:        mkdir -p certs && cp cert.pem certs/ && cp key.pem certs/"
@@ -5229,7 +5229,7 @@ compose-tls-https: compose-validate
 	@echo "   Endpoints:"
 	@echo "   ├─ HTTP:     http://localhost:8080 → redirects to HTTPS"
 	@echo "   ├─ HTTPS:    https://localhost:8443"
-	@echo "   └─ Admin UI: https://localhost:8443/admin"
+	@echo "   └─ Admin UI: https://localhost:8443/ui"
 	@echo ""
 	NGINX_FORCE_HTTPS=true IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls up -d --scale nginx=0
 	@echo ""

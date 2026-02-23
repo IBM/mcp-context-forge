@@ -1392,7 +1392,8 @@ async def test_require_admin_auth_email_auth_get_db_http_401_redirects_html(monk
         await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
 
     assert exc.value.status_code == status.HTTP_302_FOUND
-    assert exc.value.headers["Location"] == "/root/admin/login"
+    from mcpgateway import config
+    assert exc.value.headers["Location"] == f"/root{config.settings.mcpgateway_ui_base_path}/login"
 
 
 @pytest.mark.asyncio
@@ -1448,7 +1449,8 @@ async def test_require_admin_auth_email_auth_fallback_redirects_for_htmx(monkeyp
         await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token=None, basic_credentials=None)
 
     assert exc.value.status_code == status.HTTP_302_FOUND
-    assert exc.value.headers["Location"].endswith("/admin/login")
+    from mcpgateway import config
+    assert exc.value.headers["Location"].endswith(f"{config.settings.mcpgateway_ui_base_path}/login")
 
 
 @pytest.mark.asyncio

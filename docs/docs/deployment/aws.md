@@ -30,7 +30,7 @@ docker push YOUR_ECR_URI/mcpgateway
 3. **Create a Service:**
 
    - Use a Load Balancer (Application LB)
-   - Map `/` or `/admin` to port `4444`
+   - Map `/` or `/ui` to port `4444`
 
 ---
 

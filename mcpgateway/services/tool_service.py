@@ -1862,7 +1862,7 @@ class ToolService:
             per_page=per_page,
             cursor=cursor,
             limit=limit,
-            base_url="/admin/tools",  # Used for page-based links
+            base_url=f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/tools",  # Used for page-based links
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 

@@ -111,49 +111,49 @@ class TestPaginationLinks:
     def test_generate_links_first_page(self):
         """Test link generation for first page."""
         links = generate_pagination_links(
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             page=1,
             per_page=50,
             total_pages=10,
         )
 
         assert isinstance(links, PaginationLinks)
-        assert "/admin/tools?page=1" in links.self
-        assert "/admin/tools?page=1" in links.first
-        assert "/admin/tools?page=10" in links.last
-        assert "/admin/tools?page=2" in links.next
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=1" in links.self
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=1" in links.first
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=10" in links.last
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=2" in links.next
         assert links.prev is None
 
     def test_generate_links_middle_page(self):
         """Test link generation for middle page."""
         links = generate_pagination_links(
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             page=5,
             per_page=50,
             total_pages=10,
         )
 
-        assert "/admin/tools?page=5" in links.self
-        assert "/admin/tools?page=6" in links.next
-        assert "/admin/tools?page=4" in links.prev
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=5" in links.self
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=6" in links.next
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=4" in links.prev
 
     def test_generate_links_last_page(self):
         """Test link generation for last page."""
         links = generate_pagination_links(
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             page=10,
             per_page=50,
             total_pages=10,
         )
 
-        assert "/admin/tools?page=10" in links.self
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=10" in links.self
         assert links.next is None
-        assert "/admin/tools?page=9" in links.prev
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=9" in links.prev
 
     def test_generate_links_with_query_params(self):
         """Test link generation with additional query parameters."""
         links = generate_pagination_links(
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             page=2,
             per_page=50,
             total_pages=5,
@@ -167,7 +167,7 @@ class TestPaginationLinks:
     def test_generate_links_single_page(self):
         """Test link generation for single page result."""
         links = generate_pagination_links(
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             page=1,
             per_page=50,
             total_pages=1,
@@ -175,7 +175,7 @@ class TestPaginationLinks:
 
         assert links.next is None
         assert links.prev is None
-        assert "/admin/tools?page=1" in links.last
+        assert f"{settings.mcpgateway_ui_base_path}/tools?page=1" in links.last
 
     def test_generate_links_cursor_based(self):
         """Test link generation for cursor-based pagination."""
@@ -183,7 +183,7 @@ class TestPaginationLinks:
         next_cursor = encode_cursor({"id": "tool-173", "created_at": "2025-01-15T09:00:00Z"})
 
         links = generate_pagination_links(
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             page=1,
             per_page=50,
             total_pages=0,
@@ -203,14 +203,14 @@ class TestPaginationLinks:
         next_cursor = "next-cursor"
 
         links = generate_pagination_links(
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             page=None,  # Cursor mode may be invoked by next_cursor without an offset page number.
             per_page=50,
             total_pages=0,
             next_cursor=next_cursor,
         )
 
-        assert links.self == "/admin/tools"
+        assert links.self == settings.mcpgateway_ui_base_path + "/tools"
 
 
 class TestOffsetPagination:
@@ -240,7 +240,7 @@ class TestOffsetPagination:
             query=query,
             page=1,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert len(result["data"]) == 20
@@ -275,7 +275,7 @@ class TestOffsetPagination:
             query=query,
             page=3,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert len(result["data"]) == 20
@@ -307,7 +307,7 @@ class TestOffsetPagination:
             query=query,
             page=5,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         # Last page should have 15 items (95 % 20)
@@ -327,7 +327,7 @@ class TestOffsetPagination:
             query=query,
             page=1,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert len(result["data"]) == 0
@@ -346,7 +346,7 @@ class TestOffsetPagination:
             query=query,
             page=-5,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
         pagination = result["pagination"]
         assert pagination.page == 1
@@ -357,7 +357,7 @@ class TestOffsetPagination:
             query=query,
             page=1,
             per_page=10000,  # Exceeds max
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
         pagination = result["pagination"]
         assert pagination.per_page == settings.pagination_max_page_size
@@ -385,7 +385,7 @@ class TestOffsetPagination:
             query=query,
             page=1,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             include_links=False,
         )
 
@@ -414,9 +414,9 @@ class TestOffsetPagination:
         result = await offset_paginate(
             db=db_session,
             query=query,
-            page=10,
+            page=1,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         pagination = result["pagination"]
@@ -436,7 +436,7 @@ class TestOffsetPagination:
             query=query,
             page=5,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         pagination = result["pagination"]
@@ -468,7 +468,7 @@ class TestOffsetPagination:
             query=query,
             page=2,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         pagination = result["pagination"]
@@ -503,7 +503,7 @@ class TestOffsetPagination:
                 query=query,
                 page=100,
                 per_page=10,
-                base_url="/admin/tools",
+                base_url=settings.mcpgateway_ui_base_path + "/tools",
             )
 
         assert len(result["data"]) == 10
@@ -536,7 +536,7 @@ class TestCursorPagination:
             query=query,
             cursor=None,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert len(result["data"]) == 20
@@ -567,7 +567,7 @@ class TestCursorPagination:
             query=query,
             cursor=None,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         next_cursor = first_page["pagination"].next_cursor
@@ -579,7 +579,7 @@ class TestCursorPagination:
             query=query,
             cursor=next_cursor,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert len(second_page["data"]) == 20
@@ -597,7 +597,7 @@ class TestCursorPagination:
             query=query,
             cursor="invalid-cursor-data",
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         # Should fall back to first page
@@ -623,7 +623,7 @@ class TestCursorPagination:
             query=mock_query,
             cursor=cursor,
             per_page=1,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             include_links=False,
             total_count=2,
         )
@@ -649,7 +649,7 @@ class TestCursorPagination:
             query=mock_query,
             cursor=cursor,
             per_page=1,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             include_links=False,
             total_count=2,
         )
@@ -673,7 +673,7 @@ class TestCursorPagination:
         db_session.commit()
 
         query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.id))
-        result = await cursor_paginate(db=db_session, query=query, cursor=None, per_page=5, base_url="/admin/tools", include_links=False)
+        result = await cursor_paginate(db=db_session, query=query, cursor=None, per_page=5, base_url=settings.mcpgateway_ui_base_path + "/tools", include_links=False)
         assert result["links"] is None
 
     @pytest.mark.asyncio
@@ -697,7 +697,7 @@ class TestCursorPagination:
             query=mock_query,
             cursor=bad_cursor,
             per_page=1,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             include_links=False,
             total_count=2,
         )
@@ -731,7 +731,7 @@ class TestPaginateQuery:
             db=db_session,
             query=query,
             page=1,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert "pagination" in result
@@ -761,7 +761,7 @@ class TestPaginateQuery:
             db=db_session,
             query=query,
             cursor=cursor,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert "pagination" in result
@@ -790,7 +790,7 @@ class TestPaginateQuery:
         query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
 
         with caplog.at_level(logging.INFO, logger="mcpgateway.utils.pagination"):
-            result = await paginate_query(db=db_session, query=query, page=1, per_page=5, base_url="/admin/tools")
+            result = await paginate_query(db=db_session, query=query, page=1, per_page=5, base_url=settings.mcpgateway_ui_base_path + "/tools")
 
         # Cursor-based PaginationMeta uses total_pages=0 and cursor fields.
         assert result["pagination"].total_pages == 0
@@ -816,7 +816,7 @@ class TestPaginateQuery:
         db_session.commit()
 
         query = select(Tool).where(Tool.enabled.is_(True))
-        result = await paginate_query(db=db_session, query=query, page=1, per_page=2, base_url="/admin/tools", total_count=999)
+        result = await paginate_query(db=db_session, query=query, page=1, per_page=2, base_url=settings.mcpgateway_ui_base_path + "/tools", total_count=999)
 
         assert result["pagination"].total_items == 999
 
@@ -841,7 +841,7 @@ class TestPaginateQuery:
             query=query,
             page=1,
             per_page=2,  # Explicitly provided to cover the "per_page is not None" branch.
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             use_cursor_threshold=False,
         )
 
@@ -869,7 +869,7 @@ class TestUnifiedPaginate:
             page=1,
             per_page=None,
             limit=7,  # Used as default per_page when per_page is None
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             query_params={"q": "x"},
         )
 
@@ -895,7 +895,7 @@ class TestUnifiedPaginate:
             page=1,
             per_page=3,
             limit=7,  # Should be ignored when per_page is explicit
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
         )
 
         assert res["data"] == ["x"]
@@ -1180,23 +1180,23 @@ class TestPaginationSchemas:
     def test_pagination_links_creation(self):
         """Test PaginationLinks model creation."""
         links = PaginationLinks(
-            self="/admin/tools?page=2",
-            first="/admin/tools?page=1",
-            last="/admin/tools?page=10",
-            next="/admin/tools?page=3",
-            prev="/admin/tools?page=1",
+            self=f"{settings.mcpgateway_ui_base_path}/tools?page=2",
+            first=f"{settings.mcpgateway_ui_base_path}/tools?page=1",
+            last=f"{settings.mcpgateway_ui_base_path}/tools?page=10",
+            next=f"{settings.mcpgateway_ui_base_path}/tools?page=3",
+            prev=f"{settings.mcpgateway_ui_base_path}/tools?page=1",
         )
 
-        assert links.self == "/admin/tools?page=2"
-        assert links.next == "/admin/tools?page=3"
-        assert links.prev == "/admin/tools?page=1"
+        assert links.self == f"{settings.mcpgateway_ui_base_path}/tools?page=2"
+        assert links.next == f"{settings.mcpgateway_ui_base_path}/tools?page=3"
+        assert links.prev == f"{settings.mcpgateway_ui_base_path}/tools?page=1"
 
     def test_pagination_links_optional_fields(self):
         """Test PaginationLinks with optional fields."""
         links = PaginationLinks(
-            self="/admin/tools?page=1",
-            first="/admin/tools?page=1",
-            last="/admin/tools?page=1",
+            self=f"{settings.mcpgateway_ui_base_path}/tools?page=1",
+            first=f"{settings.mcpgateway_ui_base_path}/tools?page=1",
+            last=f"{settings.mcpgateway_ui_base_path}/tools?page=1",
             next=None,  # No next page
             prev=None,  # No previous page
         )
@@ -1232,7 +1232,7 @@ class TestTotalCountOptimization:
             query=query,
             page=1,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             total_count=999,  # Fake count to verify it's used
         )
 
@@ -1265,7 +1265,7 @@ class TestTotalCountOptimization:
             query=query,
             cursor=None,
             per_page=20,
-            base_url="/admin/tools",
+            base_url=settings.mcpgateway_ui_base_path + "/tools",
             total_count=888,  # Fake count to verify it's used
         )
 

@@ -89,7 +89,7 @@
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="prompts-pagination-controls" hx-swap-oob="true">
-  {% set base_url = root_path + '/admin/prompts/partial' %}
+  {% set base_url = root_path + ui_base_path + '/prompts/partial' %}
   {% set hx_target = '#prompts-table' %}
   {% set hx_indicator = '#prompts-loading' %}
   {% set table_name = 'prompts' %}

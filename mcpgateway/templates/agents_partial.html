@@ -98,7 +98,7 @@
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="agents-pagination-controls" hx-swap-oob="true">
-  {% set base_url = root_path + '/admin/a2a/partial' %}
+  {% set base_url = root_path + ui_base_path + '/a2a/partial' %}
   {% set hx_target = '#agents-table' %}
   {% set hx_indicator = '#agents-loading' %}
   {% set table_name = 'agents' %}

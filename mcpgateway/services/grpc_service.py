@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam
+from mcpgateway.config import settings
 from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
 from mcpgateway.services.logging_service import LoggingService
@@ -202,7 +203,7 @@ class GrpcService:
             per_page=per_page,
             cursor=cursor,
             limit=limit,
-            base_url="/admin/grpc",
+            base_url=f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/grpc",
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
