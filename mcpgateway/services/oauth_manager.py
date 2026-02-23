@@ -336,6 +336,21 @@ class OAuthManager:
             except Exception as e:
                 logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
+        # Decrypt password if explicitly detected as encrypted
+        if password:
+            try:
+                settings = get_settings()
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                if encryption.is_encrypted(password):
+                    decrypted_password = await encryption.decrypt_secret_async(password)
+                    if decrypted_password is None:
+                        logger.warning("Failed to decrypt password grant secret, using encrypted version")
+                    else:
+                        password = decrypted_password
+                        logger.debug("Successfully decrypted password grant secret")
+            except Exception as e:
+                logger.warning(f"Failed to decrypt password grant secret: {e}, using encrypted version")
+
         # Prepare token request data
         token_data = {
             "grant_type": "password",
@@ -1193,6 +1208,21 @@ class OAuthManager:
 
         if not client_id:
             raise OAuthError("No client_id configured for OAuth provider")
+
+        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
+        if client_secret:
+            try:
+                settings = get_settings()
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                if encryption.is_encrypted(client_secret):
+                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted_secret is None:
+                        logger.warning("Failed to decrypt client secret for refresh flow, using encrypted version")
+                    else:
+                        client_secret = decrypted_secret
+                        logger.debug("Successfully decrypted client secret for refresh flow")
+            except Exception as e:
+                logger.warning(f"Failed to decrypt client secret for refresh flow: {e}, using encrypted version")
 
         # Prepare token refresh request
         token_data = {

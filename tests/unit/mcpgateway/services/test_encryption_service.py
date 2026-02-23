@@ -15,7 +15,13 @@ from pydantic import SecretStr
 import pytest
 
 # First-Party
-from mcpgateway.services.encryption_service import EncryptionService
+from mcpgateway.config import settings
+from mcpgateway.services.encryption_service import (
+    EncryptionService,
+    decrypt_oauth_config_for_runtime,
+    get_encryption_service,
+    protect_oauth_config_for_storage,
+)
 
 class TestEncryptionService:
     """Test cases for EncryptionService class."""
@@ -699,3 +705,71 @@ class TestEncryptionService:
         # Should still decrypt correctly
         decrypted = encryption.decrypt_secret(legacy_bundle)
         assert decrypted == plaintext
+
+
+class TestOAuthConfigProtection:
+    """Tests for oauth_config protection helpers used by service-layer CRUD."""
+
+    @pytest.mark.asyncio
+    async def test_protect_oauth_config_for_storage_encrypts_sensitive_values(self):
+        """Sensitive oauth keys are encrypted recursively before storage."""
+        oauth_config = {
+            "client_id": "cid",
+            "client_secret": "top-secret",
+            "nested": {"password": "pw", "issuer": "https://idp.example.com"},
+            "tokens": [{"refresh_token": "rtok"}, {"scope": "read"}],
+        }
+
+        protected = await protect_oauth_config_for_storage(oauth_config)
+
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert protected["client_id"] == "cid"
+        assert encryption.is_encrypted(protected["client_secret"])
+        assert encryption.is_encrypted(protected["nested"]["password"])
+        assert protected["nested"]["issuer"] == "https://idp.example.com"
+        assert encryption.is_encrypted(protected["tokens"][0]["refresh_token"])
+        assert protected["tokens"][1]["scope"] == "read"
+
+    @pytest.mark.asyncio
+    async def test_protect_oauth_config_for_storage_preserves_existing_on_masked_placeholder(self):
+        """Masked placeholder keeps existing encrypted value on update."""
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        existing_secret = await encryption.encrypt_secret_async("already-stored")
+
+        protected = await protect_oauth_config_for_storage(
+            {"client_secret": settings.masked_auth_value, "grant_type": "client_credentials"},
+            existing_oauth_config={"client_secret": existing_secret, "grant_type": "client_credentials"},
+        )
+
+        assert protected["client_secret"] == existing_secret
+        assert protected["grant_type"] == "client_credentials"
+
+    @pytest.mark.asyncio
+    async def test_protect_oauth_config_for_storage_avoids_double_encryption(self):
+        """Already-encrypted values remain unchanged when processed again."""
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        encrypted_secret = await encryption.encrypt_secret_async("secret")
+
+        protected = await protect_oauth_config_for_storage({"client_secret": encrypted_secret})
+
+        assert protected["client_secret"] == encrypted_secret
+
+    @pytest.mark.asyncio
+    async def test_decrypt_oauth_config_for_runtime_decrypts_sensitive_values(self):
+        """Runtime helper decrypts only encrypted sensitive keys."""
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        encrypted_secret = await encryption.encrypt_secret_async("secret")
+        encrypted_password = await encryption.encrypt_secret_async("pw")
+
+        oauth_config = {
+            "client_secret": encrypted_secret,
+            "password": encrypted_password,
+            "client_id": "cid",
+            "masked": settings.masked_auth_value,
+        }
+        decrypted = await decrypt_oauth_config_for_runtime(oauth_config)
+
+        assert decrypted["client_secret"] == "secret"
+        assert decrypted["password"] == "pw"
+        assert decrypted["client_id"] == "cid"
+        assert decrypted["masked"] == settings.masked_auth_value

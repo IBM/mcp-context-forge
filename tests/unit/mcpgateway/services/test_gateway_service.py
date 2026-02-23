@@ -31,11 +31,13 @@ from url_normalize import url_normalize
 # ---------------------------------------------------------------------------
 # Application imports
 # ---------------------------------------------------------------------------
+from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayError,
@@ -587,6 +589,53 @@ class TestGatewayService:
         test_db.add.assert_called_once()
         test_db.flush.assert_called_once()  # Implementation uses flush() not commit()
         gateway_service._initialize_gateway.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_encrypts_oauth_sensitive_values(self, gateway_service, test_db, monkeypatch):
+        """register_gateway encrypts oauth_config secrets before persistence."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.flush = Mock()
+        test_db.refresh = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        captured_gateway: dict[str, object] = {}
+
+        def _capture_add(obj):
+            if isinstance(obj, DbGateway):
+                captured_gateway["gateway"] = obj
+
+        test_db.add = Mock(side_effect=_capture_add)
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
+
+        gateway_create = GatewayCreate(
+            name="oauth_gateway",
+            url="http://example.com/gateway",
+            description="OAuth gateway",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "password",
+                "client_id": "cid",
+                "client_secret": "super-secret",
+                "password": "p@ssw0rd",
+                "token_url": "https://auth.example.com/token",
+                "username": "svc-user",
+            },
+        )
+
+        await gateway_service.register_gateway(test_db, gateway_create)
+
+        stored_gateway = captured_gateway.get("gateway")
+        assert stored_gateway is not None
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(stored_gateway.oauth_config["client_secret"])
+        assert encryption.is_encrypted(stored_gateway.oauth_config["password"])
+        assert stored_gateway.oauth_config["grant_type"] == "password"
+        assert stored_gateway.oauth_config["client_id"] == "cid"
 
     @pytest.mark.asyncio
     async def test_register_gateway_exception_rollback(self, gateway_service, test_db):
@@ -5452,6 +5501,89 @@ class TestUpdateGatewayAdvanced:
 
         result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
         assert mock_gateway.oauth_config == {"client_id": "cid", "grant_type": "client_credentials"}
+
+    @pytest.mark.asyncio
+    async def test_update_oauth_config_encrypts_sensitive_values(self, gateway_service, mock_gateway, monkeypatch):
+        """update_gateway encrypts sensitive oauth_config values before persistence."""
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.auth_value = {}
+        mock_gateway.auth_query_params = None
+        mock_gateway.version = 1
+        mock_gateway.tags = []
+        mock_gateway.oauth_config = None
+
+        update_data = _make_gateway(
+            auth_type=None,
+            auth_value=None,
+            url="http://example.com/gateway",
+            passthrough_headers=None,
+            visibility=None,
+            oauth_config={
+                "grant_type": "password",
+                "client_id": "cid",
+                "client_secret": "secret",
+                "password": "pw",
+                "token_url": "https://auth.example.com/token",
+            },
+        )
+        update_data.auth_token = None
+        update_data.auth_password = None
+        update_data.auth_header_value = None
+        update_data.auth_query_param_key = None
+        update_data.auth_query_param_value = None
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
+
+        await gateway_service.update_gateway(db, mock_gateway.id, update_data)
+
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(mock_gateway.oauth_config["client_secret"])
+        assert encryption.is_encrypted(mock_gateway.oauth_config["password"])
+        assert mock_gateway.oauth_config["grant_type"] == "password"
+
+    @pytest.mark.asyncio
+    async def test_update_oauth_config_preserves_masked_secret_placeholder(self, gateway_service, mock_gateway, monkeypatch):
+        """Masked oauth placeholders preserve existing encrypted values on update."""
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.auth_value = {}
+        mock_gateway.auth_query_params = None
+        mock_gateway.version = 1
+        mock_gateway.tags = []
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        existing_secret = await encryption.encrypt_secret_async("existing-secret")
+        mock_gateway.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret}
+
+        update_data = _make_gateway(
+            auth_type=None,
+            auth_value=None,
+            url="http://example.com/gateway",
+            passthrough_headers=None,
+            visibility=None,
+            oauth_config={"grant_type": "client_credentials", "client_secret": settings.masked_auth_value},
+        )
+        update_data.auth_token = None
+        update_data.auth_password = None
+        update_data.auth_header_value = None
+        update_data.auth_query_param_key = None
+        update_data.auth_query_param_value = None
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
+
+        await gateway_service.update_gateway(db, mock_gateway.id, update_data)
+
+        assert mock_gateway.oauth_config["client_secret"] == existing_secret
 
     @pytest.mark.asyncio
     async def test_update_metadata_fields(self, gateway_service, mock_gateway, monkeypatch):

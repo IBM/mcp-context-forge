@@ -84,7 +84,7 @@ import base64
 import binascii
 import logging
 import os
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 # Third-Party
 from argon2.low_level import hash_secret_raw, Type
@@ -93,6 +93,7 @@ import orjson
 from pydantic import SecretStr
 
 # First-Party
+from mcpgateway.common.oauth import is_sensitive_oauth_key
 from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
@@ -519,3 +520,96 @@ def get_encryption_service(encryption_secret: Union[SecretStr, str]) -> Encrypti
         EncryptionService: Configured encryption service instance
     """
     return EncryptionService(encryption_secret)
+
+
+async def _encrypt_oauth_secret_value(value: Any, existing_value: Any, encryption: EncryptionService) -> Any:
+    """Encrypt a sensitive oauth value while preserving masked placeholders."""
+    if isinstance(value, dict):
+        return await _protect_oauth_config_value(value, existing_value, encryption)
+
+    if isinstance(value, list):
+        existing_list = existing_value if isinstance(existing_value, list) else []
+        protected_list = []
+        for idx, item in enumerate(value):
+            prior_item = existing_list[idx] if idx < len(existing_list) else None
+            protected_list.append(await _encrypt_oauth_secret_value(item, prior_item, encryption))
+        return protected_list
+
+    if value is None or value == "":
+        return value
+
+    if not isinstance(value, str):
+        return value
+
+    if value == settings.masked_auth_value:
+        if isinstance(existing_value, str) and existing_value:
+            return existing_value
+        return None
+
+    if encryption.is_encrypted(value):
+        return value
+
+    return await encryption.encrypt_secret_async(value)
+
+
+async def _protect_oauth_config_value(value: Any, existing_value: Any, encryption: EncryptionService) -> Any:
+    """Recursively encrypt sensitive oauth_config values."""
+    if isinstance(value, dict):
+        existing_dict = existing_value if isinstance(existing_value, dict) else {}
+        protected: dict[str, Any] = {}
+        for key, item in value.items():
+            existing_item = existing_dict.get(key)
+            if is_sensitive_oauth_key(key):
+                protected[key] = await _encrypt_oauth_secret_value(item, existing_item, encryption)
+            else:
+                protected[key] = await _protect_oauth_config_value(item, existing_item, encryption)
+        return protected
+
+    if isinstance(value, list):
+        existing_list = existing_value if isinstance(existing_value, list) else []
+        protected_list = []
+        for idx, item in enumerate(value):
+            prior_item = existing_list[idx] if idx < len(existing_list) else None
+            protected_list.append(await _protect_oauth_config_value(item, prior_item, encryption))
+        return protected_list
+
+    return value
+
+
+async def protect_oauth_config_for_storage(oauth_config: Any, existing_oauth_config: Any = None) -> Any:
+    """Recursively encrypt sensitive oauth_config values before persistence."""
+    if oauth_config is None:
+        return None
+
+    encryption = get_encryption_service(settings.auth_encryption_secret)
+    return await _protect_oauth_config_value(oauth_config, existing_oauth_config, encryption)
+
+
+async def _decrypt_oauth_config_value(value: Any, encryption: EncryptionService) -> Any:
+    """Recursively decrypt sensitive oauth_config values for runtime use."""
+    if isinstance(value, dict):
+        decrypted: dict[str, Any] = {}
+        for key, item in value.items():
+            if is_sensitive_oauth_key(key):
+                if isinstance(item, str) and item and item != settings.masked_auth_value and encryption.is_encrypted(item):
+                    decrypted_item = await encryption.decrypt_secret_async(item)
+                    decrypted[key] = decrypted_item if decrypted_item is not None else item
+                else:
+                    decrypted[key] = await _decrypt_oauth_config_value(item, encryption)
+            else:
+                decrypted[key] = await _decrypt_oauth_config_value(item, encryption)
+        return decrypted
+
+    if isinstance(value, list):
+        return [await _decrypt_oauth_config_value(item, encryption) for item in value]
+
+    return value
+
+
+async def decrypt_oauth_config_for_runtime(oauth_config: Any) -> Any:
+    """Recursively decrypt sensitive oauth_config values only when runtime plaintext is required."""
+    if oauth_config is None:
+        return None
+
+    encryption = get_encryption_service(settings.auth_encryption_secret)
+    return await _decrypt_oauth_config_value(oauth_config, encryption)
