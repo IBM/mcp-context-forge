@@ -33,6 +33,11 @@ $Env:PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
 uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 ```
 
+Once the gateway starts, open:
+
+- Admin UI: http://localhost:4444/admin
+- API Docs: http://localhost:4444/docs (requires JWT bearer token for API calls)
+
 ---
 
 ## 2. Your First API Call
@@ -78,5 +83,5 @@ To set up your local development environment:
 uv sync
 
 # Or using Make
-make install
+make install-dev
 ```
