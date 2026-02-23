@@ -3368,29 +3368,7 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     assert added_gateway.resources[0].title == "Resource Title"
     assert len(added_gateway.prompts) == 1
     assert added_gateway.prompts[0].title == "Prompt Title"
-    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        "mcpgateway.services.gateway_service.GatewayRead.model_validate",
-        lambda x: MagicMock(masked=lambda: x),
-    )
 
-    gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
-    gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [resource], [prompt]))
-    gateway_service._notify_gateway_added = AsyncMock()
-
-    await gateway_service.register_gateway(
-        db,
-        gateway,
-        team_id="team-1",
-        owner_email="owner@example.com",
-        created_by="creator@example.com",
-    )
-
-    added_gateway = db.add.call_args[0][0]
-    assert len(added_gateway.resources) == 1
-    assert added_gateway.resources[0].title == "Resource Title"
-    assert len(added_gateway.prompts) == 1
-    assert added_gateway.prompts[0].title == "Prompt Title"
 
 
 @pytest.mark.asyncio
