@@ -3858,20 +3858,34 @@
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Input Schema (JSON)</label
                 >
-                <div class="mb-2">
-                  <label class="mr-4 dark:text-gray-300">
-                    <input
-                      type="radio"
-                      name="schema_input_mode"
-                      value="ui"
-                      checked
-                    />
-                    Schema Builder
-                  </label>
-                  <label class="dark:text-gray-300">
-                    <input type="radio" name="schema_input_mode" value="json" />
-                    JSON Input
-                  </label>
+                <div class="mb-2 flex items-center justify-between">
+                  <div>
+                    <label class="mr-4 dark:text-gray-300">
+                      <input
+                        type="radio"
+                        name="schema_input_mode"
+                        value="ui"
+                        checked
+                      />
+                      Schema Builder
+                    </label>
+                    <label class="dark:text-gray-300">
+                      <input type="radio" name="schema_input_mode" value="json" />
+                      JSON Input
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    id="generate-schemas-from-openapi-btn"
+                    onclick="generateSchemasFromOpenAPI()"
+                    class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    title="Generate input and output schemas from OpenAPI specification"
+                  >
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                    </svg>
+                    Generate from OpenAPI Spec
+                  </button>
                 </div>
                 <div id="ui-builder" class="border p-4 mb-4">
                   <div id="parameters-container"></div>
@@ -8746,10 +8760,24 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       ></textarea>
                     </div>
                     <div>
-                      <label
-                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                        >Input Schema (JSON)</label
-                      >
+                      <div class="flex items-center justify-between mb-2">
+                        <label
+                          class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >Input Schema (JSON)</label
+                        >
+                        <button
+                          type="button"
+                          id="edit-generate-schemas-from-openapi-btn"
+                          onclick="generateSchemasFromOpenAPIEdit()"
+                          class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          title="Generate input and output schemas from OpenAPI specification"
+                        >
+                          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                          </svg>
+                          Generate from OpenAPI Spec
+                        </button>
+                      </div>
                       <textarea
                         name="input_schema"
                         id="edit-tool-schema"
