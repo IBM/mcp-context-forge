@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
@@ -17145,8 +17144,6 @@ class TestAdminTokensPartialSearch:
                 response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
                 assert response.status_code == 400
 
-
-
 # ============================================================================
 # SRI Hash Loading Tests
 # ============================================================================
@@ -17311,3 +17308,104 @@ class TestLoadSriHashes:
             result = admin_mod.load_sri_hashes()
 
             assert result == test_hashes
+
+    def test_load_sri_hashes_contains_tailwind_hash(self):
+        """Tailwind CDN script must be pinned via SRI."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        admin_mod.load_sri_hashes.cache_clear()
+        hashes = admin_mod.load_sri_hashes()
+        assert "tailwindcss" in hashes
+        assert hashes["tailwindcss"].startswith("sha384-")
+
+
+class TestAdminCsrfProtection:
+    """Regression tests for admin CSRF enforcement helper."""
+
+    @staticmethod
+    def _make_request(
+        method: str = "POST",
+        headers: dict | None = None,
+        cookies: dict | None = None,
+        form_data: dict | None = None,
+        scheme: str = "https",
+        netloc: str = "example.com",
+    ) -> MagicMock:
+        request = MagicMock()
+        request.method = method
+        request.headers = headers or {}
+        request.cookies = cookies or {}
+        request.scope = {"root_path": ""}
+        request.url = SimpleNamespace(scheme=scheme, netloc=netloc)
+        request.form = AsyncMock(return_value=form_data or {})
+        return request
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_skips_safe_method(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(method="GET")
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_skips_without_jwt_cookie(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com"},
+            cookies={},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_missing_origin_for_cookie_auth(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"host": "example.com"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "csrf-token"},
+        )
+        with pytest.raises(HTTPException, match="origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_token_mismatch(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com", "x-csrf-token": "wrong"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        with pytest.raises(HTTPException, match="token validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_matching_header_token(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com", "x-csrf-token": "expected"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_urlencoded_form_token(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://example.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)

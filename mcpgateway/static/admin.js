@@ -427,6 +427,96 @@ function escapeHtml(unsafe) {
         .replace(/\//g, "&#x2F;"); // Extra protection against script injection
 }
 
+const INNER_HTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "innerHTML",
+);
+
+function hasUnsafeUrlProtocol(value) {
+    if (typeof value !== "string") {
+        return false;
+    }
+    const trimmed = value.trim().toLowerCase();
+    return (
+        trimmed.startsWith("javascript:") ||
+        trimmed.startsWith("vbscript:") ||
+        trimmed.startsWith("data:text/html")
+    );
+}
+
+function sanitizeHtmlForInsertion(rawHtml) {
+    if (rawHtml === null || rawHtml === undefined) {
+        return "";
+    }
+    const html = String(rawHtml);
+
+    if (
+        !INNER_HTML_DESCRIPTOR ||
+        typeof INNER_HTML_DESCRIPTOR.set !== "function" ||
+        typeof INNER_HTML_DESCRIPTOR.get !== "function"
+    ) {
+        return html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+    }
+
+    const template = document.createElement("template");
+    INNER_HTML_DESCRIPTOR.set.call(template, html);
+
+    template.content
+        .querySelectorAll("script,iframe,object,embed,meta,base")
+        .forEach((node) => node.remove());
+
+    template.content.querySelectorAll("*").forEach((element) => {
+        for (const attribute of Array.from(element.attributes)) {
+            const attrName = attribute.name.toLowerCase();
+            if (attrName.startsWith("on")) {
+                element.removeAttribute(attribute.name);
+                continue;
+            }
+
+            if (
+                (attrName === "href" ||
+                    attrName === "src" ||
+                    attrName === "xlink:href" ||
+                    attrName === "action" ||
+                    attrName === "formaction" ||
+                    attrName === "srcdoc") &&
+                hasUnsafeUrlProtocol(attribute.value)
+            ) {
+                element.removeAttribute(attribute.name);
+            }
+        }
+    });
+
+    return INNER_HTML_DESCRIPTOR.get.call(template);
+}
+
+function installInnerHtmlGuard() {
+    if (window.__mcpgatewayInnerHtmlGuardInstalled) {
+        return;
+    }
+    if (
+        !INNER_HTML_DESCRIPTOR ||
+        typeof INNER_HTML_DESCRIPTOR.set !== "function" ||
+        typeof INNER_HTML_DESCRIPTOR.get !== "function"
+    ) {
+        return;
+    }
+
+    Object.defineProperty(Element.prototype, "innerHTML", {
+        configurable: true,
+        enumerable: INNER_HTML_DESCRIPTOR.enumerable,
+        get: INNER_HTML_DESCRIPTOR.get,
+        set(value) {
+            const sanitized = sanitizeHtmlForInsertion(value);
+            INNER_HTML_DESCRIPTOR.set.call(this, sanitized);
+        },
+    });
+
+    window.__mcpgatewayInnerHtmlGuardInstalled = true;
+}
+
+installInnerHtmlGuard();
+
 /**
  * Decode HTML entities back to their original characters.
  * Used when populating form fields to prevent double-encoding.
@@ -722,7 +812,7 @@ function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
         element.textContent = htmlContent; // Fallback to safe text
         return;
     }
-    element.innerHTML = htmlContent;
+    element.innerHTML = sanitizeHtmlForInsertion(htmlContent);
 }
 
 // ===================================================================
