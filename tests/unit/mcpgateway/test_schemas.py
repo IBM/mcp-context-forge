@@ -53,7 +53,14 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
+    PromptCreate,
+    PromptMetrics,
+    PromptRead,
+    PromptUpdate,
     ResourceCreate,
+    ResourceMetrics,
+    ResourceRead,
+    ResourceUpdate,
     ServerCreate,
     ServerMetrics,
     ServerRead,
@@ -63,6 +70,7 @@ from mcpgateway.schemas import (
     TeamCreateRequest,
     TeamUpdateRequest,
     ToolCreate,
+    ToolRead,
     ToolUpdate,
 )
 
@@ -1216,8 +1224,23 @@ class TestTitleSchemas:
         tool_read = ToolRead(
             id="1",
             name="test-tool",
+            originalName="test-tool-original",
             url="http://example.com",
             title="Read Tool Title",
+            description="Test Tool Description",
+            requestType="rpc",
+            integrationType="JSON",
+            headers={},
+            inputSchema={},
+            annotations={},
+            jsonpathFilter="",
+            auth={"type": "none"},
+            enabled=True,
+            reachable=True,
+            gatewayId="gw-1",
+            gatewaySlug="gw-1-slug",
+            customName="test-tool-custom",
+            customNameSlug="test-tool-custom-slug",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
             metrics=ServerMetrics(
@@ -1242,6 +1265,10 @@ class TestTitleSchemas:
             uri="test://uri",
             name="test-resource",
             title="Read Resource Title",
+            description="Test Resource Description",
+            mimeType="text/plain",
+            size=1024,
+            enabled=True,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
             metrics=ResourceMetrics(
@@ -1255,7 +1282,11 @@ class TestTitleSchemas:
 
     def test_prompt_schemas_with_title(self):
         """Test PromptCreate, PromptUpdate, and PromptRead pass title field."""
-        prompt_create = PromptCreate(name="test-prompt", title="My Custom Prompt Title")
+        prompt_create = PromptCreate(
+            name="test-prompt",
+            title="My Custom Prompt Title",
+            template="Hello {{name}}"
+        )
         assert prompt_create.title == "My Custom Prompt Title"
 
         prompt_update = PromptUpdate(title="Updated Prompt Title")
@@ -1264,6 +1295,13 @@ class TestTitleSchemas:
         prompt_read = PromptRead(
             id="1",
             name="test-prompt",
+            originalName="test-prompt-original",
+            customName="test-prompt-custom",
+            customNameSlug="test-prompt-custom-slug",
+            description="Test Prompt Description",
+            template="Hello {{name}}",
+            arguments=[],
+            enabled=True,
             title="Read Prompt Title",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
