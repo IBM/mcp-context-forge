@@ -11223,6 +11223,7 @@ function handleToggleSubmit(event, type) {
     hiddenField.value = isInactiveCheckedBool;
 
     form.appendChild(hiddenField);
+    injectCsrfTokenIntoForm(form);
     form.submit();
 }
 
@@ -11273,6 +11274,29 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
 
     const toggleType = inactiveType || type;
     return handleToggleSubmit(event, toggleType);
+}
+
+function injectCsrfTokenIntoForm(form) {
+    if (!(form instanceof HTMLFormElement)) {
+        return;
+    }
+
+    let csrfToken = "";
+    if (typeof getCookie === "function") {
+        csrfToken = getCookie("mcpgateway_csrf_token") || "";
+    }
+    if (!csrfToken) {
+        return;
+    }
+
+    let tokenInput = form.querySelector('input[name="csrf_token"]');
+    if (!tokenInput) {
+        tokenInput = document.createElement("input");
+        tokenInput.type = "hidden";
+        tokenInput.name = "csrf_token";
+        form.appendChild(tokenInput);
+    }
+    tokenInput.value = csrfToken;
 }
 
 // ===================================================================

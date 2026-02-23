@@ -20,6 +20,7 @@ history management via ChatHistoryManager from mcp_client_chat_service.
 # Standard
 import asyncio
 import os
+import time
 from typing import Any, Dict, Optional
 
 # Third-Party
@@ -75,7 +76,7 @@ async def init_redis() -> None:
 active_sessions: Dict[str, MCPChatService] = {}
 
 # Store configuration per user
-user_configs: Dict[str, bytes] = {}
+user_configs: Dict[str, tuple[bytes, float]] = {}
 
 # Logging
 logging_service = LoggingService()
@@ -483,7 +484,7 @@ async def set_user_config(user_id: str, config: MCPClientConfig):
     if redis_client:
         await redis_client.set(_cfg_key(user_id), serialized, ex=USER_CONFIG_TTL)
     else:
-        user_configs[user_id] = serialized
+        user_configs[user_id] = (serialized, time.monotonic())
 
 
 async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
@@ -501,8 +502,12 @@ async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
             return None
         return _deserialize_user_config_from_storage(data)
 
-    cached = user_configs.get(user_id)
-    if not cached:
+    cached_entry = user_configs.get(user_id)
+    if not cached_entry:
+        return None
+    cached, cached_at = cached_entry
+    if (time.monotonic() - cached_at) > USER_CONFIG_TTL:
+        user_configs.pop(user_id, None)
         return None
     return _deserialize_user_config_from_storage(cached)
 

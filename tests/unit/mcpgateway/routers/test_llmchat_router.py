@@ -106,6 +106,18 @@ async def test_set_get_delete_user_config_in_memory():
 
 
 @pytest.mark.asyncio
+async def test_get_user_config_in_memory_respects_ttl(monkeypatch: pytest.MonkeyPatch):
+    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+    start = 1000.0
+    monkeypatch.setattr(llmchat_router.time, "monotonic", lambda: start)
+    await llmchat_router.set_user_config("u1", config)
+
+    monkeypatch.setattr(llmchat_router.time, "monotonic", lambda: start + llmchat_router.USER_CONFIG_TTL + 1)
+    assert await llmchat_router.get_user_config("u1") is None
+    assert "u1" not in llmchat_router.user_configs
+
+
+@pytest.mark.asyncio
 async def test_set_get_delete_user_config_redis(monkeypatch: pytest.MonkeyPatch):
     config = llmchat_router.build_config(
         ConnectInput(

@@ -148,8 +148,10 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     re.compile(r"^x-api-key$", re.IGNORECASE),
     re.compile(r"^api-key$", re.IGNORECASE),
     re.compile(r"^apikey$", re.IGNORECASE),
-    re.compile(r"^x-.*(?:token|secret|key)$", re.IGNORECASE),
-    re.compile(r".*(?:token|secret)$", re.IGNORECASE),
+    # Keep broad-enough auth matching while avoiding operational noise from
+    # non-secret tracing/idempotency headers (e.g. X-Correlation-Token).
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
 )
 
 

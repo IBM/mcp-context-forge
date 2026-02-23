@@ -26,6 +26,7 @@ from mcpgateway.services.server_service import (
     ServerError,
     ServerNotFoundError,
     ServerService,
+    _validate_server_team_assignment,
 )
 
 
@@ -120,6 +121,47 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
 # --------------------------------------------------------------------------- #
 # Tests                                                                        #
 # --------------------------------------------------------------------------- #
+class TestValidateServerTeamAssignment:
+    """Unit tests for extracted team-assignment validator helper."""
+
+    def _build_db(self, team_exists: bool, membership_exists: bool) -> MagicMock:
+        db = MagicMock()
+        first_values = [MagicMock() if team_exists else None, MagicMock() if membership_exists else None]
+
+        def _query_side_effect(_model):
+            query = MagicMock()
+            filtered = MagicMock()
+            filtered.first.return_value = first_values.pop(0)
+            query.filter.return_value = filtered
+            return query
+
+        db.query.side_effect = _query_side_effect
+        return db
+
+    def test_requires_team_id(self):
+        db = MagicMock()
+        with pytest.raises(ValueError, match="without a team_id"):
+            _validate_server_team_assignment(db, "owner@example.com", None)
+
+    def test_rejects_unknown_team(self):
+        db = self._build_db(team_exists=False, membership_exists=False)
+        with pytest.raises(ValueError, match="Team team-1 not found"):
+            _validate_server_team_assignment(db, "owner@example.com", "team-1")
+
+    def test_skips_membership_check_for_internal_updates(self):
+        db = self._build_db(team_exists=True, membership_exists=False)
+        _validate_server_team_assignment(db, "", "team-1")
+
+    def test_requires_owner_membership_for_user_updates(self):
+        db = self._build_db(team_exists=True, membership_exists=False)
+        with pytest.raises(ValueError, match="membership in team not sufficient"):
+            _validate_server_team_assignment(db, "owner@example.com", "team-1")
+
+    def test_accepts_owner_membership(self):
+        db = self._build_db(team_exists=True, membership_exists=True)
+        _validate_server_team_assignment(db, "owner@example.com", "team-1")
+
+
 class TestServerService:
     @pytest.mark.asyncio
     async def test_update_server_visibility_team_user_not_in_team(self, server_service, mock_server, test_db):

@@ -15876,6 +15876,9 @@ class TestTemplateButtonGating:
 
     def test_servers_pagination_query_params_are_js_escaped(self, jinja_env):
         """Malicious q/tags values must not break out of JS string context."""
+        # Standard
+        import html as html_stdlib
+
         server_data = {
             "id": "srv-1",
             "name": "Test Server",
@@ -15901,9 +15904,25 @@ class TestTemplateButtonGating:
             },
         )
 
-        assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
-        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
-        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
+        decoded_html = html_stdlib.unescape(html)
+        assert "url.searchParams.set('q', 'x' );alert(1);//');" not in decoded_html
+        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in decoded_html
+        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in decoded_html
+
+    def test_admin_js_toggle_submit_injects_csrf_token(self):
+        """Form submit helpers should inject CSRF token before programmatic submit()."""
+        admin_js_path = settings.static_dir / "admin.js"
+        admin_js = admin_js_path.read_text(encoding="utf-8")
+        assert "function injectCsrfTokenIntoForm(form)" in admin_js
+        assert "injectCsrfTokenIntoForm(form);" in admin_js
+
+    def test_admin_modal_backdrops_disable_pointer_events(self):
+        """Modal backdrop wrappers should not block interactions with modal buttons."""
+        admin_template_path = settings.templates_dir / "admin.html"
+        admin_template = admin_template_path.read_text(encoding="utf-8")
+        assert 'id="server-modal"' in admin_template
+        assert "fixed inset-0 transition-opacity pointer-events-none" in admin_template
+        assert "evt.detail.headers = evt.detail.headers || {};" in admin_template
 
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""

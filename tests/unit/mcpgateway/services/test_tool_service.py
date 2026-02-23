@@ -33,6 +33,8 @@ from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _get_validator_class_and_check,
+    _is_sensitive_tool_header_name,
+    _protect_tool_headers_for_storage,
     extract_using_jq,
     TextContent,
     ToolError,
@@ -719,6 +721,29 @@ class TestToolService:
 
         assert mock_tool.headers["Authorization"] == existing_encrypted_auth
         assert mock_tool.headers["X-Trace-Id"] == "trace-2"
+
+    def test_sensitive_tool_header_patterns_avoid_non_secret_token_noise(self):
+        """Sensitive matcher should avoid tracing/idempotency token false positives."""
+        assert _is_sensitive_tool_header_name("Authorization") is True
+        assert _is_sensitive_tool_header_name("X-Auth-Token") is True
+        assert _is_sensitive_tool_header_name("client-secret") is True
+        assert _is_sensitive_tool_header_name("X-Correlation-Token") is False
+        assert _is_sensitive_tool_header_name("X-Request-Token") is False
+        assert _is_sensitive_tool_header_name("X-Idempotency-Key") is False
+
+    def test_non_secret_observability_headers_stay_plaintext_at_rest(self):
+        """Only sensitive headers should be encrypted when storing custom headers."""
+        protected = _protect_tool_headers_for_storage(
+            {
+                "Authorization": "Bearer secure-token",
+                "X-Correlation-Token": "corr-123",
+                "X-Idempotency-Key": "idem-456",
+            }
+        )
+        assert isinstance(protected["Authorization"], dict)
+        assert "_mcpgateway_encrypted_header_value_v1" in protected["Authorization"]
+        assert protected["X-Correlation-Token"] == "corr-123"
+        assert protected["X-Idempotency-Key"] == "idem-456"
 
     @pytest.mark.asyncio
     async def test_create_tool_from_a2a_agent_passes_scope_fields(self, tool_service, test_db):
