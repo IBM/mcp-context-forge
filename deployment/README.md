@@ -14,9 +14,11 @@ The container build process includes a Node.js build stage that compiles Tailwin
 
 **Build stages:**
 
-1. **Node.js builder** - Compiles `mcpgateway/static/css/tailwind.src.css` → `tailwind.min.css`
+1. **Node.js builder** (Red Hat UBI10 Node.js 24) - Compiles `mcpgateway/static/css/tailwind.src.css` → `tailwind.min.css`
 2. **Rust builder** (optional) - Builds Rust plugins if `ENABLE_RUST=true`
 3. **Main application** - Copies pre-built CSS and runs the Python application
+
+**Note:** The Node.js builder uses the official Red Hat UBI10 Node.js 24 image (`registry.access.redhat.com/ubi10/nodejs-24:latest`). This is a pre-built, optimized image with Node.js and all necessary build tools already installed. It's a temporary build stage and does not affect the final runtime image size.
 
 **Required files for CSS build:**
 
