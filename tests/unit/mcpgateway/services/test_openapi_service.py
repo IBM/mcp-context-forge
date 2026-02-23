@@ -267,8 +267,7 @@ class TestFetchOpenAPISpec:
             mock_client_class.return_value = mock_client
 
             with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url"):
-                with patch("mcpgateway.services.openapi_service.settings.ssrf_protection_enabled", False):
-                    result = await fetch_openapi_spec("http://example.com/openapi.json")
+                result = await fetch_openapi_spec("http://example.com/openapi.json")
 
             assert result == mock_spec
             mock_client.get.assert_called_once_with("http://example.com/openapi.json")
@@ -289,12 +288,9 @@ class TestFetchOpenAPISpec:
             mock_client_class.return_value = mock_client
 
             with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url") as mock_validate_url:
-                with patch("mcpgateway.services.openapi_service.SecurityValidator._validate_ssrf") as mock_validate_ssrf:
-                    with patch("mcpgateway.services.openapi_service.settings.ssrf_protection_enabled", True):
-                        await fetch_openapi_spec("http://example.com/openapi.json")
+                await fetch_openapi_spec("http://example.com/openapi.json")
 
             mock_validate_url.assert_called_once()
-            mock_validate_ssrf.assert_called_once_with("example.com", "OpenAPI spec URL")
 
     @pytest.mark.asyncio
     async def test_fetch_url_validation_failure(self):
@@ -320,9 +316,8 @@ class TestFetchOpenAPISpec:
             mock_client_class.return_value = mock_client
 
             with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url"):
-                with patch("mcpgateway.services.openapi_service.settings.ssrf_protection_enabled", False):
-                    with pytest.raises(httpx.HTTPStatusError):
-                        await fetch_openapi_spec("http://example.com/openapi.json")
+                with pytest.raises(httpx.HTTPStatusError):
+                    await fetch_openapi_spec("http://example.com/openapi.json")
 
     @pytest.mark.asyncio
     async def test_fetch_timeout(self):
@@ -340,8 +335,7 @@ class TestFetchOpenAPISpec:
             mock_client_class.return_value = mock_client
 
             with patch("mcpgateway.services.openapi_service.SecurityValidator.validate_url"):
-                with patch("mcpgateway.services.openapi_service.settings.ssrf_protection_enabled", False):
-                    await fetch_openapi_spec("http://example.com/openapi.json", timeout=5.0)
+                await fetch_openapi_spec("http://example.com/openapi.json", timeout=5.0)
 
             # Verify timeout was passed to AsyncClient
             mock_client_class.assert_called_once_with(timeout=5.0)

@@ -133,7 +133,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
-from mcpgateway.services.openapi_service import fetch_and_extract_schemas, fetch_openapi_spec
+from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -10999,56 +10999,6 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
-
-
-@admin_router.get("/fetch-openapi-spec")
-@require_permission("tools.read", allow_admin_bypass=False)
-async def admin_fetch_openapi_spec(
-    base_url: str = Query(..., description="Base URL to fetch OpenAPI spec from"),
-    _user=Depends(get_current_user_with_permissions),
-) -> JSONResponse:
-    """
-    Fetch OpenAPI spec from a given base URL.
-
-    This endpoint acts as a proxy to fetch OpenAPI specs from external services,
-    avoiding CORS issues when fetching from the browser.
-
-    Args:
-        base_url: The base URL to fetch the OpenAPI spec from
-
-    Returns:
-        JSONResponse with the OpenAPI spec or error message
-    """
-    try:
-        # Construct OpenAPI spec URL
-        openapi_url = f"{base_url.rstrip('/')}/openapi.json"
-        LOGGER.info(f"Fetching OpenAPI spec from {openapi_url}")
-
-        # Use the service to fetch with SSRF protection
-        try:
-            spec = await fetch_openapi_spec(openapi_url, timeout=10.0)
-        except ValueError as e:
-            # Security validation failed
-            return ORJSONResponse(content={"error": f"Security validation failed: {str(e)}"}, status_code=400)
-        except httpx.TimeoutException:
-            LOGGER.warning(f"Timeout fetching OpenAPI spec from {base_url}")
-            return ORJSONResponse(content={"error": f"Timeout fetching OpenAPI spec from {base_url}"}, status_code=504)
-        except httpx.HTTPStatusError as e:
-            LOGGER.warning(f"HTTP error fetching OpenAPI spec: {e}")
-            return ORJSONResponse(content={"error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}"}, status_code=e.response.status_code)
-        except httpx.HTTPError as e:
-            LOGGER.error(f"HTTP error fetching OpenAPI spec: {e}")
-            return ORJSONResponse(content={"error": f"Failed to fetch OpenAPI spec: {str(e)}"}, status_code=500)
-
-        # Validate basic structure
-        if not isinstance(spec, dict) or "paths" not in spec:
-            return ORJSONResponse(content={"error": "Invalid OpenAPI spec: missing 'paths' key"}, status_code=400)
-
-        return ORJSONResponse(content=spec, status_code=200)
-
-    except Exception as e:
-        LOGGER.error(f"Error fetching OpenAPI spec: {e}")
-        return ORJSONResponse(content={"error": f"Failed to fetch OpenAPI spec: {str(e)}"}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/state")
