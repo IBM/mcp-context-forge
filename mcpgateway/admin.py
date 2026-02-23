@@ -122,6 +122,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.csrf_service import generate_csrf_token
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -3302,6 +3303,14 @@ async def admin_ui(
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
 
+    # Generate CSRF token for the admin UI
+    csrf_token = generate_csrf_token(
+        user_id=admin_email,
+        session_id=str(uuid.uuid4()),
+        secret=settings.jwt_secret_key,
+        expiry=settings.csrf_token_expiry if hasattr(settings, 'csrf_token_expiry') else 3600
+    )
+
     response = request.app.state.templates.TemplateResponse(
         request,
         "admin.html",
@@ -3346,6 +3355,8 @@ async def admin_ui(
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
+            # CSRF token for frontend
+            "csrf_token": csrf_token,
         },
     )
 
@@ -3988,6 +3999,11 @@ async def _admin_logout(request: Request) -> Response:
 
     # Always clear local JWT session cookie.
     clear_auth_cookie(response)
+    
+    # Clear CSRF token cookie
+    from mcpgateway.services.csrf_service import clear_csrf_cookie
+    clear_csrf_cookie(response, settings)
+    
     use_secure = (settings.environment == "production") or settings.secure_cookies
     response.delete_cookie(
         key="sso_id_token_hint",

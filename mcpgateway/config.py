@@ -259,6 +259,31 @@ class Settings(BaseSettings):
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
 
+    # CSRF Protection Configuration
+    csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
+    csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
+    csrf_token_name: str = Field(default="X-CSRF-Token", description="HTTP header name for CSRF token")
+    csrf_cookie_name: str = Field(default="csrf_token", description="Cookie name for CSRF token")
+    csrf_token_expiry: int = Field(default=3600, description="CSRF token expiration time in seconds")
+    csrf_cookie_secure: bool = Field(default=True, description="Set Secure flag on CSRF cookie (HTTPS only)")
+    csrf_cookie_samesite: str = Field(default="Strict", description="SameSite attribute for CSRF cookie (Strict, Lax, or None)")
+    csrf_cookie_httponly: bool = Field(default=False, description="Set HttpOnly flag on CSRF cookie (False allows JavaScript to read for API calls)")
+    csrf_check_referer: bool = Field(default=True, description="Validate Referer header for CSRF protection")
+    csrf_rotate_on_login: bool = Field(default=True, description="Rotate CSRF token on user login for enhanced security")
+    csrf_trusted_origins: List[str] = Field(default_factory=list, description="Additional trusted origins for CSRF validation")
+    csrf_exempt_paths: List[str] = Field(
+        default_factory=lambda: [
+            "/health",
+            "/auth/login",
+            "/auth/refresh",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/metrics",
+        ],
+        description="Paths exempt from CSRF protection",
+    )
+
     # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
     json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
 
@@ -923,6 +948,10 @@ class Settings(BaseSettings):
 
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
+
+        # CSRF secret key fallback to JWT secret key
+        if not self.csrf_secret_key:
+            self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
 
         return self
 

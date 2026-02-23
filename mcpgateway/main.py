@@ -2090,6 +2090,18 @@ if settings.security_logging_enabled:
 else:
     logger.info("🔐 Security event logging disabled")
 
+# Add CSRF protection middleware
+# This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
+# Note: Runs after AuthContextMiddleware so request.state.user is available for token validation
+if settings.csrf_enabled:
+    # First-Party
+    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
+
+    app.add_middleware(CSRFMiddleware)
+    logger.info("🛡️  CSRF protection middleware enabled - validating tokens on state-changing requests")
+else:
+    logger.info("🛡️  CSRF protection middleware disabled")
+
 # Add token usage logging middleware
 # This tracks API token usage for analytics and security monitoring
 # Note: Runs after AuthContextMiddleware so request.state.auth_method is available
