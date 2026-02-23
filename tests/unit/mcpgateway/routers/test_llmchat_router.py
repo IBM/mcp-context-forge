@@ -289,6 +289,79 @@ async def test_connect_success(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_connect_rejects_ssrf_server_url(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    def _reject_url(_url: str, _field_name: str = "URL") -> str:
+        raise ValueError("localhost is blocked")
+
+    monkeypatch.setattr(llmchat_router.SecurityValidator, "validate_url", _reject_url)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="http://127.0.0.1/mcp", auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "Invalid server URL"
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_private_server_url_in_strict_ssrf_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    class StrictSSRFSettings:
+        ssrf_protection_enabled = True
+        ssrf_allow_localhost = False
+        ssrf_allow_private_networks = False
+        ssrf_allowed_networks = []
+        ssrf_blocked_networks = ["169.254.169.254/32"]
+        ssrf_blocked_hosts = []
+        ssrf_dns_fail_closed = False
+
+    monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="http://127.0.0.1/mcp", auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "Invalid server URL"
+
+
+@pytest.mark.asyncio
+async def test_connect_validates_user_supplied_server_url(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+    seen: dict[str, str] = {}
+
+    def _accept_url(url: str, _field_name: str = "URL") -> str:
+        seen["url"] = url
+        return url
+
+    monkeypatch.setattr(llmchat_router.SecurityValidator, "validate_url", _accept_url)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="https://api.example.com/mcp", auth_token="token"))
+
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert result["status"] == "connected"
+    assert seen["url"] == "https://api.example.com/mcp"
+
+
+@pytest.mark.asyncio
 async def test_connect_invalid_resolved_user_id(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llmchat_router, "_resolve_user_id", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)

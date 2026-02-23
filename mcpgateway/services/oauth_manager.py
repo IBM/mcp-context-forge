@@ -29,7 +29,7 @@ from requests_oauthlib import OAuth2Session
 
 # First-Party
 from mcpgateway.config import get_settings
-from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 
@@ -212,6 +212,27 @@ class OAuthManager:
             raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
         raise ValueError(f"Unsupported grant type: {grant_type}")
 
+    @staticmethod
+    async def _prepare_runtime_credentials(credentials: Dict[str, Any], flow_name: str) -> Dict[str, Any]:
+        """Return runtime-ready oauth credentials with sensitive fields decrypted.
+
+        Args:
+            credentials: Stored oauth_config payload.
+            flow_name: Flow label for diagnostic logging.
+
+        Returns:
+            Dict[str, Any]: Runtime-ready credentials.
+        """
+        try:
+            settings = get_settings()
+            encryption = get_encryption_service(settings.auth_encryption_secret)
+            runtime_credentials = await decrypt_oauth_config_for_runtime(credentials, encryption=encryption)
+            if isinstance(runtime_credentials, dict):
+                return runtime_credentials
+        except Exception as exc:
+            logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
+        return credentials
+
     async def _client_credentials_flow(self, credentials: Dict[str, Any]) -> str:
         """Machine-to-machine authentication using client credentials.
 
@@ -224,25 +245,11 @@ class OAuthManager:
         Raises:
             OAuthError: If token acquisition fails after all retries
         """
-        client_id = credentials["client_id"]
-        client_secret = credentials["client_secret"]
-        token_url = credentials["token_url"]
-        scopes = credentials.get("scopes", [])
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "client_credentials")
+        client_id = runtime_credentials["client_id"]
+        client_secret = runtime_credentials["client_secret"]
+        token_url = runtime_credentials["token_url"]
+        scopes = runtime_credentials.get("scopes", [])
 
         # Prepare token request data
         token_data = {
@@ -311,30 +318,16 @@ class OAuthManager:
         Raises:
             OAuthError: If token acquisition fails after all retries
         """
-        client_id = credentials.get("client_id")
-        client_secret = credentials.get("client_secret")
-        token_url = credentials["token_url"]
-        username = credentials.get("username")
-        password = credentials.get("password")
-        scopes = credentials.get("scopes", [])
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "password")
+        client_id = runtime_credentials.get("client_id")
+        client_secret = runtime_credentials.get("client_secret")
+        token_url = runtime_credentials["token_url"]
+        username = runtime_credentials.get("username")
+        password = runtime_credentials.get("password")
+        scopes = runtime_credentials.get("scopes", [])
 
         if not username or not password:
             raise OAuthError("Username and password are required for password grant type")
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
         # Prepare token request data
         token_data = {
@@ -434,25 +427,11 @@ class OAuthManager:
         Raises:
             OAuthError: If token exchange fails
         """
-        client_id = credentials["client_id"]
-        client_secret = credentials.get("client_secret")  # Optional for public clients (PKCE-only)
-        token_url = credentials["token_url"]
-        redirect_uri = credentials["redirect_uri"]
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "authorization_code_exchange")
+        client_id = runtime_credentials["client_id"]
+        client_secret = runtime_credentials.get("client_secret")  # Optional for public clients (PKCE-only)
+        token_url = runtime_credentials["token_url"]
+        redirect_uri = runtime_credentials["redirect_uri"]
 
         # Prepare token exchange data
         token_data = {
@@ -1075,25 +1054,11 @@ class OAuthManager:
         Raises:
             OAuthError: If token exchange fails
         """
-        client_id = credentials["client_id"]
-        client_secret = credentials.get("client_secret")  # Optional for public clients (PKCE-only)
-        token_url = credentials["token_url"]
-        redirect_uri = credentials["redirect_uri"]
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "authorization_code_exchange_with_pkce")
+        client_id = runtime_credentials["client_id"]
+        client_secret = runtime_credentials.get("client_secret")  # Optional for public clients (PKCE-only)
+        token_url = runtime_credentials["token_url"]
+        redirect_uri = runtime_credentials["redirect_uri"]
 
         # Prepare token exchange data
         token_data = {
@@ -1113,8 +1078,8 @@ class OAuthManager:
 
         # Add resource parameter to request JWT access token (RFC 8707)
         # The resource identifies the MCP server (resource server), not the OAuth server
-        resource = credentials.get("resource")
-        scopes = credentials.get("scopes", [])
+        resource = runtime_credentials.get("resource")
+        scopes = runtime_credentials.get("scopes", [])
         if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
                 # RFC 8707 allows multiple resource parameters - use list of tuples
@@ -1184,12 +1149,13 @@ class OAuthManager:
         if not refresh_token:
             raise OAuthError("No refresh token available")
 
-        token_url = credentials.get("token_url")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "refresh_token")
+        token_url = runtime_credentials.get("token_url")
         if not token_url:
             raise OAuthError("No token URL configured for OAuth provider")
 
-        client_id = credentials.get("client_id")
-        client_secret = credentials.get("client_secret")
+        client_id = runtime_credentials.get("client_id")
+        client_secret = runtime_credentials.get("client_secret")
 
         if not client_id:
             raise OAuthError("No client_id configured for OAuth provider")
@@ -1207,8 +1173,8 @@ class OAuthManager:
 
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type
-        resource = credentials.get("resource")
-        scopes = credentials.get("scopes", [])
+        resource = runtime_credentials.get("resource")
+        scopes = runtime_credentials.get("scopes", [])
         if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
                 # RFC 8707 allows multiple resource parameters - use list of tuples

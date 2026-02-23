@@ -25,6 +25,7 @@ import csv
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
 import html
+import inspect
 import io
 import json
 import logging
@@ -552,6 +553,8 @@ def rate_limit(requests_per_minute: Optional[int] = None):
         Returns:
             The wrapped function with rate limiting applied
         """
+        signature_params = inspect.signature(func_to_wrap).parameters.values()
+        accepts_request = any(param.name == "request" or param.kind == inspect.Parameter.VAR_KEYWORD for param in signature_params)
 
         @wraps(func_to_wrap)
         async def wrapper(*args, request: Optional[Request] = None, **kwargs):
@@ -587,8 +590,9 @@ def rate_limit(requests_per_minute: Optional[int] = None):
                     detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
                 )
             rate_limit_storage[client_ip].append(current_time)
-            # IMPORTANT: forward request to the real endpoint
-            return await func_to_wrap(*args, request=request, **kwargs)
+            if accepts_request:
+                return await func_to_wrap(*args, request=request, **kwargs)
+            return await func_to_wrap(*args, **kwargs)
 
         return wrapper
 
@@ -12511,15 +12515,22 @@ async def admin_test_gateway(
         >>> admin_test_gateway.__name__
         'admin_test_gateway'
     """
-    full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
-    full_url = full_url.rstrip("/")
-    LOGGER.debug(f"User {get_user_email(user)} testing server at {request.base_url}.")
     start_time: float = time.monotonic()
+    try:
+        validated_base_url = SecurityValidator.validate_url(str(request.base_url), "Gateway test URL")
+    except ValueError as e:
+        LOGGER.warning("Gateway test URL validation failed for %s: %s", request.base_url, e)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
+
+    full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
+    full_url = full_url.rstrip("/")
+    LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
     headers = request.headers or {}
 
     # Attempt to find a registered gateway matching this URL and team
     try:
-        gateway = gateway_service.get_first_gateway_by_url(db, str(request.base_url), team_id=team_id)
+        gateway = gateway_service.get_first_gateway_by_url(db, validated_base_url, team_id=team_id)
     except Exception:
         gateway = None
 
@@ -13770,6 +13781,8 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
     except ImportValidationError as e:
         LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Invalid import data: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Import preview failed for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
@@ -13834,6 +13847,8 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
     except ImportServiceError as e:
         LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin import error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
@@ -14918,7 +14933,11 @@ async def get_resources_section(
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}")
 
         # Get all resources and filter by team
-        resources_list = await local_resource_service.list_resources(db, include_inactive=True)
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True)
+        if isinstance(resources_result, tuple):
+            resources_list = resources_result[0]
+        else:
+            resources_list = resources_result
 
         # Apply team filtering if specified
         if team_id:
@@ -14973,7 +14992,11 @@ async def get_prompts_section(
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}")
 
         # Get all prompts and filter by team
-        prompts_list = await local_prompt_service.list_prompts(db, include_inactive=True)
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True)
+        if isinstance(prompts_result, tuple):
+            prompts_list = prompts_result[0]
+        else:
+            prompts_list = prompts_result
 
         # Apply team filtering if specified
         if team_id:
@@ -15031,7 +15054,11 @@ async def get_servers_section(
         LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}")
 
         # Get servers with optional include_inactive parameter
-        servers_list = await local_server_service.list_servers(db, include_inactive=include_inactive)
+        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive)
+        if isinstance(servers_result, tuple):
+            servers_list = servers_result[0]
+        else:
+            servers_list = servers_result
 
         # Apply team filtering if specified
         if team_id:

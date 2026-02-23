@@ -6,9 +6,9 @@
 
 ### Overview
 
-This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, and authorization (S-01, O-01, O-02, O-03, O-04, O-05, O-06, O-11, O-14, O-16, U-05, C-03, C-09, C-10, C-15, EXTRA-01, C-04, C-07, C-11, C-14, C-28, C-29):
+This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, OAuth secret handling, authentication timing, and authorization (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-02, O-03, O-04, O-05, O-06, O-10, O-11, O-14, O-16, O-17, U-05, C-03, C-09, C-10, C-15, EXTRA-01, C-04, C-07, C-11, C-14, C-28, C-29):
 
-- **🔐 Hardening Items** - SSRF strict defaults, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP/RPC token-scope enforcement, MCP transport revocation checks, session ownership enforcement, resource visibility scoping, roots authorization parity
+- **🔐 Hardening Items** - SSRF strict defaults with endpoint-level validation, OAuth secret at-rest protection for gateway/server/A2A configs, server OAuth read masking parity, failed-login timing hardening, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP/RPC token-scope enforcement, MCP transport revocation checks, session ownership enforcement, resource visibility scoping, roots authorization parity
 - **🧪 Testing** - Full regression coverage for hardened paths, token scope MCP/RPC coverage, and additional allow/deny regression tests for session/resource controls
 
 > **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. Cancellation, OAuth DCR, token scoping, session ownership, and resource visibility paths enforce proper authorization gates.
@@ -140,7 +140,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 ### Fixed
 
-#### **🔐 Security** (S-01, O-01, O-05, U-05, C-03, C-04, C-07, C-09, C-10, C-11, C-14, C-15, C-28, C-29, EXTRA-01)
+#### **🔐 Security** (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-05, O-10, O-17, U-05, C-03, C-04, C-07, C-09, C-10, C-11, C-14, C-15, C-28, C-29, EXTRA-01)
 * **SSRF defaults inverted to strict** - localhost, private networks blocked; DNS fail-closed by default (S-01)
 * **OIDC id_token now verified** - cryptographic signature validation in SSO callback (O-01)
 * **OAuth DCR admin gate** - non-admin users denied access to client management endpoints (O-05)
@@ -172,6 +172,12 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **SSO callback session binding** - state is bound to browser session marker and callback requires matching session binding (O-14)
 * **OAuth authorize/status ownership checks** - gateway visibility/team/owner checks now enforced consistently on authorize/status endpoints (O-16)
 * **OAuth fetch-tools access hardening** - `/oauth/fetch-tools/{gateway_id}` now reuses centralized gateway access enforcement and fails closed for non-admin null-scope contexts, with targeted regression coverage (O-15)
+* **OAuth config secrets now protected at rest across service CRUD** - sensitive `oauth_config` fields are encrypted on gateway/server/A2A create+update paths, with backward-compatible handling for already-encrypted values (A-02, O-10, O-17)
+* **Server OAuth read masking parity** - server read/list schema responses now mask sensitive OAuth keys the same way as gateway/A2A responses (A-05)
+* **Failed-login timing hardening** - email auth now applies dummy Argon2 verification on early failures plus a configurable minimum failed-login response floor (A-06)
+* **Admin gateway-test SSRF validation** - `/admin/gateways/test` now validates user-supplied target URLs before outbound requests (S-02)
+* **LLM chat connect SSRF validation** - `/llmchat/connect` now validates user-supplied MCP server URLs before session setup (S-03)
+* **OAuth DCR credential persistence hardening** - DCR-populated gateway credentials are protected before persisting to `oauth_config` (A-02, O-17)
 * **JWT rich-token teams semantics** - `_create_jwt_token` now preserves explicit `teams=None` as JSON `null` while still allowing omitted teams claims, restoring deterministic admin-token scope behavior for fail-closed ownership checks
 * **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
 * **Health diagnostics auth consistency** - `/health/security` now uses standard bearer JWT validation flow.
@@ -196,6 +202,10 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **C-28**: Resource event subscriptions now enforce per-subscriber visibility scoping
 * **C-29**: MCP resource subscription creation now enforces visibility checks
 * **C-15**: Token scoping defaults to deny for unmapped API paths
+* **A-02 / O-10 / O-17**: OAuth config sensitive keys are now encrypted at service-layer persistence boundaries for gateway/server/A2A, including DCR credential writes
+* **A-05**: Server read/list responses now apply OAuth secret masking parity with gateway/A2A
+* **A-06**: Email auth failed-login paths now include dummy Argon2 verification and a configurable response-time floor
+* **S-02 / S-03**: Admin gateway test and LLM chat connect now validate outbound target URLs before network calls
 * **C-05**: JSON-RPC tool execution now requires `tools.execute` for both `tools/call` and backward-compatible direct tool method invocation
 * **C-18**: Get-by-ID handlers, including `GET /resources/{resource_id}/info`, now enforce scoped ownership checks in addition to middleware controls
 * **C-19**: All root management endpoints now require `admin.system_config`
@@ -214,6 +224,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * Updated `docker-compose.yml` with transport feature flags and local SSRF overrides
 * Updated Helm chart `values.yaml`, `values.schema.json`, and `README.md` with new SSRF and transport settings
 * Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`
+* Added Alembic backfill migration to protect existing plaintext OAuth config secrets in gateway/server/A2A rows
 * Protocol version bumped to `2025-11-25` in configuration schema
 
 ### Documentation

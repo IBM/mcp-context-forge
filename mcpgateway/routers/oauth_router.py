@@ -32,6 +32,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -359,8 +360,9 @@ async def initiate_oauth_flow(
                         oauth_config["token_url"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
-                    # Update gateway's oauth_config and auth_type in database for future use
-                    gateway.oauth_config = oauth_config
+                    # Update gateway's oauth_config and auth_type in database for future use.
+                    # Protect sensitive fields before persistence to keep service-layer behavior consistent.
+                    gateway.oauth_config = await protect_oauth_config_for_storage(oauth_config, existing_oauth_config=gateway.oauth_config)
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 

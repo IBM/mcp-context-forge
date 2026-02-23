@@ -5249,8 +5249,8 @@ class TestImportConfigurationEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
-        assert excinfo.value.status_code == 500
-        assert "Import failed" in str(excinfo.value.detail)
+        assert excinfo.value.status_code == 400
+        assert "Missing import_data in request body" in str(excinfo.value.detail)
 
     async def test_admin_import_configuration_invalid_conflict_strategy(self, mock_request, mock_db):
         """Test import configuration with invalid conflict strategy."""
@@ -5262,8 +5262,8 @@ class TestImportConfigurationEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
-        assert excinfo.value.status_code == 500
-        assert "Import failed" in str(excinfo.value.detail)
+        assert excinfo.value.status_code == 400
+        assert "Invalid conflict strategy" in str(excinfo.value.detail)
 
     @patch.object(ImportService, "import_configuration")
     async def test_admin_import_configuration_import_service_error(self, mock_import_config, mock_request, mock_db):
@@ -11577,6 +11577,40 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_db):
+    """SSRF-safe URL validation blocks private/localhost targets before outbound requests."""
+
+    class StrictSSRFSettings:
+        ssrf_protection_enabled = True
+        ssrf_allow_localhost = False
+        ssrf_allow_private_networks = False
+        ssrf_allowed_networks = []
+        ssrf_blocked_networks = ["169.254.169.254/32"]
+        ssrf_blocked_hosts = []
+        ssrf_dns_fail_closed = False
+
+    class ShouldNotBeCalled:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, **_kwargs):
+            raise AssertionError("Outbound request should not execute for blocked SSRF target")
+
+    monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
+    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: ShouldNotBeCalled())
+
+    request = GatewayTestRequest(base_url="http://127.0.0.1", path="/test", method="GET", headers={}, body=None)
+    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+
+    assert response.status_code == 400
+    assert response.body["error"] == "Invalid gateway URL"
+    assert "details" not in response.body
+
+
+@pytest.mark.asyncio
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
@@ -12382,6 +12416,30 @@ async def test_get_resources_section_team_filter(mock_list, mock_db, allow_permi
 
 @pytest.mark.asyncio
 @patch.object(ResourceService, "list_resources")
+async def test_get_resources_section_team_filter_with_tuple_result(mock_list, mock_db, allow_permission):
+    mock_list.return_value = (
+        [
+            SimpleNamespace(
+                id="r1",
+                name="Res",
+                description="desc",
+                uri="res://1",
+                tags=[],
+                enabled=True,
+                team_id="team-1",
+                visibility="public",
+            )
+        ],
+        None,
+    )
+    response = await get_resources_section(team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    payload = json.loads(response.body)
+    assert payload["team_id"] == "team-1"
+    assert len(payload["resources"]) == 1
+
+
+@pytest.mark.asyncio
+@patch.object(ResourceService, "list_resources")
 async def test_get_resources_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_resources_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
@@ -12414,6 +12472,30 @@ async def test_get_prompts_section_team_filter(mock_list, mock_db, allow_permiss
 
 @pytest.mark.asyncio
 @patch.object(PromptService, "list_prompts")
+async def test_get_prompts_section_team_filter_with_tuple_result(mock_list, mock_db, allow_permission):
+    mock_list.return_value = (
+        [
+            SimpleNamespace(
+                id="p1",
+                name="Prompt",
+                description="desc",
+                arguments=[],
+                tags=[],
+                enabled=True,
+                team_id="team-2",
+                visibility="team",
+            )
+        ],
+        None,
+    )
+    response = await get_prompts_section(team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    payload = json.loads(response.body)
+    assert payload["team_id"] == "team-2"
+    assert len(payload["prompts"]) == 1
+
+
+@pytest.mark.asyncio
+@patch.object(PromptService, "list_prompts")
 async def test_get_prompts_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_prompts_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
@@ -12437,6 +12519,29 @@ async def test_get_servers_section_team_filter(mock_list, mock_db, allow_permiss
             visibility="private",
         )
     ]
+    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    payload = json.loads(response.body)
+    assert payload["team_id"] == "team-3"
+    assert len(payload["servers"]) == 1
+
+
+@pytest.mark.asyncio
+@patch.object(ServerService, "list_servers")
+async def test_get_servers_section_team_filter_with_tuple_result(mock_list, mock_db, allow_permission):
+    mock_list.return_value = (
+        [
+            SimpleNamespace(
+                id="s1",
+                name="Srv",
+                description="desc",
+                tags=[],
+                enabled=True,
+                team_id="team-3",
+                visibility="private",
+            )
+        ],
+        None,
+    )
     response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
@@ -14569,8 +14674,7 @@ class TestMaintenanceMisc:
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
             await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
-        # Inner HTTPException(400) is caught by outer except → re-raised as 500
-        assert exc_info.value.status_code == 500
+        assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_admin_import_preview_invalid_json(self, monkeypatch, allow_permission, mock_db):
@@ -14582,8 +14686,7 @@ class TestMaintenanceMisc:
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
             await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
-        # ValueError → HTTPException(400) → caught by outer except → 500
-        assert exc_info.value.status_code == 500
+        assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_admin_import_preview_import_validation_error_returns_400(self, monkeypatch, allow_permission, mock_db):
@@ -14838,6 +14941,24 @@ class TestMaintenanceMisc:
         request = MagicMock(spec=Request)
         request.client = MagicMock()
         request.client.host = "1.2.3.4"
+        result = await dummy_endpoint(request=request)
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_decorator_skips_request_injection_for_endpoints_without_request_param(self, monkeypatch):
+        # First-Party
+        from mcpgateway.admin import rate_limit, rate_limit_storage
+
+        rate_limit_storage.clear()
+        monkeypatch.setattr("mcpgateway.admin.settings.validation_max_requests_per_minute", 100, raising=False)
+
+        @rate_limit(10)
+        async def dummy_endpoint():
+            return "ok"
+
+        request = MagicMock(spec=Request)
+        request.client = MagicMock()
+        request.client.host = "2.3.4.5"
         result = await dummy_endpoint(request=request)
         assert result == "ok"
 
