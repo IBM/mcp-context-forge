@@ -10844,6 +10844,205 @@ async def admin_edit_tool(
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
+@admin_router.post("/tools/generate-schemas-from-openapi")
+@require_permission("tools.create", allow_admin_bypass=False)
+async def generate_schemas_from_openapi(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """
+    Generate input_schema and output_schema from OpenAPI specification URL.
+
+    Expects JSON body with:
+      - url: The tool URL (used to derive OpenAPI spec URL)
+      - request_type: HTTP method (GET, POST, etc.)
+      - openapi_url: (optional) Direct OpenAPI spec URL, if different from tool URL
+
+    Returns:
+        JSONResponse with generated schemas or error message.
+
+    Examples:
+        >>> callable(generate_schemas_from_openapi)
+        True
+    """
+    try:
+        body = await request.json()
+        tool_url = body.get("url", "")
+        request_type = body.get("request_type", "GET")
+        openapi_url = body.get("openapi_url", "")
+
+        if not tool_url and not openapi_url:
+            return ORJSONResponse(
+                content={"message": "Either 'url' or 'openapi_url' is required", "success": False},
+                status_code=400,
+            )
+
+        # Determine OpenAPI spec URL
+        # If openapi_url is provided, use it; otherwise derive from tool_url
+        spec_url = openapi_url if openapi_url else tool_url
+
+        # Try common OpenAPI spec paths
+        possible_spec_urls = []
+        if not openapi_url:
+            # Parse base URL
+            from urllib.parse import urlparse, urljoin
+
+            parsed = urlparse(tool_url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+            # Common OpenAPI spec locations
+            possible_spec_urls = [
+                urljoin(base_url, "/openapi.json"),
+                urljoin(base_url, "/api/openapi.json"),
+                urljoin(base_url, "/swagger.json"),
+                urljoin(base_url, "/api-docs"),
+                urljoin(base_url, "/v1/openapi.json"),
+                tool_url if tool_url.endswith((".json", ".yaml", ".yml")) else None,
+            ]
+            possible_spec_urls = [url for url in possible_spec_urls if url]
+        else:
+            possible_spec_urls = [spec_url]
+
+        # Third-Party
+        import httpx
+
+        spec_data = None
+        used_url = None
+
+        # Try to fetch OpenAPI spec
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            for url in possible_spec_urls:
+                try:
+                    LOGGER.info(f"Attempting to fetch OpenAPI spec from: {url}")
+                    response = await client.get(url)
+                    if response.status_code == 200:
+                        spec_data = response.json()
+                        used_url = url
+                        LOGGER.info(f"Successfully fetched OpenAPI spec from: {url}")
+                        break
+                except Exception as e:
+                    LOGGER.debug(f"Failed to fetch from {url}: {e}")
+                    continue
+
+        if not spec_data:
+            return ORJSONResponse(
+                content={
+                    "message": f"Could not fetch OpenAPI specification from any common location. Tried: {', '.join(possible_spec_urls)}",
+                    "success": False,
+                },
+                status_code=404,
+            )
+
+        # Parse OpenAPI spec and generate schemas
+        input_schema = {"type": "object", "properties": {}, "required": []}
+        output_schema = None
+
+        # Find the matching path and method in OpenAPI spec
+        paths = spec_data.get("paths", {})
+
+        # Try to match the tool URL path with OpenAPI paths
+        tool_path = urlparse(tool_url).path if tool_url else ""
+
+        matching_operation = None
+        for path, path_item in paths.items():
+            # Check if this path matches or is similar to tool_path
+            method_lower = request_type.lower()
+            if method_lower in path_item:
+                matching_operation = path_item[method_lower]
+                break
+
+        # If no exact match, use the first operation found
+        if not matching_operation and paths:
+            for path, path_item in paths.items():
+                for method in ["get", "post", "put", "patch", "delete"]:
+                    if method in path_item:
+                        matching_operation = path_item[method]
+                        break
+                if matching_operation:
+                    break
+
+        if matching_operation:
+            # Extract input schema from requestBody or parameters
+            request_body = matching_operation.get("requestBody", {})
+            if request_body:
+                content = request_body.get("content", {})
+                json_content = content.get("application/json", {})
+                if "schema" in json_content:
+                    input_schema = json_content["schema"]
+
+            # Extract parameters (query, path, header)
+            parameters = matching_operation.get("parameters", [])
+            if parameters and not request_body:
+                properties = {}
+                required = []
+                for param in parameters:
+                    param_name = param.get("name")
+                    param_schema = param.get("schema", {"type": "string"})
+                    properties[param_name] = param_schema
+                    if param.get("required", False):
+                        required.append(param_name)
+
+                if properties:
+                    input_schema = {"type": "object", "properties": properties, "required": required}
+
+            # Extract output schema from responses
+            responses = matching_operation.get("responses", {})
+            success_response = responses.get("200") or responses.get("201") or responses.get("default")
+            if success_response:
+                content = success_response.get("content", {})
+                json_content = content.get("application/json", {})
+                if "schema" in json_content:
+                    output_schema = json_content["schema"]
+
+        # Resolve $ref references if present
+        def resolve_refs(schema_obj, spec):
+            """Recursively resolve $ref in schema"""
+            if isinstance(schema_obj, dict):
+                if "$ref" in schema_obj:
+                    ref_path = schema_obj["$ref"]
+                    # Parse reference like "#/components/schemas/Pet"
+                    if ref_path.startswith("#/"):
+                        parts = ref_path[2:].split("/")
+                        ref_obj = spec
+                        for part in parts:
+                            ref_obj = ref_obj.get(part, {})
+                        return resolve_refs(ref_obj, spec)
+                    return schema_obj
+                else:
+                    return {k: resolve_refs(v, spec) for k, v in schema_obj.items()}
+            elif isinstance(schema_obj, list):
+                return [resolve_refs(item, spec) for item in schema_obj]
+            return schema_obj
+
+        input_schema = resolve_refs(input_schema, spec_data)
+        if output_schema:
+            output_schema = resolve_refs(output_schema, spec_data)
+
+        return ORJSONResponse(
+            content={
+                "message": "Schemas generated successfully from OpenAPI spec",
+                "success": True,
+                "input_schema": input_schema,
+                "output_schema": output_schema,
+                "spec_url": used_url,
+            },
+            status_code=200,
+        )
+
+    except orjson.JSONDecodeError:
+        return ORJSONResponse(
+            content={"message": "Invalid JSON in request body", "success": False},
+            status_code=400,
+        )
+    except Exception as ex:
+        LOGGER.error(f"Error generating schemas from OpenAPI: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Error: {str(ex)}", "success": False},
+            status_code=500,
+        )
+
+
 @admin_router.post("/tools/{tool_id}/delete")
 @require_permission("tools.delete", allow_admin_bypass=False)
 async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
