@@ -338,7 +338,9 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 | Admin Home | Navigate to `$GW_URL/admin` | Access admin UI | Dashboard displayed | ☐ | Visual interface |
 | Create Tool (Form) | `curl -X POST $GW_URL/admin/tools -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/x-www-form-urlencoded" -d 'name=admin_tool&url=https://api.example.com/v1/endpoint&description=Admin created tool&integrationType=REST&requestType=GET'` | Create via form | `{"message": "Tool registered successfully!", "success": true}` | ☐ | Form submission |
 | Create Resource (Form) | `curl -X POST $GW_URL/admin/resources -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/x-www-form-urlencoded" -d 'uri=admin/test&name=admin_resource&description=Created via admin&mimeType=text/plain&content=Admin content'` | Create via form | 303 redirect | ☐ | Admin form endpoint |
-| Test Gateway Connectivity | `curl -X POST $GW_URL/admin/gateways/test -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"base_url": "http://localhost:8101", "path": "/health", "method": "GET", "headers": {}, "body": null}'` | Test connection | Returns status_code, latency_ms, and body | ☐ | Connectivity test |
+| Test Gateway Connectivity | `curl -X POST $GW_URL/admin/gateways/test -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"base_url": "https://api.example.com", "path": "/health", "method": "GET", "headers": {}, "body": null}'` | Test connection | Returns status_code, latency_ms, and body | ☐ | Connectivity test |
+
+`/admin/gateways/test` enforces SSRF URL validation. Under strict defaults, localhost/private targets are blocked unless explicitly allowed (for example via `SSRF_ALLOWED_NETWORKS` or local dev overrides).
 
 ## 14. Input Validation Testing
 

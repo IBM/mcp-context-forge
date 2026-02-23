@@ -28,6 +28,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -379,7 +380,7 @@ class A2AAgentService:
                 pass
                 # auth_value = {}
 
-            oauth_config = getattr(agent_data, "oauth_config", None)
+            oauth_config = await protect_oauth_config_for_storage(getattr(agent_data, "oauth_config", None))
 
             # Handle query_param auth - encrypt and prepare for storage
             auth_query_params_encrypted: Optional[Dict[str, str]] = None
@@ -623,7 +624,7 @@ class A2AAgentService:
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
-                cached_agents = [A2AAgentRead.model_validate(a) for a in cached["agents"]]
+                cached_agents = [A2AAgentRead.model_validate(a).masked() for a in cached["agents"]]
                 return (cached_agents, cached.get("next_cursor"))
 
         # Build base query with ordering
@@ -1041,6 +1042,9 @@ class A2AAgentService:
                 # Skip query_param fields - handled separately below
                 if field in ("auth_query_param_key", "auth_query_param_value"):
                     continue
+
+                if field == "oauth_config":
+                    value = await protect_oauth_config_for_storage(value, existing_oauth_config=agent.oauth_config)
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)

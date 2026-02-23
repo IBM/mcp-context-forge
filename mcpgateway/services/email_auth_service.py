@@ -73,6 +73,7 @@ logger = logging_service.get_logger(__name__)
 _background_tasks: set[asyncio.Task] = set()
 
 _GET_ALL_USERS_LIMIT = 10000
+_DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
 
 
 @dataclass(frozen=True)
@@ -346,6 +347,37 @@ class EmailAuthService:
         """
         min_ms = max(0, int(getattr(settings, "password_reset_min_response_ms", 250)))
         return min_ms / 1000.0
+
+    @staticmethod
+    def _minimum_login_failure_seconds() -> float:
+        """Get minimum failed-login response duration.
+
+        Returns:
+            float: Minimum failure response duration in seconds.
+        """
+        min_ms = max(0, int(getattr(settings, "failed_login_min_response_ms", 250)))
+        return min_ms / 1000.0
+
+    async def _apply_failed_login_floor(self, start_time: float) -> None:
+        """Apply minimum failed-login response duration.
+
+        Args:
+            start_time: Monotonic timestamp when login processing started.
+        """
+        remaining = self._minimum_login_failure_seconds() - (time.monotonic() - start_time)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    async def _verify_dummy_password_for_timing(self, password: str) -> None:
+        """Run dummy Argon2 verification to reduce observable timing differences.
+
+        Args:
+            password: User-supplied password candidate.
+        """
+        try:
+            await self.password_service.verify_password_async(password, _DUMMY_ARGON2_HASH)
+        except Exception as exc:  # nosec B110
+            logger.debug("Dummy password verification failed: %s", exc)
 
     @staticmethod
     def _build_forgot_password_url() -> str:
@@ -643,6 +675,7 @@ class EmailAuthService:
             # await service.authenticate_user("user@example.com", "wrong_password")  # Returns: None
         """
         email = email.lower().strip()
+        start_time = time.monotonic()
 
         # Get user from database
         user = await self.get_user_by_email(email)
@@ -655,11 +688,15 @@ class EmailAuthService:
             if not user:
                 failure_reason = "User not found"
                 logger.info(f"Authentication failed for {email}: user not found")
+                await self._verify_dummy_password_for_timing(password)
+                await self._apply_failed_login_floor(start_time)
                 return None
 
             if not user.is_active:
                 failure_reason = "Account is disabled"
                 logger.info(f"Authentication failed for {email}: account disabled")
+                await self._verify_dummy_password_for_timing(password)
+                await self._apply_failed_login_floor(start_time)
                 return None
 
             is_protected_admin = user.is_admin and settings.protect_all_admins
@@ -667,6 +704,8 @@ class EmailAuthService:
             if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
+                await self._verify_dummy_password_for_timing(password)
+                await self._apply_failed_login_floor(start_time)
                 return None
 
             # Clear lockout for protected admins so they can always attempt login
@@ -712,6 +751,7 @@ class EmailAuthService:
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
+                await self._apply_failed_login_floor(start_time)
                 return None
 
             # Authentication successful

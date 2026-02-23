@@ -135,7 +135,7 @@ BASIC_AUTH_USER = _get_config("BASIC_AUTH_USER", "admin")
 BASIC_AUTH_PASSWORD = _get_config("BASIC_AUTH_PASSWORD", "changeme")
 
 # JWT settings for auto-generation (if MCPGATEWAY_BEARER_TOKEN not set)
-JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "loadtest-jwt-secret-key-minimum-32-bytes")
 JWT_ALGORITHM = _get_config("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _get_config("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")
@@ -178,6 +178,7 @@ AVAILABLE_PATHS: set[str] = set()
 TOOL_NAMES: list[str] = []
 RESOURCE_URIS: list[str] = []
 PROMPT_NAMES: list[str] = []
+PROMPT_ARGUMENT_NAMES: dict[str, str] = {}
 
 # Tools that require arguments and are tested with proper arguments in specific user classes
 # These should be excluded from generic rpc_call_tool to avoid false failures
@@ -323,6 +324,15 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             items = data if isinstance(data, list) else data.get("prompts", data.get("items", []))
             PROMPT_IDS.extend([str(p.get("id")) for p in items[:50] if p.get("id")])
             PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
+            for prompt in items[:50]:
+                prompt_name = prompt.get("name")
+                arguments = prompt.get("arguments", [])
+                if isinstance(prompt_name, str) and prompt_name and isinstance(arguments, list) and arguments:
+                    first_arg = arguments[0]
+                    if isinstance(first_arg, dict):
+                        arg_name = first_arg.get("name")
+                        if isinstance(arg_name, str) and arg_name:
+                            PROMPT_ARGUMENT_NAMES[prompt_name] = arg_name
             logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs, {len(PROMPT_NAMES)} prompt names")
 
         # Fetch A2A agents (only when A2A testing is enabled)
@@ -375,6 +385,7 @@ def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
     TOOL_NAMES.clear()
     RESOURCE_URIS.clear()
     PROMPT_NAMES.clear()
+    PROMPT_ARGUMENT_NAMES.clear()
 
     # Print detailed summary statistics
     _print_summary_stats(environment)
@@ -2855,7 +2866,8 @@ def on_test_start_batch1(environment, **_kwargs):
         status, data = _fetch_json(f"{host}/rbac/roles", headers)
         if status == 200 and data:
             items = data if isinstance(data, list) else data.get("roles", data.get("items", []))
-            ROLE_IDS.extend([str(r.get("id")) for r in items[:20] if r.get("id")])
+            non_system_roles = [r for r in items if r.get("id") and not r.get("is_system_role", False)]
+            ROLE_IDS.extend([str(r.get("id")) for r in non_system_roles[:20]])
             logger.info(f"Loaded {len(ROLE_IDS)} role IDs")
 
     except Exception as e:
@@ -3994,9 +4006,13 @@ class ProtocolExtendedUser(BaseUser):
     @tag("protocol", "completion")
     def protocol_completion(self):
         """POST /protocol/completion/complete - Request completion."""
+        if not PROMPT_ARGUMENT_NAMES:
+            return
+        prompt_name = random.choice(list(PROMPT_ARGUMENT_NAMES.keys()))
+        argument_name = PROMPT_ARGUMENT_NAMES[prompt_name]
         payload = {
-            "ref": {"type": "ref/prompt", "name": "test-prompt"},
-            "argument": {"name": "arg", "value": "val"},
+            "ref": {"type": "ref/prompt", "name": prompt_name},
+            "argument": {"name": argument_name, "value": "val"},
         }
         with self.client.post(
             "/protocol/completion/complete",
@@ -4014,6 +4030,11 @@ class ProtocolExtendedUser(BaseUser):
         """POST /protocol/sampling/createMessage - Create sampling message."""
         payload = {
             "messages": [{"role": "user", "content": {"type": "text", "text": "Hello"}}],
+            "modelPreferences": {
+                "costPriority": 0.3,
+                "speedPriority": 0.3,
+                "intelligencePriority": 0.4,
+            },
             "maxTokens": 10,
         }
         with self.client.post(
@@ -4048,14 +4069,14 @@ class ProtocolExtendedUser(BaseUser):
         """POST /message - Send JSON-RPC message (requires session)."""
         payload = {"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": "ping", "params": {}}
         with self.client.post(
-            "/message",
+            f"/message?session_id=loadtest-{uuid.uuid4().hex[:8]}",
             json=payload,
             headers=self.auth_headers,
             name="/message",
             catch_response=True,
         ) as response:
-            # 400=Missing session_id (expected without active session)
-            self._validate_status(response, allowed_codes=[200, 400])
+            # Dummy session IDs are expected to fail auth/session ownership checks.
+            self._validate_status(response, allowed_codes=[200, 403, 404])
 
 
 class LLMExtendedUser(BaseUser):
@@ -6002,7 +6023,7 @@ class ImportExtendedUser(BaseUser):
     @tag("admin", "import", "preview")
     def admin_import_preview(self):
         """POST /admin/import/preview - Preview import."""
-        payload = {"entities": {}}
+        payload = {"data": {"tools": [], "servers": [], "resources": [], "prompts": [], "gateways": [], "roots": []}}
         with self.client.post(
             "/admin/import/preview",
             json=payload,
@@ -7857,7 +7878,7 @@ class MiscEndpointsUser(BaseUser):
         """POST /admin/import/preview - Admin import preview."""
         with self.client.post(
             "/admin/import/preview",
-            json={"tools": []},
+            json={"data": {"tools": []}},
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/admin/import/preview",
             catch_response=True,
@@ -7870,7 +7891,7 @@ class MiscEndpointsUser(BaseUser):
         """POST /admin/import/configuration - Admin import configuration."""
         with self.client.post(
             "/admin/import/configuration",
-            json={"tools": [], "servers": []},
+            json={"import_data": {"tools": [], "servers": []}, "conflict_strategy": "update", "dry_run": True},
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/admin/import/configuration",
             catch_response=True,

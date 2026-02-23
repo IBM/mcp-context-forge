@@ -37,6 +37,7 @@ except ImportError:
     REDIS_AVAILABLE = False
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.logging_service import LoggingService
@@ -677,6 +678,14 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         # Validate user_id
         if not user_id or not isinstance(user_id, str):
             raise HTTPException(status_code=400, detail="Invalid user ID provided")
+
+        # Validate user-supplied server URLs with SSRF protections before any outbound connection setup.
+        if input_data.server and input_data.server.url:
+            try:
+                input_data.server.url = SecurityValidator.validate_url(str(input_data.server.url), "MCP server URL")
+            except ValueError as e:
+                logger.warning("LLM chat connect URL validation failed for user %s and URL %s: %s", user_id, input_data.server.url, e)
+                raise HTTPException(status_code=400, detail="Invalid server URL")
 
         # Handle authentication token
         empty_token = ""  # nosec B105

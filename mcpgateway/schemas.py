@@ -38,6 +38,7 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
+from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -3131,18 +3132,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 # ---------------------------------------------------------------------------
 # OAuth config masking helper (used by GatewayRead.masked / A2AAgentRead.masked)
 # ---------------------------------------------------------------------------
-_SENSITIVE_OAUTH_KEYS = frozenset(
-    {
-        "client_secret",
-        "password",
-        "refresh_token",
-        "access_token",
-        "id_token",
-        "token",
-        "secret",
-        "private_key",
-    }
-)
+_SENSITIVE_OAUTH_KEYS = OAUTH_SENSITIVE_KEYS
 
 
 def _mask_oauth_config(oauth_config: Any) -> Any:
@@ -4153,6 +4143,17 @@ class ServerRead(BaseModelWithConfigDict):
         if data.get("associated_a2a_agents"):
             data["associated_a2a_agents"] = [getattr(agent, "id", agent) for agent in data["associated_a2a_agents"]]
         return data
+
+    def masked(self) -> "ServerRead":
+        """Return a masked model with oauth_config secrets redacted.
+
+        Returns:
+            ServerRead: Masked server model.
+        """
+        masked_data = self.model_dump()
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
+        return ServerRead.model_validate(masked_data)
 
 
 class GatewayTestRequest(BaseModelWithConfigDict):

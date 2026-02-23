@@ -19,8 +19,10 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
+from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -155,6 +157,51 @@ class TestA2AAgentService:
         assert mock_db.commit.call_count == 3
         assert service.convert_agent_to_read.called
 
+    async def test_register_agent_encrypts_oauth_sensitive_values(self, service, mock_db):
+        """register_agent encrypts oauth_config secret values before persistence."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        captured_agent = None
+
+        def _capture_add(obj):
+            nonlocal captured_agent
+            if isinstance(obj, DbA2AAgent):
+                captured_agent = obj
+
+        mock_db.add = MagicMock(side_effect=_capture_add)
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+
+        agent_data = A2AAgentCreate(
+            name="oauth-agent",
+            description="oauth",
+            endpoint_url="https://api.example.com/agent",
+            agent_type="custom",
+            protocol_version="1.0",
+            capabilities={},
+            config={},
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "password",
+                "client_id": "cid",
+                "client_secret": "super-secret",
+                "password": "pw",
+                "token_url": "https://auth.example.com/token",
+                "username": "svc-user",
+            },
+            tags=[],
+        )
+
+        with patch("mcpgateway.schemas.ToolRead.model_validate", return_value=MagicMock()):
+            await service.register_agent(mock_db, agent_data)
+
+        assert captured_agent is not None
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(captured_agent.oauth_config["client_secret"])
+        assert encryption.is_encrypted(captured_agent.oauth_config["password"])
+        assert captured_agent.oauth_config["grant_type"] == "password"
+
     async def test_register_agent_name_conflict(self, service, mock_db, sample_agent_create):
         """Test agent registration with name conflict."""
         # Mock existing agent
@@ -252,6 +299,52 @@ class TestA2AAgentService:
                 mock_db.commit.assert_called_once()
                 assert mock_schema.called
                 assert sample_db_agent.version == 2  # Should be incremented
+
+    async def test_update_agent_encrypts_oauth_sensitive_values(self, service, mock_db, sample_db_agent):
+        """update_agent encrypts oauth_config secrets before saving."""
+        sample_db_agent.version = 1
+        sample_db_agent.oauth_config = None
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(
+                    oauth_config={
+                        "grant_type": "password",
+                        "client_id": "cid",
+                        "client_secret": "new-secret",
+                        "password": "new-pw",
+                        "token_url": "https://auth.example.com/token",
+                    }
+                )
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(sample_db_agent.oauth_config["client_secret"])
+        assert encryption.is_encrypted(sample_db_agent.oauth_config["password"])
+        assert sample_db_agent.oauth_config["grant_type"] == "password"
+
+    async def test_update_agent_oauth_masked_placeholder_preserves_existing_secret(self, service, mock_db, sample_db_agent):
+        """Masked oauth secret placeholders preserve existing encrypted values."""
+        sample_db_agent.version = 1
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        existing_secret = await encryption.encrypt_secret_async("existing-secret")
+        sample_db_agent.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret}
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(
+                    oauth_config={
+                        "grant_type": "client_credentials",
+                        "client_secret": settings.masked_auth_value,
+                    }
+                )
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert sample_db_agent.oauth_config["client_secret"] == existing_secret
 
     async def test_update_agent_not_found(self, service, mock_db):
         """Test updating non-existent agent."""
@@ -1461,6 +1554,31 @@ class TestListAgentsAdvanced:
 
         await service.list_agents(mock_db)
         cache.set.assert_awaited_once()
+
+    async def test_list_cache_read_reconstructs_and_masks(self, service, mock_db, monkeypatch):
+        """Cached A2A entries are reconstructed and re-masked before returning."""
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="h"),
+            get=AsyncMock(return_value={"agents": [{"id": "a1"}], "next_cursor": "cursor-1"}),
+            set=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: cache)
+
+        class CachedAgentRead:
+            def __init__(self):
+                self.masked_called = False
+
+            def masked(self):
+                self.masked_called = True
+                return self
+
+        cached_agent_read = CachedAgentRead()
+        with patch("mcpgateway.services.a2a_service.A2AAgentRead.model_validate", return_value=cached_agent_read):
+            result, cursor = await service.list_agents(mock_db)
+
+        assert result == [cached_agent_read]
+        assert result[0].masked_called is True
+        assert cursor == "cursor-1"
 
 
 class TestListAgentsForUser:

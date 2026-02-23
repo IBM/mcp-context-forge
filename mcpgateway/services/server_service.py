@@ -37,6 +37,7 @@ from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
@@ -355,7 +356,7 @@ class ServerService:
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
 
-        return ServerRead.model_validate(server_dict)
+        return ServerRead.model_validate(server_dict).masked()
 
     def _assemble_associated_items(
         self,
@@ -476,6 +477,7 @@ class ServerService:
         """
         try:
             logger.info(f"Registering server: {server_in.name}")
+            oauth_config = await protect_oauth_config_for_storage(getattr(server_in, "oauth_config", None))
             # # Create the new server record.
             db_server = DbServer(
                 name=server_in.name,
@@ -491,7 +493,7 @@ class ServerService:
                 visibility=visibility or getattr(server_in, "visibility", None) or "public",
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
-                oauth_config=getattr(server_in, "oauth_config", None),
+                oauth_config=oauth_config,
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -770,7 +772,7 @@ class ServerService:
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
-                cached_servers = [ServerRead.model_validate(s) for s in cached["servers"]]
+                cached_servers = [ServerRead.model_validate(s).masked() for s in cached["servers"]]
                 return (cached_servers, cached.get("next_cursor"))
 
         # Build base query with ordering and eager load relationships to avoid N+1
@@ -1281,9 +1283,9 @@ class ServerService:
             # This prevents the case where oauth_enabled=False and oauth_config are both provided
             if not oauth_being_disabled:
                 if hasattr(server_update, "model_fields_set") and "oauth_config" in server_update.model_fields_set:
-                    server.oauth_config = server_update.oauth_config
+                    server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
                 elif server_update.oauth_config is not None:
-                    server.oauth_config = server_update.oauth_config
+                    server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
