@@ -114,13 +114,51 @@ from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
-def _resolve_tool_title(tool) -> Optional[str]:
-    """Resolve tool title with annotations.title precedence per MCP spec.
 
-    Priority:
-    1. annotations.title (if annotations dict has 'title' key)
-    2. tool.title (top-level BaseMetadata field)
-    3. None
+def _resolve_tool_title(tool) -> Optional[str]:
+    """Resolve the display title for a tool based on MCP precedence rules.
+
+    This function determines the appropriate title for a tool by checking
+    multiple possible locations in order of priority, following the MCP spec:
+
+    1. tool.annotations["title"] if annotations exists and contains
+       a "title" key.
+    2. tool.title (top-level metadata field).
+    3. None if neither is available.
+
+    Args:
+        tool: An object representing a tool. It may define an annotations
+            attribute (expected to be a dict) and/or a top-level title
+            attribute.
+
+    Returns:
+        Optional[str]: The resolved title string if found, otherwise None.
+
+    Examples:
+        >>> class Tool:
+        ...     def __init__(self, title=None, annotations=None):
+        ...         self.title = title
+        ...         self.annotations = annotations
+        ...
+        >>> # 1. annotations.title takes precedence
+        >>> tool = Tool(title="Top Level", annotations={"title": "Annotated"})
+        >>> _resolve_tool_title(tool)
+        'Annotated'
+
+        >>> # 2. Fallback to top-level title
+        >>> tool = Tool(title="Top Level", annotations={})
+        >>> _resolve_tool_title(tool)
+        'Top Level'
+
+        >>> # 3. No title available
+        >>> tool = Tool()
+        >>> _resolve_tool_title(tool) is None
+        True
+
+        >>> # 4. annotations is not a dict
+        >>> tool = Tool(title="Top Level", annotations="invalid")
+        >>> _resolve_tool_title(tool)
+        'Top Level'
     """
     annotations_title = None
     if hasattr(tool, "annotations") and isinstance(tool.annotations, dict):

@@ -1160,7 +1160,12 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, title=getattr(tool, "title", None), description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [
+                    types.Tool(
+                        name=tool.name, title=getattr(tool, "title", None), description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations
+                    )
+                    for tool in tools
+                ]
         except Exception as e:
             logger.error(f"Error listing tools:{e}")
             return []
@@ -1168,7 +1173,12 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, title=getattr(tool, "title", None), description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [
+                    types.Tool(
+                        name=tool.name, title=getattr(tool, "title", None), description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations
+                    )
+                    for tool in tools
+                ]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
             return []
