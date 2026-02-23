@@ -1461,11 +1461,12 @@ class SSOService:
                         return None  # Still waiting for approval
                     if pending.status == "rejected":
                         return None  # User was rejected
-                    if pending.status == "approved" and pending.is_expired():
-                        pending.status = "expired"
-                        self.db.commit()
-                        return None
-                    if pending.status == "expired":
+                    if pending.status == "approved":
+                        if pending.is_expired():
+                            pending.status = "expired"
+                            self.db.commit()
+                            return None
+                    elif pending.status == "expired":
                         pending.status = "pending"
                         pending.requested_at = utc_now()
                         pending.expires_at = utc_now() + timedelta(days=30)
@@ -1478,22 +1479,24 @@ class SSOService:
                         self.db.commit()
                         logger.info(f"Renewed expired pending approval request for SSO user: {email}")
                         return None
-                    if pending.status in {"completed"}:
+                    elif pending.status in {"completed"}:
                         return None
-                    logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {email}. Denying by default.")
-                    return None
-                # Create pending approval request
-                pending = PendingUserApproval(
-                    email=email,
-                    full_name=user_info.get("full_name", email),
-                    auth_provider=incoming_provider,
-                    sso_metadata=user_info,
-                    expires_at=utc_now() + timedelta(days=30),  # 30-day approval window
-                )
-                self.db.add(pending)
-                self.db.commit()
-                logger.info(f"Created pending approval request for SSO user: {email}")
-                return None  # No token until approved
+                    elif pending.status != "approved":
+                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {email}. Denying by default.")
+                        return None
+                else:
+                    # Create pending approval request
+                    pending = PendingUserApproval(
+                        email=email,
+                        full_name=user_info.get("full_name", email),
+                        auth_provider=incoming_provider,
+                        sso_metadata=user_info,
+                        expires_at=utc_now() + timedelta(days=30),  # 30-day approval window
+                    )
+                    self.db.add(pending)
+                    self.db.commit()
+                    logger.info(f"Created pending approval request for SSO user: {email}")
+                    return None  # No token until approved
 
             # Create new user (either no approval required, or approval already granted)
             # Generate a secure random password for SSO users (they won't use it)
