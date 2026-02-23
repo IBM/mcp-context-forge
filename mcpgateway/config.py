@@ -2025,8 +2025,13 @@ Disallow: /
 
         """
 
-        if self.internal_rpc_host.startswith(("http://", "https://")) and self.internal_rpc_host.endswith("/rpc"):
-            return self.internal_rpc_host
+        try:
+            parsed = urlparse(self.internal_rpc_host)
+            if parsed.scheme in ("http", "https") and parsed.netloc and parsed.path.endswith("/rpc"):
+                return self.internal_rpc_host
+        except ValueError:
+            logger.error("Invalid internal RPC host: %s", self.internal_rpc_host)
+            
         return f"http://{self.internal_rpc_host}:{self.port}{self.app_root_path}/rpc"
 
     class DatabaseSettings(TypedDict):
