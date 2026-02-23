@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import LLMModel, LLMProvider, LLMProviderType
 from mcpgateway.llm_provider_configs import PROVIDER_CONFIGS
 from mcpgateway.llm_schemas import (
@@ -38,7 +39,6 @@ from mcpgateway.llm_schemas import (
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.config import settings
 
 # Initialize logging
 logging_service = LoggingService()
