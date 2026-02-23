@@ -18,7 +18,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import SessionLocal
+from mcpgateway.auth import get_current_user
+from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -116,6 +117,72 @@ class LoginRequest(BaseModel):
                 raise ValueError("Username format not supported. Please use email address.")
         else:
             raise ValueError("Either email or username must be provided")
+
+
+@auth_router.get("/csrf-token")
+async def get_csrf_token(request: Request, current_user: "EmailUser" = Depends(get_current_user)):
+    """Get a fresh CSRF token for the current authenticated user.
+
+    This endpoint generates a new CSRF token for the current session and sets it
+    as a cookie. Used by the frontend to refresh expired tokens.
+
+    Args:
+        request: FastAPI request object
+        current_user: Currently authenticated user
+
+    Returns:
+        dict: JSON response with csrf_token field
+
+    Raises:
+        HTTPException: If user authentication fails
+
+    Examples:
+        >>> # GET /auth/csrf-token
+        >>> # Headers: Authorization: Bearer <token>
+        >>> # Response: {"csrf_token": "abc123..."}
+    """
+    from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
+    from mcpgateway.config import settings
+    from fastapi.responses import JSONResponse
+    import jwt
+    
+    try:
+        # Extract JWT token from Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authorization header"
+            )
+        
+        token = auth_header[7:]  # Remove "Bearer " prefix
+        
+        # Decode JWT to get jti for session_id (don't verify since get_current_user already did)
+        payload = jwt.decode(token, options={"verify_signature": False})
+        session_id = payload.get("jti", "")
+        
+        # Generate fresh CSRF token
+        csrf_token = generate_csrf_token(
+            user_id=current_user.email,
+            session_id=session_id,
+            secret=settings.jwt_secret_key.get_secret_value(),
+            expiry=settings.csrf_token_expiry
+        )
+        
+        # Create response with CSRF cookie
+        response = JSONResponse(content={"csrf_token": csrf_token})
+        set_csrf_cookie(response, csrf_token, settings)
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating CSRF token for {current_user.email}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate CSRF token"
+        )
 
 
 @auth_router.post("/login", response_model=AuthenticationResponse)
