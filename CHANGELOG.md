@@ -165,6 +165,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **Import ownership sanitization** - untrusted `team_id`/`owner_email`/`visibility`/`team` are stripped from scoped import entities (C-39)
 * **OAuth auth-code identity binding** - resource invocation now uses caller identity for auth-code token lookup; service-account token fallback removed (O-02)
 * **SSO account-linking hardening** - existing users are no longer auto-linked across providers; provider mismatch is denied without explicit linking flow (O-03)
+* **GitHub SSO email-claim compatibility** - GitHub logins no longer fail when `/user` omits `email_verified`; explicit false verification claims are still denied (O-03 follow-up)
 * **SSO approval-state hardening** - expired pending approvals no longer fall through to user creation; approval statuses now fail closed (O-04)
 * **SSO scope policy enforcement** - requested scopes are normalized and constrained to provider policy; invalid scopes rejected with HTTP 400 (O-06)
 * **OAuth grant fallback removal** - `authorization_code` no longer falls back to `client_credentials` in non-interactive token retrieval (O-11)

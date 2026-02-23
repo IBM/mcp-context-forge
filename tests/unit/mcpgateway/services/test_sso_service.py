@@ -1849,6 +1849,11 @@ class TestAuthenticateOrCreateUser:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_whitespace_email_returns_none(self, sso_service):
+        result = await sso_service.authenticate_or_create_user({"email": "   ", "provider": "github"})
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_existing_user(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
             email="user@test.com", full_name="Old Name", auth_provider="local",
@@ -2093,6 +2098,41 @@ class TestAuthenticateOrCreateUser:
             result = await sso_service.authenticate_or_create_user({
                 "email": "new@test.com", "full_name": "New User", "provider": "github",
             })
+
+        assert result == "new-jwt"
+
+    @pytest.mark.asyncio
+    async def test_new_github_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """GitHub /user payloads without email_verified should not be auto-rejected."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        new_user = SimpleNamespace(
+            email="new@test.com",
+            full_name="New User",
+            auth_provider="github",
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+        normalized_user_info = sso_service._normalize_user_info(
+            _make_provider(id="github"),
+            {
+                "email": "new@test.com",
+                "name": "New User",
+                "login": "new-user",
+                "id": 1234,
+            },
+        )
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "new-jwt"
+            result = await sso_service.authenticate_or_create_user(normalized_user_info)
 
         assert result == "new-jwt"
 

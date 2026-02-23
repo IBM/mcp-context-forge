@@ -1157,9 +1157,8 @@ class SSOService:
         """
         # Handle GitHub provider
         if provider.id == "github":
-            return {
+            normalized = {
                 "email": user_data.get("email"),
-                "email_verified": user_data.get("email_verified", user_data.get("verified")),
                 "full_name": user_data.get("name") or user_data.get("login"),
                 "avatar_url": user_data.get("avatar_url"),
                 "provider_id": user_data.get("id"),
@@ -1167,6 +1166,15 @@ class SSOService:
                 "provider": "github",
                 "organizations": user_data.get("organizations", []),
             }
+            # GitHub /user responses do not include an email_verified claim. Preserve
+            # backward-compatible login behavior by only enforcing verification when
+            # a concrete claim value is present.
+            github_email_verified = user_data.get("email_verified")
+            if github_email_verified is None:
+                github_email_verified = user_data.get("verified")
+            if github_email_verified is not None:
+                normalized["email_verified"] = github_email_verified
+            return normalized
 
         # Handle Google provider
         if provider.id == "google":
