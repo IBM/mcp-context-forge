@@ -284,7 +284,7 @@ class TestGenerateSchemasFromOpenAPI:
             orjson.loads(b"invalid json {")
         except orjson.JSONDecodeError as e:
             json_error = e
-        
+
         mock_request.json = AsyncMock(side_effect=json_error)
         mock_db = MagicMock(spec=Session)
         mock_user = {"email": "test@example.com"}
@@ -376,4 +376,3 @@ class TestGenerateSchemasFromOpenAPI:
             assert call_args[1]["base_url"] == "https://api.example.com:8443"
             assert call_args[1]["path"] == "/v1/calculate"
             assert call_args[1]["method"] == "POST"
-
