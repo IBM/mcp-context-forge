@@ -40,6 +40,7 @@ def mock_request():
     request.url.scheme = "https"
     request.url.netloc = "gateway.example.com"
     request.scope = {"root_path": ""}
+    request.state = SimpleNamespace(token_teams=["team-1"])
     return request
 
 
@@ -50,6 +51,8 @@ def mock_gateway():
     gateway.id = "gateway123"
     gateway.name = "Test Gateway"
     gateway.url = "https://mcp.example.com"  # MCP server URL
+    gateway.visibility = "public"
+    gateway.owner_email = None
     gateway.team_id = None  # No team restriction - allow all authenticated users
     gateway.oauth_config = {
         "grant_type": "authorization_code",
@@ -115,6 +118,7 @@ class TestOAuthRouter:
         request.url.scheme = "https"
         request.url.netloc = "gateway.example.com"
         request.scope = {"root_path": ""}
+        request.state = SimpleNamespace(token_teams=["team-1"])
         return request
 
     @pytest.fixture
@@ -124,6 +128,8 @@ class TestOAuthRouter:
         gateway.id = "gateway123"
         gateway.name = "Test Gateway"
         gateway.url = "https://mcp.example.com"  # MCP server URL
+        gateway.visibility = "public"
+        gateway.owner_email = None
         gateway.team_id = None  # No team restriction - allow all authenticated users
         gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -208,6 +214,7 @@ class TestOAuthRouter:
         # Setup
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
+        mock_gateway.visibility = "public"
         mock_gateway.oauth_config = None
         mock_gateway.team_id = None  # No team restriction
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
@@ -228,6 +235,7 @@ class TestOAuthRouter:
         # Setup
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
+        mock_gateway.visibility = "public"
         mock_gateway.oauth_config = {"grant_type": "client_credentials"}
         mock_gateway.team_id = None  # No team restriction
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
@@ -249,6 +257,7 @@ class TestOAuthRouter:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -276,6 +285,7 @@ class TestOAuthRouter:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -310,6 +320,7 @@ class TestOAuthRouter:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -344,6 +355,7 @@ class TestOAuthRouter:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -368,6 +380,7 @@ class TestOAuthRouter:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -732,6 +745,7 @@ class TestOAuthRouter:
         # Setup
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.oauth_config = None
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None  # No team restriction
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
@@ -759,6 +773,7 @@ class TestOAuthRouter:
     @pytest.mark.asyncio
     async def test_get_oauth_status_non_authorization_code(self, mock_db, mock_current_user):
         mock_gateway = Mock(spec=Gateway)
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {"grant_type": "client_credentials", "client_id": "cid"}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
@@ -957,6 +972,24 @@ class TestOAuthRouter:
 
         assert exc_info.value.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_requires_gateways_update_permission(self, mock_db):
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+        with patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new=AsyncMock(return_value=False)):
+            with pytest.raises(HTTPException) as exc_info:
+                await fetch_tools_after_oauth(
+                    gateway_id="gateway123",
+                    request=request,
+                    current_user={"email": "test@example.com", "is_admin": False},
+                    db=mock_db,
+                )
+
+        assert exc_info.value.status_code == 403
+
     def test_resolve_token_teams_for_scope_check_admin_attribute_fallback(self):
         request = Mock(spec=Request)
         request.state = SimpleNamespace()
@@ -1075,6 +1108,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.auth_type = None
         mock_gateway.oauth_config = {
@@ -1125,6 +1159,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "team"
         mock_gateway.team_id = "team-1"
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -1157,6 +1192,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -1189,6 +1225,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.auth_type = None
         mock_gateway.oauth_config = {
@@ -1308,6 +1345,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
         mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
         mock_gateway.team_id = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -1338,6 +1376,7 @@ class TestOAuthRouterAdditionalCoverage:
     async def test_get_oauth_status_team_access_denied(self, mock_db):
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
+        mock_gateway.visibility = "team"
         mock_gateway.team_id = "team-1"
         mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
@@ -1356,6 +1395,76 @@ class TestOAuthRouterAdditionalCoverage:
 
             with pytest.raises(HTTPException) as exc_info:
                 await get_oauth_status("gateway123", {"email": "user@example.com"}, mock_db)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_private_gateway_non_owner_denied(self, mock_db, mock_request):
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "private"
+        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "cid",
+            "authorization_url": "https://issuer.example.com/auth",
+            "token_url": "https://issuer.example.com/token",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+            with pytest.raises(HTTPException) as exc_info:
+                await initiate_oauth_flow("gateway123", mock_request, {"email": "intruder@example.com", "is_admin": False}, mock_db)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_private_gateway_owner_allowed(self, mock_db, mock_request):
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.visibility = "private"
+        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+            result = await get_oauth_status(
+                "gateway123",
+                current_user={"email": "owner@example.com", "is_admin": False},
+                db=mock_db,
+                request=mock_request,
+            )
+
+        assert result["oauth_enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_private_gateway_non_owner_denied(self, mock_db, mock_request):
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.visibility = "private"
+        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_oauth_status(
+                    "gateway123",
+                    current_user={"email": "intruder@example.com", "is_admin": False},
+                    db=mock_db,
+                    request=mock_request,
+                )
 
         assert exc_info.value.status_code == 403
 

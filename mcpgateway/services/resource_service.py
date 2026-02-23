@@ -1448,7 +1448,7 @@ class ResourceService:
                 Identity of the user making the request, used for session pool isolation.
                 Can be a string (email) or a dict with an 'email' key.
                 Defaults to "anonymous" for pool isolation if not provided.
-                OAuth token lookup always uses platform_admin_email (service account).
+                OAuth Authorization Code token lookup uses this user identity.
             meta_data (Optional[Dict[str, Any]]):
                 Additional metadata to pass to the gateway during invocation.
             resource_obj (Optional[Any]):
@@ -1542,8 +1542,7 @@ class ResourceService:
         # This is especially important when resource isn't found - we don't want to hold the transaction
         db.commit()
 
-        # Normalize user_identity to string for session pool isolation
-        # Use authenticated user for pool isolation, but keep platform_admin for OAuth token lookup
+        # Normalize user_identity to string for session pool isolation.
         if isinstance(user_identity, dict):
             pool_user_identity = user_identity.get("email") or "anonymous"
         elif isinstance(user_identity, str):
@@ -1551,8 +1550,13 @@ class ResourceService:
         else:
             pool_user_identity = "anonymous"
 
-        # OAuth token lookup uses platform admin (service account) - not changed
-        oauth_user_email = settings.platform_admin_email
+        oauth_user_email: Optional[str] = None
+        if isinstance(user_identity, dict):
+            user_email_value = user_identity.get("email")
+            if isinstance(user_email_value, str):
+                oauth_user_email = user_email_value.strip().lower() or None
+        elif isinstance(user_identity, str):
+            oauth_user_email = user_identity.strip().lower() or None
 
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
@@ -1704,9 +1708,11 @@ class ResourceService:
                                     from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
-                                    with fresh_db_session() as token_db:
-                                        token_storage = TokenStorageService(token_db)
-                                        access_token: str = await token_storage.get_user_token(gateway_id, oauth_user_email)
+                                    access_token = None
+                                    if oauth_user_email:
+                                        with fresh_db_session() as token_db:
+                                            token_storage = TokenStorageService(token_db)
+                                            access_token = await token_storage.get_user_token(gateway_id, oauth_user_email)
 
                                     if access_token:
                                         headers["Authorization"] = f"Bearer {access_token}"
