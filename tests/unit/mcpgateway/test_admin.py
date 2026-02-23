@@ -11577,6 +11577,39 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_db):
+    """SSRF-safe URL validation blocks private/localhost targets before outbound requests."""
+
+    class StrictSSRFSettings:
+        ssrf_protection_enabled = True
+        ssrf_allow_localhost = False
+        ssrf_allow_private_networks = False
+        ssrf_allowed_networks = []
+        ssrf_blocked_networks = ["169.254.169.254/32"]
+        ssrf_blocked_hosts = []
+        ssrf_dns_fail_closed = False
+
+    class ShouldNotBeCalled:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, **_kwargs):
+            raise AssertionError("Outbound request should not execute for blocked SSRF target")
+
+    monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
+    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: ShouldNotBeCalled())
+
+    request = GatewayTestRequest(base_url="http://127.0.0.1", path="/test", method="GET", headers={}, body=None)
+    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+
+    assert response.status_code == 400
+    assert response.body["error"] == "Invalid gateway URL"
+
+
+@pytest.mark.asyncio
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)

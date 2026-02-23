@@ -12511,15 +12511,21 @@ async def admin_test_gateway(
         >>> admin_test_gateway.__name__
         'admin_test_gateway'
     """
-    full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
-    full_url = full_url.rstrip("/")
-    LOGGER.debug(f"User {get_user_email(user)} testing server at {request.base_url}.")
     start_time: float = time.monotonic()
+    try:
+        validated_base_url = SecurityValidator.validate_url(str(request.base_url), "Gateway test URL")
+    except ValueError as e:
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL", "details": str(e)})
+
+    full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
+    full_url = full_url.rstrip("/")
+    LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
     headers = request.headers or {}
 
     # Attempt to find a registered gateway matching this URL and team
     try:
-        gateway = gateway_service.get_first_gateway_by_url(db, str(request.base_url), team_id=team_id)
+        gateway = gateway_service.get_first_gateway_by_url(db, validated_base_url, team_id=team_id)
     except Exception:
         gateway = None
 
