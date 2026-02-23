@@ -8958,10 +8958,6 @@ async def test_local_affinity_post_no_injection_without_server_url(monkeypatch):
 # Internal RPC URL Configuration Tests                                       #
 # --------------------------------------------------------------------------- #
 
-
-@pytest.mark.asyncio
-
-
 @pytest.mark.asyncio
 async def test_session_manager_uses_internal_rpc_url_for_events_endpoint(monkeypatch):
     """Test that SessionManagerWrapper uses settings.internal_rpc_url for /events endpoint."""
