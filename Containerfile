@@ -53,17 +53,14 @@ FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1771303073 AS node-builder
 
 WORKDIR /build
 
-# Copy only files needed for CSS build
-COPY package.json package-lock.json* ./
-COPY tailwind.config.js postcss.config.js ./
-COPY mcpgateway/templates/ ./mcpgateway/templates/
-COPY mcpgateway/static/ ./mcpgateway/static/
+# Copy only files needed for CSS build (with proper ownership for non-root user)
+COPY --chown=1001:1001 package.json package-lock.json* ./
+COPY --chown=1001:1001 tailwind.config.js postcss.config.js ./
+COPY --chown=1001:1001 mcpgateway/templates/ ./mcpgateway/templates/
+COPY --chown=1001:1001 mcpgateway/static/ ./mcpgateway/static/
 
 # Install dependencies and build CSS
-# Create output directory with proper permissions before building
-RUN mkdir -p mcpgateway/static/css && \
-    chmod -R 755 mcpgateway/static/css && \
-    npm ci && \
+RUN npm ci && \
     npm run build:css && \
     echo "✅ Tailwind CSS built successfully"
 
