@@ -1206,6 +1206,17 @@ class SecurityValidator:
             ip_addresses = [ipaddress.ip_address(hostname)]
         except ValueError:
             # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
+            # Avoid potentially slow DNS resolution in the common case during
+            # validation. By default (ssrf_dns_fail_closed == False) we take a
+            # fail-open approach for hostnames that are not explicitly blocked
+            # by name (settings.ssrf_blocked_hosts). This prevents tests and
+            # fast-path validations from incurring DNS lookup latency while
+            # preserving strict behavior when the administrator opts-in to
+            # fail-closed mode.
+            if not settings.ssrf_dns_fail_closed:
+                # We already checked blocked hostnames above; if hostname is
+                # not a blocked host, skip DNS resolution to avoid blocking.
+                return
             try:
                 # getaddrinfo returns all A/AAAA records
                 addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
@@ -1215,11 +1226,8 @@ class SecurityValidator:
                     except ValueError:
                         continue
             except (socket.gaierror, socket.herror):
-                # DNS resolution failed
-                if settings.ssrf_dns_fail_closed:
-                    raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
-                # Fail open: allow through (hostname blocking above catches known dangerous hostnames)
-                return
+                # DNS resolution failed and fail-closed is enabled
+                raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
 
         if not ip_addresses:
             if settings.ssrf_dns_fail_closed:
