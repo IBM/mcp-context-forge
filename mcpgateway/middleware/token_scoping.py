@@ -228,8 +228,10 @@ def _get_llm_permission_patterns(prefix: str) -> Tuple[Tuple[str, Pattern[str], 
     normalized_prefix = _normalize_llm_api_prefix(prefix)
     escaped_prefix = re.escape(normalized_prefix)
     return (
-        ("POST", re.compile(rf"^{escaped_prefix}/chat/completions(?:$|/)"), Permissions.LLM_INVOKE),
-        ("GET", re.compile(rf"^{escaped_prefix}/models(?:$|/)"), Permissions.LLM_READ),
+        # LLM proxy routes are exact endpoints (optionally with a trailing slash),
+        # unlike many REST resources that intentionally include sub-resources.
+        ("POST", re.compile(rf"^{escaped_prefix}/chat/completions/?$"), Permissions.LLM_INVOKE),
+        ("GET", re.compile(rf"^{escaped_prefix}/models/?$"), Permissions.LLM_READ),
     )
 
 
