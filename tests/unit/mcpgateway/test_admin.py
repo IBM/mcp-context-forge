@@ -29,13 +29,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
-    UI_HIDE_SECTIONS_COOKIE_NAME,
-    _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
     _escape_like,
     _generate_unified_teams_view,
-    _get_user_team_ids,
     _get_latency_heatmap_postgresql,
     _get_latency_heatmap_python,
     _get_latency_percentiles_postgresql,
@@ -43,9 +39,11 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_span_entity_performance,
     _get_timeseries_metrics_postgresql,
     _get_timeseries_metrics_python,
+    _get_user_team_ids,
     _get_user_team_roles,
-    _normalize_team_id,
     _normalize_search_query,
+    _normalize_team_id,
+    _normalize_ui_hide_values,
     _owner_access_condition,
     _parse_tag_filter_groups,
     _read_request_json,
@@ -147,8 +145,8 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_search_resources,
     admin_search_servers,
     admin_search_teams,
+    admin_search_tokens,
     admin_search_tools,
-    admin_unified_search,
     admin_search_users,
     admin_servers_partial_html,
     admin_set_a2a_agent_state,
@@ -163,13 +161,13 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_team_non_members_partial_html,
     admin_teams_partial_html,
     admin_test_a2a_agent,
-    admin_tokens_partial_html,
-    admin_search_tokens,
     admin_test_gateway,
     admin_test_resource,
+    admin_tokens_partial_html,
     admin_tool_ops_partial,
     admin_tools_partial_html,
     admin_ui,
+    admin_unified_search,
     admin_update_grpc_service,
     admin_update_root,
     admin_update_team,
@@ -244,10 +242,12 @@ from mcpgateway.admin import (  # admin_get_metrics,
     save_observability_query,
     serialize_datetime,
     track_query_usage,
+    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
+    UI_HIDE_SECTIONS_COOKIE_NAME,
     update_global_passthrough_headers,
     update_observability_query,
 )
-from mcpgateway.config import UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES, settings
+from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.schemas import (
     GatewayTestRequest,
     GlobalConfigRead,
@@ -884,6 +884,7 @@ class TestAdminServerRoutes:
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_error_handlers(self, mock_update_server, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_server exception branches."""
+        # First-Party
         from mcpgateway.services.server_service import ServerError, ServerNameConflictError
 
         server_id = "00000000-0000-0000-0000-000000000012"
@@ -1008,8 +1009,10 @@ class TestAdminServerRoutes:
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_lock_conflict_inactive_checked(self, mock_set_state, mock_request, mock_db):
         """Cover ServerLockConflictError branch + include_inactive error redirect."""
+        # Standard
         from urllib.parse import unquote
 
+        # First-Party
         from mcpgateway.services.server_service import ServerLockConflictError
 
         form_data = FakeForm({"activate": "true", "is_inactive_checked": "true"})
@@ -1058,6 +1061,7 @@ class TestAdminServerRoutes:
     @patch.object(ServerService, "delete_server")
     async def test_admin_delete_server_error_handlers(self, mock_delete_server, mock_request, mock_db):
         """Cover exception branches in admin_delete_server."""
+        # Standard
         from urllib.parse import unquote
 
         mock_request.scope = {"root_path": ""}
@@ -1078,6 +1082,7 @@ class TestAdminServerRoutes:
     @patch.object(ServerService, "delete_server")
     async def test_admin_delete_server_error_inactive_checked_redirects(self, mock_delete_server, mock_request, mock_db):
         """Cover error redirect with include_inactive=true when checkbox is checked."""
+        # Standard
         from urllib.parse import unquote
 
         mock_request.scope = {"root_path": ""}
@@ -1210,6 +1215,7 @@ class TestAdminToolRoutes:
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_request_type_defaults_and_error_handlers(self, mock_register_tool, mock_request, mock_db, monkeypatch):
         """Cover request_type defaulting and key exception handlers in admin_add_tool."""
+        # First-Party
         from mcpgateway.services.tool_service import ToolNameConflictError
 
         team_service = MagicMock()
@@ -1287,6 +1293,7 @@ class TestAdminToolRoutes:
         assert result.status_code == 403
 
         # ToolNameConflictError should return 409
+        # First-Party
         from mcpgateway.services.tool_service import ToolNameConflictError
 
         mock_update_tool.side_effect = ToolNameConflictError("conflict")
@@ -1302,6 +1309,7 @@ class TestAdminToolRoutes:
 
     async def test_admin_edit_tool_validation_error(self, mock_request, mock_db):
         """Cover ValidationError handler in admin_edit_tool (invalid requestType literal)."""
+        # Third-Party
         from starlette.datastructures import FormData
 
         mock_request.form = AsyncMock(
@@ -1387,8 +1395,10 @@ class TestAdminToolRoutes:
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_error_handlers(self, mock_toggle_status, mock_request, mock_db):
         """Cover exception branches in admin_set_tool_state."""
+        # Standard
         from urllib.parse import unquote
 
+        # First-Party
         from mcpgateway.services.tool_service import ToolLockConflictError
 
         tool_id = "tool-1"
@@ -1590,8 +1600,10 @@ class TestAdminBulkImportRoutes:
     @patch.object(ToolService, "register_tool")
     async def test_bulk_import_file_upload_success(self, mock_register_tool, mock_request, mock_db, monkeypatch):
         """Cover tools_file upload path in admin_import_tools."""
+        # Standard
         import io
 
+        # Third-Party
         from starlette.datastructures import UploadFile
 
         tools = [{"name": "file_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"}]
@@ -1613,8 +1625,10 @@ class TestAdminBulkImportRoutes:
 
     async def test_bulk_import_file_upload_invalid_json(self, mock_request, mock_db):
         """Cover invalid JSON file upload branch in admin_import_tools."""
+        # Standard
         import io
 
+        # Third-Party
         from starlette.datastructures import UploadFile
 
         upload = UploadFile(io.BytesIO(b"{invalid json["), filename="tools.json")
@@ -1725,6 +1739,7 @@ class TestAdminBulkImportRoutes:
     @patch.object(ToolService, "register_tool")
     async def test_bulk_import_integrity_error_formatter_guard(self, mock_register_tool, mock_request, mock_db, monkeypatch):
         """Cover the guarded ErrorFormatter.format_database_error exception path."""
+        # Third-Party
         from sqlalchemy.exc import IntegrityError
 
         monkeypatch.setattr(settings, "mcpgateway_bulk_import_enabled", True)
@@ -1911,8 +1926,10 @@ class TestAdminResourceRoutes:
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_validation_conflict_and_rollback_failure(self, mock_register_resource, mock_request, mock_db, monkeypatch):
         """Cover ValidationError/URI conflict handlers and rollback failure suppression in admin_add_resource."""
+        # Third-Party
         from sqlalchemy.exc import InvalidRequestError
 
+        # First-Party
         from mcpgateway.services.resource_service import ResourceURIConflictError
 
         team_service = MagicMock()
@@ -1955,6 +1972,7 @@ class TestAdminResourceRoutes:
     @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_error_handlers(self, mock_update_resource, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_resource error branches (permission, validation, integrity, conflict, generic)."""
+        # First-Party
         from mcpgateway.services.resource_service import ResourceURIConflictError
 
         monkeypatch.setattr(
@@ -2146,6 +2164,7 @@ class TestAdminPromptRoutes:
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_error_handlers(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
         """Cover ValidationError/IntegrityError/name conflict and generic exception paths in admin_add_prompt."""
+        # First-Party
         from mcpgateway.services.prompt_service import PromptNameConflictError
 
         team_service = MagicMock()
@@ -2211,6 +2230,7 @@ class TestAdminPromptRoutes:
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_error_handlers(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_prompt error branches (permission, validation, integrity, conflict, generic)."""
+        # First-Party
         from mcpgateway.services.prompt_service import PromptNameConflictError
 
         team_service = MagicMock()
@@ -2513,8 +2533,10 @@ class TestAdminRootRoutes:
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
     async def test_admin_add_root_error_handlers(self, mock_add_root, mock_request, mock_db):
         """Cover RootServiceError and generic exception branches in admin_add_root."""
+        # Standard
         from urllib.parse import unquote
 
+        # First-Party
         from mcpgateway.services.root_service import RootServiceError
 
         mock_request.scope = {"root_path": ""}
@@ -2535,6 +2557,7 @@ class TestAdminRootRoutes:
 
     async def test_admin_add_root_missing_uri_validation(self, mock_request, mock_db):
         """Cover ValueError branch when uri is missing/blank in admin_add_root."""
+        # Standard
         from urllib.parse import unquote
 
         mock_request.scope = {"root_path": ""}
@@ -2848,9 +2871,7 @@ class TestNormalizeUiHideValues:
         assert result == {"tools", "prompts"}
 
     def test_alias_resolution(self):
-        result = _normalize_ui_hide_values(
-            "catalog,a2a,api_tokens", UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
-        )
+        result = _normalize_ui_hide_values("catalog,a2a,api_tokens", UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
         assert result == {"servers", "agents", "tokens"}
 
     def test_no_aliases_when_none(self):
@@ -2893,9 +2914,7 @@ class TestUIVisibilityConfig:
         request.query_params = {"ui_hide": "prompts,tools,invalid"}
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
 
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_sections", ["teams"], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["teams"], raising=False)
         monkeypatch.setattr(
             settings,
             "mcpgateway_ui_hide_header_items",
@@ -2925,12 +2944,8 @@ class TestUIVisibilityConfig:
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources,catalog"}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_embedded", False, raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
 
@@ -2946,12 +2961,8 @@ class TestUIVisibilityConfig:
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_embedded", False, raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
 
@@ -2966,9 +2977,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -2986,9 +2995,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -3007,9 +3014,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -3065,7 +3070,11 @@ class TestAdminUIRoute:
 
         # Ensure no sections are hidden (env may set MCPGATEWAY_UI_HIDE_SECTIONS)
         # Patch logger to verify logging occurred
-        with patch("mcpgateway.admin.LOGGER.exception") as mock_log, patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources), patch.object(settings, "mcpgateway_ui_hide_sections", []):
+        with (
+            patch("mcpgateway.admin.LOGGER.exception") as mock_log,
+            patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources),
+            patch.object(settings, "mcpgateway_ui_hide_sections", []),
+        ):
             response = await admin_ui(
                 request=mock_request,
                 team_id=None,
@@ -3284,9 +3293,7 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
@@ -3334,9 +3341,7 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
@@ -3383,9 +3388,7 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
@@ -4153,6 +4156,7 @@ class TestA2AAgentManagement:
     @patch.object(A2AAgentService, "set_agent_state")
     async def test_admin_set_a2a_agent_state_error_handlers(self, mock_toggle_status, mock_request, mock_db):
         """Cover exception branches in admin_set_a2a_agent_state."""
+        # Standard
         from urllib.parse import unquote
 
         mock_request.scope = {"root_path": ""}
@@ -4202,6 +4206,7 @@ class TestA2AAgentManagement:
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_error_handlers(self, mock_delete_agent, mock_request, mock_db):
         """Cover exception branches in admin_delete_a2a_agent."""
+        # Standard
         from urllib.parse import unquote
 
         mock_request.scope = {"root_path": ""}
@@ -4905,6 +4910,7 @@ class TestOAuthFunctionality:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_ca_certificate_signed(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
         """Test adding gateway with CA certificate signing enabled."""
+        # Third-Party
         from pydantic import SecretStr
 
         monkeypatch.setattr(settings, "enable_ed25519_signing", True)
@@ -4973,6 +4979,7 @@ class TestOAuthFunctionality:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_ca_certificate_signing_failure(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
         """Test adding gateway with CA certificate signing enabled but signing failing."""
+        # Third-Party
         from pydantic import SecretStr
 
         monkeypatch.setattr(settings, "enable_ed25519_signing", True)
@@ -4991,8 +4998,11 @@ class TestOAuthFunctionality:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_error_handlers(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
         """Cover admin_add_gateway exception branches."""
-        from mcpgateway.services.gateway_service import GatewayDuplicateConflictError, GatewayNameConflictError
+        # Standard
         from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayDuplicateConflictError, GatewayNameConflictError
 
         form_data = FakeForm({"name": "Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
@@ -6843,7 +6853,11 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
     auth_service = MagicMock()
     auth_service.list_users = AsyncMock(
         return_value=SimpleNamespace(
-            data=[SimpleNamespace(email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)],
+            data=[
+                SimpleNamespace(
+                    email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False
+                )
+            ],
             pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
         )
     )
@@ -10500,7 +10514,8 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     # Mock paginated response from list_services
     mock_service = MagicMock()
     mock_service.model_dump = MagicMock(return_value={"id": "svc-1"})
-    from mcpgateway.schemas import PaginationMeta, PaginationLinks
+    # First-Party
+    from mcpgateway.schemas import PaginationLinks, PaginationMeta
 
     mgr.list_services = AsyncMock(
         return_value={
@@ -10519,8 +10534,20 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
-    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
+    metadata.extract_creation_metadata = MagicMock(
+        return_value={
+            "created_by": "user@example.com",
+            "created_from_ip": "1.1.1.1",
+            "created_via": "ui",
+            "created_user_agent": "test/1.0",
+            "import_batch_id": None,
+            "federation_source": None,
+            "version": 1,
+        }
+    )
+    metadata.extract_modification_metadata = MagicMock(
+        return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1}
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10562,6 +10589,7 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
     """Cover admin_update_grpc_service exception translation."""
+    # First-Party
     from mcpgateway import admin as admin_mod
 
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
@@ -10571,7 +10599,9 @@ async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
+    metadata.extract_modification_metadata = MagicMock(
+        return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1}
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10596,6 +10626,7 @@ async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_create_grpc_service_error_handlers(monkeypatch, mock_db):
     """Cover exception translation for admin_create_grpc_service."""
+    # First-Party
     from mcpgateway import admin as admin_mod
 
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
@@ -10605,7 +10636,17 @@ async def test_admin_create_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
+    metadata.extract_creation_metadata = MagicMock(
+        return_value={
+            "created_by": "user@example.com",
+            "created_from_ip": "1.1.1.1",
+            "created_via": "ui",
+            "created_user_agent": "test/1.0",
+            "import_batch_id": None,
+            "federation_source": None,
+            "version": 1,
+        }
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10628,6 +10669,7 @@ async def test_admin_create_grpc_service_error_handlers(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_get_grpc_service_not_found(monkeypatch, mock_db):
     """Cover GrpcServiceNotFoundError translation in admin_get_grpc_service."""
+    # First-Party
     from mcpgateway import admin as admin_mod
 
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
@@ -10645,6 +10687,7 @@ async def test_admin_get_grpc_service_not_found(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_grpc_state_delete_methods_not_found(monkeypatch, mock_db):
     """Cover not-found translation for state/delete/methods endpoints."""
+    # First-Party
     from mcpgateway import admin as admin_mod
 
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
@@ -10672,6 +10715,7 @@ async def test_admin_grpc_state_delete_methods_not_found(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_reflect_grpc_service_error_handlers(monkeypatch, mock_db):
     """Cover not-found and service-error translation in admin_reflect_grpc_service."""
+    # First-Party
     from mcpgateway import admin as admin_mod
 
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
@@ -10900,6 +10944,28 @@ async def test_admin_team_non_members_partial_html_empty_search(monkeypatch, moc
     response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "search for users" in response.body.decode().lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_team_non_members_partial_html_short_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-members endpoint requires at least 2 characters before querying users."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    auth_service = MagicMock()
+    auth_service.list_users_not_in_team = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="a", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert "type at least 2 characters" in response.body.decode().lower()
+    auth_service.list_users_not_in_team.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -11485,6 +11551,7 @@ async def test_change_password_required_handler_reattach_exception(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_change_password_required_handler_cookie_too_large(monkeypatch, mock_db):
+    # First-Party
     from mcpgateway.admin import CookieTooLargeError
 
     monkeypatch.setattr(settings, "email_auth_enabled", True)
@@ -11521,6 +11588,7 @@ async def test_change_password_required_handler_cookie_too_large(monkeypatch, mo
     ],
 )
 async def test_change_password_required_handler_change_password_failures(monkeypatch, mock_db, side_effect, expected_query):
+    # First-Party
     from mcpgateway.services.email_auth_service import AuthenticationError, PasswordValidationError
 
     monkeypatch.setattr(settings, "email_auth_enabled", True)
@@ -11748,6 +11816,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
 @pytest.mark.asyncio
 async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypatch, mock_db):
     """Cover OAuthManager exception path in client-credentials flow."""
+    # Third-Party
     import httpx
 
     class MockClient:
@@ -12014,6 +12083,7 @@ async def test_admin_delete_gateway_success(mock_delete, mock_db):
 @pytest.mark.asyncio
 @patch.object(GatewayService, "delete_gateway")
 async def test_admin_delete_gateway_error_handlers(mock_delete, mock_db):
+    # Standard
     from urllib.parse import unquote
 
     request = MagicMock(spec=Request)
@@ -12092,6 +12162,7 @@ async def test_admin_delete_resource_success_inactive_unchecked_redirect(mock_de
 @pytest.mark.asyncio
 @patch.object(ResourceService, "delete_resource")
 async def test_admin_delete_resource_error_handlers(mock_delete, mock_db):
+    # Standard
     from urllib.parse import unquote
 
     request = MagicMock(spec=Request)
@@ -12154,6 +12225,7 @@ async def test_admin_delete_prompt_success_inactive_checked_redirect(mock_delete
 @pytest.mark.asyncio
 @patch.object(PromptService, "delete_prompt")
 async def test_admin_delete_prompt_error_handlers(mock_delete, mock_db):
+    # Standard
     from urllib.parse import unquote
 
     request = MagicMock(spec=Request)
@@ -12190,6 +12262,7 @@ async def test_admin_delete_prompt_error_inactive_checked_redirect(mock_delete, 
 @pytest.mark.asyncio
 @patch.object(ResourceService, "set_resource_state")
 async def test_admin_set_resource_state_error_handlers(mock_set_state, mock_db):
+    # Standard
     from urllib.parse import unquote
 
     request = MagicMock(spec=Request)
@@ -12239,6 +12312,7 @@ async def test_admin_set_resource_state_error_inactive_checked_redirect(mock_set
 @pytest.mark.asyncio
 @patch.object(PromptService, "set_prompt_state")
 async def test_admin_set_prompt_state_error_handlers(mock_set_state, mock_db):
+    # Standard
     from urllib.parse import unquote
 
     request = MagicMock(spec=Request)
@@ -13032,6 +13106,7 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
 @pytest.mark.asyncio
 async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
     """Cover ValidationError/IntegrityError/generic exception responses."""
+    # First-Party
     from mcpgateway.schemas import TeamCreateRequest
 
     try:
@@ -13292,6 +13367,7 @@ class TestAuthLogin:
     @pytest.mark.asyncio
     async def test_admin_login_handler_password_expired_requires_change(self, monkeypatch, mock_db):
         """Cover password age expiry logic when enforcement is enabled."""
+        # Standard
         from datetime import timedelta
 
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
@@ -13326,6 +13402,7 @@ class TestAuthLogin:
     @pytest.mark.asyncio
     async def test_admin_login_handler_password_change_cookie_too_large(self, monkeypatch, mock_db):
         """Cover CookieTooLargeError handling on the password-change redirect path."""
+        # First-Party
         from mcpgateway.admin import CookieTooLargeError
 
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
@@ -13352,6 +13429,7 @@ class TestAuthLogin:
     @pytest.mark.asyncio
     async def test_admin_login_handler_cookie_too_large(self, monkeypatch, mock_db):
         """Cover CookieTooLargeError handling on the normal login path."""
+        # First-Party
         from mcpgateway.admin import CookieTooLargeError
 
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
@@ -14598,6 +14676,7 @@ class TestMaintenanceMisc:
     @pytest.mark.asyncio
     async def test_admin_import_preview_import_validation_error_returns_400(self, monkeypatch, allow_permission, mock_db):
         """Cover ImportValidationError handler in admin_import_preview."""
+        # First-Party
         from mcpgateway.services.import_service import ImportValidationError
 
         monkeypatch.setattr(
@@ -14703,6 +14782,7 @@ class TestMaintenanceMisc:
     @pytest.mark.asyncio
     async def test_admin_events_streams_event_and_cleans_up(self, monkeypatch, allow_permission, mock_db):
         """Execute the SSE generator to cover stream_to_queue happy path and cancellation."""
+        # Standard
         import asyncio
 
         request = MagicMock(spec=Request)
@@ -14755,6 +14835,7 @@ class TestMaintenanceMisc:
     @pytest.mark.asyncio
     async def test_admin_events_keepalive_timeout(self, monkeypatch, allow_permission, mock_db):
         """Cover keepalive branch when the queue read times out."""
+        # Standard
         import asyncio
 
         request = MagicMock(spec=Request)
@@ -14784,6 +14865,7 @@ class TestMaintenanceMisc:
     @pytest.mark.asyncio
     async def test_admin_events_wait_for_cancelled(self, monkeypatch, allow_permission, mock_db):
         """Cover CancelledError handling around the wait_for() call."""
+        # Standard
         import asyncio
 
         request = MagicMock(spec=Request)
@@ -15914,6 +15996,7 @@ class TestAdjustPaginationForConversionFailures:
     """Tests for _adjust_pagination_for_conversion_failures."""
 
     def _make_pagination(self, total_items: int = 100, page: int = 1, per_page: int = 20) -> PaginationMeta:
+        # Standard
         import math
 
         total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0

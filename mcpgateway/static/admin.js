@@ -31954,6 +31954,117 @@ window.llmApiInfoApp = llmApiInfoApp;
 const memberSearchTimers = {};
 const nonMemberSearchTimers = {};
 
+// Selection caches to preserve state across searches
+// nonMemberSelectionsCache: teamId -> {email: role}
+const nonMemberSelectionsCache = {};
+// memberOverridesCache: teamId -> {email: {checked: bool, role: string}}
+const memberOverridesCache = {};
+
+function captureNonMemberSelections(teamId) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container) return;
+    if (!nonMemberSelectionsCache[teamId]) {
+        nonMemberSelectionsCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.checked && !cb.getAttribute("data-auto-check")) {
+            nonMemberSelectionsCache[teamId][email] = roleSelect
+                ? roleSelect.value
+                : "member";
+        } else if (cb && !cb.checked && !cb.getAttribute("data-auto-check")) {
+            delete nonMemberSelectionsCache[teamId][email];
+        }
+    });
+}
+
+function restoreNonMemberSelections(teamId) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container || !nonMemberSelectionsCache[teamId]) return;
+    const cache = nonMemberSelectionsCache[teamId];
+    const visibleEmails = new Set();
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        visibleEmails.add(email);
+        if (cache[email] !== undefined) {
+            const cb = item.querySelector('input[name="associatedUsers"]');
+            const roleSelect = item.querySelector(".role-select");
+            if (cb) cb.checked = true;
+            if (roleSelect) roleSelect.value = cache[email];
+        }
+    });
+    container
+        .querySelectorAll(".cached-selection")
+        .forEach((el) => el.remove());
+    for (const [email, role] of Object.entries(cache)) {
+        if (!visibleEmails.has(email)) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "cached-selection hidden";
+            const cbHidden = document.createElement("input");
+            cbHidden.type = "checkbox";
+            cbHidden.name = "associatedUsers";
+            cbHidden.value = email;
+            cbHidden.checked = true;
+            cbHidden.className = "hidden";
+            const roleHidden = document.createElement("input");
+            roleHidden.type = "hidden";
+            roleHidden.name = "role_" + encodeURIComponent(email);
+            roleHidden.value = role;
+            wrapper.appendChild(cbHidden);
+            wrapper.appendChild(roleHidden);
+            container.appendChild(wrapper);
+        }
+    }
+}
+
+function captureMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container) return;
+    if (!memberOverridesCache[teamId]) {
+        memberOverridesCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.getAttribute("data-auto-check") === "true") {
+            if (!cb.checked || (roleSelect && roleSelect.value)) {
+                memberOverridesCache[teamId][email] = {
+                    checked: cb.checked,
+                    role: roleSelect ? roleSelect.value : "member",
+                };
+            }
+        }
+    });
+}
+
+function restoreMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container || !memberOverridesCache[teamId]) return;
+    const cache = memberOverridesCache[teamId];
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email || !cache[email]) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb) cb.checked = cache[email].checked;
+        if (roleSelect) roleSelect.value = cache[email].role;
+    });
+}
+
 function debouncedMemberSearch(teamId, searchTerm, delay = 300) {
     if (memberSearchTimers[teamId]) {
         clearTimeout(memberSearchTimers[teamId]);
@@ -31982,6 +32093,7 @@ async function serverSideMemberSearch(teamId, searchTerm) {
     if (!container) {
         return;
     }
+    captureMemberOverrides(teamId);
     const perPage =
         container.dataset.perPage ||
         container.getAttribute("data-per-page") ||
@@ -31999,6 +32111,7 @@ async function serverSideMemberSearch(teamId, searchTerm) {
             if (typeof htmx !== "undefined") {
                 htmx.process(container);
             }
+            restoreMemberOverrides(teamId);
         }
     } catch (error) {
         console.error("Error searching members:", error);
@@ -32017,10 +32130,13 @@ async function serverSideNonMemberSearch(teamId, searchTerm) {
         return;
     }
 
-    // Require a search term - do not load all non-members
-    if (!searchTerm || searchTerm.trim() === "") {
+    captureNonMemberSelections(teamId);
+
+    // Require at least 2 characters for non-member search
+    if (!searchTerm || searchTerm.trim().length < 2) {
         container.innerHTML =
-            '<div class="text-center py-4 text-gray-500 dark:text-gray-400">Search for users by name or email to add them to this team.</div>';
+            '<div class="text-center py-4 text-gray-500 dark:text-gray-400">Type at least 2 characters to search for users.</div>';
+        restoreNonMemberSelections(teamId);
         return;
     }
 
@@ -32033,6 +32149,7 @@ async function serverSideNonMemberSearch(teamId, searchTerm) {
             if (typeof htmx !== "undefined") {
                 htmx.process(container);
             }
+            restoreNonMemberSelections(teamId);
         }
     } catch (error) {
         console.error("Error searching non-members:", error);
