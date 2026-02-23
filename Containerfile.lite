@@ -76,7 +76,8 @@ FROM rust-builder-base AS rust-builder
 ###############################################################################
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/nodejs-20-minimal:1-77 AS node-builder
+# Use official Red Hat UBI10 Node.js 24 image
+FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS node-builder
 
 WORKDIR /build
 
@@ -88,7 +89,7 @@ COPY mcpgateway/templates/ ./mcpgateway/templates/
 COPY mcpgateway/static/ ./mcpgateway/static/
 
 # Install dependencies and build CSS
-RUN npm ci --omit=dev && \
+RUN npm ci && \
     npm run build:css && \
     echo "✅ Tailwind CSS built successfully"
 
