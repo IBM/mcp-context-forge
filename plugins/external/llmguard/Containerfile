@@ -60,6 +60,7 @@ ENTRYPOINT ["sh", "-c", "${HOME}/run-server.sh"]
 
 FROM builder as testing
 
-COPY tests .
+# do NOT copy tests into the root.  It causes the test py files to be included in coverage
+# COPY tests .
 RUN python3 -m uv pip install -e .[dev]
 ENTRYPOINT ["sh", "-c", "pytest tests"]
