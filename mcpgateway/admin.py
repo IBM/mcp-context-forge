@@ -6701,8 +6701,9 @@ async def admin_team_non_members_partial_html(
 ) -> Response:
     """Return paginated non-members for two-section layout (bottom section).
 
-    Non-members are only returned when a search term is provided.
-    Without a search term, returns an empty placeholder prompting the user to search.
+    Non-members are only returned when a search term with at least 2 characters
+    is provided. Without a search term, returns an empty placeholder prompting
+    the user to search.
 
     Args:
         team_id: Team identifier.
@@ -6745,6 +6746,11 @@ async def admin_team_non_members_partial_html(
         if not search_term:
             return HTMLResponse(
                 content='<div class="text-center py-4 text-gray-500 dark:text-gray-400">Search for users by name or email to add them to this team.</div>',
+                status_code=200,
+            )
+        if len(search_term) < 2:
+            return HTMLResponse(
+                content='<div class="text-center py-4 text-gray-500 dark:text-gray-400">Type at least 2 characters to search for users.</div>',
                 status_code=200,
             )
 
