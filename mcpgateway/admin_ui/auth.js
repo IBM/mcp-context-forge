@@ -367,7 +367,7 @@ export async function fetchToolsForGateway(gatewayId, gatewayName) {
   try {
     const response = await fetch(
       `${window.ROOT_PATH}/oauth/fetch-tools/${gatewayId}`,
-      { method: "POST" },
+      { method: "POST", credentials: "include" },
     );
 
     const result = await response.json();
