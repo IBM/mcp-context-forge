@@ -193,8 +193,7 @@ class TestLogin:
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)
 
-            # The 401 HTTPException is caught by except Exception and becomes 500
-            assert exc_info.value.status_code == 500
+            assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_login_value_error(self, mock_request, mock_db):

@@ -495,6 +495,7 @@ class SSOService:
             return
 
         if not isinstance(issuer, str) or not issuer.strip():
+            logger.warning("SSO provider has blank/empty issuer while SSO_ISSUERS allowlist is configured; issuer enforcement skipped.")
             return
 
         normalized_candidate = self._normalize_issuer_url(issuer)

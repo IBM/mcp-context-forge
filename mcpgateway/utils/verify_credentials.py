@@ -93,7 +93,9 @@ def is_proxy_auth_trust_active(settings_obj: Any | None = None) -> bool:
     if getattr(current_settings, "trust_proxy_auth_dangerously", False) is True:
         return True
 
-    logger.warning("Ignoring trusted proxy auth because TRUST_PROXY_AUTH_DANGEROUSLY is false " "while MCP client auth is disabled.")
+    if not getattr(is_proxy_auth_trust_active, "_warned", False):
+        logger.warning("Ignoring trusted proxy auth because TRUST_PROXY_AUTH_DANGEROUSLY is false while MCP client auth is disabled.")
+        is_proxy_auth_trust_active._warned = True  # type: ignore[attr-defined]
     return False
 
 

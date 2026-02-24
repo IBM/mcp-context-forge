@@ -569,7 +569,7 @@ class TokenScopingMiddleware:
             return True, None
         finally:
             try:
-                db.commit()
+                db.rollback()
             finally:
                 db.close()
 

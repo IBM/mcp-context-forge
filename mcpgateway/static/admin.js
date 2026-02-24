@@ -8,6 +8,8 @@ try {
     ADMIN_DEBUG_LOGGING_ENABLED = false;
 }
 
+window._originalConsoleLog = console.log;
+window._originalConsoleDebug = console.debug;
 if (!ADMIN_DEBUG_LOGGING_ENABLED) {
     console.log = () => {};
     console.debug = () => {};

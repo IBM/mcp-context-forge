@@ -300,6 +300,8 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 "auth_method": "anonymous",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
+                "plugin_context_table": getattr(request.state, "plugin_context_table", None),
+                "plugin_global_context": getattr(request.state, "plugin_global_context", None),
             }
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")

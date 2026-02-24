@@ -83,7 +83,7 @@ def test_check_usage_limits_hourly_exceeded():
 
     assert allowed is False
     assert reason == "Hourly request limit exceeded"
-    mock_db.commit.assert_called_once()
+    mock_db.rollback.assert_called_once()
     mock_db.close.assert_called_once()
 
 
@@ -142,7 +142,7 @@ def test_check_usage_limits_db_failure_fails_open():
 
     assert allowed is True
     assert reason is None
-    mock_db.commit.assert_called_once()
+    mock_db.rollback.assert_called_once()
     mock_db.close.assert_called_once()
 
 
