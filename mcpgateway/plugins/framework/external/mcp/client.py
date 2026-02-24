@@ -66,6 +66,8 @@ class ExternalPlugin(Plugin):
         self._get_session_id: Optional[Callable[[], str | None]] = None
         self._session_id: Optional[str] = None
         self._http_client_factory: Optional[Callable[..., httpx.AsyncClient]] = None
+        self._reconnect_attempts: int = 3  # Will be loaded from config
+        self._reconnect_delay: float = 0.1  # Will be loaded from config
 
     async def initialize(self) -> None:
         """Initialize the plugin's connection to the MCP server.
@@ -76,6 +78,11 @@ class ExternalPlugin(Plugin):
 
         if not self._config.mcp:
             raise PluginError(error=PluginErrorModel(message="The mcp section must be defined for external plugin", plugin_name=self.name))
+        
+        # Load reconnect configuration
+        self._reconnect_attempts = self._config.mcp.reconnect_attempts
+        self._reconnect_delay = self._config.mcp.reconnect_delay
+        
         if self._config.mcp.proto == TransportType.STDIO:
             if not (self._config.mcp.script or self._config.mcp.cmd):
                 raise PluginError(error=PluginErrorModel(message="STDIO transport requires script or cmd", plugin_name=self.name))
@@ -341,6 +348,70 @@ class ExternalPlugin(Plugin):
                 logger.info(f"Retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
+    async def _cleanup_session(self) -> None:
+        """Clean up existing session without full shutdown.
+        
+        Closes exit stacks and resets session state to prepare for reconnection.
+        """
+        if self._exit_stack:
+            await self._exit_stack.aclose()
+            self._exit_stack = AsyncExitStack()
+        if self._stdio_exit_stack:
+            await self._stdio_exit_stack.aclose()
+            self._stdio_exit_stack = AsyncExitStack()
+        self._session = None
+        self._http = None
+        self._write = None
+        self._stdio = None
+        self._get_session_id = None
+        self._session_id = None
+
+    async def _reconnect_session(self) -> None:
+        """Tear down old session and reconnect to MCP server.
+        
+        Implements retry logic with exponential backoff, matching the pattern
+        used in the Unix socket client.
+        
+        Raises:
+            PluginError: If reconnection fails after all attempts.
+        """
+        logger.info("Attempting to reconnect to MCP server: %s", self.name)
+        
+        # Clean up existing session
+        await self._cleanup_session()
+        
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self._reconnect_attempts + 1):
+            try:
+                logger.debug("Reconnection attempt %d/%d to %s",
+                            attempt, self._reconnect_attempts, self.name)
+                
+                # Re-run connection based on transport type
+                if self._config.mcp.proto == TransportType.STREAMABLEHTTP:
+                    await self.__connect_to_http_server(self._config.mcp.url)
+                elif self._config.mcp.proto == TransportType.STDIO:
+                    await self.__connect_to_stdio_server(
+                        self._config.mcp.script,
+                        self._config.mcp.cmd,
+                        self._config.mcp.env,
+                        self._config.mcp.cwd
+                    )
+                
+                logger.info("Reconnected to MCP server on attempt %d: %s", attempt, self.name)
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < self._reconnect_attempts:
+                    delay = self._reconnect_delay * attempt  # Exponential backoff
+                    logger.warning("Reconnection attempt %d failed: %s. Retrying in %.2fs...",
+                                  attempt, e, delay)
+                    await asyncio.sleep(delay)
+        
+        raise PluginError(error=PluginErrorModel(
+            message=f"Failed to reconnect after {self._reconnect_attempts} attempts: {last_error}",
+            plugin_name=self.name
+        ))
+
     async def invoke_hook(self, hook_type: str, payload: PluginPayload, context: PluginContext) -> PluginResult:
         """Invoke an external plugin hook using the MCP protocol.
 
@@ -364,7 +435,8 @@ class ExternalPlugin(Plugin):
         if not self._session:
             raise PluginError(error=PluginErrorModel(message="Plugin session not initialized", plugin_name=self.name))
 
-        try:
+        # Helper to execute the actual call
+        async def _execute_call():
             result = await self._session.call_tool(INVOKE_HOOK, {HOOK_TYPE: hook_type, PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
             for content in result.content:
                 if not isinstance(content, TextContent):
@@ -383,13 +455,40 @@ class ExternalPlugin(Plugin):
                 if ERROR in res:
                     error = PluginErrorModel.model_validate(res[ERROR])
                     raise PluginError(error)
+            raise PluginError(error=PluginErrorModel(message=f"Received invalid response. Result = {result}", plugin_name=self.name))
+
+        # Third-Party
+        from mcp import McpError  # pylint: disable=import-outside-toplevel
+
+        try:
+            return await _execute_call()
+        except McpError as e:
+            # Always try reconnection for MCP protocol errors
+            logger.warning("MCP error for plugin %s: %s", self.name, e)
+            try:
+                await self._reconnect_session()
+                # Retry the request once after reconnection
+                return await _execute_call()
+            except Exception as reconn_err:
+                logger.exception("Reconnection failed: %s", reconn_err)
+                raise PluginError(error=convert_exception_to_error(e, plugin_name=self.name))
         except PluginError as pe:
+            # Check for session termination in PluginError messages
+            error_msg = str(pe.error.message).lower() if pe.error.message else ""
+            if "session" in error_msg and "terminated" in error_msg:
+                logger.warning("Session terminated for plugin %s, attempting reconnection...", self.name)
+                try:
+                    await self._reconnect_session()
+                    # Retry the request once after reconnection
+                    return await _execute_call()
+                except Exception as reconn_err:
+                    logger.exception("Reconnection failed: %s", reconn_err)
+                    raise
             logger.exception(pe)
             raise
         except Exception as e:
             logger.exception(e)
             raise PluginError(error=convert_exception_to_error(e, plugin_name=self.name))
-        raise PluginError(error=PluginErrorModel(message=f"Received invalid response. Result = {result}", plugin_name=self.name))
 
     async def __get_plugin_config(self) -> PluginConfig | None:
         """Retrieve plugin configuration for the current plugin on the remote MCP server.
