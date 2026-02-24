@@ -21613,7 +21613,7 @@ function showTokenCreatedModal(tokenData) {
                             id="new-token-value"
                         />
                         <button
-                            onclick="copyToClipboard('new-token-value')"
+                            data-copy-token-target="new-token-value"
                             class="px-3 py-2 bg-indigo-600 text-white text-sm rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                             Copy
@@ -21650,6 +21650,20 @@ function showTokenCreatedModal(tokenData) {
             });
         });
 
+    // Bind copy action without relying on inline handlers
+    const copyTokenButton = modal.querySelector("[data-copy-token-target]");
+    if (copyTokenButton) {
+        copyTokenButton.addEventListener("click", function (event) {
+            event.preventDefault();
+            const elementId = event.currentTarget.getAttribute(
+                "data-copy-token-target",
+            );
+            if (elementId) {
+                void copyToClipboard(elementId);
+            }
+        });
+    }
+
     // Focus the token input for easy selection
     const tokenInput = modal.querySelector("#new-token-value");
     tokenInput.focus();
@@ -21659,13 +21673,65 @@ function showTokenCreatedModal(tokenData) {
 /**
  * Copy text to clipboard
  */
-function copyToClipboard(elementId) {
+async function copyToClipboard(elementId) {
     const element = document.getElementById(elementId);
-    if (element) {
-        element.select();
-        document.execCommand("copy");
-        showNotification("Token copied to clipboard", "success");
+    if (!element) {
+        return;
     }
+
+    const textToCopy =
+        typeof element.value === "string"
+            ? element.value
+            : (element.textContent || "").trim();
+
+    const fallbackCopy = () => {
+        if (typeof element.focus === "function") {
+            element.focus();
+        }
+        if (typeof element.select === "function") {
+            element.select();
+        }
+        if (typeof element.setSelectionRange === "function") {
+            element.setSelectionRange(0, textToCopy.length);
+        }
+
+        if (typeof document.execCommand !== "function") {
+            return false;
+        }
+        try {
+            return document.execCommand("copy");
+        } catch (error) {
+            console.warn("Fallback copy failed", error);
+            return false;
+        }
+    };
+
+    if (!textToCopy) {
+        showNotification("No token available to copy", "error");
+        return;
+    }
+
+    const hasClipboardApi =
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function";
+
+    if (hasClipboardApi) {
+        try {
+            await navigator.clipboard.writeText(textToCopy);
+            showNotification("Token copied to clipboard", "success");
+            return;
+        } catch (error) {
+            console.warn("Clipboard API copy failed, trying fallback", error);
+        }
+    }
+
+    if (fallbackCopy()) {
+        showNotification("Token copied to clipboard", "success");
+        return;
+    }
+
+    showNotification("Failed to copy token. Please copy it manually.", "error");
 }
 
 /**
