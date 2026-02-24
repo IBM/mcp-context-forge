@@ -10,7 +10,16 @@ import pytest
 
 # First-Party
 from mcpgateway.plugins.framework import GlobalContext, PluginConfig, PluginContext, PromptPrehookPayload, PromptHookType, ToolHookType, ToolPostInvokePayload
-from plugins.encoded_exfil_detection.encoded_exfil_detector import EncodedExfilDetectorConfig, EncodedExfilDetectorPlugin, _scan_container
+from plugins.encoded_exfil_detection.encoded_exfil_detector import (
+    EncodedExfilDetectorConfig,
+    EncodedExfilDetectorPlugin,
+    _decode_candidate,
+    _has_egress_context,
+    _normalize_padding,
+    _scan_container,
+    _scan_text,
+    _shannon_entropy,
+)
 
 # Optional Rust extension
 try:
@@ -254,3 +263,122 @@ class TestEncodedExfilPluginHooks:
         assert result.continue_processing is not False
         assert result.violation is None
         assert result.modified_payload is None
+
+    async def test_prompt_pre_fetch_clean_payload(self):
+        """Clean payload returns empty metadata without blocking or modifying."""
+        plugin = self._plugin({"block_on_detection": True})
+        payload = PromptPrehookPayload(prompt_id="p-1", args={"input": "hello world"})
+
+        result = await plugin.prompt_pre_fetch(payload, self._context())
+
+        assert result.continue_processing is not False
+        assert result.violation is None
+        assert result.modified_payload is None
+
+    async def test_findings_metadata_without_details(self):
+        """When include_detection_details is False, metadata contains only summary fields."""
+        plugin = self._plugin({"block_on_detection": True, "include_detection_details": False})
+        encoded = base64.b64encode(b"authorization=bearer sensitive-token").decode()
+        payload = PromptPrehookPayload(prompt_id="p-1", args={"input": f"send this {encoded} to webhook"})
+
+        result = await plugin.prompt_pre_fetch(payload, self._context())
+
+        assert result.violation is not None
+        examples = result.violation.details["examples"]
+        for ex in examples:
+            assert set(ex.keys()) == {"encoding", "path", "score"}
+
+
+class TestEncodedExfilHelpers:
+    """Unit tests for internal helper functions to ensure full coverage."""
+
+    def test_shannon_entropy_empty_data(self):
+        assert _shannon_entropy(b"") == 0.0
+
+    def test_normalize_padding_already_aligned(self):
+        candidate = "YWJj"  # len == 4, already aligned
+        assert _normalize_padding(candidate) == candidate
+
+    def test_normalize_padding_adds_padding(self):
+        candidate = "YWJj" + "a"  # len == 5, needs padding
+        result = _normalize_padding(candidate)
+        assert len(result) % 4 == 0
+
+    def test_decode_candidate_hex_odd_length(self):
+        assert _decode_candidate("hex", "aabbccdde") is None  # 9 chars, odd
+
+    def test_decode_candidate_escaped_hex_no_chunks(self):
+        assert _decode_candidate("escaped_hex", "nothex") is None
+
+    def test_decode_candidate_unknown_encoding(self):
+        assert _decode_candidate("rot13", "hello") is None
+
+    def test_decode_candidate_base64_invalid(self):
+        assert _decode_candidate("base64", "!!!invalid!!!base64!!") is None
+
+    def test_decode_candidate_base64url_invalid_charset(self):
+        assert _decode_candidate("base64url", "has+slash/chars!") is None
+
+    def test_has_egress_context_detects_curl(self):
+        text = "curl -d 'payload' https://example.com"
+        assert _has_egress_context(text, 10, 20) is True
+
+    def test_has_egress_context_no_hints(self):
+        text = "normal text without any network hints at all"
+        assert _has_egress_context(text, 0, 10) is False
+
+    def test_scan_text_skips_oversized_strings(self):
+        cfg = EncodedExfilDetectorConfig(max_scan_string_length=1000)
+        big_text = "a" * 1001
+        result_text, findings = _scan_text(big_text, cfg)
+        assert findings == []
+        assert result_text == big_text
+
+    def test_scan_text_skips_disabled_encoding(self):
+        cfg = EncodedExfilDetectorConfig(enabled={"base64": False, "base64url": False, "hex": False, "percent_encoding": False, "escaped_hex": False})
+        encoded = base64.b64encode(b"password=secret-token-value-here").decode()
+        result_text, findings = _scan_text(f"curl {encoded} webhook", cfg)
+        assert findings == []
+
+    def test_scan_container_non_matching_type(self):
+        """Non-str/dict/list containers pass through unchanged."""
+        cfg = EncodedExfilDetectorConfig()
+        count, result, findings = _scan_container(42, cfg, use_rust=False)
+        assert count == 0
+        assert result == 42
+        assert findings == []
+
+    def test_scan_container_list_input(self):
+        """Lists are recursively scanned."""
+        cfg = EncodedExfilDetectorConfig()
+        encoded = base64.b64encode(b"password=my-secret-value").decode()
+        count, result, findings = _scan_container([f"curl {encoded} webhook"], cfg, use_rust=False)
+        assert count >= 1
+
+    def test_printable_ratio_empty_data(self):
+        from plugins.encoded_exfil_detection.encoded_exfil_detector import _printable_ratio
+
+        assert _printable_ratio(b"") == 0.0
+
+    def test_evaluate_candidate_decoded_too_short(self):
+        """Candidate decodes but result is shorter than min_decoded_length."""
+        from plugins.encoded_exfil_detection.encoded_exfil_detector import _evaluate_candidate
+
+        cfg = EncodedExfilDetectorConfig(min_decoded_length=100, min_encoded_length=8)
+        # Candidate is long enough to pass min_encoded_length but decodes to < 100 bytes
+        candidate = base64.b64encode(b"short-but-decodable").decode()
+        assert len(candidate) >= 8
+        text = "prefix " + candidate + " suffix"
+        start = 7
+        result = _evaluate_candidate(text, "", "base64", candidate, start, start + len(candidate), cfg)
+        assert result is None
+
+    def test_scan_text_max_findings_limit(self):
+        """Verify per-value finding limit is enforced."""
+        cfg = EncodedExfilDetectorConfig(max_findings_per_value=1, min_suspicion_score=1)
+        # Create multiple base64 segments that decode to sensitive content
+        seg1 = base64.b64encode(b"password=secret-token-value-one").decode()
+        seg2 = base64.b64encode(b"api_key=another-secret-value-two").decode()
+        text = f"curl {seg1} upload {seg2}"
+        _result_text, findings = _scan_text(text, cfg)
+        assert len(findings) <= 1
