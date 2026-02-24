@@ -89,7 +89,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
@@ -138,6 +138,145 @@ logger = logging_service.get_logger(__name__)
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
+
+_ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
+_TOOL_HEADER_DATA_KEY = "data"
+_TOOL_HEADER_LEGACY_VALUE_KEY = "value"
+_SENSITIVE_TOOL_HEADER_PATTERNS = (
+    re.compile(r"^authorization$", re.IGNORECASE),
+    re.compile(r"^proxy-authorization$", re.IGNORECASE),
+    re.compile(r"^x-api-key$", re.IGNORECASE),
+    re.compile(r"^api-key$", re.IGNORECASE),
+    re.compile(r"^apikey$", re.IGNORECASE),
+    # Keep broad-enough auth matching while avoiding operational noise from
+    # non-secret tracing/idempotency headers (e.g. X-Correlation-Token).
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+)
+
+
+def _is_sensitive_tool_header_name(name: str) -> bool:
+    """Return whether a tool header name should be treated as sensitive.
+
+    Args:
+        name: Header name to evaluate.
+
+    Returns:
+        ``True`` when header value should be protected.
+    """
+    normalized_name = str(name).strip().lower()
+    return any(pattern.match(normalized_name) for pattern in _SENSITIVE_TOOL_HEADER_PATTERNS)
+
+
+def _is_encrypted_tool_header_value(value: Any) -> bool:
+    """Return whether a header value uses encrypted envelope format.
+
+    Args:
+        value: Header value candidate.
+
+    Returns:
+        ``True`` when value is an encrypted envelope mapping.
+    """
+    return isinstance(value, dict) and isinstance(value.get(_ENCRYPTED_TOOL_HEADER_VALUE_KEY), str)
+
+
+def _encrypt_tool_header_value(value: Any, existing_value: Any = None) -> Any:
+    """Encrypt a single sensitive tool header value.
+
+    Args:
+        value: Incoming header value from payload.
+        existing_value: Existing stored value used for masked-value merges.
+
+    Returns:
+        Encrypted envelope, preserved existing value, or ``None`` when cleared.
+    """
+    if value is None or value == "":
+        return value
+
+    if value == settings.masked_auth_value:
+        if _is_encrypted_tool_header_value(existing_value):
+            return existing_value
+        if existing_value in (None, ""):
+            return None
+        return _encrypt_tool_header_value(existing_value, None)
+
+    if _is_encrypted_tool_header_value(value):
+        return value
+
+    encrypted = encode_auth({_TOOL_HEADER_DATA_KEY: str(value)})
+    return {_ENCRYPTED_TOOL_HEADER_VALUE_KEY: encrypted}
+
+
+def _protect_tool_headers_for_storage(headers: Optional[Dict[str, Any]], existing_headers: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Encrypt sensitive tool header values before persistence.
+
+    Args:
+        headers: Incoming tool headers payload.
+        existing_headers: Existing stored headers used for masked-value merges.
+
+    Returns:
+        Header mapping with sensitive values protected for storage, or ``None``.
+    """
+    if headers is None:
+        return None
+    if not isinstance(headers, dict):
+        return None
+
+    existing_by_lower: Dict[str, Any] = {}
+    if isinstance(existing_headers, dict):
+        for key, existing_value in existing_headers.items():
+            existing_by_lower[str(key).strip().lower()] = existing_value
+
+    protected: Dict[str, Any] = {}
+    for key, value in headers.items():
+        if _is_sensitive_tool_header_name(key):
+            existing_value = existing_by_lower.get(str(key).strip().lower())
+            protected[key] = _encrypt_tool_header_value(value, existing_value)
+        else:
+            protected[key] = value
+    return protected
+
+
+def _decrypt_tool_header_value(value: Any) -> Any:
+    """Decrypt a single tool header envelope when possible.
+
+    Args:
+        value: Stored header value, possibly encrypted.
+
+    Returns:
+        Decrypted plain value when envelope is valid, else original value.
+    """
+    if not _is_encrypted_tool_header_value(value):
+        return value
+
+    encrypted_payload = value.get(_ENCRYPTED_TOOL_HEADER_VALUE_KEY)
+    if not encrypted_payload:
+        return value
+
+    try:
+        decoded = decode_auth(encrypted_payload)
+        if isinstance(decoded, dict):
+            if _TOOL_HEADER_DATA_KEY in decoded:
+                return decoded[_TOOL_HEADER_DATA_KEY]
+            if _TOOL_HEADER_LEGACY_VALUE_KEY in decoded:
+                return decoded[_TOOL_HEADER_LEGACY_VALUE_KEY]
+    except Exception as exc:
+        logger.warning("Failed to decrypt tool header value: %s", exc)
+    return value
+
+
+def _decrypt_tool_headers_for_runtime(headers: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Decrypt tool header map for runtime outbound requests.
+
+    Args:
+        headers: Stored header mapping.
+
+    Returns:
+        Header mapping with encrypted values decrypted where possible.
+    """
+    if not isinstance(headers, dict):
+        return {}
+    return {key: _decrypt_tool_header_value(value) for key, value in headers.items()}
 
 
 @lru_cache(maxsize=256)
@@ -776,6 +915,8 @@ class ToolService:
         # Safe default: if no requester context is provided, mask everything.
         headers = tool_dict.get("headers")
         if headers:
+            tool_dict["headers"] = _decrypt_tool_headers_for_runtime(headers)
+            headers = tool_dict["headers"]
             can_view = requesting_user_is_admin
             if not can_view and getattr(tool, "owner_email", None) == requesting_user_email:
                 can_view = True
@@ -1118,7 +1259,7 @@ class ToolService:
                 original_description=tool.description,
                 integration_type=tool.integration_type,
                 request_type=tool.request_type,
-                headers=tool.headers,
+                headers=_protect_tool_headers_for_storage(tool.headers),
                 input_schema=tool.input_schema,
                 output_schema=tool.output_schema,
                 annotations=tool.annotations,
@@ -1558,7 +1699,7 @@ class ToolService:
                         existing_tool.original_description = tool.description
                     existing_tool.integration_type = tool.integration_type
                     existing_tool.request_type = tool.request_type
-                    existing_tool.headers = tool.headers
+                    existing_tool.headers = _protect_tool_headers_for_storage(tool.headers, existing_headers=existing_tool.headers)
                     existing_tool.input_schema = tool.input_schema
                     existing_tool.output_schema = tool.output_schema
                     existing_tool.annotations = tool.annotations
@@ -1678,7 +1819,7 @@ class ToolService:
             original_description=tool.description,
             integration_type=tool.integration_type,
             request_type=tool.request_type,
-            headers=tool.headers,
+            headers=_protect_tool_headers_for_storage(tool.headers),
             input_schema=tool.input_schema,
             output_schema=tool.output_schema,
             annotations=tool.annotations,
@@ -2881,7 +3022,7 @@ class ToolService:
         tool_url = tool_payload.get("url")
         tool_integration_type = tool_payload.get("integration_type")
         tool_request_type = tool_payload.get("request_type")
-        tool_headers = dict(tool_payload.get("headers") or {})
+        tool_headers = _decrypt_tool_headers_for_runtime(tool_payload.get("headers") or {})
         tool_auth_type = tool_payload.get("auth_type")
         tool_auth_value = tool_payload.get("auth_value")
         tool_jsonpath_filter = tool_payload.get("jsonpath_filter")
@@ -4076,7 +4217,7 @@ class ToolService:
             if tool_update.request_type is not None:
                 tool.request_type = tool_update.request_type
             if tool_update.headers is not None:
-                tool.headers = tool_update.headers
+                tool.headers = _protect_tool_headers_for_storage(tool_update.headers, existing_headers=tool.headers)
             if tool_update.input_schema is not None:
                 tool.input_schema = tool_update.input_schema
             if tool_update.output_schema is not None:

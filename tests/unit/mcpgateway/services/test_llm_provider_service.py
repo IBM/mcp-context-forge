@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import LLMProviderType
 from mcpgateway.llm_schemas import (
     GatewayModelInfo,
@@ -23,11 +24,17 @@ from mcpgateway.llm_schemas import (
     LLMProviderUpdate,
 )
 from mcpgateway.services.llm_provider_service import (
+    _encrypt_provider_config_secret,
+    _mask_provider_config_fragment,
+    _protect_provider_config_fragment,
+    decrypt_provider_config_for_runtime,
     LLMModelConflictError,
     LLMModelNotFoundError,
     LLMProviderNameConflictError,
     LLMProviderNotFoundError,
     LLMProviderService,
+    protect_provider_config_for_storage,
+    sanitize_provider_config_for_response,
 )
 
 
@@ -67,6 +74,24 @@ def test_create_provider_success(service, db, monkeypatch: pytest.MonkeyPatch):
     db.add.assert_called_once()
     db.commit.assert_called_once()
     db.refresh.assert_called_once()
+
+
+def test_create_provider_encrypts_sensitive_config(service, db, monkeypatch: pytest.MonkeyPatch):
+    db.execute.return_value = _mock_execute_scalar(None)
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.encode_auth", lambda data: f"encoded:{data.get('data', data.get('value'))}")
+
+    provider_data = LLMProviderCreate(
+        name="Provider",
+        provider_type=LLMProviderType.OPENAI,
+        config={"api_key": "cfg-secret", "region": "us-east-1"},
+        enabled=True,
+    )
+
+    provider = service.create_provider(db, provider_data, created_by="user")
+
+    assert isinstance(provider.config["api_key"], dict)
+    assert "_mcpgateway_encrypted_value_v1" in provider.config["api_key"]
+    assert provider.config["region"] == "us-east-1"
 
 
 def test_create_provider_conflict(service, db):
@@ -164,6 +189,33 @@ def test_update_provider_fields(service, db, monkeypatch: pytest.MonkeyPatch):
     assert updated.plugin_ids == ["plugin-1"]
     db.commit.assert_called_once()
     db.refresh.assert_called_once()
+
+
+def test_update_provider_preserves_masked_sensitive_config(service, db):
+    provider = SimpleNamespace(
+        id="p1",
+        name="Provider",
+        slug="provider",
+        description=None,
+        provider_type=LLMProviderType.OPENAI,
+        api_key=None,
+        api_base=None,
+        api_version=None,
+        config={"api_key": {"_mcpgateway_encrypted_value_v1": "encrypted-existing"}, "region": "us-east-1"},
+        default_model=None,
+        default_temperature=None,
+        default_max_tokens=None,
+        enabled=True,
+        plugin_ids=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+    db.execute.return_value = _mock_execute_scalar(None)
+
+    update = LLMProviderUpdate(config={"api_key": "*****", "region": "us-west-2"})
+    updated = service.update_provider(db, "p1", update)
+
+    assert updated.config["api_key"] == {"_mcpgateway_encrypted_value_v1": "encrypted-existing"}
+    assert updated.config["region"] == "us-west-2"
 
 
 def test_delete_provider(service, db):
@@ -341,6 +393,7 @@ def test_to_provider_and_model_response(service):
 
     response = service.to_provider_response(provider, model_count=0)
     assert response.name == "Provider"
+    assert response.config == {}
 
     model = SimpleNamespace(
         id="m1",
@@ -363,6 +416,112 @@ def test_to_provider_and_model_response(service):
 
     model_response = service.to_model_response(model, provider)
     assert model_response.model_id == "gpt"
+
+
+def test_to_provider_response_masks_sensitive_config(service, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"value": "cfg-secret"})
+    provider = SimpleNamespace(
+        id="p1",
+        name="Provider",
+        slug="provider",
+        description=None,
+        provider_type="openai",
+        api_base=None,
+        api_version=None,
+        config={
+            "api_key": {"_mcpgateway_encrypted_value_v1": "encrypted-secret"},
+            "nested": {"client_secret": {"_mcpgateway_encrypted_value_v1": "encrypted-nested"}},
+            "region": "us-east-1",
+        },
+        default_model=None,
+        default_temperature=0.7,
+        default_max_tokens=None,
+        enabled=True,
+        health_status="unknown",
+        last_health_check=None,
+        plugin_ids=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        created_by=None,
+        modified_by=None,
+        models=[],
+    )
+
+    response = service.to_provider_response(provider, model_count=0)
+    assert response.config["api_key"] == "*****"
+    assert response.config["nested"]["client_secret"] == "*****"
+    assert response.config["region"] == "us-east-1"
+
+
+def test_decrypt_provider_config_for_runtime_handles_encrypted_values(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"value": "clear-secret"})
+    config = {"api_key": {"_mcpgateway_encrypted_value_v1": "encrypted-secret"}, "region": "us-east-1"}
+    decrypted = decrypt_provider_config_for_runtime(config)
+    assert decrypted["api_key"] == "clear-secret"
+    assert decrypted["region"] == "us-east-1"
+
+
+def test_provider_config_secret_helper_branches(monkeypatch: pytest.MonkeyPatch):
+    """Cover helper branches for clear/masked/encrypted config secret handling."""
+    assert _encrypt_provider_config_secret(None) is None
+    assert _encrypt_provider_config_secret("") == ""
+
+    assert _encrypt_provider_config_secret(settings.masked_auth_value, None) is None
+
+    already_encrypted = {"_mcpgateway_encrypted_value_v1": "existing-cipher"}
+    assert _encrypt_provider_config_secret(already_encrypted) == already_encrypted
+
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.encode_auth", lambda data: f"enc:{data['data']}")
+    from_plain = _encrypt_provider_config_secret(settings.masked_auth_value, "plain-secret")
+    assert from_plain == {"_mcpgateway_encrypted_value_v1": "enc:plain-secret"}
+
+
+def test_provider_config_recursive_list_and_non_dict_branches(monkeypatch: pytest.MonkeyPatch):
+    """Protect/decrypt/mask helpers should handle list and non-dict payloads safely."""
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.encode_auth", lambda data: f"enc:{data['data']}")
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"data": "clear-secret"})
+
+    protected = _protect_provider_config_fragment(
+        {"items": [{"api_key": "secret-1"}, {"region": "us-east-1"}]}
+    )
+    assert protected["items"][0]["api_key"] == {"_mcpgateway_encrypted_value_v1": "enc:secret-1"}
+    assert protected["items"][1]["region"] == "us-east-1"
+
+    assert protect_provider_config_for_storage("not-a-dict") == {}
+
+    decrypted = decrypt_provider_config_for_runtime({"items": [protected["items"][0]]})
+    assert decrypted["items"][0]["api_key"] == "clear-secret"
+    assert decrypt_provider_config_for_runtime(None) == {}
+
+    masked_list = _mask_provider_config_fragment([{"api_key": "clear-secret"}, {"region": "us-east-1"}])
+    assert masked_list[0]["api_key"] == settings.masked_auth_value
+    assert masked_list[1]["region"] == "us-east-1"
+
+
+def test_decrypt_provider_config_handles_decode_failure(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """Decode failures should log and preserve encrypted envelope."""
+    caplog.set_level("WARNING")
+    encrypted_fragment = {"_mcpgateway_encrypted_value_v1": "ciphertext"}
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", MagicMock(side_effect=RuntimeError("boom")))
+
+    decrypted = decrypt_provider_config_for_runtime({"api_key": encrypted_fragment})
+
+    assert decrypted["api_key"] == encrypted_fragment
+    assert "Failed to decrypt provider config fragment" in caplog.text
+
+
+def test_sanitize_provider_config_masks_nested_lists(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"data": "clear-secret"})
+    config = {
+        "items": [
+            {"api_key": {"_mcpgateway_encrypted_value_v1": "cipher"}},
+            {"region": "us-east-1"},
+        ]
+    }
+
+    sanitized = sanitize_provider_config_for_response(config)
+    assert sanitized["items"][0]["api_key"] == settings.masked_auth_value
+    assert sanitized["items"][1]["region"] == "us-east-1"
 
 
 def test_create_provider_integrity_error(service, db):

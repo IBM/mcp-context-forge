@@ -360,7 +360,7 @@ services:
       - JSON_SCHEMA_VALIDATION_STRICT=true
       - CORRELATION_ID_ENABLED=false
       - LLMCHAT_ENABLED=true
-      - OBSERVABILITY_ENABLED=false
+      - OBSERVABILITY_ENABLED=true
       # ═══════════════════════════════════════════════════════════════════════════
       # Database Connection Pool Configuration
       # ═══════════════════════════════════════════════════════════════════════════

@@ -66,6 +66,40 @@ def _get_registry_cache():
     return _REGISTRY_CACHE
 
 
+def _validate_server_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment and ownership requirements for server updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped
+            for system/internal update paths.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team ID is missing, team does not exist, or caller is not
+            an active team owner.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    # Preserve existing behavior for system/internal updates where
+    # user context may be intentionally omitted.
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -1203,27 +1237,8 @@ class ServerService:
 
                 # Validate visibility transitions
                 if new_visibility == "team":
-                    if not server.team_id and not server_update.team_id:
-                        raise ValueError("Cannot set visibility to 'team' without a team_id")
-
-                    # Verify team exists and user is a member
-                    if server.team_id:
-                        team_id = server.team_id
-                    else:
-                        team_id = server_update.team_id
-
-                    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id).first()
-                    if not team:
-                        raise ValueError(f"Team {team_id} not found")
-
-                    # Verify user is a member of the team
-                    membership = (
-                        db.query(DbEmailTeamMember)
-                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
-                        .first()
-                    )
-                    if not membership:
-                        raise ValueError("User membership in team not sufficient for this update.")
+                    target_team_id = server_update.team_id if server_update.team_id is not None else server.team_id
+                    _validate_server_team_assignment(db, user_email, target_team_id)
 
                 elif new_visibility == "public":
                     # Optional: Check if user has permission to make resources public
@@ -1233,6 +1248,8 @@ class ServerService:
                 server.visibility = new_visibility
 
             if server_update.team_id is not None:
+                if server_update.team_id != server.team_id:
+                    _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
 
             if server_update.owner_email is not None:

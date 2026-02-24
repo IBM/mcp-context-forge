@@ -306,6 +306,9 @@ class TestAuthFlow:
         assert sso_service._is_email_verified_claim({"email_verified": "no"}) is False
         assert sso_service._is_email_verified_claim({"email_verified": object()}) is False
 
+    def test_is_email_verified_claim_missing_claim_defaults_to_false(self, sso_service):
+        assert sso_service._is_email_verified_claim({"email": "user@example.com"}) is False
+
 
 # ---------------------------------------------------------------------------
 # OAuth callback tests
@@ -1892,12 +1895,63 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com", "full_name": "New Name", "provider": "github",
+                "email": "user@test.com", "full_name": "New Name", "provider": "github", "email_verified": True,
             })
 
         assert result == "jwt-token"
         assert existing_user.full_name == "New Name"
         assert existing_user.auth_provider == "github"
+
+    @pytest.mark.asyncio
+    async def test_existing_user_rejects_unverified_claim_without_mutation(self, sso_service, mock_db):
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        result = await sso_service.authenticate_or_create_user(
+            {
+                "email": "user@test.com",
+                "full_name": "New Name",
+                "provider": "github",
+                "email_verified": False,
+            }
+        )
+
+        assert result is None
+        assert existing_user.email_verified is True
+
+    @pytest.mark.asyncio
+    async def test_existing_user_untrusted_domain_rejected(self, sso_service, mock_db):
+        existing_user = SimpleNamespace(
+            email="user@untrusted.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider(trusted_domains=["trusted.com"])
+
+        result = await sso_service.authenticate_or_create_user(
+            {
+                "email": "user@untrusted.com",
+                "full_name": "Old Name",
+                "provider": "github",
+                "email_verified": True,
+            }
+        )
+
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_existing_user_mixed_case_idp_email_uses_canonical_claims(self, sso_service, mock_db):
@@ -1922,6 +1976,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "User@Test.com",
                     "full_name": "User Name",
                     "provider": "github",
+                    "email_verified": True,
                 }
             )
 
@@ -2020,6 +2075,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "user@test.com",
                     "full_name": "Updated Name",
                     "provider": "github",
+                    "email_verified": True,
                     "groups": ["dev"],
                 }
             )
@@ -2047,7 +2103,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@admin.com", "full_name": "Admin", "provider": "github",
+                "email": "user@admin.com", "full_name": "Admin", "provider": "github", "email_verified": True,
             })
 
         assert existing_user.is_admin is True
@@ -2071,7 +2127,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@other.com", "full_name": "Ex-Admin", "provider": "github",
+                "email": "user@other.com", "full_name": "Ex-Admin", "provider": "github", "email_verified": True,
             })
 
         assert existing_user.is_admin is False
@@ -2096,14 +2152,14 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_require_admin_approval = False
             mock_jwt.return_value = "new-jwt"
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result == "new-jwt"
 
     @pytest.mark.asyncio
-    async def test_new_github_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
-        """GitHub /user payloads without email_verified should not be auto-rejected."""
+    async def test_new_github_user_without_email_verified_claim_is_rejected(self, sso_service, mock_db):
+        """GitHub payloads without email_verified are rejected by secure default."""
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         new_user = SimpleNamespace(
             email="new@test.com",
@@ -2134,7 +2190,7 @@ class TestAuthenticateOrCreateUser:
             mock_jwt.return_value = "new-jwt"
             result = await sso_service.authenticate_or_create_user(normalized_user_info)
 
-        assert result == "new-jwt"
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_new_user_with_role_assignments_triggers_sync(self, sso_service, mock_db):
@@ -2166,6 +2222,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                     "groups": ["dev"],
                 }
             )
@@ -2229,6 +2286,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                     "groups": ["dev"],
                 }
             )
@@ -2268,7 +2326,7 @@ class TestAuthenticateOrCreateUser:
              patch("mcpgateway.services.sso_service.PendingUserApproval"):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result is None
@@ -2286,7 +2344,7 @@ class TestAuthenticateOrCreateUser:
              patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result is None
@@ -2314,7 +2372,7 @@ class TestAuthenticateOrCreateUser:
              patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result is None
@@ -2373,6 +2431,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                 }
             )
 
@@ -2405,6 +2464,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                 }
             )
 
@@ -2483,7 +2543,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_admin_groups = []
             mock_jwt.return_value = "approved-jwt"
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result == "approved-jwt"
@@ -2527,7 +2587,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_admin_groups = []
             mock_jwt.return_value = "jwt"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com", "full_name": "Name", "provider": "github", "groups": ["dev"],
+                "email": "user@test.com", "full_name": "Name", "provider": "github", "email_verified": True, "groups": ["dev"],
             })
 
         sso_service._map_groups_to_roles.assert_called_once()

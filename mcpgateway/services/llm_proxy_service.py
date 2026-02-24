@@ -32,6 +32,7 @@ from mcpgateway.llm_schemas import (
     UsageStats,
 )
 from mcpgateway.services.llm_provider_service import (
+    decrypt_provider_config_for_runtime,
     LLMModelNotFoundError,
     LLMProviderNotFoundError,
 )
@@ -234,11 +235,12 @@ class LLMProxyService:
             Tuple of (url, headers, body).
         """
         api_key = self._get_api_key(provider)
+        provider_config = decrypt_provider_config_for_runtime(provider.config)
 
         # Get Azure-specific config
-        deployment_name = provider.config.get("deployment_name") or provider.config.get("deployment") or model.model_id
-        resource_name = provider.config.get("resource_name", "")
-        api_version = provider.config.get("api_version") or provider.api_version or "2024-02-15-preview"
+        deployment_name = provider_config.get("deployment_name") or provider_config.get("deployment") or model.model_id
+        resource_name = provider_config.get("resource_name", "")
+        api_version = provider_config.get("api_version") or provider.api_version or "2024-02-15-preview"
 
         # Build base URL from resource name if not provided
         if not provider.api_base and resource_name:
@@ -291,11 +293,12 @@ class LLMProxyService:
         """
         api_key = self._get_api_key(provider)
         base_url = provider.api_base or "https://api.anthropic.com"
+        provider_config = decrypt_provider_config_for_runtime(provider.config)
 
         url = f"{base_url.rstrip('/')}/v1/messages"
 
         # Get Anthropic-specific config
-        anthropic_version = provider.config.get("anthropic_version") or provider.api_version or "2023-06-01"
+        anthropic_version = provider_config.get("anthropic_version") or provider.api_version or "2023-06-01"
 
         headers = {
             "Content-Type": "application/json",
