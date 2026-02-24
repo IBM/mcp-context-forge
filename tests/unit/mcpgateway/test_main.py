@@ -38,6 +38,8 @@ from mcpgateway.schemas import (
     ServerRead,
     ToolRead,
 )
+from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
+
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -3066,7 +3068,7 @@ class TestPluginExceptionHandlers:
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
         # Verify code mapping works (PROHIBITED_CONTENT -> 422 in PLUGIN_VIOLATION_CODE_MAPPING)
-        assert result.status_code == 422  # Uses mapping
+        assert result.status_code == PLUGIN_VIOLATION_CODE_MAPPING["PROHIBITED_CONTENT"].code  # Uses mapping
         content = json.loads(result.body.decode())
         assert "error" in content
         assert content["error"]["code"] == -32602
@@ -3431,7 +3433,7 @@ class TestPluginExceptionHandlers:
         assert content["error"]["code"] == -32602
 
     def test_plugin_violation_valid_http_status_code_edge_cases(self):
-        """Test that valid edge case HTTP status codes (100, 599) are accepted."""
+        """Test that valid edge case HTTP status codes (400, 599) are accepted."""
         # Standard
         import asyncio
 
@@ -3440,16 +3442,16 @@ class TestPluginExceptionHandlers:
         from mcpgateway.plugins.framework.errors import PluginViolationError
         from mcpgateway.plugins.framework.models import PluginViolation
 
-        # Test lower boundary (100)
-        violation_100 = PluginViolation(
+        # Test lower boundary (400)
+        violation_400 = PluginViolation(
             reason="Continue",
-            description="Valid status 100",
+            description="Valid status 400",
             code="INFO",
-            http_status_code=100,  # Valid: exactly 100
+            http_status_code=400,  # Valid: exactly 400
         )
-        exc_100 = PluginViolationError(message="Status 100", violation=violation_100)
-        result_100 = asyncio.run(plugin_violation_exception_handler(None, exc_100))
-        assert result_100.status_code == 100
+        exc_400 = PluginViolationError(message="Status 400", violation=violation_400)
+        result_400 = asyncio.run(plugin_violation_exception_handler(None, exc_400))
+        assert result_400.status_code == 400
 
         # Test upper boundary (599)
         violation_599 = PluginViolation(

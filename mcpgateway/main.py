@@ -87,7 +87,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
+from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -1456,6 +1456,7 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
     policy_violation["message"] = exc.message
     status_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
     violation_details: dict[str, Any] = {}
+    http_status = 200
     if exc.violation:
         if exc.violation.description:
             violation_details["description"] = exc.violation.description
@@ -1465,16 +1466,21 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
             violation_details["plugin_error_code"] = exc.violation.code
         if exc.violation.plugin_name:
             violation_details["plugin_name"] = exc.violation.plugin_name
-    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
 
-    # Use HTTP status code from violation if present (e.g., 429 for rate limiting)
-    http_status = exc.violation.http_status_code if exc.violation and exc.violation.http_status_code else None
-    if http_status and not 100 <= http_status <= 599:
-        logger.warning(f"Invalid HTTP status code {http_status} from violation, defaulting to 200")
-        http_status = None
-    if not http_status:
-        logger.info("Using Plugin violation code mapping for lack of http_status_code")
-        http_status = PLUGIN_VIOLATION_CODE_MAPPING.get(exc.violation.code, 200) if exc.violation and exc.violation.code else 200
+        # Use HTTP status code from violation if present (e.g., 429 for rate limiting)
+        http_status = exc.violation.http_status_code if exc.violation.http_status_code else None
+        if http_status and not 400 <= http_status <= 599:
+            logger.warning(f"Invalid HTTP status code {http_status} from violation, defaulting to 200")
+            http_status = None
+        if not http_status:
+            logger.debug("Using Plugin violation code mapping for lack of http_status_code")
+            mapping: Optional[PluginViolationCode] = PLUGIN_VIOLATION_CODE_MAPPING.get(exc.violation.code) if exc.violation.code else None
+            if not mapping:
+                http_status = 200
+            else:
+                http_status = mapping.code
+
+    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
 
     # Collect HTTP headers from violation if present
     headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
