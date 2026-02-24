@@ -248,6 +248,10 @@ class Settings(BaseSettings):
     jwt_audience_verification: bool = True
     jwt_issuer_verification: bool = True
     auth_required: bool = True
+    allow_unauthenticated_admin: bool = Field(
+        default=False,
+        description="Allow unauthenticated requests to receive platform-admin context when AUTH_REQUIRED=false (dangerous; development-only override).",
+    )
     token_expiry: int = 10080  # minutes
 
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
@@ -363,6 +367,10 @@ class Settings(BaseSettings):
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
+    )
+    trust_proxy_auth_dangerously: bool = Field(
+        default=False,
+        description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
@@ -2315,12 +2323,24 @@ Disallow: /
                 self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
 
         # Validate proxy auth configuration
-        if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
+        if not self.mcp_client_auth_enabled and self.trust_proxy_auth and not self.trust_proxy_auth_dangerously:
+            logger.warning(
+                "TRUST_PROXY_AUTH=true ignored because TRUST_PROXY_AUTH_DANGEROUSLY is false "
+                "while MCP_CLIENT_AUTH_ENABLED=false. Set TRUST_PROXY_AUTH_DANGEROUSLY=true "
+                "only behind a strictly trusted authentication proxy."
+            )
+            self.trust_proxy_auth = False
+        elif not self.mcp_client_auth_enabled and self.trust_proxy_auth and self.trust_proxy_auth_dangerously:
+            logger.warning("TRUST_PROXY_AUTH_DANGEROUSLY=true acknowledged. Requests may trust identity headers from the upstream proxy.")
+        elif not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
             logger.warning(
                 "MCP client authentication is disabled but trust_proxy_auth is not set. "
                 "This is a security risk! Set TRUST_PROXY_AUTH=true only if ContextForge "
                 "is behind a trusted authentication proxy."
             )
+
+        if not self.auth_required and self.allow_unauthenticated_admin:
+            logger.warning("ALLOW_UNAUTHENTICATED_ADMIN=true acknowledged while AUTH_REQUIRED=false. Unauthenticated requests may receive admin context.")
 
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"

@@ -68,7 +68,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import require_auth_header_first, verify_credentials
+from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -2208,10 +2208,10 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             return True
 
     authorization = headers.get("authorization")
-    proxy_user = headers.get(settings.proxy_user_header) if settings.trust_proxy_auth else None
+    proxy_user = headers.get(settings.proxy_user_header) if is_proxy_auth_trust_active(settings) else None
 
     # Determine authentication strategy based on settings
-    if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
+    if is_proxy_auth_trust_active(settings):
         # Client auth disabled → allow proxy header
         if proxy_user:
             # Set enriched user context for proxy-authenticated sessions
@@ -2401,7 +2401,7 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             )
     except Exception:
         # If JWT auth fails but we have a trusted proxy user, use that
-        if settings.trust_proxy_auth and proxy_user:
+        if is_proxy_auth_trust_active(settings) and proxy_user:
             user_context_var.set(
                 {
                     "email": proxy_user,

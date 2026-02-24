@@ -1011,6 +1011,43 @@ def test_proxy_auth_warning():
     assert s.mcp_client_auth_enabled is False
 
 
+def test_proxy_auth_trust_requires_explicit_ack():
+    """Proxy trust should fail closed without TRUST_PROXY_AUTH_DANGEROUSLY."""
+    s = Settings(
+        mcp_client_auth_enabled=False,
+        trust_proxy_auth=True,
+        trust_proxy_auth_dangerously=False,
+        _env_file=None,
+    )
+    assert s.trust_proxy_auth is False
+
+
+def test_proxy_auth_trust_enabled_with_explicit_ack():
+    """Proxy trust should stay enabled when dangerous mode is explicitly acknowledged."""
+    s = Settings(
+        mcp_client_auth_enabled=False,
+        trust_proxy_auth=True,
+        trust_proxy_auth_dangerously=True,
+        _env_file=None,
+    )
+    assert s.trust_proxy_auth is True
+
+
+def test_allow_unauthenticated_admin_warns_when_auth_disabled(caplog):
+    """Explicit unauthenticated-admin override should emit warning when auth is disabled."""
+    caplog.set_level("WARNING")
+
+    s = Settings(
+        auth_required=False,
+        allow_unauthenticated_admin=True,
+        _env_file=None,
+    )
+
+    assert s.auth_required is False
+    assert s.allow_unauthenticated_admin is True
+    assert any("ALLOW_UNAUTHENTICATED_ADMIN=true acknowledged" in rec.message for rec in caplog.records)
+
+
 # --------------------------------------------------------------------------- #
 #                    Ed25519 key derivation                                    #
 # --------------------------------------------------------------------------- #

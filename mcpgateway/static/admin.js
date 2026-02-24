@@ -1,5 +1,17 @@
 /* global marked, DOMPurify, safeReplaceState, _logRestrictedContext, getPaginationParams, buildTableUrl */
 const MASKED_AUTH_VALUE = "*****";
+let ADMIN_DEBUG_LOGGING_ENABLED = false;
+try {
+    ADMIN_DEBUG_LOGGING_ENABLED =
+        window.localStorage.getItem("MCPGATEWAY_ADMIN_DEBUG") === "1";
+} catch (_e) {
+    ADMIN_DEBUG_LOGGING_ENABLED = false;
+}
+
+if (!ADMIN_DEBUG_LOGGING_ENABLED) {
+    console.log = () => {};
+    console.debug = () => {};
+}
 
 // Runtime fallbacks when admin.js is loaded outside admin.html
 window._restrictedContextLogged = window._restrictedContextLogged || false;

@@ -3690,6 +3690,7 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
     """Test auth sets user context for proxy user when client auth disabled (lines 1740-1750)."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -3727,7 +3728,9 @@ async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypat
         raise ValueError("invalid token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -3761,7 +3764,9 @@ async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch)
         return "string_payload"
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -4087,6 +4092,7 @@ async def test_streamable_http_auth_no_proxy_user_when_client_auth_disabled(monk
     """Test auth continues to JWT flow when client auth disabled but no proxy user header (line 1740->1753)."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
@@ -8405,6 +8411,7 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
 
     # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-user")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
