@@ -62,8 +62,9 @@ jobs:
           path: plugins_rust/*/target
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
+      # rust-check = fmt-check + clippy + cargo test only
       - name: Run all checks for plugins
-        run: make rust-test
+        run: make rust-check
 
   # Build wheels for multiple platforms (all plugins in one job per OS)
   build-wheels:
