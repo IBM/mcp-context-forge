@@ -470,6 +470,40 @@ async def test_create_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_create_sso_provider_disallowed_issuer(monkeypatch: pytest.MonkeyPatch):
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        def get_provider(self, _provider_id):
+            return None
+
+        async def create_provider(self, _data):
+            raise ValueError("Issuer is not allowed by SSO_ISSUERS configuration")
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    payload = sso_router.SSOProviderCreateRequest(
+        id="provider",
+        name="Provider",
+        display_name="Provider",
+        provider_type="oidc",
+        client_id="cid",
+        client_secret="secret",
+        authorization_url="https://auth",
+        token_url="https://token",
+        userinfo_url="https://userinfo",
+        issuer="https://issuer.denied.example.com",
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await sso_router.create_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert excinfo.value.status_code == 400
+    assert "Issuer is not allowed" in str(excinfo.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_list_all_sso_providers(monkeypatch: pytest.MonkeyPatch):
     provider = SimpleNamespace(
         id="provider",
@@ -598,6 +632,25 @@ async def test_update_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
     result = await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert result["updated_at"] == "updated"
+
+
+@pytest.mark.asyncio
+async def test_update_sso_provider_disallowed_issuer(monkeypatch: pytest.MonkeyPatch):
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def update_provider(self, _provider_id, _data):
+            raise ValueError("Issuer is not allowed by SSO_ISSUERS configuration")
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    payload = sso_router.SSOProviderUpdateRequest(issuer="https://issuer.denied.example.com")
+    with pytest.raises(HTTPException) as excinfo:
+        await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert excinfo.value.status_code == 400
+    assert "Issuer is not allowed" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio

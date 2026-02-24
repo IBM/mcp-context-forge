@@ -25,55 +25,55 @@ curl -fsSL "https://cdn.tailwindcss.com/3.4.17" \
   -o "${STATIC_DIR}/tailwindcss/tailwind.min.js"
 
 # Download HTMX
-echo "  ⬇️  HTMX 1.9.10..."
-curl -fsSL "https://unpkg.com/htmx.org@1.9.10" \
+echo "  ⬇️  HTMX 1.9.12..."
+curl -fsSL "https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" \
   -o "${STATIC_DIR}/htmx/htmx.min.js"
 
 # Download CodeMirror
-echo "  ⬇️  CodeMirror 5.65.18..."
-curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js" \
+echo "  ⬇️  CodeMirror 5.65.20..."
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js" \
   -o "${STATIC_DIR}/codemirror/codemirror.min.js"
 
-curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js" \
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/javascript/javascript.min.js" \
   -o "${STATIC_DIR}/codemirror/mode/javascript/javascript.min.js"
 
-curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css" \
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css" \
   -o "${STATIC_DIR}/codemirror/codemirror.min.css"
 
-curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/monokai.min.css" \
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css" \
   -o "${STATIC_DIR}/codemirror/theme/monokai.min.css"
 
-# Download Alpine.js (pinned to 3.14.1 for reproducibility)
-echo "  ⬇️  Alpine.js 3.14.1..."
-curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js" \
+# Download Alpine.js (pinned to 3.15.8 for reproducibility)
+echo "  ⬇️  Alpine.js 3.15.8..."
+curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.8/dist/cdn.min.js" \
   -o "${STATIC_DIR}/alpinejs/alpine.min.js"
 
-# Download Chart.js (pinned to 4.4.1 for reproducibility)
-echo "  ⬇️  Chart.js 4.4.1..."
-curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" \
+# Download Chart.js (pinned to 4.5.1 for reproducibility)
+echo "  ⬇️  Chart.js 4.5.1..."
+curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" \
   -o "${STATIC_DIR}/chartjs/chart.umd.min.js"
 
-# Download Marked (Markdown parser, pinned to 11.1.1 for reproducibility)
-echo "  ⬇️  Marked 11.1.1..."
+# Download Marked (Markdown parser, pinned to 11.2.0 for reproducibility)
+echo "  ⬇️  Marked 11.2.0..."
 mkdir -p "${STATIC_DIR}/marked"
-curl -fsSL "https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js" \
   -o "${STATIC_DIR}/marked/marked.min.js"
 
-# Download DOMPurify (XSS sanitizer, pinned to 3.0.6 for reproducibility)
-echo "  ⬇️  DOMPurify 3.0.6..."
+# Download DOMPurify (XSS sanitizer, pinned to 3.3.1 for reproducibility)
+echo "  ⬇️  DOMPurify 3.3.1..."
 mkdir -p "${STATIC_DIR}/dompurify"
-curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.3.1/dist/purify.min.js" \
   -o "${STATIC_DIR}/dompurify/purify.min.js"
 
-# Download Font Awesome (pinned to 6.4.0 for reproducibility)
-echo "  ⬇️  Font Awesome 6.4.0..."
-curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" \
+# Download Font Awesome (pinned to 6.7.2 for reproducibility)
+echo "  ⬇️  Font Awesome 6.7.2..."
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" \
   -o "${STATIC_DIR}/fontawesome/css/all.min.css"
 
 # Download Font Awesome webfonts (required for the CSS to work)
 echo "  ⬇️  Font Awesome webfonts..."
 for font in fa-solid-900.woff2 fa-regular-400.woff2 fa-brands-400.woff2; do
-  curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/${font}" \
+  curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/webfonts/${font}" \
     -o "${STATIC_DIR}/fontawesome/webfonts/${font}"
 done
 

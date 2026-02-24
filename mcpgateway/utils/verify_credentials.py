@@ -75,6 +75,30 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def is_proxy_auth_trust_active(settings_obj: Any | None = None) -> bool:
+    """Return whether proxy-header trust mode is explicitly active.
+
+    Args:
+        settings_obj: Optional settings object override (defaults to global settings).
+
+    Returns:
+        ``True`` when proxy-header trust is explicitly enabled and acknowledged;
+        otherwise ``False``.
+    """
+    current_settings = settings_obj or settings
+
+    if current_settings.mcp_client_auth_enabled or not current_settings.trust_proxy_auth:
+        return False
+
+    if getattr(current_settings, "trust_proxy_auth_dangerously", False) is True:
+        return True
+
+    if not getattr(is_proxy_auth_trust_active, "_warned", False):
+        logger.warning("Ignoring trusted proxy auth because TRUST_PROXY_AUTH_DANGEROUSLY is false while MCP client auth is disabled.")
+        is_proxy_auth_trust_active._warned = True  # type: ignore[attr-defined]
+    return False
+
+
 def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_param_warning: Optional[str] = None) -> Optional[str]:
     """Extract bearer token from WebSocket Authorization headers.
 
@@ -447,7 +471,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
     """
     # If MCP client auth is disabled and proxy auth is trusted, use proxy headers
     if not settings.mcp_client_auth_enabled:
-        if settings.trust_proxy_auth:
+        if is_proxy_auth_trust_active():
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
@@ -822,8 +846,11 @@ async def require_docs_auth_override(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Validate the JWT token
-    return await verify_credentials(token)
+    # Validate JWT and enforce standard token/account status checks.
+    payload = await verify_credentials(token)
+    if isinstance(payload, dict):
+        await _enforce_revocation_and_active_user(payload)
+    return payload
 
 
 async def require_auth_override(
@@ -1005,7 +1032,7 @@ async def require_auth_header_first(
 
     # Proxy auth path — identical to require_auth
     if not settings.mcp_client_auth_enabled:
-        if settings.trust_proxy_auth:
+        if is_proxy_auth_trust_active():
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
                 return {"sub": proxy_user, "source": "proxy", "token": None}  # nosec B105 - None is not a password

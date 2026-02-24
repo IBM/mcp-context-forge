@@ -29,7 +29,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import PermissionChecker
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, require_auth
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_auth
 
 # Initialize logging
 logging_service = LoggingService()
@@ -211,7 +211,7 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optiona
             "token_teams": getattr(websocket.state, "token_teams", None),
             "token_use": getattr(websocket.state, "token_use", None),
         }
-    elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+    elif is_proxy_auth_trust_active(settings):
         proxy_user = websocket.headers.get(settings.proxy_user_header)
         if proxy_user:
             user_context = {

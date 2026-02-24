@@ -228,3 +228,61 @@ describe("admin template security hardening", () => {
         }
     });
 });
+
+describe("admin debug logging bootstrap", () => {
+    test("keeps console methods when MCPGATEWAY_ADMIN_DEBUG=1", () => {
+        cleanupAdminJs();
+
+        const originalLog = () => {};
+        const originalDebug = () => {};
+        const localWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.console.log = originalLog;
+                w.console.debug = originalDebug;
+                w.localStorage.setItem("MCPGATEWAY_ADMIN_DEBUG", "1");
+            },
+        });
+
+        expect(localWin.console.log).toBe(originalLog);
+        expect(localWin.console.debug).toBe(originalDebug);
+    });
+
+    test("disables console methods when debug toggle is not enabled", () => {
+        cleanupAdminJs();
+
+        const originalLog = () => {};
+        const originalDebug = () => {};
+        const localWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.console.log = originalLog;
+                w.console.debug = originalDebug;
+                w.localStorage.removeItem("MCPGATEWAY_ADMIN_DEBUG");
+            },
+        });
+
+        expect(localWin.console.log).not.toBe(originalLog);
+        expect(localWin.console.debug).not.toBe(originalDebug);
+    });
+
+    test("fails closed when localStorage access throws", () => {
+        cleanupAdminJs();
+
+        const originalLog = () => {};
+        const originalDebug = () => {};
+        const localWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.console.log = originalLog;
+                w.console.debug = originalDebug;
+                Object.defineProperty(w, "localStorage", {
+                    configurable: true,
+                    get() {
+                        throw new Error("blocked");
+                    },
+                });
+            },
+        });
+
+        expect(localWin.console.log).not.toBe(originalLog);
+        expect(localWin.console.debug).not.toBe(originalDebug);
+    });
+});

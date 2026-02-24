@@ -2490,6 +2490,69 @@ class TestToolService:
         assert response.content[0].text == "Invalid tool type"
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_cache_hit_hydrates_auth_material_from_db(self, tool_service, test_db):
+        """Cache-hit invocation should hydrate auth material from DB when required."""
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-cache-1",
+                "name": "cached_tool",
+                "original_name": "cached_tool",
+                "url": "http://example.com/tool",
+                "integration_type": "ABC",
+                "request_type": "POST",
+                "auth_type": "oauth",
+                "headers": {},
+                "annotations": {},
+                "jsonpath_filter": "",
+                "output_schema": {},
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "gw-cache-1",
+            },
+            "gateway": {
+                "id": "gw-cache-1",
+                "name": "cached-gw",
+                "url": "http://example.com/gateway",
+                "auth_type": "basic",
+                "passthrough_headers": [],
+            },
+        }
+
+        lookup_cache = SimpleNamespace(
+            enabled=True,
+            get=AsyncMock(return_value=cached_payload),
+            set=AsyncMock(),
+            set_negative=AsyncMock(),
+        )
+
+        hydrated_gateway = SimpleNamespace(
+            auth_value="gateway-secret",
+            auth_query_params=None,
+            oauth_config={"grant_type": "client_credentials", "client_id": "gw", "client_secret": "secret"},
+        )
+        hydrated_tool = SimpleNamespace(
+            auth_value="tool-secret",
+            oauth_config={"grant_type": "client_credentials", "client_id": "tool", "client_secret": "secret"},
+            gateway=hydrated_gateway,
+        )
+        hydration_result = Mock()
+        hydration_result.scalar_one_or_none.return_value = hydrated_tool
+        test_db.execute = Mock(return_value=hydration_result)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+        ):
+            response = await tool_service.invoke_tool(test_db, "cached_tool", {"param": "value"}, request_headers=None)
+
+        assert response.content[0].text == "Invalid tool type"
+        assert test_db.execute.called
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_tool_basic_auth(self, tool_service, mock_tool, mock_gateway, test_db):
         """Test invoking an invalid tool type."""
         # Basic auth_value
@@ -5087,7 +5150,12 @@ class TestToolServiceHelpers:
         assert payload["status"] == "active"
         assert payload["tool"]["headers"] == {}
         assert payload["tool"]["input_schema"]["type"] == "object"
+        assert "auth_value" not in payload["tool"]
+        assert "oauth_config" not in payload["tool"]
         assert payload["gateway"]["passthrough_headers"] == []
+        assert "auth_value" not in payload["gateway"]
+        assert "oauth_config" not in payload["gateway"]
+        assert "auth_query_params" not in payload["gateway"]
 
         sentinel = object()
         with patch("mcpgateway.services.tool_service.PydanticTool.model_validate", return_value=sentinel):
