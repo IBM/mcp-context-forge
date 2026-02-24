@@ -25,6 +25,7 @@ from mcpgateway.plugins.framework.hooks.registry import HookRegistry, get_hook_r
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.observability import ObservabilityProvider
 from mcpgateway.plugins.framework.hooks.http import (
     HttpAuthCheckPermissionPayload,
     HttpAuthCheckPermissionResult,
@@ -67,11 +68,14 @@ from mcpgateway.plugins.framework.utils import get_attr
 _plugin_manager: Optional[PluginManager] = None
 
 
-def get_plugin_manager() -> Optional[PluginManager]:
+def get_plugin_manager(observability: Optional[ObservabilityProvider] = None) -> Optional[PluginManager]:
     """Get or initialize the plugin manager singleton.
 
     This is the public API for accessing the plugin manager from anywhere in the application.
     The plugin manager is lazily initialized on first access if plugins are enabled.
+
+    Args:
+        observability: Optional observability provider implementing ObservabilityProvider protocol.
 
     Returns:
         PluginManager instance if plugins are enabled, None otherwise.
@@ -90,7 +94,7 @@ def get_plugin_manager() -> Optional[PluginManager]:
 
         if settings.plugins_enabled:
             config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-            _plugin_manager = PluginManager(config_file)
+            _plugin_manager = PluginManager(config_file, observability=observability)
     return _plugin_manager
 
 
@@ -119,6 +123,7 @@ __all__ = [
     "HttpPreRequestPayload",
     "HttpPreRequestResult",
     "MCPServerConfig",
+    "ObservabilityProvider",
     "Plugin",
     "PluginCondition",
     "PluginConfig",
