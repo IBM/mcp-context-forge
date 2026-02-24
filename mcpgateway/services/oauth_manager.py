@@ -524,7 +524,7 @@ class OAuthManager:
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
-    async def complete_authorization_code_flow(self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+    async def complete_authorization_code_flow(self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any], request: Any = None) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
         Args:
@@ -532,6 +532,7 @@ class OAuthManager:
             code: Authorization code from callback
             state: State parameter for CSRF validation
             credentials: OAuth configuration
+            request: Optional incoming HTTP request for context
 
         Returns:
             Dict containing success status, user_id, and expiration info
@@ -555,6 +556,30 @@ class OAuthManager:
                 if legacy_gateway_id and legacy_gateway_id != gateway_id:
                     raise OAuthError("State parameter gateway mismatch")
                 app_user_email = legacy_state_payload.get("app_user_email")
+
+        # NEW: Attempt to extract app_user_email from request context if still missing
+        if not app_user_email and request is not None:
+            # Try to extract from request.state or JWT payload if available
+            user_email = None
+            # Try FastAPI user context (common pattern)
+            if hasattr(request, "state") and hasattr(request.state, "user"):
+                user = getattr(request.state, "user", None)
+                if user and hasattr(user, "email"):
+                    user_email = getattr(user, "email")
+                elif isinstance(user, dict):
+                    user_email = user.get("email")
+            # Try JWT payload if present
+            if not user_email and hasattr(request.state, "_jwt_verified_payload"):
+                payload = getattr(request.state, "_jwt_verified_payload", None)
+                if payload and isinstance(payload, tuple) and len(payload) == 2:
+                    _, jwt_payload = payload
+                    if jwt_payload:
+                        user_email = jwt_payload.get("email")
+            if user_email:
+                logger.info("Extracted app_user_email from request context for legacy OAuth fallback: %s", user_email)
+                app_user_email = user_email
+        if not app_user_email:
+            logger.error("User context (app_user_email) missing for OAuth token storage; legacy fallback and request context both failed.")
 
         # Exchange code for tokens with PKCE code_verifier
         token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
