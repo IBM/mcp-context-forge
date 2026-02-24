@@ -63,6 +63,7 @@ class PluginViolationCode:
 
 
 PLUGIN_VIOLATION_CODE_MAPPING: Mapping[str, PluginViolationCode] = MappingProxyType(
+    # MappingProxyType will make sure the resulting object is immutable and hence this will act as a constant.
     {
         # Rate Limiting
         "RATE_LIMIT": PluginViolationCode(429, "RATE_LIMIT", "Used when rate limit is exceeded (rate_limiter plugin)"),
