@@ -234,10 +234,13 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **L-10**: Security architecture docs now align with current token and secret encryption implementation details.
 * **L-15 / L-16**: Tool lookup cache payloads now exclude auth/OAuth secret material, and token usage limits (`requests_per_hour` / `requests_per_day`) are now enforced during request scoping.
 * **L-17**: Admin UI debug logging is now gated behind an explicit local debug toggle (`MCPGATEWAY_ADMIN_DEBUG=1`) for quieter production browser consoles.
+* **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`.
+* **MCP bearer fail-closed in permissive mode**: Streamable HTTP MCP auth now rejects malformed/invalid `Authorization: Bearer ...` tokens with `401` instead of silently downgrading to anonymous public-only access.
 
 ### Chores
 
 * Updated `.env.example` with strict SSRF defaults, local dev overrides section, and transport feature flags
+* Updated `.env.example` and `docker-compose.yml` to make MCP auth posture explicit (`MCP_REQUIRE_AUTH=true` in compose; inheritance behavior documented in env example comments).
 * Updated `docker-compose.yml` with transport feature flags and local SSRF overrides
 * Updated Helm chart `values.yaml`, `values.schema.json`, and `README.md` with new SSRF and transport settings
 * Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`

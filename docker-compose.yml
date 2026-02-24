@@ -336,6 +336,7 @@ services:
       # Authentication configuration
       - AUTH_REQUIRED=true
       - MCP_CLIENT_AUTH_ENABLED=true
+      - MCP_REQUIRE_AUTH=true
       - TRUST_PROXY_AUTH=false
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.

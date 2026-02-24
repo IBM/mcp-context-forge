@@ -8402,7 +8402,7 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeypatch):
-    """Test auth exception fallback when permissive mode enabled and no proxy user."""
+    """Bearer verification errors should return 401 even in permissive mode without proxy fallback."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import streamable_http_auth, user_context_var
 
@@ -8421,15 +8421,15 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
     async def send(msg):
         sent.append(msg)
 
-    # Should catch exception, fail proxy check (no header), then succeed via permissive check
+    # Should catch exception, fail proxy fallback (no proxy header), and reject invalid bearer.
     result = await streamable_http_auth(scope, None, send)
 
-    assert result is True
-    assert sent == []
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == tr.HTTP_401_UNAUTHORIZED
 
     ctx = user_context_var.get()
-    assert ctx["is_authenticated"] is False
-    assert ctx["teams"] == []
+    assert ctx is not None
 
 
 # ---------------------------------------------------------------------------

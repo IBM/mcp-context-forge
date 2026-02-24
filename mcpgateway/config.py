@@ -360,9 +360,14 @@ class Settings(BaseSettings):
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
-    mcp_require_auth: bool = Field(
-        default=False,
-        description="Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. " "If true, all /mcp requests must include a valid Bearer token.",
+    mcp_require_auth: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Require authentication for /mcp endpoints. "
+            "When unset, inherits AUTH_REQUIRED. "
+            "Set false explicitly to allow unauthenticated access to public items only; "
+            "set true to require a valid Bearer token for all /mcp requests."
+        ),
     )
     trust_proxy_auth: bool = Field(
         default=False,
@@ -2321,6 +2326,19 @@ Disallow: /
                 # Production origins - construct from app_domain (extract hostname from HttpUrl)
                 app_domain_host = urlparse(str(self.app_domain)).hostname or "localhost"
                 self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
+
+        # MCP transport auth policy:
+        # - If MCP_REQUIRE_AUTH is unset, derive it from AUTH_REQUIRED
+        # - If AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false is explicit, emit a warning
+        if self.mcp_require_auth is None:
+            self.mcp_require_auth = bool(self.auth_required)
+            logger.info(
+                "MCP_REQUIRE_AUTH not set; defaulting to %s to match AUTH_REQUIRED=%s.",
+                self.mcp_require_auth,
+                self.auth_required,
+            )
+        elif self.auth_required and self.mcp_require_auth is False:
+            logger.warning("AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false. " "MCP endpoints (/servers/*/mcp) allow unauthenticated access to public items.")
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and self.trust_proxy_auth and not self.trust_proxy_auth_dangerously:

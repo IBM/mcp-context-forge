@@ -2165,13 +2165,12 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
     Behavior:
     - If the path does not end with "/mcp", authentication is skipped.
-    - If mcp_require_auth=True (strict mode):
-      - Requests without valid auth are rejected with 401.
-    - If mcp_require_auth=False (default, permissive mode):
+    - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
+    - If mcp_require_auth=False (permissive mode):
       - Requests without auth are allowed but get public-only access (token_teams=[]).
       - Valid tokens get full scoped access based on their teams.
+      - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
     - If a Bearer token is present, it is verified using `verify_credentials`.
-    - If verification fails and mcp_require_auth=True, a 401 Unauthorized JSON response is sent.
 
     Args:
         scope: The ASGI scope dictionary, which includes request metadata.
@@ -2227,10 +2226,13 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
     # --- Standard JWT authentication flow (client auth enabled) ---
     token: str | None = None
+    bearer_header_supplied = False
     if authorization:
         scheme, credentials = get_authorization_scheme_param(authorization)
-        if scheme.lower() == "bearer" and credentials:
-            token = credentials
+        if scheme.lower() == "bearer":
+            bearer_header_supplied = True
+            if credentials:
+                token = credentials
 
     try:
         if token is None:
@@ -2411,6 +2413,17 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 }
             )
             return True  # Fall back to proxy authentication
+
+        # If client supplied a Bearer token but verification failed (or token was empty),
+        # fail closed even in permissive mode to avoid silently downgrading bad auth.
+        if bearer_header_supplied:
+            response = ORJSONResponse(
+                {"detail": "Invalid authentication credentials"},
+                status_code=HTTP_401_UNAUTHORIZED,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            await response(scope, receive, send)
+            return False
 
         # Check mcp_require_auth setting to determine behavior
         if settings.mcp_require_auth:
