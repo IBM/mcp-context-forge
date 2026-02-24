@@ -3669,7 +3669,7 @@ async def admin_login_page(request: Request) -> Response:
     prefill_email = request.query_params.get("email", "")
 
     # Use external template file
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "login.html",
         {
@@ -3682,6 +3682,8 @@ async def admin_login_page(request: Request) -> Response:
             "sri_hashes": load_sri_hashes(),
         },
     )
+    _set_admin_csrf_cookie(request, response)
+    return response
 
 
 @admin_router.post("/login")
@@ -3863,7 +3865,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "forgot-password.html",
         {
@@ -3874,6 +3876,8 @@ async def admin_forgot_password_page(request: Request) -> Response:
             "sri_hashes": load_sri_hashes(),
         },
     )
+    _set_admin_csrf_cookie(request, response)
+    return response
 
 
 @admin_router.post("/forgot-password")
@@ -3937,7 +3941,7 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
     except AuthenticationError as exc:
         token_error = str(exc)
 
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "reset-password.html",
         {
@@ -3951,6 +3955,8 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
             "sri_hashes": load_sri_hashes(),
         },
     )
+    _set_admin_csrf_cookie(request, response)
+    return response
 
 
 @admin_router.post("/reset-password/{token}")

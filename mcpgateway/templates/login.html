@@ -164,6 +164,7 @@
               action="{{ root_path }}/admin/login"
               method="post"
             >
+              <input type="hidden" name="csrf_token" value="" />
               <div>
                 <label
                   for="email"
@@ -438,6 +439,35 @@
       // Initialize ROOT_PATH for JavaScript URL composition
       window.ROOT_PATH = {{ root_path | tojson }};
 
+      function getCookie(name) {
+        const parts = document.cookie.split(";");
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (trimmed.startsWith(name + "=")) {
+            return decodeURIComponent(trimmed.slice(name.length + 1));
+          }
+        }
+        return "";
+      }
+
+      function attachCsrfToPostForms() {
+        const csrfToken = getCookie("mcpgateway_csrf_token");
+        if (!csrfToken) return;
+        const forms = document.querySelectorAll("form");
+        forms.forEach((form) => {
+          const method = (form.getAttribute("method") || "get").toLowerCase();
+          if (method === "get") return;
+          let tokenInput = form.querySelector('input[name="csrf_token"]');
+          if (!tokenInput) {
+            tokenInput = document.createElement("input");
+            tokenInput.type = "hidden";
+            tokenInput.name = "csrf_token";
+            form.appendChild(tokenInput);
+          }
+          tokenInput.value = csrfToken;
+        });
+      }
+
       // SSO Provider configurations with branding
       const ssoProviders = {
         github: {
@@ -487,6 +517,7 @@
 
       // Initialize page
       document.addEventListener("DOMContentLoaded", async function () {
+        attachCsrfToPostForms();
         await loadSSOProviders();
         handleErrorMessages();
         setupAnimations();
@@ -496,6 +527,10 @@
         if (emailField && emailField.value) {
           document.getElementById("password").focus();
         }
+
+        document.querySelectorAll("form").forEach((form) => {
+          form.addEventListener("submit", attachCsrfToPostForms);
+        });
       });
 
       // Load available SSO providers
