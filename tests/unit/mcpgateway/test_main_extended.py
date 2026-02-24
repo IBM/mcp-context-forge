@@ -623,7 +623,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
 
         with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "admin@example.com"})),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "admin@example.com", "is_admin": True, "teams": None})),
             patch("mcpgateway.main.get_db", _db_gen),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
@@ -654,7 +654,7 @@ class TestAdminAuthMiddleware:
         mock_permission_service.has_admin_permission = AsyncMock(return_value=False)
 
         with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "teams": ["team-1"]})),
             patch("mcpgateway.main.get_db", _db_gen),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
@@ -662,6 +662,88 @@ class TestAdminAuthMiddleware:
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_public_only_admin_token_denied(self, monkeypatch):
+        """teams=[] tokens are public-only and must not pass admin middleware."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token", "accept": "application/json"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "admin@example.com", "is_admin": True, "teams": []})):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 403
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_explicit_null_teams_admin_bypass_allowed(self, monkeypatch):
+        """teams=null + is_admin=true should preserve unrestricted admin middleware behavior."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=True)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "admin@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_session_token_resolves_teams_from_db(self, monkeypatch):
+        """Session tokens should resolve team scope via DB helper before admin path checks."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=True)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
+            ),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=None)) as mock_resolve_teams,
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        mock_resolve_teams.assert_awaited_once_with("admin@example.com", {"is_admin": True})
+        call_next.assert_called_once()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -772,7 +854,10 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "jti": "jti-1"})),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "user@example.com", "jti": "jti-1", "is_admin": True, "teams": None}),
+            ),
             patch("mcpgateway.main._check_token_revoked_sync", side_effect=RuntimeError("revocation backend down")),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
@@ -838,7 +923,7 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
@@ -864,7 +949,7 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
@@ -891,7 +976,7 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
@@ -916,7 +1001,7 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
@@ -930,7 +1015,7 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -5676,11 +5761,14 @@ class TestRemainingCoverageGaps:
     async def test_tag_endpoints_parse_entity_types(self, monkeypatch):
         import mcpgateway.main as main_mod
 
+        request = _make_request("/tags")
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _request, _user: ("u", [], False))
+
         monkeypatch.setattr(main_mod.tag_service, "get_all_tags", AsyncMock(return_value=[]))
-        _ = await main_mod.list_tags.__wrapped__("Tools, Servers", include_entities=False, db=MagicMock(), user={"email": "u"})
+        _ = await main_mod.list_tags.__wrapped__(request, "Tools, Servers", include_entities=False, db=MagicMock(), user={"email": "u"})
 
         monkeypatch.setattr(main_mod.tag_service, "get_entities_by_tag", AsyncMock(return_value=[]))
-        _ = await main_mod.get_entities_by_tag.__wrapped__("tag-1", entity_types="Tools", db=MagicMock(), user={"email": "u"})
+        _ = await main_mod.get_entities_by_tag.__wrapped__(request, "tag-1", entity_types="Tools", db=MagicMock(), user={"email": "u"})
 
     async def test_get_a2a_agent_service_unavailable(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -6198,6 +6286,102 @@ class TestHardeningHelperCoverage:
                 main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
 
         assert excinfo.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_bypass(monkeypatch):
+    """Direct call should preserve admin bypass semantics for completion endpoint."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    payload = {"ref": {"type": "ref/prompt", "name": "test"}}
+    db = object()
+
+    monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    completion_mock = AsyncMock(return_value={"result": "ok"})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_completion(request=request, db=db, user={"email": "admin@example.com"})
+    assert result == {"result": "ok"}
+    assert completion_mock.await_args.args[0] is db
+    assert completion_mock.await_args.args[1] == payload
+    assert completion_mock.await_args.kwargs["user_email"] is None
+    assert completion_mock.await_args.kwargs["token_teams"] is None
+
+
+@pytest.mark.asyncio
+async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_public_only(monkeypatch):
+    """Direct call should normalize non-admin teams=None to public-only scope."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    payload = {"ref": {"type": "ref/prompt", "name": "test"}}
+    db = object()
+
+    monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    completion_mock = AsyncMock(return_value={"result": "ok"})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_completion(request=request, db=db, user={"email": "viewer@example.com"})
+    assert result == {"result": "ok"}
+    assert completion_mock.await_args.args[0] is db
+    assert completion_mock.await_args.args[1] == payload
+    assert completion_mock.await_args.kwargs["user_email"] == "viewer@example.com"
+    assert completion_mock.await_args.kwargs["token_teams"] == []
+
+
+@pytest.mark.asyncio
+async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(monkeypatch):
+    """RPC completion direct path should preserve admin bypass context."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    request.body = AsyncMock(
+        return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode()
+    )
+    request.headers = {}
+    request.query_params = {}
+    db = MagicMock()
+
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    completion_mock = AsyncMock(return_value={"done": True})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_rpc(request=request, db=db, user={"email": "admin@example.com"})
+    assert result["jsonrpc"] == "2.0"
+    assert result["id"] == "rpc-id"
+    assert result["result"] == {"done": True}
+    assert completion_mock.await_args.kwargs["user_email"] is None
+    assert completion_mock.await_args.kwargs["token_teams"] is None
+
+
+@pytest.mark.asyncio
+async def test_handle_rpc_completion_direct_non_admin_none_teams_becomes_public_only(monkeypatch):
+    """RPC completion direct path should normalize teams=None for non-admin callers."""
+    import mcpgateway.main as main_mod
+
+    request = MagicMock(spec=Request)
+    request.body = AsyncMock(
+        return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode()
+    )
+    request.headers = {}
+    request.query_params = {}
+    db = MagicMock()
+
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    completion_mock = AsyncMock(return_value={"done": True})
+    monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
+
+    result = await main_mod.handle_rpc(request=request, db=db, user={"email": "viewer@example.com"})
+    assert result["jsonrpc"] == "2.0"
+    assert result["id"] == "rpc-id"
+    assert result["result"] == {"done": True}
+    assert completion_mock.await_args.kwargs["user_email"] == "viewer@example.com"
+    assert completion_mock.await_args.kwargs["token_teams"] == []
 
 
 @pytest.fixture

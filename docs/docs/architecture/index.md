@@ -1,6 +1,6 @@
 # Architecture Overview
 
-The **ContextForge** (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It acts as a unified entry point for tools, resources, prompts, and servers, federating local and remote nodes into a coherent MCP-compliant interface.
+**ContextForge** is a production-grade AI gateway, registry, and proxy for Model Context Protocol (MCP) servers, A2A Agents, and REST/gRPC APIs. It exposes a unified control plane with centralized governance, discovery, and observability, acting as a single entry point for tools, resources, prompts, and servers while federating local and remote nodes into a coherent MCP-compliant interface.
 
 ## High-Level Architecture Summary
 

@@ -1106,11 +1106,15 @@ def test_user_role_is_expired():
 def test_permissions_helpers():
     permissions = db.Permissions.get_all_permissions()
     assert "tools.read" in permissions
+    assert "llm.read" in permissions
+    assert "llm.invoke" in permissions
     assert db.Permissions.ALL_PERMISSIONS not in permissions
 
     by_resource = db.Permissions.get_permissions_by_resource()
     assert "tools" in by_resource
     assert "tools.read" in by_resource["tools"]
+    assert "llm" in by_resource
+    assert "llm.read" in by_resource["llm"]
 
 
 # --- Email user helpers ---

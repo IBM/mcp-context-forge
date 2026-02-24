@@ -833,3 +833,25 @@ class TestMaskOauthConfig:
         masked = agent.masked()
         assert masked.oauth_config["client_secret"] == settings.masked_auth_value
         assert masked.oauth_config["grant_type"] == "client_credentials"
+
+    def test_server_read_masked_includes_oauth(self):
+        """ServerRead.masked() masks oauth_config sensitive keys."""
+        now = datetime.now(timezone.utc)
+        server = ServerRead(
+            id="srv-1",
+            name="srv",
+            description=None,
+            icon=None,
+            created_at=now,
+            updated_at=now,
+            enabled=True,
+            associated_tools=[],
+            associated_resources=[],
+            associated_prompts=[],
+            associated_a2a_agents=[],
+            oauth_enabled=True,
+            oauth_config={"client_secret": "secret", "authorization_server": "https://idp.example.com"},
+        )
+        masked = server.masked()
+        assert masked.oauth_config["client_secret"] == settings.masked_auth_value
+        assert masked.oauth_config["authorization_server"] == "https://idp.example.com"

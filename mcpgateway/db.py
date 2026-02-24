@@ -948,6 +948,10 @@ class Permissions:
     PROMPTS_DELETE = "prompts.delete"
     PROMPTS_EXECUTE = "prompts.execute"
 
+    # LLM proxy permissions
+    LLM_READ = "llm.read"
+    LLM_INVOKE = "llm.invoke"
+
     # Server permissions
     SERVERS_CREATE = "servers.create"
     SERVERS_READ = "servers.read"

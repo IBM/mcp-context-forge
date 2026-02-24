@@ -104,7 +104,7 @@ async def test_initiate_sso_login_invalid_redirect(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(sso_router, "_validate_redirect_uri", lambda *_args, **_kwargs: False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.initiate_sso_login("provider", MagicMock(), redirect_uri="https://evil.com", db=MagicMock())
+        await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="https://evil.com", db=MagicMock())
 
     assert excinfo.value.status_code == 400
 
@@ -114,7 +114,7 @@ async def test_initiate_sso_login_disabled(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "sso_enabled", False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.initiate_sso_login("provider", MagicMock(), redirect_uri="/cb", db=MagicMock())
+        await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", db=MagicMock())
 
     assert excinfo.value.status_code == 404
 
@@ -134,9 +134,30 @@ async def test_initiate_sso_login_provider_not_found(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
     with pytest.raises(HTTPException) as excinfo:
-        await sso_router.initiate_sso_login("provider", MagicMock(), redirect_uri="/cb", scopes=None, db=MagicMock())
+        await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", scopes=None, db=MagicMock())
 
     assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_initiate_sso_login_invalid_scopes(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+    monkeypatch.setattr(sso_router, "_validate_redirect_uri", lambda *_args, **_kwargs: True)
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        def get_authorization_url(self, *_args, **_kwargs):
+            raise ValueError("Invalid scopes requested: admin")
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", scopes="admin", db=MagicMock())
+
+    assert excinfo.value.status_code == 400
+    assert "Invalid scopes requested: admin" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio
@@ -153,9 +174,12 @@ async def test_initiate_sso_login_success(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
-    result = await sso_router.initiate_sso_login("provider", MagicMock(), redirect_uri="/cb", scopes=None, db=MagicMock())
+    response = MagicMock()
+    result = await sso_router.initiate_sso_login("provider", MagicMock(), response, redirect_uri="/cb", scopes=None, db=MagicMock())
 
     assert result.state == "abc"
+    response.set_cookie.assert_called_once()
+    assert response.set_cookie.call_args.kwargs["key"] == "sso_session_id"
 
 
 @pytest.mark.asyncio
@@ -172,7 +196,7 @@ async def test_initiate_sso_login_state_missing(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
-    result = await sso_router.initiate_sso_login("provider", MagicMock(), redirect_uri="/cb", scopes=None, db=MagicMock())
+    result = await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", scopes=None, db=MagicMock())
 
     assert result.state == ""
 
@@ -192,6 +216,7 @@ async def test_handle_sso_callback_failure_redirect(monkeypatch: pytest.MonkeyPa
 
     request = MagicMock()
     request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
 
     response = await sso_router.handle_sso_callback("provider", "code", "state", request=request, response=MagicMock(), db=MagicMock())
 
@@ -228,6 +253,7 @@ async def test_handle_sso_callback_user_creation_failed(monkeypatch: pytest.Monk
 
     request = MagicMock()
     request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
 
     response = await sso_router.handle_sso_callback("provider", "code", "state", request=request, response=MagicMock(), db=MagicMock())
 
@@ -259,6 +285,7 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
 
     request = MagicMock()
     request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
 
     response = await sso_router.handle_sso_callback("provider", "code", "state", request=request, response=MagicMock(), db=MagicMock())
 
@@ -296,6 +323,7 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
     request = MagicMock()
     request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
 
     response = await sso_router.handle_sso_callback("keycloak", "code", "state", request=request, response=MagicMock(), db=MagicMock())
 
@@ -335,6 +363,7 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
 
     request = MagicMock()
     request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
 
     response = await sso_router.handle_sso_callback("keycloak", "code", "state", request=request, response=MagicMock(), db=MagicMock())
 
@@ -344,6 +373,30 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
     assert "sso_id_token_hint=" not in response.headers.get("set-cookie", "")
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
+
+
+@pytest.mark.asyncio
+async def test_handle_sso_callback_missing_session_cookie_redirects_failed(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            raise AssertionError("Should not call callback service without session cookie")
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+    request.cookies = {}
+
+    response = await sso_router.handle_sso_callback("provider", "code", "state", request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio

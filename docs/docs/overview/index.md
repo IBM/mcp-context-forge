@@ -8,7 +8,7 @@ This section introduces what ContextForge is, the gateway patterns it supports, 
 
 ## What is ContextForge?
 
-**ContextForge** is a production-grade AI gateway that unifies tools, agents, models, and APIs behind a single endpoint. It supports multiple gateway patterns:
+**ContextForge** is a production-grade AI gateway, registry, and proxy that sits in front of any MCP, A2A, or REST/gRPC APIs, exposing a unified control plane with centralized governance, discovery, and observability for all your AI needs. It optimizes agent and tool calling, supports plugins, and provides multiple gateway patterns:
 
 - **Tools Gateway** — Federate MCP servers, REST APIs, and gRPC services into one composable tool catalog
 - **Agent Gateway** — Route to A2A agents, OpenAI-compatible agents, and Anthropic agents

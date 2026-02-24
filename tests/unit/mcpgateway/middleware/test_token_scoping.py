@@ -21,7 +21,15 @@ import pytest
 
 # First-Party
 from mcpgateway.db import Permissions
-from mcpgateway.middleware.token_scoping import TokenScopingMiddleware
+from mcpgateway.middleware.token_scoping import _get_llm_permission_patterns, TokenScopingMiddleware
+
+
+@pytest.fixture(autouse=True)
+def clear_llm_permission_pattern_cache():
+    """Clear cached LLM permission regex patterns between tests."""
+    _get_llm_permission_patterns.cache_clear()
+    yield
+    _get_llm_permission_patterns.cache_clear()
 
 
 class TestTokenScopingMiddleware:
@@ -124,15 +132,18 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
-        """Test that admin endpoints use canonical admin permissions."""
-        result = middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
-        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT permission"
+        """Test that admin endpoint groups use canonical granular permissions."""
+        result = middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT on /admin/users"
 
-        result = middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.ADMIN_USER_MANAGEMENT])
-        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT for admin operations"
+        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
+        assert result == True, "Should accept canonical ADMIN_SYSTEM_CONFIG on /admin/config/*"
+
+        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        assert result == False, "Should reject ADMIN_USER_MANAGEMENT for system-config admin routes"
 
         # Test that old non-canonical admin permissions would not work
-        result = middleware._check_permission_restrictions("/admin", "GET", ["admin.read"])
+        result = middleware._check_permission_restrictions("/admin/users", "GET", ["admin.read"])
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
     @pytest.mark.asyncio
@@ -194,7 +205,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return admin-scoped token
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}}
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -213,7 +224,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return wildcard permissions
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"permissions": ["*"]}
+            mock_extract.return_value = {"scopes": {"permissions": ["*"]}}
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -277,6 +288,27 @@ class TestTokenScopingMiddleware:
         """Server MCP endpoint should require servers.use permission."""
         assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is False
         assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
+
+    def test_permission_restrictions_llm_proxy_default_prefix(self, middleware):
+        """LLM proxy endpoints should enforce llm.read/llm.invoke with default /v1 prefix."""
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_INVOKE]) is False
+
+        assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
+        assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_READ]) is False
+
+    def test_permission_restrictions_llm_proxy_custom_prefix(self, middleware, monkeypatch):
+        """LLM proxy path mapping should follow settings.llm_api_prefix."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.llm_api_prefix", "/gateway-llm")
+
+        assert middleware._check_permission_restrictions("/gateway-llm/models", "GET", [Permissions.LLM_READ]) is True
+        assert middleware._check_permission_restrictions("/gateway-llm/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_READ]) is False
+
+    def test_permission_restrictions_llm_proxy_exact_paths_only(self, middleware):
+        """LLM proxy permissions should not match sub-resource paths."""
+        assert middleware._check_permission_restrictions("/v1/models/anything", "GET", [Permissions.LLM_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/chat/completions/anything", "POST", [Permissions.LLM_INVOKE]) is False
 
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""
@@ -367,21 +399,31 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_admin(self, middleware):
-        """Test that admin regex patterns require correct permissions."""
-        # Test exact /admin path requires ADMIN_USER_MANAGEMENT
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        """Test that admin regex patterns enforce route-group-specific permissions."""
+        # Dashboard/overview groups
+        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_DASHBOARD]) == True
+        assert middleware._check_permission_restrictions("/admin/overview/partial", "GET", [Permissions.ADMIN_OVERVIEW]) == True
 
-        # Test admin operations require admin permissions
-        assert middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/teams", "PUT", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        # User management vs config domains must remain separated
+        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == True
+        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == False
+        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
 
-        # Test that non-admin permissions are rejected for admin paths
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.TOOLS_READ]) == False
-        assert middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.RESOURCES_CREATE]) == False
+        # Other admin route groups
+        assert middleware._check_permission_restrictions("/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
+        assert middleware._check_permission_restrictions("/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
+        assert middleware._check_permission_restrictions("/admin/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
 
-        # Test that empty permissions list returns True (no restrictions policy)
-        assert middleware._check_permission_restrictions("/admin", "GET", []) == True
+        # Unmapped admin paths default-deny when token has explicit restrictions
+        assert middleware._check_permission_restrictions("/admin/not-mapped", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
+
+        # Explicitly multi-scoped token remains functional
+        assert middleware._check_permission_restrictions(
+            "/admin/config/settings",
+            "GET",
+            [Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SYSTEM_CONFIG],
+        ) == True
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_servers(self, middleware):
@@ -632,7 +674,7 @@ class TestTokenScopingMiddleware:
         # Test that exact patterns still work correctly
         exact_matches = [
             ("/tools", "GET", [Permissions.TOOLS_READ], True),
-            ("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT], True),
+            ("/admin", "GET", [Permissions.ADMIN_DASHBOARD], True),
             ("/resources", "GET", [Permissions.RESOURCES_READ], True),
             ("/prompts", "POST", [Permissions.PROMPTS_CREATE], True),
             ("/servers", "POST", [Permissions.SERVERS_CREATE], True),

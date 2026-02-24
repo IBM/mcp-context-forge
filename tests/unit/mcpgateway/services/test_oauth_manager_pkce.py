@@ -580,10 +580,12 @@ class TestOAuthManagerAccessToken:
     @pytest.mark.asyncio
     async def test_get_access_token_authorization_code_fallback_error(self, monkeypatch):
         manager = OAuthManager()
-        monkeypatch.setattr(manager, "_client_credentials_flow", AsyncMock(side_effect=RuntimeError("nope")))
+        mock_client_flow = AsyncMock(side_effect=RuntimeError("nope"))
+        monkeypatch.setattr(manager, "_client_credentials_flow", mock_client_flow)
 
-        with pytest.raises(OAuthError, match="Authorization code flow cannot be used"):
+        with pytest.raises(OAuthError, match="requires user consent"):
             await manager.get_access_token({"grant_type": "authorization_code"})
+        mock_client_flow.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_get_access_token_unsupported_grant(self):

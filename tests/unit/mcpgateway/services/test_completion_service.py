@@ -5,13 +5,20 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
+# Standard
+from types import SimpleNamespace
+
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.common.models import (
     CompleteResult,
 )
+from mcpgateway.db import Base, Prompt as DbPrompt, Resource as DbResource
 from mcpgateway.services.completion_service import (
     CompletionError,
     CompletionService,
@@ -204,3 +211,182 @@ async def test_unregister_completions():
     assert comp["values"] == []
     assert comp["total"] == 0
     assert comp["hasMore"] is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_team_ids_uses_team_management_service_when_token_teams_absent(monkeypatch):
+    service = CompletionService()
+
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, _user_email):
+            return [SimpleNamespace(id="team-1"), SimpleNamespace(id="team-2")]
+
+    monkeypatch.setattr("mcpgateway.services.team_management_service.TeamManagementService", MockTeamService)
+
+    team_ids = await service._resolve_team_ids(db=object(), user_email="member@example.com", token_teams=None)
+    assert team_ids == ["team-1", "team-2"]
+
+
+@pytest.fixture
+def completion_db():
+    """Create an isolated in-memory DB session for completion visibility tests."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(bind=engine)
+    db = SessionLocal()
+
+    prompt_schema = {"properties": {"arg": {"name": "arg", "enum": ["red", "green", "blue"]}}}
+
+    db.add_all(
+        [
+            DbPrompt(
+                original_name="public-prompt",
+                custom_name="public-prompt",
+                custom_name_slug="public-prompt",
+                name="public-prompt",
+                template="public",
+                argument_schema=prompt_schema,
+                visibility="public",
+                owner_email="owner@example.com",
+                team_id=None,
+                enabled=True,
+            ),
+            DbPrompt(
+                original_name="team-prompt",
+                custom_name="team-prompt",
+                custom_name_slug="team-prompt",
+                name="team-prompt",
+                template="team",
+                argument_schema=prompt_schema,
+                visibility="team",
+                team_id="team-1",
+                owner_email="teammate@example.com",
+                enabled=True,
+            ),
+            DbPrompt(
+                original_name="private-prompt",
+                custom_name="private-prompt",
+                custom_name_slug="private-prompt",
+                name="private-prompt",
+                template="private",
+                argument_schema=prompt_schema,
+                visibility="private",
+                owner_email="owner@example.com",
+                team_id=None,
+                enabled=True,
+            ),
+        ]
+    )
+
+    db.add_all(
+        [
+            DbResource(
+                uri="file://public.txt",
+                name="Public Resource",
+                text_content="public",
+                visibility="public",
+                owner_email="owner@example.com",
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://team.txt",
+                name="Team Resource",
+                text_content="team",
+                visibility="team",
+                team_id="team-1",
+                owner_email="teammate@example.com",
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://private.txt",
+                name="Private Resource",
+                text_content="private",
+                visibility="private",
+                owner_email="owner@example.com",
+                enabled=True,
+            ),
+        ]
+    )
+    db.commit()
+
+    try:
+        yield db
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_prompt_completion_public_only_token_cannot_access_private_prompt(completion_db):
+    service = CompletionService()
+    request = {
+        "ref": {"type": "ref/prompt", "name": "private-prompt"},
+        "argument": {"name": "arg", "value": "r"},
+    }
+
+    with pytest.raises(CompletionError, match="Prompt not found"):
+        await service.handle_completion(completion_db, request, user_email="owner@example.com", token_teams=[])
+
+
+@pytest.mark.asyncio
+async def test_prompt_completion_team_token_can_access_team_prompt(completion_db):
+    service = CompletionService()
+    request = {
+        "ref": {"type": "ref/prompt", "name": "team-prompt"},
+        "argument": {"name": "arg", "value": "r"},
+    }
+
+    result = await service.handle_completion(completion_db, request, user_email="member@example.com", token_teams=["team-1"])
+    assert result.completion["values"] == ["red", "green"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_completion_admin_bypass_can_access_private_prompt(completion_db):
+    service = CompletionService()
+    request = {
+        "ref": {"type": "ref/prompt", "name": "private-prompt"},
+        "argument": {"name": "arg", "value": "r"},
+    }
+
+    result = await service.handle_completion(completion_db, request, user_email=None, token_teams=None)
+    assert result.completion["values"] == ["red", "green"]
+
+
+@pytest.mark.asyncio
+async def test_resource_completion_public_only_token_filters_private_and_team(completion_db):
+    service = CompletionService()
+    request = {
+        "ref": {"type": "ref/resource", "uri": "template://resource"},
+        "argument": {"name": "uri", "value": "file://"},
+    }
+
+    result = await service.handle_completion(completion_db, request, user_email="owner@example.com", token_teams=[])
+    assert set(result.completion["values"]) == {"file://public.txt"}
+
+
+@pytest.mark.asyncio
+async def test_resource_completion_team_token_includes_public_and_team_only(completion_db):
+    service = CompletionService()
+    request = {
+        "ref": {"type": "ref/resource", "uri": "template://resource"},
+        "argument": {"name": "uri", "value": "file://"},
+    }
+
+    result = await service.handle_completion(completion_db, request, user_email="member@example.com", token_teams=["team-1"])
+    assert set(result.completion["values"]) == {"file://public.txt", "file://team.txt"}
+    assert "file://private.txt" not in result.completion["values"]
+
+
+@pytest.mark.asyncio
+async def test_resource_completion_admin_bypass_includes_all_visible_records(completion_db):
+    service = CompletionService()
+    request = {
+        "ref": {"type": "ref/resource", "uri": "template://resource"},
+        "argument": {"name": "uri", "value": "file://"},
+    }
+
+    result = await service.handle_completion(completion_db, request, user_email=None, token_teams=None)
+    assert set(result.completion["values"]) == {"file://public.txt", "file://team.txt", "file://private.txt"}

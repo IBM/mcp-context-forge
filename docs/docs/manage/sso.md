@@ -251,6 +251,10 @@ Response:
 }
 ```
 
+!!! important "Login State and Scope Enforcement"
+    - The SSO login endpoint sets an HTTP-only `sso_session_id` cookie and binds OAuth `state` to that browser session. The callback must present the same cookie or authentication is rejected.
+    - Optional `scopes` supplied to `/auth/sso/login/{provider}` must be a subset of the provider's configured scope policy. Out-of-policy scopes are rejected with HTTP `400`.
+
 ## Provider Configuration
 
 ### GitHub OAuth Setup
