@@ -268,3 +268,90 @@ async def test_clear_cache_endpoint(monkeypatch):
 
     await router_mod.clear_cache(user=_mock_user())
     mock_service.invalidate_cache.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# get_db error handling (rollback/invalidate paths)
+# ---------------------------------------------------------------------------
+
+
+def test_get_db_rollback_on_exception(monkeypatch):
+    """get_db rolls back and re-raises on exception during yield."""
+    db = MagicMock()
+    monkeypatch.setattr(router_mod, "SessionLocal", lambda: db)
+
+    gen = router_mod.get_db()
+    next(gen)
+
+    with pytest.raises(ValueError):
+        gen.throw(ValueError, ValueError("test error"), None)
+
+    db.rollback.assert_called_once()
+    db.close.assert_called_once()
+
+
+def test_get_db_invalidate_on_rollback_failure(monkeypatch):
+    """get_db calls invalidate() when rollback also fails."""
+    db = MagicMock()
+    db.rollback.side_effect = RuntimeError("rollback failed")
+    monkeypatch.setattr(router_mod, "SessionLocal", lambda: db)
+
+    gen = router_mod.get_db()
+    next(gen)
+
+    with pytest.raises(ValueError):
+        gen.throw(ValueError, ValueError("test error"), None)
+
+    db.rollback.assert_called_once()
+    db.invalidate.assert_called_once()
+    db.close.assert_called_once()
+
+
+def test_get_db_invalidate_also_fails(monkeypatch):
+    """get_db handles both rollback and invalidate failures gracefully."""
+    db = MagicMock()
+    db.rollback.side_effect = RuntimeError("rollback failed")
+    db.invalidate.side_effect = RuntimeError("invalidate failed")
+    monkeypatch.setattr(router_mod, "SessionLocal", lambda: db)
+
+    gen = router_mod.get_db()
+    next(gen)
+
+    with pytest.raises(ValueError):
+        gen.throw(ValueError, ValueError("test error"), None)
+
+    db.rollback.assert_called_once()
+    db.invalidate.assert_called_once()
+    db.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# list_blocks endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_blocks_success(monkeypatch):
+    blocks = [_make_block("b1"), _make_block("b2")]
+    mock_service = MagicMock()
+    mock_service.list_blocks.return_value = blocks
+    monkeypatch.setattr(router_mod, "get_ip_control_service", lambda: mock_service)
+
+    result = await router_mod.list_blocks(user=_mock_user(), db=MagicMock(), active_only=True)
+    assert len(result) == 2
+    mock_service.list_blocks.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# remove_block success
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_remove_block_success(monkeypatch):
+    mock_service = MagicMock()
+    mock_service.remove_block.return_value = True
+    monkeypatch.setattr(router_mod, "get_ip_control_service", lambda: mock_service)
+
+    # Should not raise
+    await router_mod.remove_block("b1", user=_mock_user(), db=MagicMock())

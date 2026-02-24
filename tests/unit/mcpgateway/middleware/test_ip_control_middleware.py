@@ -241,3 +241,29 @@ async def test_request_state_client_ip_set(monkeypatch):
 
     assert request.state.client_ip == "127.0.0.1"
     assert request.state.ip_control_result is True
+
+
+@pytest.mark.asyncio
+async def test_no_client_returns_unknown(monkeypatch):
+    """When request.client is None, client IP should be 'unknown'."""
+    monkeypatch.setattr("mcpgateway.middleware.ip_control.settings.ip_control_skip_paths", [])
+    monkeypatch.setattr("mcpgateway.middleware.ip_control.settings.ip_control_trust_proxy_headers", False)
+    monkeypatch.setattr("mcpgateway.middleware.ip_control.settings.ip_control_log_only", False)
+
+    middleware = IPControlMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.client = None
+    request.headers = {}
+    request.state = MagicMock()
+
+    mock_service = MagicMock()
+    mock_service.evaluate_ip.return_value = True
+
+    with patch("mcpgateway.middleware.ip_control.get_ip_control_service", return_value=mock_service):
+        await middleware.dispatch(request, call_next)
+
+    mock_service.evaluate_ip.assert_called_once_with("unknown", "/api/tools")
+    assert request.state.client_ip == "unknown"
