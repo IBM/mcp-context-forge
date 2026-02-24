@@ -5179,8 +5179,6 @@ class TestExportImportEndpoints:
         assert excinfo.value.status_code == 500
 
 
-
-
 class TestMessageEndpointElicitation:
     """Cover elicitation response handling."""
 
