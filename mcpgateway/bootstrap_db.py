@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+import mcpgateway.db as _db
 from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
@@ -213,9 +214,7 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             )
 
             # Mark admin user as email verified and require password change on first login
-            # Import `utc_now` from the db module at runtime so tests can monkeypatch mcpgateway.db.utc_now
-            from mcpgateway import db as _db  # imported here to allow test monkeypatching
-
+            # Use module-level `_db` (imported at module top) so tests can monkeypatch `mcpgateway.db.utc_now`
             admin_user.email_verified_at = _db.utc_now()
             # Respect configuration: only require password change on bootstrap when enabled
             if getattr(settings, "password_change_enforcement_enabled", True) and getattr(settings, "admin_require_password_change_on_bootstrap", True):

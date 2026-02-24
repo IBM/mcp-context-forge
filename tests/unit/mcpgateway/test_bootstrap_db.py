@@ -25,6 +25,7 @@ from mcpgateway.bootstrap_db import (
     main,
     normalize_team_visibility,
 )
+from mcpgateway.bootstrap_db import run_batched_update
 
 
 @pytest.fixture
@@ -1531,3 +1532,78 @@ class TestModuleLevel:
         from mcpgateway.bootstrap_db import main
 
         assert asyncio.iscoroutinefunction(main)
+
+
+class TestCoverageHelpers:
+    """Additional small tests to exercise utility branches and helpers for coverage."""
+
+    def test_postgresql_lock_timeout_raises(self):
+        """Ensure Postgres advisory lock timeout path raises TimeoutError."""
+        conn = MagicMock()
+        conn.dialect.name = "postgresql"
+        # Simulate pg_try_advisory_lock always failing
+        fake_exec = MagicMock()
+        fake_exec.scalar.return_value = False
+        conn.execute.return_value = fake_exec
+
+        # Patch migration timeout to 0 so loop times out immediately
+        with patch("mcpgateway.bootstrap_db.settings", Mock(migration_timeout=0)):
+            with pytest.raises(TimeoutError):
+                with advisory_lock(conn):
+                    pass
+
+    def test_run_batched_update_no_rows_and_batches(self):
+        """Cover both empty and multi-batch paths of run_batched_update."""
+        # No rows case
+        conn = Mock()
+
+        class Rows:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        conn.execute = Mock(side_effect=[Rows([])])
+        conn.commit = Mock()
+        assert run_batched_update(conn, "select", "UPDATE foo SET x=1 WHERE id IN :ids", batch_size=10) == 0
+
+        # Batches case: first select returns two ids, then update, then empty
+        conn = Mock()
+        conn.execute = Mock(side_effect=[Rows([(1,), (2,)]), None, Rows([])])
+        conn.commit = Mock()
+        assert run_batched_update(conn, "select", "UPDATE foo SET x=1 WHERE id IN :ids", batch_size=2) == 2
+
+    def test_db_datetime_helpers_and_expired_methods(self):
+        """Call small db helper branches (None expiry) across several models."""
+        from datetime import datetime, timedelta, timezone
+        import mcpgateway.db as dbmod
+
+        # _ensure_aware_utc should return None when given None
+        assert dbmod._ensure_aware_utc(None) is None
+
+        # PasswordResetToken.is_expired: when expires_at is None -> False
+        PR = dbmod.PasswordResetToken
+        dummy = type("X", (), {"expires_at": None})
+        assert PR.is_expired(dummy) is False
+
+        # EmailTeamInvitation.is_expired: when expires_at is None -> False
+        ETI = dbmod.EmailTeamInvitation
+        dummy2 = type("Y", (), {"expires_at": None})
+        assert ETI.is_expired(dummy2) is False
+
+        # EmailTeamJoinRequest.is_expired
+        EJ = dbmod.EmailTeamJoinRequest
+        dummy3 = type("Z", (), {"expires_at": None})
+        assert EJ.is_expired(dummy3) is False
+
+        # PendingUserApproval.is_expired
+        PUA = dbmod.PendingUserApproval
+        dummy4 = type("P", (), {"expires_at": None})
+        assert PUA.is_expired(dummy4) is False
+
+        # SSOAuthSession.is_expired (property) when expires_at is None -> False
+        SSO = dbmod.SSOAuthSession
+        dummy5 = type("S", (), {"expires_at": None})
+        # property fget is accessible via .fget
+        assert SSO.is_expired.fget(dummy5) is False
