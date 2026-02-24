@@ -9044,6 +9044,7 @@ function initToolSelect(
             checkboxes.forEach((cb) => (cb.checked = false));
 
             getEditSelections(selectId).clear();
+            container.removeAttribute("data-server-tools");
 
             // Clear the "select all" flag
             const selectAllInput = container.querySelector(
@@ -9468,6 +9469,7 @@ function initResourceSelect(
             checkboxes.forEach((cb) => (cb.checked = false));
 
             getEditSelections(selectId).clear();
+            container.removeAttribute("data-server-resources");
 
             // Remove any select-all hidden inputs
             const selectAllInput = container.querySelector(
@@ -9878,6 +9880,7 @@ function initPromptSelect(
             checkboxes.forEach((cb) => (cb.checked = false));
 
             getEditSelections(selectId).clear();
+            container.removeAttribute("data-server-prompts");
 
             // Remove any select-all hidden inputs
             const selectAllInput = container.querySelector(
