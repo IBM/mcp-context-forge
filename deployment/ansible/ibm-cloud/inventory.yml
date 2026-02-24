@@ -1,4 +1,0 @@
-all:
-  hosts:
-    localhost:
-      ansible_connection: local

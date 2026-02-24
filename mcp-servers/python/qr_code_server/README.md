@@ -1,6 +1,14 @@
 # QR Code Server Documentation
 
+> Authors: Matheus Cafalchio, Jonathan Springer, Mihai Criveti
+
 MCP server that provides QR code generation, decoding, and validation capabilities.
+
+> **Warning:** This is an unsupported sample server for demonstration and testing only.
+> Never run untrusted MCP servers directly on your local filesystem — always use a
+> sandbox, container, or microVM (e.g. Docker, gVisor, Firecracker) with restricted
+> capabilities. Perform your own security evaluation before registering any remote MCP
+> server, including servers from public catalogs.
 
 ## Table of Contents
 

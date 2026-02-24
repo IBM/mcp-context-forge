@@ -67,4 +67,4 @@ WORKDIR /app
 EXPOSE 8000
 USER 1001
 
-CMD ["python3", "-m", "url_to_markdown_server.server"]
+CMD ["python3", "-m", "url_to_markdown_server.server_fastmcp"]

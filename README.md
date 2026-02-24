@@ -900,7 +900,21 @@ tests/               # Test suite (400+ tests)
 docs/docs/           # Full documentation (MkDocs)
 charts/              # Kubernetes/Helm charts
 plugins/             # Plugin framework and implementations
+mcp-servers/         # Sample/test MCP servers (see note below)
 ```
+
+> **Note:** The `mcp-servers/` directory contains **unsupported sample and test servers**,
+> most originating from community contributions, provided for demonstration and integration
+> testing purposes only. They generally lack session management, persistent state,
+> multi-tenancy, authentication, and other production concerns. They do not go through
+> the same review, testing, and security rigor as the core ContextForge codebase and
+> **should not be run in production**.
+>
+> **Security:** Never run untrusted MCP servers directly on your local filesystem.
+> Always use a sandbox, container, or microVM (e.g. gVisor, Firecracker) with
+> restricted capabilities. Exercise caution when registering any remote MCP server,
+> including servers from public catalogs — perform your own security evaluation
+> before granting access to your gateway.
 
 For complete structure, see [CONTRIBUTING.md](./CONTRIBUTING.md) or run `tree -L 2`.
 

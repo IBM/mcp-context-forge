@@ -70,12 +70,12 @@ async def test_validate_code():
 
 
 @pytest.mark.asyncio
-async def test_get_capabilities():
+async def test_get_sandbox_info():
     """Test getting sandbox capabilities."""
-    from python_sandbox_server.server_fastmcp import get_capabilities
+    from python_sandbox_server.server_fastmcp import get_sandbox_info
 
-    result = await get_capabilities()
+    result = await get_sandbox_info()
 
-    assert "allowed_builtins" in result
-    assert "print" in result["allowed_builtins"]
-    assert "len" in result["allowed_builtins"]
+    assert "safe_builtins" in result
+    assert "allowed_imports" in result
+    assert "timeout_seconds" in result

@@ -1,6 +1,10 @@
 # Slow Time Server
 
+> Author: Mihai Criveti
+
 A configurable-latency MCP server for timeout, resilience, and load testing. Modelled on `fast-time-server`, it introduces artificial latency on every tool call to serve as a testing target for gateway timeout enforcement, circuit breaker behaviour, session pool resilience, and load testing.
+
+**Note:** Used for testing ContextForge and benchmarking. This server introduces ERRORS or LATENCY in responses be design.
 
 ## Tools
 

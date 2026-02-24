@@ -20,8 +20,6 @@ help: ## Show help
 	@echo "  make serve-http            Run with native FastMCP HTTP"
 	@echo "  make test                  Run tests with coverage"
 	@echo ""
-	@echo "📚 For AI similarity features, see: SIMILARITY.md"
-	@echo ""
 	@awk 'BEGIN {FS=":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-25s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install in editable mode

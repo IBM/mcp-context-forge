@@ -6,7 +6,6 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `tests/AGENTS.md` - Testing conventions and workflows
 - `plugins/AGENTS.md` - Plugin framework and development
 - `charts/AGENTS.md` - Helm chart operations
-- `deployment/AGENTS.md` - Infrastructure and deployment
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
 
@@ -36,10 +35,8 @@ plugins/                    # Plugin implementations (see plugins/AGENTS.md)
 plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 plugin_templates/           # Starter templates for building new plugins
 charts/                     # Helm charts (see charts/AGENTS.md)
-deployment/                 # Infrastructure configs (see deployment/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
-agent_runtimes/             # Agent runtime integrations (for example LangChain runtime)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
 tools_rust/                 # Rust utilities (for example stdio wrapper tooling)
 llms/                       # End-user LLM guidance (not for code agents)

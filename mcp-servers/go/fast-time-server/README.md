@@ -1,7 +1,8 @@
 # 🦫 Fast Time Server
 
-> Author: Mihai Criveti
-> A minimal Go service that streams or returns the current UTC time over **stdio**, **HTTP/JSON-RPC**, or **Server-Sent Events (SSE)**.
+> Authors: Mihai Criveti, Jonathan Springer
+>
+> A minimal Go service that streams or returns the current UTC time over **stdio**, **HTTP/JSON-RPC**, or **Server-Sent Events (SSE)** used for testing ContextForge and benchmarking.
 
 [![Go Version](https://img.shields.io/badge/go-1.23-1.27-blue)]()
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue)]()

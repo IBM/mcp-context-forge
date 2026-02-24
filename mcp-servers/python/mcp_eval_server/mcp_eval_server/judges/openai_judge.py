@@ -47,7 +47,7 @@ class OpenAIJudge(BaseJudge):
         if not api_key:
             raise ValueError(f"API key not found in environment variable: {config['api_key_env']}")
 
-        # Support for organization (updated to match agent_runtimes)
+        # Support for organization
         organization = None
         if config.get("organization_env"):
             organization = os.getenv(config["organization_env"])
