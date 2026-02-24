@@ -832,12 +832,26 @@
                   selectedTeamName: 'All Teams',
                   init() {
                     const urlParams = new URLSearchParams(window.location.search);
-                    this.selectedTeam = urlParams.get('team_id') || '';
-                    if (this.selectedTeam) {
-                      // Try to find team name from USER_TEAMS_DATA
-                      const teams = window.USER_TEAMS_DATA || [];
-                      const team = teams.find(t => t.id === this.selectedTeam);
-                      this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
+                    const requestedTeamId = urlParams.get('team_id') || '';
+                    this.selectedTeam = '';
+                    this.selectedTeamName = 'All Teams';
+
+                    if (requestedTeamId) {
+                      // Keep team scope only when it exists in known visible teams.
+                      const teams = (Array.isArray(window.USER_TEAMS_DATA) && window.USER_TEAMS_DATA.length > 0)
+                        ? window.USER_TEAMS_DATA
+                        : (Array.isArray(window.USER_TEAMS) ? window.USER_TEAMS : []);
+                      const team = teams.find(t => t.id === requestedTeamId);
+
+                      if (team) {
+                        this.selectedTeam = requestedTeamId;
+                        this.selectedTeamName = team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name;
+                      } else if (teams.length > 0) {
+                        // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
+                        const cleanUrl = new URL(window.location.href);
+                        cleanUrl.searchParams.delete('team_id');
+                        safeReplaceState({}, '', cleanUrl);
+                      }
                     }
                   },
                   loadTeams() {

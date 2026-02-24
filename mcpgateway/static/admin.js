@@ -21214,6 +21214,25 @@ function setupTokenListEventHandlers(container) {
  * Get the currently selected team ID from the team selector
  */
 function getCurrentTeamId() {
+    const isKnownTeamId = (teamId) => {
+        if (!teamId) {
+            return false;
+        }
+
+        const teamsData = Array.isArray(window.USER_TEAMS_DATA)
+            ? window.USER_TEAMS_DATA
+            : Array.isArray(window.USER_TEAMS)
+              ? window.USER_TEAMS
+              : [];
+
+        // If team data is unavailable, do not block existing behavior.
+        if (teamsData.length === 0) {
+            return true;
+        }
+
+        return teamsData.some((team) => team && team.id === teamId);
+    };
+
     // First, try to get from Alpine.js component (most reliable)
     const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
     if (
@@ -21229,7 +21248,7 @@ function getCurrentTeamId() {
             return null;
         }
 
-        return selectedTeam;
+        return isKnownTeamId(selectedTeam) ? selectedTeam : null;
     }
 
     // Fallback: check URL parameters
@@ -21240,7 +21259,7 @@ function getCurrentTeamId() {
         return null;
     }
 
-    return teamId;
+    return isKnownTeamId(teamId) ? teamId : null;
 }
 
 /**
@@ -21530,20 +21549,40 @@ async function createToken(form) {
         scope.usage_limits = {};
         payload.scope = scope;
 
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
             method: "POST",
-            headers: {
-                Authorization: `Bearer ${await getAuthToken()}`,
-                "Content-Type": "application/json",
-            },
+            headers: requestHeaders,
             body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
-            const errorMsg = await parseErrorResponse(
+            let errorMsg = await parseErrorResponse(
                 response,
                 `Failed to create token (${response.status})`,
             );
+
+            // Common conflict path: duplicate token name (same user + same team scope).
+            const genericCreateTokenError =
+                "Unable to complete the operation. Please try again.";
+            if (
+                response.status === 409 &&
+                errorMsg === genericCreateTokenError
+            ) {
+                const scopeLabel = currentTeamId
+                    ? "the selected team"
+                    : "All Teams (public-only)";
+                errorMsg = `Token name already exists in ${scopeLabel}. Choose a different token name.`;
+            }
+            if (
+                response.status === 400 &&
+                typeof errorMsg === "string" &&
+                errorMsg.startsWith("Team not found:")
+            ) {
+                errorMsg =
+                    "Selected team is no longer available. Switch the header selector to All Teams and try again.";
+            }
+
             throw new Error(errorMsg);
         }
 
@@ -21659,7 +21698,9 @@ function showTokenCreatedModal(tokenData) {
                 "data-copy-token-target",
             );
             if (elementId) {
-                void copyToClipboard(elementId);
+                copyToClipboard(elementId).catch((error) => {
+                    console.warn("Copy token action failed", error);
+                });
             }
         });
     }
@@ -21747,14 +21788,12 @@ async function revokeToken(tokenId, tokenName) {
     }
 
     try {
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/tokens/${tokenId}`,
             {
                 method: "DELETE",
-                headers: {
-                    Authorization: `Bearer ${await getAuthToken()}`,
-                    "Content-Type": "application/json",
-                },
+                headers: requestHeaders,
                 body: JSON.stringify({
                     reason: "Revoked by user via admin interface",
                 }),
@@ -21782,13 +21821,11 @@ async function revokeToken(tokenId, tokenName) {
  */
 async function viewTokenUsage(tokenId) {
     try {
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/tokens/${tokenId}/usage`,
             {
-                headers: {
-                    Authorization: `Bearer ${await getAuthToken()}`,
-                    "Content-Type": "application/json",
-                },
+                headers: requestHeaders,
             },
         );
 
@@ -22161,6 +22198,24 @@ async function getAuthToken() {
         }
     }
     return token || "";
+}
+
+/**
+ * Build auth headers for API requests.
+ * Avoids sending an empty Bearer header when token is not JS-readable (e.g., HttpOnly cookie auth).
+ */
+async function getAuthHeaders(includeJsonContentType = false) {
+    const headers = {};
+    if (includeJsonContentType) {
+        headers["Content-Type"] = "application/json";
+    }
+
+    const token = await getAuthToken();
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+
+    return headers;
 }
 
 /**
