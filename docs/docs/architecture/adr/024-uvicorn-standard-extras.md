@@ -54,7 +54,7 @@ We will adopt **uvicorn[standard]** as the default uvicorn installation to enabl
 - **15-30% higher throughput** - Faster event loop and HTTP parsing reduce per-request overhead
 - **Lower latency** - uvloop provides 20-40% lower event loop latency
 - **Zero code changes** - Drop-in enhancement, automatically detected by Uvicorn
-- **Consistency** - Matches other projects in the repository (langchain_agent, mcp_eval_server)
+- **Consistency** - Matches other projects in the repository (mcp_eval_server)
 - **Better development experience** - watchfiles provides faster, more reliable `--reload`
 - **Production-ready** - Used by major deployments (Microsoft, Mozilla, Sentry)
 

@@ -45,8 +45,10 @@ class TestServersCRUD:
         servers_page.wait_for_visible(servers_page.add_server_form)
 
         # Create server first using the high-level method
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
+        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
             servers_page.create_server(name=test_server_data["name"], icon=test_server_data["icon"])
+        response = response_info.value
+        assert response.status < 400, f"Server creation failed with status {response.status}"
 
         # Verify creation
         created_server = find_server(servers_page.page, test_server_data["name"])

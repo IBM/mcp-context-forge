@@ -98,6 +98,23 @@ class TestPermissionServiceCore:
             # Fallback should not be called for non-team permissions
             mock_fallback.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_check_permission_fallback_not_called_for_team_or_token_permissions(self, permission_service):
+        """Team/token checks must rely on explicit RBAC permissions."""
+        with (
+            patch.object(permission_service, "_is_user_admin", return_value=False),
+            patch.object(permission_service, "get_user_permissions", return_value=set()),
+            patch.object(permission_service, "_check_team_fallback_permissions") as mock_team_fallback,
+            patch.object(permission_service, "_check_token_fallback_permissions") as mock_token_fallback,
+        ):
+            team_result = await permission_service.check_permission("user@example.com", "teams.read", team_id="team-1")
+            token_result = await permission_service.check_permission("user@example.com", "tokens.create")
+
+        assert team_result is False
+        assert token_result is False
+        mock_team_fallback.assert_not_called()
+        mock_token_fallback.assert_not_called()
+
 
 class TestPermissionCaching:
     """Test permission caching functionality."""

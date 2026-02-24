@@ -12,7 +12,8 @@ and health checks for the internal LLM Chat feature.
 
 # Standard
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 import httpx
@@ -21,7 +22,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import LLMModel, LLMProvider, LLMProviderType
+from mcpgateway.llm_provider_configs import PROVIDER_CONFIGS
 from mcpgateway.llm_schemas import (
     GatewayModelInfo,
     HealthStatus,
@@ -40,6 +43,233 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+_ENCRYPTED_PROVIDER_CONFIG_KEY = "_mcpgateway_encrypted_value_v1"
+_PROVIDER_CONFIG_DATA_KEY = "data"
+_PROVIDER_CONFIG_LEGACY_VALUE_KEY = "value"
+_BASE_SENSITIVE_PROVIDER_CONFIG_KEYS = {
+    "api_key",
+    "auth_token",
+    "authorization",
+    "access_token",
+    "refresh_token",
+    "client_secret",
+    "secret_access_key",
+    "session_token",
+    "credentials_json",
+    "password",
+    "private_key",
+    "aws_secret_access_key",
+    "aws_session_token",
+}
+
+
+def _normalize_provider_config_key(key: str) -> str:
+    """Normalize provider config key names for matching.
+
+    Args:
+        key: Raw provider config field name.
+
+    Returns:
+        Canonical lowercase key using underscore separators.
+    """
+    normalized = str(key).strip().lower()
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
+    return normalized.strip("_")
+
+
+def _build_sensitive_provider_config_keys() -> set[str]:
+    """Build normalized sensitive key set from defaults and provider schemas.
+
+    Returns:
+        Set of normalized keys that should be treated as sensitive.
+    """
+    sensitive_keys = {_normalize_provider_config_key(key) for key in _BASE_SENSITIVE_PROVIDER_CONFIG_KEYS}
+    for provider_definition in PROVIDER_CONFIGS.values():
+        for field_definition in provider_definition.config_fields:
+            key_name = _normalize_provider_config_key(field_definition.name)
+            if field_definition.field_type == "password":
+                sensitive_keys.add(key_name)
+    return sensitive_keys
+
+
+_SENSITIVE_PROVIDER_CONFIG_KEYS = frozenset(_build_sensitive_provider_config_keys())
+
+
+def _is_sensitive_provider_config_key(key: str) -> bool:
+    """Return whether a provider config key is sensitive.
+
+    Args:
+        key: Candidate provider config key.
+
+    Returns:
+        ``True`` when key should be protected; otherwise ``False``.
+    """
+    return _normalize_provider_config_key(key) in _SENSITIVE_PROVIDER_CONFIG_KEYS
+
+
+def _is_encrypted_provider_config_value(value: Any) -> bool:
+    """Return whether a config fragment is an encrypted envelope.
+
+    Args:
+        value: Config fragment to inspect.
+
+    Returns:
+        ``True`` when fragment matches encrypted envelope structure.
+    """
+    return isinstance(value, dict) and isinstance(value.get(_ENCRYPTED_PROVIDER_CONFIG_KEY), str)
+
+
+def _encrypt_provider_config_secret(value: Any, existing_value: Any = None) -> Any:
+    """Encrypt a single sensitive provider config value.
+
+    Args:
+        value: Incoming value from create/update payload.
+        existing_value: Existing stored value for masked-value merge behavior.
+
+    Returns:
+        Encrypted envelope, preserved existing value, or ``None`` for explicit clear.
+    """
+    if value is None or value == "":
+        return value
+
+    if value == settings.masked_auth_value:
+        if existing_value in (None, ""):
+            return None
+        if _is_encrypted_provider_config_value(existing_value):
+            return existing_value
+        return _encrypt_provider_config_secret(existing_value, None)
+
+    if _is_encrypted_provider_config_value(value):
+        return value
+
+    encrypted = encode_auth({_PROVIDER_CONFIG_DATA_KEY: value})
+    return {_ENCRYPTED_PROVIDER_CONFIG_KEY: encrypted}
+
+
+def _protect_provider_config_fragment(config_fragment: Any, existing_fragment: Any = None) -> Any:
+    """Recursively protect sensitive provider config values.
+
+    Args:
+        config_fragment: Incoming config fragment to protect.
+        existing_fragment: Existing persisted fragment for merge behavior.
+
+    Returns:
+        Config fragment with sensitive values protected.
+    """
+    if isinstance(config_fragment, dict):
+        existing_dict = existing_fragment if isinstance(existing_fragment, dict) else {}
+        protected: Dict[str, Any] = {}
+        for key, value in config_fragment.items():
+            existing_value = existing_dict.get(key)
+            if _is_sensitive_provider_config_key(key):
+                protected[key] = _encrypt_provider_config_secret(value, existing_value)
+            else:
+                protected[key] = _protect_provider_config_fragment(value, existing_value)
+        return protected
+
+    if isinstance(config_fragment, list):
+        existing_list = existing_fragment if isinstance(existing_fragment, list) else []
+        return [_protect_provider_config_fragment(value, existing_list[idx] if idx < len(existing_list) else None) for idx, value in enumerate(config_fragment)]
+
+    return config_fragment
+
+
+def protect_provider_config_for_storage(config: Optional[Dict[str, Any]], existing_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Encrypt sensitive provider config fields before database persistence.
+
+    Args:
+        config: Incoming provider configuration payload.
+        existing_config: Existing stored configuration used for masked-value merges.
+
+    Returns:
+        Provider config structure with sensitive fields protected for storage.
+    """
+    if not isinstance(config, dict):
+        return {}
+    return _protect_provider_config_fragment(config, existing_config)
+
+
+def _decrypt_provider_config_fragment(config_fragment: Any) -> Any:
+    """Recursively decrypt provider config fragments for runtime usage.
+
+    Args:
+        config_fragment: Stored config fragment, possibly encrypted.
+
+    Returns:
+        Runtime-ready fragment with decryptable values restored.
+    """
+    if _is_encrypted_provider_config_value(config_fragment):
+        encrypted_payload = config_fragment.get(_ENCRYPTED_PROVIDER_CONFIG_KEY)
+        try:
+            decoded = decode_auth(encrypted_payload)
+            if isinstance(decoded, dict):
+                if _PROVIDER_CONFIG_DATA_KEY in decoded:
+                    return decoded[_PROVIDER_CONFIG_DATA_KEY]
+                if _PROVIDER_CONFIG_LEGACY_VALUE_KEY in decoded:
+                    return decoded[_PROVIDER_CONFIG_LEGACY_VALUE_KEY]
+        except Exception as exc:
+            logger.warning("Failed to decrypt provider config fragment: %s", exc)
+        return config_fragment
+
+    if isinstance(config_fragment, dict):
+        return {key: _decrypt_provider_config_fragment(value) for key, value in config_fragment.items()}
+
+    if isinstance(config_fragment, list):
+        return [_decrypt_provider_config_fragment(value) for value in config_fragment]
+
+    return config_fragment
+
+
+def decrypt_provider_config_for_runtime(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return runtime-ready provider config with encrypted fields decrypted.
+
+    Args:
+        config: Stored provider configuration payload.
+
+    Returns:
+        Provider config with decryptable sensitive fields restored.
+    """
+    if not isinstance(config, dict):
+        return {}
+    return _decrypt_provider_config_fragment(config)
+
+
+def _mask_provider_config_fragment(config_fragment: Any) -> Any:
+    """Recursively mask sensitive provider config values for API responses.
+
+    Args:
+        config_fragment: Runtime config fragment.
+
+    Returns:
+        Fragment with sensitive values replaced by mask markers.
+    """
+    if isinstance(config_fragment, dict):
+        masked: Dict[str, Any] = {}
+        for key, value in config_fragment.items():
+            if _is_sensitive_provider_config_key(key):
+                masked[key] = settings.masked_auth_value if value not in (None, "") else value
+            else:
+                masked[key] = _mask_provider_config_fragment(value)
+        return masked
+
+    if isinstance(config_fragment, list):
+        return [_mask_provider_config_fragment(value) for value in config_fragment]
+
+    return config_fragment
+
+
+def sanitize_provider_config_for_response(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return API-safe provider config with sensitive fields masked.
+
+    Args:
+        config: Stored provider configuration payload.
+
+    Returns:
+        Provider config suitable for API responses with masked secrets.
+    """
+    runtime_config = decrypt_provider_config_for_runtime(config)
+    return _mask_provider_config_fragment(runtime_config)
 
 
 class LLMProviderError(Exception):
@@ -142,7 +372,7 @@ class LLMProviderService:
             api_key=encrypted_api_key,
             api_base=provider_data.api_base,
             api_version=provider_data.api_version,
-            config=provider_data.config,
+            config=protect_provider_config_for_storage(provider_data.config),
             default_model=provider_data.default_model,
             default_temperature=provider_data.default_temperature,
             default_max_tokens=provider_data.default_max_tokens,
@@ -292,7 +522,10 @@ class LLMProviderService:
         if provider_data.api_version is not None:
             provider.api_version = provider_data.api_version
         if provider_data.config is not None:
-            provider.config = provider_data.config
+            provider.config = protect_provider_config_for_storage(
+                provider_data.config,
+                existing_config=provider.config if isinstance(provider.config, dict) else None,
+            )
         if provider_data.default_model is not None:
             provider.default_model = provider_data.default_model
         if provider_data.default_temperature is not None:
@@ -744,7 +977,7 @@ class LLMProviderService:
             provider_type=provider.provider_type,
             api_base=provider.api_base,
             api_version=provider.api_version,
-            config=provider.config,
+            config=sanitize_provider_config_for_response(provider.config),
             default_model=provider.default_model,
             default_temperature=provider.default_temperature,
             default_max_tokens=provider.default_max_tokens,

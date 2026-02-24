@@ -1137,6 +1137,12 @@
       "title": "Account Lockout Notification Enabled",
       "type": "boolean"
     },
+    "failed_login_min_response_ms": {
+      "default": 250,
+      "description": "Minimum response duration for failed login attempts to reduce timing side channels",
+      "title": "Failed Login Min Response Ms",
+      "type": "integer"
+    },
     "password_reset_enabled": {
       "default": true,
       "description": "Enable self-service password reset workflow (set false to disable public forgot/reset endpoints)",

@@ -32,6 +32,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -359,8 +360,9 @@ async def initiate_oauth_flow(
                         oauth_config["token_url"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
-                    # Update gateway's oauth_config and auth_type in database for future use
-                    gateway.oauth_config = oauth_config
+                    # Update gateway's oauth_config and auth_type in database for future use.
+                    # Protect sensitive fields before persistence to keep service-layer behavior consistent.
+                    gateway.oauth_config = await protect_oauth_config_for_storage(oauth_config, existing_oauth_config=gateway.oauth_config)
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 
@@ -483,40 +485,11 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        # Extract gateway_id from state parameter
-        # Try new base64-encoded JSON format first
-        # Standard
-        import base64
-
-        # Third-Party
-        import orjson
-
-        try:
-            # Expect state as base64url(payload || signature) where the last 32 bytes
-            # are the signature. Decode to bytes first so we can split payload vs sig.
-            state_raw = base64.urlsafe_b64decode(state.encode())
-            if len(state_raw) <= 32:
-                raise ValueError("State too short to contain payload and signature")
-
-            # Split payload and signature. Signature is the last 32 bytes.
-            payload_bytes = state_raw[:-32]
-            # signature_bytes = state_raw[-32:]
-
-            # Parse the JSON payload only (not including signature bytes)
-            try:
-                state_data = orjson.loads(payload_bytes)
-            except Exception as decode_exc:
-                raise ValueError(f"Failed to parse state payload JSON: {decode_exc}")
-
-            gateway_id = state_data.get("gateway_id")
-            if not gateway_id:
-                raise ValueError("No gateway_id in state")
-        except Exception as e:
-            # Fallback to legacy format (gateway_id_random)
-            logger.warning(f"Failed to decode state as JSON, trying legacy format: {e}")
-            if "_" not in state:
-                return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
-            gateway_id = state.split("_")[0]
+        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
+        gateway_id = await oauth_manager.resolve_gateway_id_from_state(state)
+        if not gateway_id:
+            logger.warning("OAuth callback received invalid or unknown state token")
+            return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
 
         # Get gateway configuration
         gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
@@ -554,7 +527,6 @@ async def oauth_callback(
             )
 
         # Complete OAuth flow
-        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
 
         # RFC 8707: Add resource parameter for JWT access tokens
         # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow

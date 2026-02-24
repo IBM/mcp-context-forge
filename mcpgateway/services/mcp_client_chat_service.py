@@ -1491,6 +1491,7 @@ class GatewayProvider:
         # Import here to avoid circular imports
         # First-Party
         from mcpgateway.db import LLMModel, LLMProvider, SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.llm_provider_service import decrypt_provider_config_for_runtime  # pylint: disable=import-outside-toplevel
         from mcpgateway.utils.services_auth import decode_auth  # pylint: disable=import-outside-toplevel
 
         model_id = self.config.model
@@ -1533,7 +1534,7 @@ class GatewayProvider:
 
             # Create appropriate LLM based on provider type
             provider_type = provider.provider_type.lower()
-            config = provider.config or {}
+            config = decrypt_provider_config_for_runtime(provider.config)
 
             # Common kwargs
             kwargs: Dict[str, Any] = {

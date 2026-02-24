@@ -6,7 +6,6 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `tests/AGENTS.md` - Testing conventions and workflows
 - `plugins/AGENTS.md` - Plugin framework and development
 - `charts/AGENTS.md` - Helm chart operations
-- `deployment/AGENTS.md` - Infrastructure and deployment
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
 
@@ -14,7 +13,7 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 
 ## Project Overview
 
-ContextForge is a production-grade unified gateway for Tools, Agents, Models, and APIs. It federates MCP, A2A, and REST services (plus model/provider proxying), with unified discovery, auth/RBAC, rate-limiting, observability, virtual servers, multi-transport protocols, plugin extensibility, and an optional Admin UI.
+ContextForge is a production-grade AI gateway, registry, and proxy that sits in front of any MCP, A2A, or REST/gRPC APIs, exposing a unified control plane with centralized governance, discovery, and observability. It federates tools, agents, models, and APIs (plus model/provider proxying), optimizes agent and tool calling, and supports plugins, auth/RBAC, rate-limiting, virtual servers, multi-transport protocols, and an optional Admin UI.
 
 ## Project Structure
 
@@ -36,10 +35,8 @@ plugins/                    # Plugin implementations (see plugins/AGENTS.md)
 plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 plugin_templates/           # Starter templates for building new plugins
 charts/                     # Helm charts (see charts/AGENTS.md)
-deployment/                 # Infrastructure configs (see deployment/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
-agent_runtimes/             # Agent runtime integrations (for example LangChain runtime)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
 tools_rust/                 # Rust utilities (for example stdio wrapper tooling)
 llms/                       # End-user LLM guidance (not for code agents)
@@ -94,6 +91,22 @@ The `teams` claim in JWT tokens determines resource visibility:
 - Missing `teams` key = public-only access (secure default)
 - Admin bypass requires BOTH `teams: null` AND `is_admin: true`
 - `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth
+
+### Security Invariants (Required)
+
+- Treat `public` as platform-public scope, not internet-anonymous scope.
+- Explicit exception: when `MCP_REQUIRE_AUTH=false`, unauthenticated `/mcp` requests are allowed with public-only visibility.
+- Keep the two-layer model on every path:
+  - Layer 1: token scoping controls what a caller can see.
+  - Layer 2: RBAC controls what a caller can do.
+- Do not re-implement token team interpretation logic; always use `normalize_token_teams()` in `mcpgateway/auth.py`.
+- Do not accept inbound client auth tokens via URL query parameters.
+- Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
+- High-risk transports must be feature-flagged and disabled by default.
+- Transport/session endpoints must authenticate before session establishment (or message forwarding) and enforce RBAC before processing actions.
+- Token-scoped route authorization must be default-deny for unmapped protected paths.
+- Never trust client-provided ownership fields (`owner_email`, `team_id`, session owner); derive authorization from authenticated identity and server-side state.
+- Security-sensitive changes must include deny-path regression tests (unauthenticated, wrong team, insufficient permissions, feature disabled).
 
 ### Built-in Roles
 

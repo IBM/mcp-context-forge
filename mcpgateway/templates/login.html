@@ -84,7 +84,10 @@
     </style>
     <!-- Font Awesome -->
     {% if ui_airgapped %}
-    <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
+    <link
+      rel="stylesheet"
+      href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css"
+    />
     {% else %}
     <link
       rel="stylesheet"
@@ -141,9 +144,13 @@
             </div>
 
             {% if secure_cookie_warning %}
-            <div class="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 rounded-xl text-sm">
+            <div
+              class="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 rounded-xl text-sm"
+            >
               <div class="flex items-start">
-                <i class="fas fa-exclamation-triangle mr-2 mt-0.5 flex-shrink-0"></i>
+                <i
+                  class="fas fa-exclamation-triangle mr-2 mt-0.5 flex-shrink-0"
+                ></i>
                 <div class="text-sm">{{ secure_cookie_warning }}</div>
               </div>
             </div>
@@ -184,6 +191,7 @@
               action="{{ root_path }}/admin/login"
               method="post"
             >
+              <input type="hidden" name="csrf_token" value="" />
               <div>
                 <label
                   for="email"
@@ -458,6 +466,35 @@
       // Initialize ROOT_PATH for JavaScript URL composition
       window.ROOT_PATH = {{ root_path | tojson }};
 
+      function getCookie(name) {
+        const parts = document.cookie.split(";");
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (trimmed.startsWith(name + "=")) {
+            return decodeURIComponent(trimmed.slice(name.length + 1));
+          }
+        }
+        return "";
+      }
+
+      function attachCsrfToPostForms() {
+        const csrfToken = getCookie("mcpgateway_csrf_token");
+        if (!csrfToken) return;
+        const forms = document.querySelectorAll("form");
+        forms.forEach((form) => {
+          const method = (form.getAttribute("method") || "get").toLowerCase();
+          if (method === "get") return;
+          let tokenInput = form.querySelector('input[name="csrf_token"]');
+          if (!tokenInput) {
+            tokenInput = document.createElement("input");
+            tokenInput.type = "hidden";
+            tokenInput.name = "csrf_token";
+            form.appendChild(tokenInput);
+          }
+          tokenInput.value = csrfToken;
+        });
+      }
+
       // SSO Provider configurations with branding
       const ssoProviders = {
         github: {
@@ -507,6 +544,7 @@
 
       // Initialize page
       document.addEventListener("DOMContentLoaded", async function () {
+        attachCsrfToPostForms();
         await loadSSOProviders();
         handleErrorMessages();
         setupAnimations();
@@ -516,6 +554,10 @@
         if (emailField && emailField.value) {
           document.getElementById("password").focus();
         }
+
+        document.querySelectorAll("form").forEach((form) => {
+          form.addEventListener("submit", attachCsrfToPostForms);
+        });
       });
 
       // Load available SSO providers

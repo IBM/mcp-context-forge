@@ -194,6 +194,8 @@ class TestRouterEndpointPermissions:
             ("mcpgateway.routers.sso", "admin.user_management"),
             ("mcpgateway.routers.llm_config_router", "admin.system_config"),
             ("mcpgateway.routers.llm_admin_router", "admin.system_config"),
+            ("mcpgateway.routers.llm_proxy_router", "llm.read"),
+            ("mcpgateway.routers.llm_proxy_router", "llm.invoke"),
             ("mcpgateway.routers.observability", "admin.system_config"),
             ("mcpgateway.routers.log_search", "logs:read"),
             ("mcpgateway.routers.log_search", "security:read"),
