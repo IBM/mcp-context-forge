@@ -342,6 +342,19 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/forge/tools", "GET", [Permissions.TOOLS_READ]) is True
         assert middleware._check_permission_restrictions("/forge/tools", "GET", [Permissions.TOOLS_CREATE]) is False
 
+    def test_normalize_path_for_matching_adds_leading_slash(self, middleware, monkeypatch):
+        """Relative normalized paths should be converted to absolute for matching."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "tools")
+        assert middleware._normalize_path_for_matching("/forge/tools") == "/tools"
+
+    def test_get_normalized_request_path_handles_non_dict_scope_and_relative_path(self, middleware, mock_request, monkeypatch):
+        """Non-dict scopes and relative normalized paths should be safely normalized."""
+        mock_request.scope = ["not-a-dict"]  # truthy non-dict exercises defensive coercion branch
+        mock_request.url.path = "/forge/tools"
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "forge/tools")
+
+        assert middleware._get_normalized_request_path(mock_request) == "/forge/tools"
+
     @pytest.mark.asyncio
     async def test_call_normalizes_scope_root_path_before_checks(self, middleware, mock_request):
         """Request scope root_path should be removed before scope enforcement."""

@@ -1122,6 +1122,16 @@ def test_permissions_helpers():
     assert "logs:read" in by_resource["logs"]
 
 
+def test_permissions_helpers_without_separator(monkeypatch):
+    """Permissions without separators should map to their own resource bucket."""
+    monkeypatch.setattr(db.Permissions, "get_all_permissions", classmethod(lambda cls: ["standalone", "tools.read"]))
+
+    by_resource = db.Permissions.get_permissions_by_resource()
+
+    assert by_resource["standalone"] == ["standalone"]
+    assert by_resource["tools"] == ["tools.read"]
+
+
 # --- Email user helpers ---
 def test_email_user_account_helpers():
     user = db.EmailUser(email="user@example.com", password_hash="hash")

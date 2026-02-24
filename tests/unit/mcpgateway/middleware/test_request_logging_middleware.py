@@ -107,6 +107,13 @@ def test_mask_sensitive_data_masks_common_key_variants():
     assert masked["token_count"] == 7
     assert masked["tokenizer"] == "gpt"
 
+
+def test_mask_sensitive_data_ignores_empty_normalized_keys():
+    data = {"!!!": "value", "password": "secret"}
+    masked = mask_sensitive_data(data)
+    assert masked["!!!"] == "value"
+    assert masked["password"] == "******"
+
 # --- mask_jwt_in_cookies tests ---
 
 def test_mask_jwt_in_cookies_with_sensitive():

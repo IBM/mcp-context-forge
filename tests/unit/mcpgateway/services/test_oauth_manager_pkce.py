@@ -1273,6 +1273,81 @@ async def test_store_and_resolve_state_in_memory_preserves_gateway_mapping(monke
     assert state_data.get("app_user_email") == "user@test.com"
 
 
+def test_extract_legacy_state_payload_gateway_suffix_format():
+    manager = OAuthManager()
+    assert manager._extract_legacy_state_payload("gateway123_randomsuffix") == {"gateway_id": "gateway123"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_redis_success(monkeypatch):
+    manager = OAuthManager()
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=b"gw-redis")
+
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis"))
+    monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+    assert await manager.resolve_gateway_id_from_state("opaque") == "gw-redis"
+
+
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_redis_logs_lookup_failure(monkeypatch, caplog: pytest.LogCaptureFixture):
+    manager = OAuthManager()
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=RuntimeError("redis-unavailable"))
+
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis"))
+    monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+    caplog.set_level("WARNING")
+    assert await manager.resolve_gateway_id_from_state("opaque") is None
+    assert "Failed to resolve state gateway in Redis" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_database_success(monkeypatch):
+    manager = OAuthManager()
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+    mock_db = MagicMock()
+    mock_oauth_state = SimpleNamespace(gateway_id="gw-db")
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_oauth_state
+
+    mock_db_gen = MagicMock()
+    mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+    mock_db_gen.close = MagicMock()
+
+    mock_db_module = MagicMock()
+    mock_db_module.get_db = MagicMock(return_value=mock_db_gen)
+    mock_db_module.OAuthState = MagicMock()
+    mock_db_module.OAuthState.state = "state-col"
+
+    with patch.dict("sys.modules", {"mcpgateway.db": mock_db_module}):
+        assert await manager.resolve_gateway_id_from_state("opaque") == "gw-db"
+
+
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_cleans_expired_in_memory_entries(monkeypatch):
+    import mcpgateway.services.oauth_manager as om
+    from datetime import datetime, timedelta, timezone
+
+    manager = OAuthManager()
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
+
+    expired_key = "oauth:state:gw-expired"
+    state_token = "expired-state-token"
+    om._oauth_states[expired_key] = {
+        "state": state_token,
+        "gateway_id": "gw-expired",
+        "expires_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    }
+    om._oauth_state_lookup[state_token] = "gw-expired"
+
+    assert await manager.resolve_gateway_id_from_state("missing-state") is None
+    assert expired_key not in om._oauth_states
+    assert state_token not in om._oauth_state_lookup
+
+
 class _MockColumn:
     """Mock SQLAlchemy column that supports comparison operators."""
 

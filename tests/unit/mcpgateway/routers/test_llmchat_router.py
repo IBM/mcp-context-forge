@@ -157,6 +157,33 @@ async def test_get_user_config_redis_supports_legacy_plaintext(monkeypatch: pyte
     assert result == config
 
 
+def test_deserialize_user_config_rejects_invalid_payload(caplog: pytest.LogCaptureFixture):
+    caplog.set_level("WARNING")
+    assert llmchat_router._deserialize_user_config_from_storage(b"{not-json") is None
+    assert "Failed to parse stored LLM chat config payload" in caplog.text
+
+
+def test_deserialize_user_config_rejects_missing_or_invalid_encrypted_payload(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    caplog.set_level("WARNING")
+
+    missing_payload = llmchat_router.orjson.dumps(
+        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: ""}
+    )
+    assert llmchat_router._deserialize_user_config_from_storage(missing_payload) is None
+
+    monkeypatch.setattr(llmchat_router, "decode_auth", lambda *_args, **_kwargs: ["invalid"])
+    invalid_decoded = llmchat_router.orjson.dumps(
+        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: "ciphertext"}
+    )
+    assert llmchat_router._deserialize_user_config_from_storage(invalid_decoded) is None
+    assert "Decoded encrypted LLM chat config is invalid" in caplog.text
+
+
+def test_deserialize_user_config_rejects_non_dict_legacy_payload():
+    legacy_non_dict = llmchat_router.orjson.dumps(["not-a-dict"])
+    assert llmchat_router._deserialize_user_config_from_storage(legacy_non_dict) is None
+
+
 @pytest.mark.asyncio
 async def test_active_session_redis_set_and_delete(monkeypatch: pytest.MonkeyPatch):
     redis_mock = AsyncMock()

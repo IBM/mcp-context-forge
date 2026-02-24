@@ -17405,6 +17405,61 @@ class TestAdminCsrfProtection:
             await admin_mod.enforce_admin_csrf(request)
 
     @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_referer_origin_fallback(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "referer": "https://example.com/admin",
+                "host": "example.com",
+                "x-csrf-token": "expected",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_invalid_origin_components(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "invalid-origin", "host": "example.com", "x-csrf-token": "expected"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        with pytest.raises(HTTPException, match="origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_referer_parse_error_fails_closed(self, monkeypatch):
+        import urllib.parse
+
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"referer": "https://example.com/admin", "host": "example.com"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "csrf-token"},
+        )
+
+        monkeypatch.setattr(urllib.parse, "urlparse", MagicMock(side_effect=ValueError("bad referer")))
+        with pytest.raises(HTTPException, match="origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_missing_csrf_cookie(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com", "x-csrf-token": "expected"},
+            cookies={"jwt_token": "jwt"},
+        )
+        with pytest.raises(HTTPException, match="token cookie missing"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
     async def test_enforce_admin_csrf_rejects_token_mismatch(self):
         from mcpgateway import admin as admin_mod
 
@@ -17442,3 +17497,21 @@ class TestAdminCsrfProtection:
             form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
         )
         await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_when_form_parse_fails(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://example.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        request.form = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(HTTPException, match="token validation failed"):
+            await admin_mod.enforce_admin_csrf(request)

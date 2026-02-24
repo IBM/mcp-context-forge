@@ -32,6 +32,9 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
+    _decrypt_tool_header_value,
+    _decrypt_tool_headers_for_runtime,
+    _encrypt_tool_header_value,
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
@@ -744,6 +747,43 @@ class TestToolService:
         assert "_mcpgateway_encrypted_header_value_v1" in protected["Authorization"]
         assert protected["X-Correlation-Token"] == "corr-123"
         assert protected["X-Idempotency-Key"] == "idem-456"
+
+    def test_tool_header_crypto_helpers_cover_edge_cases(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+        """Exercise edge branches for header encrypt/decrypt helpers."""
+        # Explicit clears
+        assert _encrypt_tool_header_value(None) is None
+        assert _encrypt_tool_header_value("") == ""
+
+        # Masked values with no existing secret should clear
+        assert _encrypt_tool_header_value(settings.masked_auth_value, None) is None
+
+        # Masked values with existing plain secret should encrypt recursively
+        monkeypatch.setattr("mcpgateway.services.tool_service.encode_auth", lambda payload: f"enc:{payload['data']}")
+        encrypted_from_existing = _encrypt_tool_header_value(settings.masked_auth_value, "Bearer existing-secret")
+        assert encrypted_from_existing == {"_mcpgateway_encrypted_header_value_v1": "enc:Bearer existing-secret"}
+
+        # Already encrypted values should pass through unchanged
+        already_encrypted = {"_mcpgateway_encrypted_header_value_v1": "ciphertext"}
+        assert _encrypt_tool_header_value(already_encrypted) == already_encrypted
+
+        # Missing encrypted payload returns original envelope
+        missing_payload = {"_mcpgateway_encrypted_header_value_v1": ""}
+        assert _decrypt_tool_header_value(missing_payload) == missing_payload
+
+        # Successful decode should return canonical data key
+        monkeypatch.setattr("mcpgateway.services.tool_service.decode_auth", lambda _payload: {"data": "Bearer runtime-secret"})
+        assert _decrypt_tool_header_value({"_mcpgateway_encrypted_header_value_v1": "ciphertext"}) == "Bearer runtime-secret"
+
+        # Decode failure logs and preserves envelope
+        caplog.set_level("WARNING")
+        monkeypatch.setattr("mcpgateway.services.tool_service.decode_auth", MagicMock(side_effect=RuntimeError("boom")))
+        encrypted_value = {"_mcpgateway_encrypted_header_value_v1": "ciphertext"}
+        assert _decrypt_tool_header_value(encrypted_value) == encrypted_value
+        assert "Failed to decrypt tool header value" in caplog.text
+
+        # Non-dict header maps should safely normalize to empty dict
+        assert _protect_tool_headers_for_storage("not-a-dict") is None
+        assert _decrypt_tool_headers_for_runtime(None) == {}
 
     @pytest.mark.asyncio
     async def test_create_tool_from_a2a_agent_passes_scope_fields(self, tool_service, test_db):
