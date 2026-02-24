@@ -751,10 +751,10 @@ class SSOService:
             user_info: Normalized user-info payload from provider.
 
         Returns:
-            ``True`` when email is verified or claim is absent.
+            ``True`` only when email verification claim is explicitly verified.
         """
         if "email_verified" not in user_info:
-            return True
+            return False
 
         claim_value = user_info.get("email_verified")
         if isinstance(claim_value, bool):
@@ -1333,6 +1333,20 @@ class SSOService:
             return None
 
         incoming_provider = str(user_info.get("provider", "sso")).strip().lower() or "sso"
+        provider = self.get_provider(incoming_provider)
+
+        # Enforce trusted-domain policy consistently for both existing and new users.
+        trusted_domains = getattr(provider, "trusted_domains", None) if provider else None
+        if trusted_domains:
+            domain = email.split("@")[1].lower() if "@" in email else ""
+            normalized_trusted_domains = [d.lower() for d in trusted_domains if isinstance(d, str)]
+            if domain not in normalized_trusted_domains:
+                logger.warning(
+                    "SSO authenticate_or_create_user: email domain '%s' is not allowed for provider '%s'.",
+                    domain,
+                    incoming_provider,
+                )
+                return None
 
         # Use stable local values for JWT payload generation to avoid lazy-loading
         # expired ORM attributes after commit/flush boundaries.
@@ -1359,7 +1373,6 @@ class SSOService:
                 )
                 return None
 
-            provider = self.get_provider(incoming_provider)
             provider_id: Optional[str] = None
             provider_metadata: Dict[str, Any] = {}
             provider_ctx: Optional[Any] = None
@@ -1378,8 +1391,8 @@ class SSOService:
                 user.auth_provider = incoming_provider
                 current_auth_provider = incoming_provider
 
-            # Mark email as verified for SSO users
-            user.email_verified = True
+            # Persist verification status from provider claims.
+            user.email_verified = self._is_email_verified_claim(user_info)
             user.last_login = utc_now()
 
             # Synchronize is_admin status based on current group membership
@@ -1428,19 +1441,12 @@ class SSOService:
             resolved_is_admin = current_is_admin
         else:
             # Auto-create user if enabled
-            provider = self.get_provider(incoming_provider)
             if not provider or not provider.auto_create_users:
                 return None
 
             provider_id = provider.id
             provider_metadata = provider.provider_metadata or {}
             provider_ctx = SSOProviderContext(id=provider_id, provider_metadata=provider_metadata)
-
-            # Check trusted domains if configured
-            if provider.trusted_domains:
-                domain = email.split("@")[1].lower()
-                if domain not in [d.lower() for d in provider.trusted_domains]:
-                    return None
 
             # Check if admin approval is required
             if settings.sso_require_admin_approval:

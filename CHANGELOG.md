@@ -212,6 +212,13 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **C-20**: Gateway sync endpoints now enforce explicit RBAC and scoped ownership checks with normalized token-team semantics
 * **C-35**: Server usage SSE now validates server existence and fails closed for missing IDs in scoped checks
 * **C-39**: Import flow strips untrusted ownership/team/visibility fields for scoped entities
+* **A-04**: Request logging masking now covers normalized key variants (snake/camel/kebab/case changes) while preserving non-sensitive metadata fields
+* **C-06 / C-26**: Token scoping now applies consistently for cookie and header auth paths, and normalizes `APP_ROOT_PATH` prefixes before route permission matching
+* **C-31 / C-40 / C-41**: LLM chat config, provider config secrets, and sensitive tool headers now use at-rest protection with response-time masking and backward-compatible read handling
+* **C-34 / L-13**: Permission fallback paths now rely on explicit constants and canonical permission mappings across decorators, validation, and role checks, with default non-admin roles receiving explicit `teams.read` and token self-management permissions
+* **C-36 / C-37**: Server team reassignment now validates target-team ownership membership, and import defaults prefer scoped visibility for safer tenant defaults
+* **O-08 / O-12 / O-13**: SSO/OAuth flows now require `email_verified: true` claims for login acceptance (including existing users), enforce trusted-domain policy consistently, and use opaque server-side OAuth state mapping
+* **U-02 / U-03 / U-04**: Admin UI now enforces CSRF tokens/origin checks for state-changing flows, sanitizes dynamic DOM insertions, and uses pinned integrity-checked external assets
 * **Token helpers**: Rich-token generation now distinguishes omitted teams from explicit `teams: null` to preserve intended scope semantics
 * Health diagnostics endpoint now follows standard bearer-token validation.
 * JSON-RPC and REST logging controls now use aligned permission checks.

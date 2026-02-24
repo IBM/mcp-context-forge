@@ -16,8 +16,11 @@ from playwright.sync_api import expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
+# First-Party
+from mcpgateway.config import Settings
+
 # Local
-from .conftest import ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, ADMIN_NEW_PASSWORD, BASE_URL
+from .conftest import ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, BASE_URL, _attempt_admin_login_with_password, _candidate_admin_passwords
 from .pages.admin_page import AdminPage
 from .pages.login_page import LoginPage
 
@@ -45,16 +48,15 @@ class TestAuthentication:
 
         # Perform login with optional password change
         if allow_password_change:
-            success = login_page.login(email, password, ADMIN_NEW_PASSWORD)
-            if success and login_page.is_on_change_password_page():
-                # Password was changed
-                ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-            elif not success and ADMIN_NEW_PASSWORD != password:
-                # Try with new password
-                success = login_page.login(email, ADMIN_NEW_PASSWORD)
-                if success:
-                    ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-            return success
+            settings = Settings()
+            if _attempt_admin_login_with_password(page, login_page, email, password):
+                return True
+            for candidate in _candidate_admin_passwords(settings, password):
+                if candidate == password:
+                    continue
+                if _attempt_admin_login_with_password(page, login_page, email, candidate):
+                    return True
+            return False
 
         login_page.submit_login(email, password)
         return not login_page.has_invalid_credentials_error()
@@ -118,7 +120,7 @@ class TestAuthentication:
         if re.search(r"/admin/change-password-required", page.url):
             pytest.skip("Admin password change required; configure a final password and retry.")
         expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
-        expect(page.locator("h1")).to_contain_text("Gateway Administration")
+        expect(page).to_have_title(re.compile(r".*Gateway Administration.*"))
 
         # Check that we can see admin tabs
         admin_ui = AdminPage(page, BASE_URL)

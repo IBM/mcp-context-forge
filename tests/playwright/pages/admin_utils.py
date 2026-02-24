@@ -9,27 +9,45 @@ Shared utility functions for admin page interactions.
 
 # Standard
 import logging
+import os
 import urllib.parse
 
 # Third-Party
 from playwright.sync_api import Page
 
+# Local
+from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
+
 logger = logging.getLogger(__name__)
 
 
 def _get_auth_headers(page: Page) -> dict:
-    """Extract JWT token from browser cookies and return Authorization headers.
-
-    The server rejects cookie-based authentication for programmatic API
-    requests (page.request), requiring an Authorization header instead.
-    This extracts the jwt_token cookie set during login and converts it
-    to a Bearer token header.
-    """
-    cookies = page.context.cookies()
-    jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
+    """Extract JWT and CSRF tokens from browser cookies for API requests."""
+    headers: dict[str, str] = {}
+    jwt_cookie = None
+    csrf_cookie = None
+    for cookie in page.context.cookies():
+        if cookie.get("name") == "jwt_token":
+            jwt_cookie = cookie
+        elif cookie.get("name") == ADMIN_CSRF_COOKIE_NAME:
+            csrf_cookie = cookie
     if jwt_cookie:
-        return {"Authorization": f"Bearer {jwt_cookie['value']}"}
-    return {}
+        headers["Authorization"] = f"Bearer {jwt_cookie['value']}"
+    if csrf_cookie:
+        headers[ADMIN_CSRF_HEADER_NAME] = csrf_cookie["value"]
+    origin = None
+    parsed = urllib.parse.urlparse(page.url or "")
+    if parsed.scheme and parsed.netloc:
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+    elif os.getenv("TEST_BASE_URL"):
+        fallback = urllib.parse.urlparse(os.getenv("TEST_BASE_URL", ""))
+        if fallback.scheme and fallback.netloc:
+            origin = f"{fallback.scheme}://{fallback.netloc}"
+
+    if origin:
+        headers["Origin"] = origin
+        headers["Referer"] = f"{origin}/admin"
+    return headers
 
 
 def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
@@ -61,7 +79,8 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
                     return item
         else:
             logger.warning("find_entity_by_name: %s returned status=%d: %s", endpoint, response.status, response.text()[:200])
-        page.wait_for_timeout(500)
+        # Back off linearly under DB contention in full-suite runs.
+        page.wait_for_timeout(500 * (attempt + 1))
     return None
 
 

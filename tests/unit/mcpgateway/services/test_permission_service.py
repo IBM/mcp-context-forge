@@ -180,22 +180,24 @@ async def test_check_permission_denied(svc):
 
 @pytest.mark.asyncio
 async def test_check_permission_team_fallback(svc):
-    """teams.* permission falls back to team membership check."""
+    """teams.* permissions require explicit RBAC grants."""
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value=set()):
-            with patch.object(svc, "_check_team_fallback_permissions", return_value=True):
+            with patch.object(svc, "_check_team_fallback_permissions") as mock_fallback:
                 result = await svc.check_permission("user@test.com", "teams.read")
-    assert result is True
+    assert result is False
+    mock_fallback.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_check_permission_token_fallback(svc):
-    """tokens.* permission falls back to token self-management."""
+    """tokens.* permissions require explicit RBAC grants."""
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value=set()):
-            with patch.object(svc, "_check_token_fallback_permissions", return_value=True):
+            with patch.object(svc, "_check_token_fallback_permissions") as mock_fallback:
                 result = await svc.check_permission("user@test.com", "tokens.create")
-    assert result is True
+    assert result is False
+    mock_fallback.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -10,8 +10,9 @@ verify-sri-hashes.py import from this module to prevent configuration drift.
 # Format: "key": "url"
 # IMPORTANT: URLs must be canonical (not redirect URLs) for reliable SRI verification
 CDN_RESOURCES = {
-    # Tailwind CSS (JIT - special handling, no SRI for dynamic content)
-    # "tailwindcss": "https://cdn.tailwindcss.com",  # Excluded: JIT compiler
+    # Tailwind is intentionally excluded:
+    # - Play CDN is a JIT compiler endpoint (non-static script semantics)
+    # - It does not provide stable CORS/SRI guarantees for integrity enforcement
 
     # HTMX - Use canonical /dist/ path, not redirect URL
     "htmx": "https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js",

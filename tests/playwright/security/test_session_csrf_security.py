@@ -7,10 +7,14 @@
 # Future
 from __future__ import annotations
 
+# Standard
+from urllib.parse import urlparse
+
 # Third-Party
 import pytest
 
 # First-Party
+from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
 from mcpgateway.config import settings
 
 
@@ -21,6 +25,22 @@ def _expected_samesite() -> str:
 
 class TestSessionAndCSRFSecurity:
     """Session cookie hardening and CSRF protection expectations."""
+
+    @staticmethod
+    def _logout_headers(page) -> dict[str, str]:
+        """Build CSRF/origin headers for logout mutation requests."""
+        headers: dict[str, str] = {}
+        csrf_cookie = next((cookie for cookie in page.context.cookies() if cookie["name"] == ADMIN_CSRF_COOKIE_NAME), None)
+        if csrf_cookie and csrf_cookie.get("value"):
+            headers[ADMIN_CSRF_HEADER_NAME] = csrf_cookie["value"]
+
+        parsed = urlparse(page.url or "")
+        if parsed.scheme and parsed.netloc:
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            headers["Origin"] = origin
+            headers["Referer"] = f"{origin}/admin"
+
+        return headers
 
     def test_admin_session_cookie_has_security_attributes(self, admin_page):
         if not settings.auth_required:
@@ -41,16 +61,12 @@ class TestSessionAndCSRFSecurity:
         if before is None:
             pytest.skip("No jwt_token cookie present before logout in this environment.")
 
-        response = page.request.post("/admin/logout")
+        response = page.request.post("/admin/logout", headers=self._logout_headers(page))
         assert response.status in (200, 302, 303), f"Unexpected logout status: {response.status}"
 
         after = next((cookie for cookie in page.context.cookies() if cookie["name"] == "jwt_token"), None)
         assert after is None or not after.get("value"), "jwt_token cookie should be cleared by logout"
 
-    @pytest.mark.xfail(
-        reason="CSRF origin/token validation for admin form POSTs is not yet enforced server-side.",
-        strict=False,
-    )
     def test_cross_origin_state_change_without_csrf_token_is_rejected(self, admin_page):
         if not settings.auth_required:
             pytest.skip("Authentication is disabled; CSRF protections are not applicable.")

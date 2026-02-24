@@ -98,7 +98,7 @@ class UsersPage(BasePage):
     # ==================== Navigation ====================
 
     def navigate_to_users_tab(self) -> None:
-        """Navigate to Users tab and wait for panel to be visible."""
+        """Navigate to Users tab and wait for the user list to finish loading."""
         self.sidebar.click_users_tab()
         self.wait_for_users_loaded()
 
@@ -177,14 +177,12 @@ class UsersPage(BasePage):
         """Reload the page so the users list is refreshed.
 
         The HTMX in-place refresh does not update the UI reliably, so
-        we wait for any pending JS navigation, then do a full page
-        reload and click the users tab to get a fresh user list.
+        we wait for any pending JS navigation, then load admin directly
+        on the users hash to force a fresh users-partial fetch.
         """
         self.page.wait_for_timeout(4000)
         self.page.wait_for_load_state("domcontentloaded")
-
-        self.page.reload(wait_until="domcontentloaded")
-        self.sidebar.click_users_tab()
+        self.page.goto("/admin#users", wait_until="domcontentloaded")
         self.wait_for_users_loaded()
 
     def user_has_badge(self, email: str, badge_text: str) -> bool:

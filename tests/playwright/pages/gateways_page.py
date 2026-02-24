@@ -293,8 +293,9 @@ class GatewaysPage(BasePage):
     # ==================== High-Level Navigation Methods ====================
 
     def navigate_to_gateways_tab(self) -> None:
-        """Navigate to Gateways tab and wait for panel to be visible."""
+        """Navigate to Gateways tab and wait for the table to finish loading."""
         self.sidebar.click_gateways_tab()
+        self.wait_for_gateways_table_loaded()
 
     # ==================== High-Level Gateway Operations ====================
 
@@ -314,6 +315,7 @@ class GatewaysPage(BasePage):
         except AssertionError:
             # Alpine.js x-init / HTMX load race: reload to re-run the sequence
             self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
             self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=timeout)
             self.wait_for_attached(self.gateways_table_body, timeout=timeout)
 
@@ -484,6 +486,7 @@ class GatewaysPage(BasePage):
         Args:
             show: True to show inactive gateways, False to hide them
         """
+        self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=15000)
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
@@ -706,6 +709,7 @@ class GatewaysPage(BasePage):
 
                 # Reload to see updated table
                 self.page.reload()
+                self.navigate_to_gateways_tab()
                 self.wait_for_gateways_table_loaded()
                 self.page.wait_for_timeout(1000)
 

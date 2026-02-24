@@ -213,8 +213,9 @@ class ServersPage(BasePage):
     # ==================== High-Level Navigation Methods ====================
 
     def navigate_to_servers_tab(self) -> None:
-        """Navigate to Servers/Catalog tab and wait for panel to be visible."""
+        """Navigate to Servers/Catalog tab and wait for the table to finish loading."""
         self.sidebar.click_servers_tab()
+        self.wait_for_servers_table_loaded()
 
     # ==================== High-Level Server Operations ====================
 
@@ -382,6 +383,7 @@ class ServersPage(BasePage):
         Args:
             show: True to show inactive servers, False to hide them
         """
+        self.page.wait_for_selector("#catalog-panel:not(.hidden)", timeout=15000)
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
@@ -392,6 +394,7 @@ class ServersPage(BasePage):
         Returns:
             Number of visible server rows
         """
+        self.page.wait_for_selector("#catalog-panel:not(.hidden)", timeout=15000)
         self.page.wait_for_selector('[data-testid="server-list"]', state="attached")
         return self.server_items.locator(":visible").count()
 

@@ -351,7 +351,7 @@ class ImportService:
                     if not dry_run:
                         db.flush()
 
-            # Assign all imported items to user's team with public visibility (after all entities processed)
+            # Assign all imported items to user's team with team visibility (after all entities processed)
             if not dry_run:
                 await self._assign_imported_items_to_team(db, imported_by)
 
@@ -1833,10 +1833,10 @@ class ImportService:
         if not enhanced_data.get("owner_email"):
             enhanced_data["owner_email"] = user_context["user_email"]
 
-        # Set visibility: use export value if present, otherwise default to 'public'
+        # Set visibility: use export value if present, otherwise default to 'team'
         # This supports pre-0.7.0 exports that don't have visibility field
         if not enhanced_data.get("visibility"):
-            enhanced_data["visibility"] = "public"  # Default to public for backward compatibility
+            enhanced_data["visibility"] = "team"
 
         # Add import tracking
         if not enhanced_data.get("federation_source"):
@@ -1882,8 +1882,8 @@ class ImportService:
                         for item in unassigned:
                             item.team_id = personal_team.id
                             item.owner_email = user.email
-                            # Set imported items to public for better visibility
-                            item.visibility = "public"
+                            # Assign a secure default visibility when import payload omits it.
+                            item.visibility = "team"
                             if hasattr(item, "federation_source") and not item.federation_source:
                                 item.federation_source = f"imported-by-{imported_by}"
 
@@ -1895,7 +1895,7 @@ class ImportService:
 
             if total_assigned > 0:
                 db.commit()
-                logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with public visibility")
+                logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with team visibility")
             else:
                 logger.debug("No orphaned imported items found")
 

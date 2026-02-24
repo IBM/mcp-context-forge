@@ -2765,7 +2765,7 @@ async def test_add_multitenancy_context_defaults_and_tracking(import_service):
 
     assert result["team_id"] == "team-1"
     assert result["owner_email"] == "user@example.com"
-    assert result["visibility"] == "public"
+    assert result["visibility"] == "team"
     assert result["federation_source"] == "imported-by-user@example.com"
     # Should not mutate original input
     assert "team_id" not in entity_data
@@ -2836,7 +2836,7 @@ async def test_assign_imported_items_to_team_assigns_and_commits(import_service)
 
     assert orphan.team_id == "team-1"
     assert orphan.owner_email == "user@example.com"
-    assert orphan.visibility == "public"
+    assert orphan.visibility == "team"
     assert orphan.federation_source == "imported-by-user@example.com"
     db.commit.assert_called_once()
 

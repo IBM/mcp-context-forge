@@ -125,14 +125,6 @@ class PermissionService:
             # Check if user has the specific permission or wildcard
             granted = permission in user_permissions or Permissions.ALL_PERMISSIONS in user_permissions
 
-            # If no explicit permissions found, check fallback permissions for team operations
-            if not granted and permission.startswith("teams."):
-                granted = await self._check_team_fallback_permissions(user_email, permission, team_id)
-
-            # If no explicit permissions found, check fallback permissions for token operations
-            if not granted and permission.startswith("tokens."):
-                granted = await self._check_token_fallback_permissions(user_email, permission)
-
             # Log the permission check if auditing is enabled
             if self.audit_enabled:
                 # Reuse roles cached by get_user_permissions (no second query)

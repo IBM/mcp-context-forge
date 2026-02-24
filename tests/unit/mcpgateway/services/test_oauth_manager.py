@@ -792,6 +792,13 @@ def test_generate_state_no_email(oauth_manager):
     assert isinstance(state, str)
 
 
+def test_generate_state_is_opaque_and_no_email_leak(oauth_manager):
+    state = oauth_manager._generate_state("gw-1", "user@test.com")
+    assert isinstance(state, str)
+    assert "user@test.com" not in state
+    assert "gw-1" not in state
+
+
 # ---------- _create_authorization_url_with_pkce ----------
 
 
