@@ -1,5 +1,7 @@
 # Fast Test Server (Rust)
 
+> Author: Mihai Criveti
+
 Ultra-fast MCP server written in Rust for performance testing and benchmarking. Uses the official [Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk).
 
 ## Features

@@ -9,7 +9,7 @@ license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=2.14.5",
+    "fastmcp>=3.0.2",
     "httpx>=0.28.1",
     "pydantic>=2.12.5",
     "typing-extensions>=4.15.0",
@@ -22,7 +22,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
-    "ruff>=0.15.1",
+    "ruff>=0.15.2",
 ]
 html = [
     "beautifulsoup4>=4.14.3",
@@ -39,7 +39,7 @@ documents = [
 ]
 full = [
     "beautifulsoup4>=4.14.3",
-    "chardet>=5.2.0",
+    "chardet>=6.0.0.post1",
     "html2text>=2025.4.15",
     "lxml>=6.0.2",
     "markdownify>=1.2.2",

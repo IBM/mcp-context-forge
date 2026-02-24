@@ -27,22 +27,22 @@ cforge gateway --help
 
 ```bash
 # 1. Validate your configuration
-cforge gateway validate examples/deployment-configs/deploy-compose.yaml
+cforge gateway validate my-config.yaml
 
 # 2. Build containers (if building from source)
-cforge gateway build examples/deployment-configs/deploy-compose.yaml
+cforge gateway build my-config.yaml
 
 # 3. Generate mTLS certificates (if needed)
-cforge gateway certs examples/deployment-configs/deploy-compose.yaml
+cforge gateway certs my-config.yaml
 
 # 4. Deploy the stack
-cforge gateway deploy examples/deployment-configs/deploy-compose.yaml
+cforge gateway deploy my-config.yaml
 
 # 5. Verify deployment health
-cforge gateway verify examples/deployment-configs/deploy-compose.yaml
+cforge gateway verify my-config.yaml
 
 # 6. (Optional) Tear down
-cforge gateway destroy examples/deployment-configs/deploy-compose.yaml
+cforge gateway destroy my-config.yaml
 ```
 
 ---
@@ -109,14 +109,6 @@ When you run `cforge gateway deploy <config-file>`, the tool:
    - For `type: kubernetes` → `deploy/manifests/*.yaml` (Deployment, Service, ConfigMap, etc.)
 
 5. Deploys the generated manifests to your target environment
-
-**Additional example configurations** are available in `examples/deployment-configs/`:
-
-- `deploy-compose.yaml` - Docker Compose without mTLS
-- `deploy-compose.mtls.yaml` - Docker Compose with mTLS
-- `deploy-k8s.yaml` - Kubernetes with pre-built images
-- `deploy-k8s-cert-manager.yaml` - Kubernetes with cert-manager integration
-- More examples for OpenShift, registry integration, and advanced scenarios
 
 See the [Example Configurations](#example-configurations) section below for detailed examples with full explanations.
 
@@ -759,7 +751,7 @@ certificates:
    kubectl create namespace mcp-gateway-test
 
    # Apply CA Issuer
-   kubectl apply -f examples/deployment-configs/cert-manager-issuer-example.yaml
+   kubectl apply -f cert-manager-issuer.yaml
    ```
 
 **Configuration:**
@@ -820,7 +812,7 @@ cforge gateway deploy deploy.yaml
 
 ### Example 1: Docker Compose (No mTLS)
 
-**File:** `examples/deployment-configs/deploy-compose.yaml`
+**File:** `my-config.yaml`
 
 Simple local deployment for development and testing:
 
@@ -862,7 +854,7 @@ certificates:
 
 **Deploy:**
 ```bash
-cforge gateway deploy examples/deployment-configs/deploy-compose.yaml
+cforge gateway deploy my-config.yaml
 ```
 
 **Access:**
@@ -875,7 +867,7 @@ cforge gateway deploy examples/deployment-configs/deploy-compose.yaml
 
 ### Example 2: Docker Compose (With mTLS)
 
-**File:** `examples/deployment-configs/deploy-compose.mtls.yaml`
+**File:** `my-mtls-config.yaml`
 
 Secure local deployment with mutual TLS:
 
@@ -915,7 +907,7 @@ certificates:
 **Deploy:**
 ```bash
 # Certificates are auto-generated during deploy
-cforge gateway deploy examples/deployment-configs/deploy-compose.mtls.yaml
+cforge gateway deploy my-mtls-config.yaml
 ```
 
 **How mTLS works:**
@@ -929,7 +921,7 @@ cforge gateway deploy examples/deployment-configs/deploy-compose.mtls.yaml
 
 ### Example 3: Kubernetes (Pre-built Images)
 
-**File:** `examples/deployment-configs/deploy-k8s.yaml`
+**File:** `my-k8s-config.yaml`
 
 Production-ready Kubernetes deployment using pre-built images:
 
@@ -989,7 +981,7 @@ certificates:
 **Deploy:**
 ```bash
 # Deploy to Kubernetes
-cforge gateway deploy examples/deployment-configs/deploy-k8s.yaml
+cforge gateway deploy my-k8s-config.yaml
 
 # Verify
 kubectl get all -n mcp-gateway-prod
@@ -1044,7 +1036,7 @@ cforge gateway deploy deploy-k8s-build.yaml --skip-build
 
 ### Example 5: Kubernetes with cert-manager
 
-**File:** `examples/deployment-configs/deploy-k8s-cert-manager.yaml`
+**File:** `my-k8s-certmanager-config.yaml`
 
 Production deployment using cert-manager for automated certificate management:
 
@@ -1122,13 +1114,13 @@ certificates:
    kubectl create namespace mcp-gateway-test
 
    # Apply CA Issuer
-   kubectl apply -f examples/deployment-configs/cert-manager-issuer-example.yaml
+   kubectl apply -f cert-manager-issuer.yaml
    ```
 
 **Deploy:**
 ```bash
 # Deploy (no need to generate certificates manually)
-cforge gateway deploy examples/deployment-configs/deploy-k8s-cert-manager.yaml
+cforge gateway deploy my-k8s-certmanager-config.yaml
 
 # Verify cert-manager created certificates
 kubectl get certificates -n mcp-gateway-test
@@ -1412,7 +1404,7 @@ Choose the appropriate policy for your use case:
 podman login $(oc registry info) -u $(oc whoami) -p $(oc whoami -t)
 
 # 2. Build and push images
-cforge gateway deploy examples/deployment-configs/deploy-openshift-local-registry.yaml
+cforge gateway deploy my-openshift-registry-config.yaml
 
 # The tool will:
 # - Build images locally
@@ -1656,10 +1648,7 @@ url: registry:5000                               # Include port in URL, not name
 
 ### Example Configurations
 
-Full examples available in:
-
-- `examples/deployment-configs/deploy-openshift-local.yaml` - Registry config commented
-- `examples/deployment-configs/deploy-openshift-local-registry.yaml` - Full registry setup
+See the inline examples above for Docker Compose, Kubernetes, and OpenShift configurations.
 
 ---
 
@@ -2127,7 +2116,6 @@ A:
 - **Main Documentation**: [ContextForge Documentation](../index.md)
 - **Plugin Development**: [Plugin Framework Guide](../using/plugins/index.md)
 - **mTLS Setup**: [mTLS Configuration Guide](../using/plugins/mtls.md)
-- **Example Configs**: [`examples/deployment-configs/`](https://github.com/terylt/mcp-context-forge/tree/main/examples/deployment-configs)
 - **Source Code**: [`mcpgateway/tools/builder/`](https://github.com/terylt/mcp-context-forge/tree/main/mcpgateway/tools/builder)
 
 ---

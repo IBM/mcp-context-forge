@@ -1,5 +1,7 @@
 # Filesystem Server
 
+> Authors: Matheus Cafalchio, Jonathan Springer
+
 A secure MCP (Model Context Protocol) server written in Rust that provides comprehensive filesystem operations with sandboxing, atomic writes, and pattern-matching edits. Uses the official [Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk).
 
 ## Features

@@ -1,11 +1,19 @@
 # MCP RSS Search Server
 
+> Author: Mihai Criveti
+
 **The ultimate RSS feed parser and search server for the Model Context Protocol (MCP)**
 
 Advanced RSS feed parsing, searching, filtering, and statistical analysis server built with FastMCP. Features AI-powered semantic search, hybrid retrieval (BM25 + semantic), multi-schema podcast support, and comprehensive RSS analytics.
 
+> **Warning:** This is an unsupported sample server for demonstration and testing only.
+> Never run untrusted MCP servers directly on your local filesystem — always use a
+> sandbox, container, or microVM (e.g. Docker, gVisor, Firecracker) with restricted
+> capabilities. Perform your own security evaluation before registering any remote MCP
+> server, including servers from public catalogs.
+
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastMCP](https://img.shields.io/badge/FastMCP-2.11.3-green.svg)](https://gofastmcp.com/)
+[![FastMCP](https://img.shields.io/badge/FastMCP-3.x-green.svg)](https://gofastmcp.com/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 ## Table of Contents
@@ -164,7 +172,7 @@ uv pip install -e ".[similarity]"
 ### Requirements
 
 **Core Dependencies** (always installed):
-- `fastmcp` >= 2.11.3
+- `fastmcp` >= 3.0.2
 - `pydantic` >= 2.5.0
 - `feedparser` >= 6.0.0
 - `httpx` >= 0.27.0
