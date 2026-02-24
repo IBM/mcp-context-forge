@@ -92,7 +92,7 @@ def get_plugin_manager(observability: Optional[ObservabilityProvider] = None) ->
         from mcpgateway.plugins.framework.settings import settings  # pylint: disable=import-outside-toplevel
 
         if settings.enabled:
-            _plugin_manager = PluginManager(settings.config_file)
+            _plugin_manager = PluginManager(settings.config_file, observability=observability)
     return _plugin_manager
 
 
