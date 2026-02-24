@@ -5,8 +5,7 @@ This guide shows how to operate the **ContextForge Stack** with a *Git-Ops* work
 > 🌳 Git source of truth:
 > `https://github.com/IBM/mcp-context-forge`
 >
-> * **App manifests:** `deployment/k8s/` (Kustomize-ready)
-> * **Helm chart (optional):** `charts/mcp-stack`
+> * **Helm chart:** `charts/mcp-stack`
 
 ---
 
@@ -76,7 +75,7 @@ Open the web UI → [https://localhost:8083](https://localhost:8083) (credential
 
 ## 🚀 Step 3 - Bootstrap the Application
 
-Create an Argo CD *Application* that tracks the **`deployment/k8s/`** folder from the main branch:
+Create an Argo CD *Application* that tracks the **`charts/mcp-stack`** Helm chart from the main branch:
 
 ```bash
 APP=mcp-gateway
@@ -84,7 +83,7 @@ REPO=https://github.com/IBM/mcp-context-forge.git
 
 argocd app create "$APP" \
   --repo "$REPO" \
-  --path deployment/k8s \
+  --path charts/mcp-stack \
   --dest-server https://kubernetes.default.svc \
   --dest-namespace default \
   --sync-policy automated \

@@ -6,37 +6,27 @@ MCP server implementation guidance for AI coding assistants.
 
 ```
 mcp-servers/
-├── go/                         # Go MCP servers (6 implementations)
-│   ├── fast-time-server/       # Time/date operations
-│   ├── slow-time-server/       # Configurable-latency testing server
-│   ├── calculator-server/      # Math operations
-│   ├── system-monitor-server/  # System metrics
-│   ├── benchmark-server/       # Performance benchmarking
-│   └── pandoc-server/          # Document conversion
-├── python/                     # Python MCP servers (20 implementations)
-│   ├── chunker_server/         # Text chunking
-│   ├── code_splitter_server/   # Code analysis
-│   ├── csv_pandas_chat_server/ # CSV/pandas operations
-│   ├── data_analysis_server/   # Data analysis tools
-│   ├── docx_server/            # Word document handling
-│   ├── graphviz_server/        # Diagram generation
-│   ├── latex_server/           # LaTeX document tools
-│   ├── libreoffice_server/     # Office document conversion
-│   ├── mcp_eval_server/        # MCP server evaluation
-│   ├── mcp-rss-search/         # RSS feed search
-│   ├── mermaid_server/         # Diagram generation
+├── go/                            # Go MCP servers
+│   ├── benchmark-server/          # Performance benchmarking
+│   ├── fast-time-server/          # Time/date operations
+│   └── slow-time-server/          # Configurable-latency testing server
+├── python/                        # Python MCP servers
+│   ├── data_analysis_server/      # Data analysis tools
+│   ├── graphviz_server/           # Diagram generation
+│   ├── mcp_eval_server/           # MCP server evaluation
+│   ├── mcp-rss-search/            # RSS feed search
 │   ├── output_schema_test_server/ # Output validation
-│   ├── plotly_server/          # Interactive plotting
-│   ├── pm_mcp_server/          # Project management
-│   ├── pptx_server/            # PowerPoint handling
-│   ├── python_sandbox_server/  # Sandboxed Python execution
-│   ├── qr_code_server/         # QR code generation
-│   ├── synthetic_data_server/  # Test data generation
-│   ├── url_to_markdown_server/ # URL to markdown conversion
-│   └── xlsx_server/            # Excel/spreadsheet handling
-├── templates/                  # Cookiecutter scaffolding templates
-├── scaffold-go-server.sh       # Go server scaffolding script
-└── scaffold-python-server.sh   # Python server scaffolding script
+│   ├── python_sandbox_server/     # Sandboxed Python execution
+│   ├── qr_code_server/            # QR code generation
+│   └── url_to_markdown_server/    # URL to markdown conversion
+├── rust/                          # Rust MCP servers
+│   ├── fast-test-server/          # Fast testing server
+│   └── filesystem-server/         # Filesystem operations
+├── templates/                     # Cookiecutter scaffolding templates
+│   ├── go/                        # Go server template
+│   └── python/                    # Python server template
+├── scaffold-go-server.sh          # Go server scaffolding script
+└── scaffold-python-server.sh      # Python server scaffolding script
 ```
 
 ## Scaffolding New Servers
@@ -107,7 +97,7 @@ make format           # Format code
 - `pyproject.toml` - Project configuration
 - `Makefile` - Build automation
 
-### Example Tool Implementation (FastMCP 2.x)
+### Example Tool Implementation (FastMCP)
 
 ```python
 from fastmcp import FastMCP
