@@ -212,15 +212,35 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **C-20**: Gateway sync endpoints now enforce explicit RBAC and scoped ownership checks with normalized token-team semantics
 * **C-35**: Server usage SSE now validates server existence and fails closed for missing IDs in scoped checks
 * **C-39**: Import flow strips untrusted ownership/team/visibility fields for scoped entities
+* **A-04**: Request logging masking now covers normalized key variants (snake/camel/kebab/case changes) while preserving non-sensitive metadata fields
+* **C-06 / C-26**: Token scoping now applies consistently for cookie and header auth paths, and normalizes `APP_ROOT_PATH` prefixes before route permission matching
+* **C-31 / C-40 / C-41**: LLM chat config, provider config secrets, and sensitive tool headers now use at-rest protection with response-time masking and backward-compatible read handling
+* **C-34 / L-13**: Permission fallback paths now rely on explicit constants and canonical permission mappings across decorators, validation, and role checks, with default non-admin roles receiving explicit `teams.read` and token self-management permissions
+* **C-36 / C-37**: Server team reassignment now validates target-team ownership membership, and import defaults prefer scoped visibility for safer tenant defaults
+* **O-08 / O-12 / O-13**: SSO/OAuth flows now require `email_verified: true` claims for login acceptance (including existing users), enforce trusted-domain policy consistently, and use opaque server-side OAuth state mapping
+* **U-02 / U-03 / U-04**: Admin UI now enforces CSRF tokens/origin checks for state-changing flows, sanitizes dynamic DOM insertions, and uses pinned integrity-checked external assets
 * **Token helpers**: Rich-token generation now distinguishes omitted teams from explicit `teams: null` to preserve intended scope semantics
 * Health diagnostics endpoint now follows standard bearer-token validation.
 * JSON-RPC and REST logging controls now use aligned permission checks.
 * Utility SSE/message endpoints now use canonical execution permission naming.
 * Shared auth dependencies now enforce consistent token/account validity checks.
 
+### Additional Hardening (Low Batch)
+
+* **L-01 / L-07**: Trusted-proxy auth now requires explicit dangerous-mode acknowledgement, and docs auth now enforces revocation plus active-user checks for consistency with other auth paths.
+* **L-02**: `AUTH_REQUIRED=false` now defaults to anonymous request context unless `ALLOW_UNAUTHENTICATED_ADMIN=true` is explicitly enabled.
+* **L-03 / L-05**: OAuth callback state handling now uses strict opaque-state resolution with uniform invalid-state responses, reducing callback error-shape drift.
+* **L-08 / L-09 / L-12**: SSO provider controls now enforce issuer allowlists, apply configured team mappings during login provisioning, and restrict local password auth to admins when preserve-admin mode is enabled.
+* **L-10**: Security architecture docs now align with current token and secret encryption implementation details.
+* **L-15 / L-16**: Tool lookup cache payloads now exclude auth/OAuth secret material, and token usage limits (`requests_per_hour` / `requests_per_day`) are now enforced during request scoping.
+* **L-17**: Admin UI debug logging is now gated behind an explicit local debug toggle (`MCPGATEWAY_ADMIN_DEBUG=1`) for quieter production browser consoles.
+* **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`.
+* **MCP bearer fail-closed in permissive mode**: Streamable HTTP MCP auth now rejects malformed/invalid `Authorization: Bearer ...` tokens with `401` instead of silently downgrading to anonymous public-only access.
+
 ### Chores
 
 * Updated `.env.example` with strict SSRF defaults, local dev overrides section, and transport feature flags
+* Updated `.env.example` and `docker-compose.yml` to make MCP auth posture explicit (`MCP_REQUIRE_AUTH=true` in compose; inheritance behavior documented in env example comments).
 * Updated `docker-compose.yml` with transport feature flags and local SSRF overrides
 * Updated Helm chart `values.yaml`, `values.schema.json`, and `README.md` with new SSRF and transport settings
 * Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`

@@ -47,6 +47,7 @@ Examples:
 
 # Standard
 import logging
+import re
 import secrets
 import time
 from typing import Callable, List, Optional
@@ -73,7 +74,87 @@ logger = logging_service.get_logger(__name__)
 # Initialize structured logger for gateway boundary logging
 structured_logger = get_structured_logger("http_gateway")
 
-SENSITIVE_KEYS = frozenset({"password", "secret", "token", "apikey", "access_token", "refresh_token", "client_secret", "authorization", "jwt_token"})
+SENSITIVE_KEYS = frozenset(
+    {
+        "password",
+        "passphrase",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "authorization",
+        "auth_token",
+        "jwt_token",
+        "private_key",
+    }
+)
+_NON_SENSITIVE_KEY_SUFFIXES = (
+    "_count",
+    "_counts",
+    "_size",
+    "_length",
+    "_ttl",
+    "_seconds",
+    "_ms",
+    "_id",
+    "_ids",
+    "_name",
+    "_type",
+    "_url",
+    "_uri",
+    "_path",
+    "_status",
+    "_code",
+)
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"(^|_)(password|passphrase|secret|token|apikey|api_key|access_token|refresh_token|client_secret|authorization|auth_token|jwt_token|private_key)($|_)",
+    re.IGNORECASE,
+)
+_AUTHENTICATION_KEYWORD_PATTERN = re.compile(r"(^|_)(auth|authorization|jwt)(_|\Z)")
+
+
+def _normalize_key_for_masking(key: str) -> str:
+    """Normalize key names for robust sensitive-key matching.
+
+    Args:
+        key: Original key name from request payload or headers.
+
+    Returns:
+        Lowercased, underscore-delimited key name for pattern checks.
+    """
+    key_with_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", key_with_boundaries)
+    return normalized.strip("_").lower()
+
+
+def _is_sensitive_key(key: str) -> bool:
+    """Return ``True`` when a key name should be masked.
+
+    Args:
+        key: Candidate key to evaluate.
+
+    Returns:
+        ``True`` when the key matches sensitive-key heuristics; otherwise ``False``.
+    """
+    normalized_key = _normalize_key_for_masking(key)
+    if not normalized_key:
+        return False
+
+    has_nonsensitive_suffix = any(normalized_key.endswith(suffix) for suffix in _NON_SENSITIVE_KEY_SUFFIXES)
+
+    if normalized_key in SENSITIVE_KEYS:
+        return True
+
+    if _AUTHENTICATION_KEYWORD_PATTERN.search(normalized_key) and not has_nonsensitive_suffix:
+        return True
+
+    if has_nonsensitive_suffix:
+        return False
+
+    return bool(_SENSITIVE_KEY_PATTERN.search(normalized_key))
 
 
 def mask_sensitive_data(data, max_depth: int = 10):
@@ -106,7 +187,7 @@ def mask_sensitive_data(data, max_depth: int = 10):
         return "<nested too deep>"
 
     if isinstance(data, dict):
-        return {k: ("******" if k.lower() in SENSITIVE_KEYS else mask_sensitive_data(v, max_depth - 1)) for k, v in data.items()}
+        return {k: ("******" if _is_sensitive_key(k) else mask_sensitive_data(v, max_depth - 1)) for k, v in data.items()}
     if isinstance(data, list):
         return [mask_sensitive_data(i, max_depth - 1) for i in data]
     return data
@@ -184,7 +265,7 @@ def mask_sensitive_headers(headers):
     masked_headers = {}
     for key, value in headers.items():
         key_lower = key.lower()
-        if key_lower in SENSITIVE_KEYS or "auth" in key_lower or "jwt" in key_lower:
+        if _is_sensitive_key(key):
             masked_headers[key] = "******"
         elif key_lower == "cookie":
             # Special handling for cookies to mask only JWT tokens

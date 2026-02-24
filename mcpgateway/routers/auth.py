@@ -18,6 +18,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
@@ -163,6 +164,9 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
+        if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password authentication is restricted to admin accounts while SSO is enabled.")
+
         # Create session JWT token (Tier 1 authentication)
         access_token, expires_in = await create_access_token(user)
 
@@ -173,6 +177,8 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
 
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.warning(f"Login validation error: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

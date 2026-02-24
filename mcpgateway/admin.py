@@ -33,6 +33,7 @@ import math
 import os
 from pathlib import Path
 import re
+import secrets
 import tempfile
 import time
 from typing import Any
@@ -988,7 +989,179 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
+ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
+ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
+ADMIN_CSRF_FORM_FIELD = "csrf_token"
+
+
+def _admin_cookie_path(request: Request) -> str:
+    """Build admin cookie path honoring ASGI root_path.
+
+    Args:
+        request: Incoming request used to read ASGI ``root_path``.
+
+    Returns:
+        Admin cookie path scoped under the deployed app root.
+    """
+    root_path = request.scope.get("root_path", "") or ""
+    return f"{root_path}/admin" if root_path else "/admin"
+
+
+def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
+    """Normalize origin components for exact same-origin comparisons.
+
+    Args:
+        scheme: URL scheme (for example ``http`` or ``https``).
+        netloc: URL authority component (host and optional port).
+
+    Returns:
+        Tuple of normalized scheme, hostname, and resolved port.
+    """
+    parsed = urllib.parse.urlparse(f"{scheme}://{netloc}")
+    normalized_scheme = (parsed.scheme or scheme or "http").lower()
+    normalized_host = (parsed.hostname or "").lower()
+    normalized_port = parsed.port
+    if normalized_port is None:
+        normalized_port = 443 if normalized_scheme == "https" else 80
+    return normalized_scheme, normalized_host, normalized_port
+
+
+def _request_origin_matches(request: Request) -> bool:
+    """Return ``True`` when Origin/Referer matches this request origin.
+
+    Args:
+        request: Incoming request carrying Origin/Referer and host headers.
+
+    Returns:
+        ``True`` when candidate origin exactly matches request origin; otherwise ``False``.
+
+    Note:
+        When the service is deployed behind a reverse proxy, this check relies on
+        ``X-Forwarded-Proto`` / ``X-Forwarded-Host`` values emitted by that proxy.
+        The deployment boundary must sanitize and overwrite forwarded headers.
+    """
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+
+    candidate_origin = origin
+    if not candidate_origin and referer:
+        try:
+            parsed_referer = urllib.parse.urlparse(referer)
+            if parsed_referer.scheme and parsed_referer.netloc:
+                candidate_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"
+        except Exception:  # nosec B110 - invalid Referer should fail closed below
+            candidate_origin = None
+
+    if not candidate_origin:
+        return False
+
+    parsed_candidate = urllib.parse.urlparse(candidate_origin)
+    if not parsed_candidate.scheme or not parsed_candidate.netloc:
+        return False
+
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    request_scheme = (forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme) or "http"
+    request_netloc = (forwarded_host.split(",")[0].strip() if forwarded_host else request.headers.get("host")) or request.url.netloc
+
+    candidate_parts = _normalize_origin_parts(parsed_candidate.scheme, parsed_candidate.netloc)
+    request_parts = _normalize_origin_parts(request_scheme, request_netloc)
+    return candidate_parts == request_parts
+
+
+def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
+    """Set or refresh admin CSRF cookie and return token value.
+
+    Args:
+        request: Incoming request used for existing token and path scoping.
+        response: Outgoing response where the cookie will be written.
+
+    Returns:
+        CSRF token value stored in the response cookie.
+    """
+    existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+    csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
+
+    use_secure = (settings.environment == "production") or settings.secure_cookies
+    max_age = max(300, int(getattr(settings, "token_expiry", 60)) * 60)
+    response.set_cookie(
+        key=ADMIN_CSRF_COOKIE_NAME,
+        value=csrf_token,
+        max_age=max_age,
+        path=_admin_cookie_path(request),
+        httponly=False,
+        secure=use_secure,
+        samesite="strict",
+    )
+    return csrf_token
+
+
+def _clear_admin_csrf_cookie(request: Request, response: Response) -> None:
+    """Clear admin CSRF cookie.
+
+    Args:
+        request: Incoming request used to compute cookie path.
+        response: Outgoing response where cookie deletion is applied.
+    """
+    use_secure = (settings.environment == "production") or settings.secure_cookies
+    response.delete_cookie(
+        key=ADMIN_CSRF_COOKIE_NAME,
+        path=_admin_cookie_path(request),
+        secure=use_secure,
+        httponly=False,
+        samesite="strict",
+    )
+
+
+async def enforce_admin_csrf(request: Request) -> None:
+    """Enforce CSRF protections for cookie-authenticated admin mutations.
+
+    Args:
+        request: Incoming admin request to validate.
+
+    Returns:
+        ``None`` when validation passes.
+
+    Raises:
+        HTTPException: If origin validation fails or CSRF token validation fails.
+    """
+    if request.method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+        return
+
+    jwt_cookie = request.cookies.get("jwt_token")
+    if not jwt_cookie:
+        # CSRF is relevant only for browser cookie auth. Token-auth API calls
+        # without session cookies are not subject to browser CSRF.
+        return
+
+    if not _request_origin_matches(request):
+        raise HTTPException(status_code=403, detail="CSRF origin validation failed")
+
+    csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+    if not isinstance(csrf_cookie, str) or not csrf_cookie:
+        raise HTTPException(status_code=403, detail="CSRF token cookie missing")
+
+    submitted_token = request.headers.get(ADMIN_CSRF_HEADER_NAME)
+    if not submitted_token:
+        content_type = (request.headers.get("content-type") or "").lower()
+        if "application/x-www-form-urlencoded" in content_type:
+            try:
+                form = await request.form()
+                form_token = form.get(ADMIN_CSRF_FORM_FIELD)
+                if isinstance(form_token, str):
+                    submitted_token = form_token
+            except Exception:
+                submitted_token = None
+
+    if not isinstance(submitted_token, str) or not submitted_token or not secrets.compare_digest(submitted_token, csrf_cookie):
+        raise HTTPException(status_code=403, detail="CSRF token validation failed")
+
+
+admin_router = APIRouter(
+    prefix="/admin",
+    tags=["Admin UI"],
+    dependencies=[Depends(enforce_admin_csrf)],
+)
 
 ####################
 # Admin UI Routes  #
@@ -3442,6 +3615,7 @@ async def admin_ui(
                 samesite=samesite,
             )
 
+    _set_admin_csrf_cookie(request, response)
     return response
 
 
@@ -3495,7 +3669,7 @@ async def admin_login_page(request: Request) -> Response:
     prefill_email = request.query_params.get("email", "")
 
     # Use external template file
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "login.html",
         {
@@ -3508,6 +3682,8 @@ async def admin_login_page(request: Request) -> Response:
             "sri_hashes": load_sri_hashes(),
         },
     )
+    _set_admin_csrf_cookie(request, response)
+    return response
 
 
 @admin_router.post("/login")
@@ -3581,6 +3757,11 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
+            if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
+                LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
+                root_path = request.scope.get("root_path", "")
+                return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
+
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
 
@@ -3638,6 +3819,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                         status_code=303,
                     )
 
+                _set_admin_csrf_cookie(request, response)
                 return response
 
             # Create JWT token with proper audience and issuer claims
@@ -3656,6 +3838,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     status_code=303,
                 )
 
+            _set_admin_csrf_cookie(request, response)
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
 
@@ -3687,7 +3870,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "forgot-password.html",
         {
@@ -3698,6 +3881,8 @@ async def admin_forgot_password_page(request: Request) -> Response:
             "sri_hashes": load_sri_hashes(),
         },
     )
+    _set_admin_csrf_cookie(request, response)
+    return response
 
 
 @admin_router.post("/forgot-password")
@@ -3761,7 +3946,7 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
     except AuthenticationError as exc:
         token_error = str(exc)
 
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "reset-password.html",
         {
@@ -3775,6 +3960,8 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
             "sri_hashes": load_sri_hashes(),
         },
     )
+    _set_admin_csrf_cookie(request, response)
+    return response
 
 
 @admin_router.post("/reset-password/{token}")
@@ -3996,6 +4183,7 @@ async def _admin_logout(request: Request) -> Response:
         httponly=True,
         samesite=settings.cookie_samesite,
     )
+    _clear_admin_csrf_cookie(request, response)
     return response
 
 
@@ -4066,7 +4254,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = request.scope.get("root_path", "")
 
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "change-password-required.html",
         {
@@ -4082,6 +4270,8 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "sri_hashes": load_sri_hashes(),
         },
     )
+    _set_admin_csrf_cookie(request, response)
+    return response
 
 
 @admin_router.post("/change-password-required")
@@ -6578,7 +6768,7 @@ async def admin_users_partial_html(
         db.commit()
 
         if render == "selector":
-            return request.app.state.templates.TemplateResponse(
+            response = request.app.state.templates.TemplateResponse(
                 request,
                 "team_members_selector.html",
                 {
@@ -6593,10 +6783,9 @@ async def admin_users_partial_html(
                     "team_id": team_id,
                 },
             )
-
-        if render == "controls":
+        elif render == "controls":
             base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
-            return request.app.state.templates.TemplateResponse(
+            response = request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
                 {
@@ -6610,19 +6799,25 @@ async def admin_users_partial_html(
                     "root_path": request.scope.get("root_path", ""),
                 },
             )
+        else:
+            # Render template with paginated data
+            response = request.app.state.templates.TemplateResponse(
+                request,
+                "users_partial.html",
+                {
+                    "request": request,
+                    "data": users_data,
+                    "pagination": pagination.model_dump(),
+                    "root_path": request.scope.get("root_path", ""),
+                    "current_user_email": current_user_email,
+                },
+            )
 
-        # Render template with paginated data
-        return request.app.state.templates.TemplateResponse(
-            request,
-            "users_partial.html",
-            {
-                "request": request,
-                "data": users_data,
-                "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
-                "current_user_email": current_user_email,
-            },
-        )
+        # Prevent stale partials after create/update/delete actions.
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error loading users partial for admin {user}: {e}")

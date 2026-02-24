@@ -50,8 +50,8 @@ dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
     "cryptography>=46.0.5",
-    "fastapi>=0.129.0",
-    "filelock>=3.24.2",
+    "fastapi>=0.133.0",
+    "filelock>=3.24.3",
     "gunicorn>=25.1.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -61,13 +61,13 @@ dependencies = [
     "jsonschema>=4.26.0",
     "mcp>=1.26.0",
     "orjson>=3.11.7",
-    "parse>=1.21.0",
+    "parse>=1.21.1",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.24.1",
     "psutil>=7.2.2",
     "pydantic>=2.12.5",
     "pydantic[email]>=2.12.5",
-    "pydantic-settings>=2.13.0",
+    "pydantic-settings>=2.13.1",
     "pyjwt>=2.11.0",
     "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
@@ -189,7 +189,7 @@ redis-pure = [
 # Requires system dependency: libpq-dev (Debian/Ubuntu) or postgresql-devel (RHEL/Fedora)
 # Install with: sudo apt-get install libpq-dev (or dnf install postgresql-devel)
 postgres = [
-    "psycopg[c,binary]>=3.3.2",
+    "psycopg[c,binary]>=3.3.3",
 ]
 
 mysql = [
@@ -201,11 +201,11 @@ mariadb = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.13",
+    "langchain-core>=1.2.15",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.10",
-    "langgraph>=1.0.8",
+    "langgraph>=1.0.9",
 ]
 
 # Fuzzing and property-based testing
@@ -270,19 +270,19 @@ altk = [
 # Agent Lifecycle Toolkit(optional)
 toolops = [
     "agent-lifecycle-toolkit>=0.10.0",
-    "langchain-core>=1.2.13",
+    "langchain-core>=1.2.15",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.10",
-    "langgraph>=1.0.8",
+    "langgraph>=1.0.9",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
-    "grpcio>=1.78.0",
-    "grpcio-reflection>=1.78.0",
-    "grpcio-tools>=1.78.0",
+    "grpcio>=1.78.1",
+    "grpcio-reflection>=1.78.1",
+    "grpcio-tools>=1.78.1",
     "protobuf>=6.33.5",
 ]
 
@@ -440,7 +440,6 @@ preview = true
 "tests/**/*.py" = ["D1"]
 "scripts/**/*.py" = ["D1"]
 "mcp-servers/**/*.py" = ["D1"]
-"agent_runtimes/**/*.py" = ["D1"]
 ".github/**/*.py" = ["D1"]
 "migration_add_annotations.py" = ["D1"]
 "playwright.config.py" = ["D1"]

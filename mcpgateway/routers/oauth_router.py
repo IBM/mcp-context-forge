@@ -485,45 +485,7 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        # Extract gateway_id from state parameter
-        # Try new base64-encoded JSON format first
-        # Standard
-        import base64
-
-        # Third-Party
-        import orjson
-
-        try:
-            # Expect state as base64url(payload || signature) where the last 32 bytes
-            # are the signature. Decode to bytes first so we can split payload vs sig.
-            state_raw = base64.urlsafe_b64decode(state.encode())
-            if len(state_raw) <= 32:
-                raise ValueError("State too short to contain payload and signature")
-
-            # Split payload and signature. Signature is the last 32 bytes.
-            payload_bytes = state_raw[:-32]
-            # signature_bytes = state_raw[-32:]
-
-            # Parse the JSON payload only (not including signature bytes)
-            try:
-                state_data = orjson.loads(payload_bytes)
-            except Exception as decode_exc:
-                raise ValueError(f"Failed to parse state payload JSON: {decode_exc}")
-
-            gateway_id = state_data.get("gateway_id")
-            if not gateway_id:
-                raise ValueError("No gateway_id in state")
-        except Exception as e:
-            # Fallback to legacy format (gateway_id_random)
-            logger.warning(f"Failed to decode state as JSON, trying legacy format: {e}")
-            if "_" not in state:
-                return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
-            gateway_id = state.split("_")[0]
-
-        # Get gateway configuration
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
-
-        if not gateway:
+        def _invalid_state_response() -> HTMLResponse:
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -531,23 +493,7 @@ async def oauth_callback(
                 <head><title>OAuth Authorization Failed</title></head>
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Gateway not found</p>
-                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
-                </body>
-                </html>
-                """,
-                status_code=404,
-            )
-
-        if not gateway.oauth_config:
-            return HTMLResponse(
-                content=f"""
-                <!DOCTYPE html>
-                <html>
-                <head><title>OAuth Authorization Failed</title></head>
-                <body>
-                    <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Gateway has no OAuth configuration</p>
+                    <p>Error: Invalid OAuth state parameter.</p>
                     <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
@@ -555,8 +501,24 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        # Complete OAuth flow
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
+        gateway_id = await oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        if not gateway_id:
+            logger.warning("OAuth callback received invalid or unknown state token")
+            return _invalid_state_response()
+
+        # Get gateway configuration
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+
+        if not gateway:
+            logger.warning("OAuth callback state resolved to unknown gateway id")
+            return _invalid_state_response()
+
+        if not gateway.oauth_config:
+            logger.warning("OAuth callback state resolved to gateway without OAuth configuration")
+            return _invalid_state_response()
+
+        # Complete OAuth flow
 
         # RFC 8707: Add resource parameter for JWT access tokens
         # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow

@@ -1011,6 +1011,70 @@ def test_proxy_auth_warning():
     assert s.mcp_client_auth_enabled is False
 
 
+def test_proxy_auth_trust_requires_explicit_ack():
+    """Proxy trust should fail closed without TRUST_PROXY_AUTH_DANGEROUSLY."""
+    s = Settings(
+        mcp_client_auth_enabled=False,
+        trust_proxy_auth=True,
+        trust_proxy_auth_dangerously=False,
+        _env_file=None,
+    )
+    assert s.trust_proxy_auth is False
+
+
+def test_proxy_auth_trust_enabled_with_explicit_ack():
+    """Proxy trust should stay enabled when dangerous mode is explicitly acknowledged."""
+    s = Settings(
+        mcp_client_auth_enabled=False,
+        trust_proxy_auth=True,
+        trust_proxy_auth_dangerously=True,
+        _env_file=None,
+    )
+    assert s.trust_proxy_auth is True
+
+
+def test_mcp_require_auth_defaults_to_auth_required_true():
+    """When unset, MCP_REQUIRE_AUTH should follow AUTH_REQUIRED=true."""
+    s = Settings(auth_required=True, mcp_require_auth=None, _env_file=None)
+    assert s.mcp_require_auth is True
+
+
+def test_mcp_require_auth_defaults_to_auth_required_false():
+    """When unset, MCP_REQUIRE_AUTH should follow AUTH_REQUIRED=false."""
+    s = Settings(auth_required=False, mcp_require_auth=None, _env_file=None)
+    assert s.mcp_require_auth is False
+
+
+def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
+    """AUTH_REQUIRED=true with explicit MCP_REQUIRE_AUTH=false should warn."""
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    s = Settings(
+        auth_required=True,
+        mcp_require_auth=False,
+        _env_file=None,
+    )
+
+    assert s.auth_required is True
+    assert s.mcp_require_auth is False
+    assert any("AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false" in rec.message for rec in caplog.records)
+
+
+def test_allow_unauthenticated_admin_warns_when_auth_disabled(caplog):
+    """Explicit unauthenticated-admin override should emit warning when auth is disabled."""
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    s = Settings(
+        auth_required=False,
+        allow_unauthenticated_admin=True,
+        _env_file=None,
+    )
+
+    assert s.auth_required is False
+    assert s.allow_unauthenticated_admin is True
+    assert any("ALLOW_UNAUTHENTICATED_ADMIN=true acknowledged" in rec.message for rec in caplog.records)
+
+
 # --------------------------------------------------------------------------- #
 #                    Ed25519 key derivation                                    #
 # --------------------------------------------------------------------------- #

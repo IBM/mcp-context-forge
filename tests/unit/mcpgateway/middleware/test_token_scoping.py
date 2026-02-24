@@ -47,6 +47,8 @@ class TestTokenScopingMiddleware:
         request.url.path = "/test"
         request.method = "GET"
         request.headers = {}
+        request.cookies = {}
+        request.scope = {"path": "/test", "root_path": ""}
         request.client = MagicMock()
         request.client.host = "127.0.0.1"
         # Set up state as a simple object that can hold attributes
@@ -60,6 +62,7 @@ class TestTokenScopingMiddleware:
         """_extract_token_scopes should return decoded payload on success."""
         request = MagicMock(spec=Request)
         request.headers = {"Authorization": "Bearer test-token"}
+        request.cookies = {}
 
         payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
         with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
@@ -71,6 +74,7 @@ class TestTokenScopingMiddleware:
         """Bearer scheme should be parsed case-insensitively."""
         request = MagicMock(spec=Request)
         request.headers = {"Authorization": f"{scheme} test-token"}
+        request.cookies = {}
 
         payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
         with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
@@ -81,6 +85,7 @@ class TestTokenScopingMiddleware:
         """Bearer authorization with an empty token should be rejected."""
         request = MagicMock(spec=Request)
         request.headers = {"Authorization": "Bearer "}
+        request.cookies = {}
 
         assert await middleware._extract_token_scopes(request) is None
 
@@ -89,8 +94,24 @@ class TestTokenScopingMiddleware:
         """Non-bearer auth schemes must not be treated as JWT bearer tokens."""
         request = MagicMock(spec=Request)
         request.headers = {"Authorization": "Basic abc123"}
+        request.cookies = {}
 
         assert await middleware._extract_token_scopes(request) is None
+
+    @pytest.mark.asyncio
+    async def test_extract_token_scopes_reads_supported_cookie_tokens(self, middleware):
+        """Cookie-authenticated requests should be scoped the same as bearer headers."""
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.cookies = {"jwt_token": "cookie-token"}
+
+        payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
+
+        request.cookies = {"access_token": "access-cookie-token"}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
 
     @pytest.mark.asyncio
     async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
@@ -249,6 +270,33 @@ class TestTokenScopingMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_usage_limits_block_request_with_429(self, middleware, mock_request):
+        """Requests above configured token usage limits should be denied."""
+        mock_request.url.path = "/tools"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with (
+            patch.object(middleware, "_extract_token_scopes") as mock_extract,
+            patch.object(middleware, "_check_usage_limits", return_value=(False, "Hourly request limit exceeded")),
+        ):
+            mock_extract.return_value = {
+                "jti": "token-jti-1",
+                "scopes": {
+                    "permissions": ["*"],
+                    "usage_limits": {"requests_per_hour": 1},
+                },
+            }
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+            assert "Hourly request limit exceeded" in content.get("detail")
+            call_next.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_whitelisted_paths_bypass_middleware(self, middleware):
         """Test that whitelisted paths bypass all scoping checks."""
         whitelisted_paths = ["/health", "/metrics", "/docs", "/auth/email/login"]
@@ -256,6 +304,11 @@ class TestTokenScopingMiddleware:
         for path in whitelisted_paths:
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = path
+            mock_request.headers = {}
+            mock_request.cookies = {}
+            mock_request.scope = {"path": path, "root_path": ""}
+            mock_request.state = MagicMock()
+            mock_request.state._token_scoping_done = False
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -309,6 +362,40 @@ class TestTokenScopingMiddleware:
         """LLM proxy permissions should not match sub-resource paths."""
         assert middleware._check_permission_restrictions("/v1/models/anything", "GET", [Permissions.LLM_READ]) is False
         assert middleware._check_permission_restrictions("/v1/chat/completions/anything", "POST", [Permissions.LLM_INVOKE]) is False
+
+    def test_permission_restrictions_normalizes_app_root_prefix(self, middleware, monkeypatch):
+        """APP_ROOT_PATH-prefixed requests should use canonical permission mappings."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.app_root_path", "/forge")
+        assert middleware._check_permission_restrictions("/forge/tools", "GET", [Permissions.TOOLS_READ]) is True
+        assert middleware._check_permission_restrictions("/forge/tools", "GET", [Permissions.TOOLS_CREATE]) is False
+
+    def test_normalize_path_for_matching_adds_leading_slash(self, middleware, monkeypatch):
+        """Relative normalized paths should be converted to absolute for matching."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "tools")
+        assert middleware._normalize_path_for_matching("/forge/tools") == "/tools"
+
+    def test_get_normalized_request_path_handles_non_dict_scope_and_relative_path(self, middleware, mock_request, monkeypatch):
+        """Non-dict scopes and relative normalized paths should be safely normalized."""
+        mock_request.scope = ["not-a-dict"]  # truthy non-dict exercises defensive coercion branch
+        mock_request.url.path = "/forge/tools"
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "forge/tools")
+
+        assert middleware._get_normalized_request_path(mock_request) == "/forge/tools"
+
+    @pytest.mark.asyncio
+    async def test_call_normalizes_scope_root_path_before_checks(self, middleware, mock_request):
+        """Request scope root_path should be removed before scope enforcement."""
+        mock_request.url.path = "/forge/tools"
+        mock_request.scope = {"path": "/forge/tools", "root_path": "/forge"}
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes", return_value={"scopes": {"permissions": [Permissions.TOOLS_READ]}}):
+            call_next = AsyncMock(return_value="success")
+            result = await middleware(mock_request, call_next)
+
+        assert result == "success"
+        call_next.assert_called_once()
 
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""

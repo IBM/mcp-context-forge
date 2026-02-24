@@ -469,6 +469,119 @@ class SSOService:
         result = self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _normalize_issuer_url(issuer: str) -> str:
+        """Normalize issuer URL for allowlist comparisons.
+
+        Args:
+            issuer: Raw issuer URL from provider config or metadata.
+
+        Returns:
+            Lowercased issuer URL without trailing slash.
+        """
+        return issuer.strip().rstrip("/").lower()
+
+    def _enforce_allowed_issuer(self, issuer: Optional[str]) -> None:
+        """Enforce configured issuer allowlist when present.
+
+        Args:
+            issuer: Candidate issuer URL from provider configuration.
+
+        Raises:
+            ValueError: If issuer is set but not in configured allowlist.
+        """
+        allowed_issuers = getattr(settings, "sso_issuers", None)
+        if not allowed_issuers:
+            return
+
+        if not isinstance(issuer, str) or not issuer.strip():
+            logger.warning("SSO provider has blank/empty issuer while SSO_ISSUERS allowlist is configured; issuer enforcement skipped.")
+            return
+
+        normalized_candidate = self._normalize_issuer_url(issuer)
+        normalized_allowlist = {self._normalize_issuer_url(str(allowed_issuer)) for allowed_issuer in allowed_issuers if isinstance(allowed_issuer, str) and allowed_issuer.strip()}
+        if normalized_allowlist and normalized_candidate not in normalized_allowlist:
+            raise ValueError("Issuer is not allowed by SSO_ISSUERS configuration")
+
+    @staticmethod
+    def _resolve_team_mapping_target(mapping_value: Any) -> Tuple[Optional[str], str]:
+        """Resolve team mapping value into team id and role.
+
+        Args:
+            mapping_value: Team mapping target value from provider config.
+
+        Returns:
+            Tuple of ``(team_id, role)`` where ``team_id`` may be ``None`` and
+            role defaults to ``member`` when not explicitly valid.
+        """
+        if isinstance(mapping_value, str) and mapping_value.strip():
+            return mapping_value.strip(), "member"
+
+        if isinstance(mapping_value, dict):
+            team_id_value = mapping_value.get("team_id") or mapping_value.get("id")
+            team_id = str(team_id_value).strip() if team_id_value is not None else ""
+            role_value = str(mapping_value.get("role", "member")).strip().lower()
+            role = role_value if role_value in {"owner", "member"} else "member"
+            return (team_id if team_id else None), role
+
+        return None, "member"
+
+    async def _apply_team_mapping(self, user_email: str, user_info: Dict[str, Any], provider: Optional[SSOProvider]) -> None:
+        """Apply provider team mappings based on SSO group claims.
+
+        Args:
+            user_email: Authenticated user email to map into teams.
+            user_info: Identity claims payload containing optional group claims.
+            provider: SSO provider configuration with ``team_mapping`` entries.
+
+        Returns:
+            None.
+        """
+        if not provider:
+            return
+
+        mapping = getattr(provider, "team_mapping", None)
+        if not isinstance(mapping, dict) or not mapping:
+            return
+
+        groups_raw = user_info.get("groups", [])
+        if isinstance(groups_raw, str):
+            groups = [groups_raw]
+        elif isinstance(groups_raw, list):
+            groups = [str(group).strip() for group in groups_raw if str(group).strip()]
+        else:
+            groups = []
+
+        if not groups:
+            return
+
+        normalized_groups = {group.lower() for group in groups}
+
+        # First-Party
+        from mcpgateway.services.team_management_service import MemberAlreadyExistsError, TeamManagementError, TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        team_service = TeamManagementService(self.db)
+        for source_group, target in mapping.items():
+            if not isinstance(source_group, str):
+                continue
+            source_group_normalized = source_group.strip().lower()
+            if not source_group_normalized or source_group_normalized not in normalized_groups:
+                continue
+
+            team_id, role = self._resolve_team_mapping_target(target)
+            if not team_id:
+                logger.warning("Skipping invalid SSO team_mapping entry for provider %s and group '%s'", provider.id, source_group)
+                continue
+
+            try:
+                await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=role, invited_by=user_email)
+            except MemberAlreadyExistsError:
+                logger.debug("SSO team_mapping: user %s already member of team %s", user_email, team_id)
+            except TeamManagementError as exc:
+                logger.warning("SSO team_mapping failed for user %s, group '%s', team '%s': %s", user_email, source_group, team_id, exc)
+            except Exception as exc:
+                logger.warning("Unexpected SSO team_mapping error for user %s and team '%s': %s", user_email, team_id, exc)
+
     async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.
 
@@ -495,6 +608,8 @@ class SSOService:
             >>> provider.client_secret_encrypted.startswith('ENC(')
             True
         """
+        self._enforce_allowed_issuer(provider_data.get("issuer"))
+
         # Encrypt client secret
         client_secret = provider_data.pop("client_secret")
         provider_data["client_secret_encrypted"] = await self._encrypt_secret(client_secret)
@@ -542,6 +657,9 @@ class SSOService:
         provider = self.get_provider(provider_id)
         if not provider:
             return None
+
+        if "issuer" in provider_data:
+            self._enforce_allowed_issuer(provider_data.get("issuer"))
 
         # Handle client secret encryption if provided
         if "client_secret" in provider_data:
@@ -751,10 +869,10 @@ class SSOService:
             user_info: Normalized user-info payload from provider.
 
         Returns:
-            ``True`` when email is verified or claim is absent.
+            ``True`` only when email verification claim is explicitly verified.
         """
         if "email_verified" not in user_info:
-            return True
+            return False
 
         claim_value = user_info.get("email_verified")
         if isinstance(claim_value, bool):
@@ -1333,6 +1451,20 @@ class SSOService:
             return None
 
         incoming_provider = str(user_info.get("provider", "sso")).strip().lower() or "sso"
+        provider = self.get_provider(incoming_provider)
+
+        # Enforce trusted-domain policy consistently for both existing and new users.
+        trusted_domains = getattr(provider, "trusted_domains", None) if provider else None
+        if trusted_domains:
+            domain = email.split("@")[1].lower() if "@" in email else ""
+            normalized_trusted_domains = [d.lower() for d in trusted_domains if isinstance(d, str)]
+            if domain not in normalized_trusted_domains:
+                logger.warning(
+                    "SSO authenticate_or_create_user: email domain '%s' is not allowed for provider '%s'.",
+                    domain,
+                    incoming_provider,
+                )
+                return None
 
         # Use stable local values for JWT payload generation to avoid lazy-loading
         # expired ORM attributes after commit/flush boundaries.
@@ -1359,7 +1491,6 @@ class SSOService:
                 )
                 return None
 
-            provider = self.get_provider(incoming_provider)
             provider_id: Optional[str] = None
             provider_metadata: Dict[str, Any] = {}
             provider_ctx: Optional[Any] = None
@@ -1378,8 +1509,8 @@ class SSOService:
                 user.auth_provider = incoming_provider
                 current_auth_provider = incoming_provider
 
-            # Mark email as verified for SSO users
-            user.email_verified = True
+            # Persist verification status from provider claims.
+            user.email_verified = self._is_email_verified_claim(user_info)
             user.last_login = utc_now()
 
             # Synchronize is_admin status based on current group membership
@@ -1419,6 +1550,7 @@ class SSOService:
             if provider_ctx and should_sync:
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 await self._sync_user_roles(email, role_assignments, provider_ctx)
+            await self._apply_team_mapping(email, user_info, provider)
 
             user_email = getattr(user, "email", None)
             if isinstance(user_email, str) and user_email.strip():
@@ -1428,19 +1560,12 @@ class SSOService:
             resolved_is_admin = current_is_admin
         else:
             # Auto-create user if enabled
-            provider = self.get_provider(incoming_provider)
             if not provider or not provider.auto_create_users:
                 return None
 
             provider_id = provider.id
             provider_metadata = provider.provider_metadata or {}
             provider_ctx = SSOProviderContext(id=provider_id, provider_metadata=provider_metadata)
-
-            # Check trusted domains if configured
-            if provider.trusted_domains:
-                domain = email.split("@")[1].lower()
-                if domain not in [d.lower() for d in provider.trusted_domains]:
-                    return None
 
             # Check if admin approval is required
             if settings.sso_require_admin_approval:
@@ -1542,6 +1667,7 @@ class SSOService:
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 if role_assignments:
                     await self._sync_user_roles(email, role_assignments, provider_ctx)
+            await self._apply_team_mapping(email, user_info, provider)
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:

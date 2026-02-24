@@ -150,7 +150,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -1780,7 +1780,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             # Supporting Basic auth would require passing auth context to routes,
             # which increases complexity and attack surface. Use JWT or API tokens instead.
 
-            if not username and settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+            if not username and is_proxy_auth_trust_active(settings):
                 # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
                 proxy_user = request.headers.get(settings.proxy_user_header)
                 if proxy_user:
@@ -6662,7 +6662,7 @@ async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[s
             "token_use": getattr(websocket.state, "token_use", None),
         }
     # Proxy authentication path (only valid when MCP client auth is disabled)
-    elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+    elif is_proxy_auth_trust_active(settings):
         proxy_user = websocket.headers.get(settings.proxy_user_header)
         if proxy_user:
             user_context = {

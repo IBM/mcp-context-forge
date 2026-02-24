@@ -158,12 +158,46 @@ class TestProviderCRUD:
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_create_provider_rejects_disallowed_issuer(self, sso_service):
+        data = {
+            "id": "github",
+            "name": "github",
+            "display_name": "GitHub",
+            "provider_type": "oidc",
+            "client_id": "cid",
+            "client_secret": "sec",
+            "authorization_url": "https://auth",
+            "token_url": "https://token",
+            "userinfo_url": "https://userinfo",
+            "issuer": "https://issuer.denied.example.com",
+            "scope": "openid profile email",
+        }
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_issuers = ["https://issuer.allowed.example.com"]
+            with pytest.raises(ValueError, match="Issuer is not allowed"):
+                await sso_service.create_provider(data)
+
+    def test_enforce_allowed_issuer_ignores_blank_candidate(self, sso_service):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_issuers = ["https://issuer.allowed.example.com"]
+            sso_service._enforce_allowed_issuer("  ")
+
+    @pytest.mark.asyncio
     async def test_update_provider(self, sso_service, mock_db):
         existing = _make_provider()
         sso_service.get_provider = lambda _id: existing
         result = await sso_service.update_provider("github", {"client_id": "new-cid", "client_secret": "new-sec"})
         assert result.client_id == "new-cid"
         assert result.client_secret_encrypted == "encrypted"
+
+    @pytest.mark.asyncio
+    async def test_update_provider_rejects_disallowed_issuer(self, sso_service):
+        existing = _make_provider()
+        sso_service.get_provider = lambda _id: existing
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_issuers = ["https://issuer.allowed.example.com"]
+            with pytest.raises(ValueError, match="Issuer is not allowed"):
+                await sso_service.update_provider("github", {"issuer": "https://issuer.denied.example.com"})
 
     @pytest.mark.asyncio
     async def test_update_provider_not_found(self, sso_service):
@@ -305,6 +339,9 @@ class TestAuthFlow:
         assert sso_service._is_email_verified_claim({"email_verified": "yes"}) is True
         assert sso_service._is_email_verified_claim({"email_verified": "no"}) is False
         assert sso_service._is_email_verified_claim({"email_verified": object()}) is False
+
+    def test_is_email_verified_claim_missing_claim_defaults_to_false(self, sso_service):
+        assert sso_service._is_email_verified_claim({"email": "user@example.com"}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1892,12 +1929,195 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com", "full_name": "New Name", "provider": "github",
+                "email": "user@test.com", "full_name": "New Name", "provider": "github", "email_verified": True,
             })
 
         assert result == "jwt-token"
         assert existing_user.full_name == "New Name"
         assert existing_user.auth_provider == "github"
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_assigns_matching_group(self, sso_service):
+        provider = _make_provider(team_mapping={"Engineering": {"team_id": "team-1", "role": "owner"}})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering"]},
+                provider=provider,
+            )
+
+        team_service.add_member_to_team.assert_awaited_once_with(
+            team_id="team-1",
+            user_email="user@test.com",
+            role="owner",
+            invited_by="user@test.com",
+        )
+
+    def test_resolve_team_mapping_target_string_and_invalid(self, sso_service):
+        team_id, role = sso_service._resolve_team_mapping_target("team-raw")
+        assert team_id == "team-raw"
+        assert role == "member"
+
+        team_id, role = sso_service._resolve_team_mapping_target(123)
+        assert team_id is None
+        assert role == "member"
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_returns_early_for_missing_provider_or_groups(self, sso_service):
+        await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=None)
+        await sso_service._apply_team_mapping("user@test.com", {"groups": {"not": "a-list"}}, provider=_make_provider(team_mapping={"engineering": "team-1"}))
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_supports_string_group_and_skips_non_string_mapping_key(self, sso_service):
+        provider = _make_provider(team_mapping={1: "team-ignored", "engineering": "team-1"})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping("user@test.com", {"groups": "engineering"}, provider=provider)
+
+        team_service.add_member_to_team.assert_awaited_once_with(
+            team_id="team-1",
+            user_email="user@test.com",
+            role="member",
+            invited_by="user@test.com",
+        )
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_invalid_target_logs_warning(self, sso_service):
+        provider = _make_provider(team_mapping={"engineering": {}})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=provider)
+
+        team_service.add_member_to_team.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_skips_unmatched_group(self, sso_service):
+        provider = _make_provider(team_mapping={"sales": "team-9"})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=provider)
+
+        team_service.add_member_to_team.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_handles_expected_errors(self, sso_service):
+        # First-Party
+        from mcpgateway.services.team_management_service import MemberAlreadyExistsError, TeamManagementError
+
+        provider = _make_provider(
+            team_mapping={
+                "engineering": "team-1",
+                "platform": "team-2",
+                "ops": "team-3",
+            }
+        )
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock(
+            side_effect=[
+                MemberAlreadyExistsError("already-member"),
+                TeamManagementError("team-error"),
+                RuntimeError("unexpected-error"),
+            ]
+        )
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                "user@test.com",
+                {"groups": ["engineering", "platform", "ops", "other"]},
+                provider=provider,
+            )
+
+        assert team_service.add_member_to_team.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_existing_user_calls_apply_team_mapping(self, sso_service, mock_db):
+        existing_user = SimpleNamespace(
+            email="user@test.com", full_name="Old Name", auth_provider="github",
+            email_verified=True, last_login=None, is_admin=False, admin_origin=None,
+        )
+        provider = _make_provider(team_mapping={"engineering": "team-1"})
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: provider
+        sso_service._apply_team_mapping = AsyncMock()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user({
+                "email": "user@test.com",
+                "full_name": "New Name",
+                "provider": "github",
+                "email_verified": True,
+                "groups": ["engineering"],
+            })
+
+        assert result == "jwt-token"
+        sso_service._apply_team_mapping.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_existing_user_rejects_unverified_claim_without_mutation(self, sso_service, mock_db):
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        result = await sso_service.authenticate_or_create_user(
+            {
+                "email": "user@test.com",
+                "full_name": "New Name",
+                "provider": "github",
+                "email_verified": False,
+            }
+        )
+
+        assert result is None
+        assert existing_user.email_verified is True
+
+    @pytest.mark.asyncio
+    async def test_existing_user_untrusted_domain_rejected(self, sso_service, mock_db):
+        existing_user = SimpleNamespace(
+            email="user@untrusted.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider(trusted_domains=["trusted.com"])
+
+        result = await sso_service.authenticate_or_create_user(
+            {
+                "email": "user@untrusted.com",
+                "full_name": "Old Name",
+                "provider": "github",
+                "email_verified": True,
+            }
+        )
+
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_existing_user_mixed_case_idp_email_uses_canonical_claims(self, sso_service, mock_db):
@@ -1922,6 +2142,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "User@Test.com",
                     "full_name": "User Name",
                     "provider": "github",
+                    "email_verified": True,
                 }
             )
 
@@ -2020,6 +2241,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "user@test.com",
                     "full_name": "Updated Name",
                     "provider": "github",
+                    "email_verified": True,
                     "groups": ["dev"],
                 }
             )
@@ -2047,7 +2269,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@admin.com", "full_name": "Admin", "provider": "github",
+                "email": "user@admin.com", "full_name": "Admin", "provider": "github", "email_verified": True,
             })
 
         assert existing_user.is_admin is True
@@ -2071,7 +2293,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@other.com", "full_name": "Ex-Admin", "provider": "github",
+                "email": "user@other.com", "full_name": "Ex-Admin", "provider": "github", "email_verified": True,
             })
 
         assert existing_user.is_admin is False
@@ -2096,14 +2318,14 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_require_admin_approval = False
             mock_jwt.return_value = "new-jwt"
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result == "new-jwt"
 
     @pytest.mark.asyncio
-    async def test_new_github_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
-        """GitHub /user payloads without email_verified should not be auto-rejected."""
+    async def test_new_github_user_without_email_verified_claim_is_rejected(self, sso_service, mock_db):
+        """GitHub payloads without email_verified are rejected by secure default."""
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         new_user = SimpleNamespace(
             email="new@test.com",
@@ -2134,7 +2356,7 @@ class TestAuthenticateOrCreateUser:
             mock_jwt.return_value = "new-jwt"
             result = await sso_service.authenticate_or_create_user(normalized_user_info)
 
-        assert result == "new-jwt"
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_new_user_with_role_assignments_triggers_sync(self, sso_service, mock_db):
@@ -2166,6 +2388,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                     "groups": ["dev"],
                 }
             )
@@ -2229,6 +2452,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                     "groups": ["dev"],
                 }
             )
@@ -2268,7 +2492,7 @@ class TestAuthenticateOrCreateUser:
              patch("mcpgateway.services.sso_service.PendingUserApproval"):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result is None
@@ -2286,7 +2510,7 @@ class TestAuthenticateOrCreateUser:
              patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result is None
@@ -2314,7 +2538,7 @@ class TestAuthenticateOrCreateUser:
              patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result is None
@@ -2373,6 +2597,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                 }
             )
 
@@ -2405,6 +2630,7 @@ class TestAuthenticateOrCreateUser:
                     "email": "new@test.com",
                     "full_name": "New User",
                     "provider": "github",
+                    "email_verified": True,
                 }
             )
 
@@ -2483,7 +2709,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_admin_groups = []
             mock_jwt.return_value = "approved-jwt"
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result == "approved-jwt"
@@ -2502,7 +2728,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
+                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
             })
 
         assert result is None
@@ -2527,7 +2753,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_admin_groups = []
             mock_jwt.return_value = "jwt"
             result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com", "full_name": "Name", "provider": "github", "groups": ["dev"],
+                "email": "user@test.com", "full_name": "Name", "provider": "github", "email_verified": True, "groups": ["dev"],
             })
 
         sso_service._map_groups_to_roles.assert_called_once()
