@@ -4,15 +4,20 @@
 
 """Shared fixtures for mcpgateway unit tests."""
 
+# Future
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+# Standard
+from unittest.mock import AsyncMock
 
+# Third-Party
 import pytest
 
+# First-Party
 # Save original RBAC decorator functions at conftest import time.
 # Conftest files load before test modules, so these should be the real functions.
 import mcpgateway.middleware.rbac as _rbac_mod
+from mcpgateway.plugins.framework.settings import settings
 
 _ORIG_REQUIRE_PERMISSION = _rbac_mod.require_permission
 _ORIG_REQUIRE_ADMIN_PERMISSION = _rbac_mod.require_admin_permission
@@ -54,3 +59,10 @@ def mock_permission_service(monkeypatch):
     MockPermissionService.check_admin_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     return MockPermissionService
+
+
+@pytest.fixture(autouse=True)
+def clear_plugins_settings_cache():
+    """Clear the settings LRU cache so env changes take effect per test."""
+    settings.cache_clear()
+    yield
