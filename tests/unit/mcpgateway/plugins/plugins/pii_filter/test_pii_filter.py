@@ -43,7 +43,7 @@ except ImportError:
     RUST_AVAILABLE = False
     RustPIIDetector = None
     # Fail in CI if Rust plugins are required
-    if os.environ.get("REQUIRE_RUST_PLUGINS") == "1":
+    if os.environ.get("REQUIRE_RUST") == "1":
         raise ImportError("Rust plugin 'pii_filter' is required in CI but not available")
 
 
