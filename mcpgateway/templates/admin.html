@@ -37,7 +37,7 @@
     <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
     {% else %}
     <script
-      src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js"
+      src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"
       integrity="{{ sri_hashes.htmx }}"
       crossorigin="anonymous">
     </script>
@@ -262,37 +262,37 @@
     <script src="{{ root_path }}/static/vendor/codemirror/mode/rust/rust.min.js"></script>
     {% else %}
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js"
       integrity="{{ sri_hashes.codemirror_js }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/mode/simple.min.js"
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/addon/mode/simple.min.js"
       integrity="{{ sri_hashes.codemirror_addon_simple }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/javascript/javascript.min.js"
       integrity="{{ sri_hashes.codemirror_mode_javascript }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/python/python.min.js"
       integrity="{{ sri_hashes.codemirror_mode_python }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/shell/shell.min.js"
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/shell/shell.min.js"
       integrity="{{ sri_hashes.codemirror_mode_shell }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/go/go.min.js"
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/go/go.min.js"
       integrity="{{ sri_hashes.codemirror_mode_go }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/rust/rust.min.js"
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/rust/rust.min.js"
       integrity="{{ sri_hashes.codemirror_mode_rust }}"
       crossorigin="anonymous">
     </script>
@@ -305,7 +305,7 @@
     ></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.8/dist/cdn.min.js"
       integrity="{{ sri_hashes.alpinejs }}"
       crossorigin="anonymous"
       defer
@@ -317,7 +317,7 @@
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
       integrity="{{ sri_hashes.chartjs }}"
       crossorigin="anonymous">
     </script>
@@ -329,12 +329,12 @@
     <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"
+      src="https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js"
       integrity="{{ sri_hashes.marked }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.1/dist/purify.min.js"
       integrity="{{ sri_hashes.dompurify }}"
       crossorigin="anonymous">
     </script>
@@ -356,13 +356,13 @@
     />
     {% else %}
     <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css"
       rel="stylesheet"
       integrity="{{ sri_hashes.codemirror_css }}"
       crossorigin="anonymous"
     />
     <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/monokai.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css"
       rel="stylesheet"
       integrity="{{ sri_hashes.codemirror_theme_monokai }}"
       crossorigin="anonymous"
@@ -374,7 +374,7 @@
     {% else %}
     <link
       rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
       integrity="{{ sri_hashes.fontawesome }}"
       crossorigin="anonymous"
     />
@@ -832,12 +832,26 @@
                   selectedTeamName: 'All Teams',
                   init() {
                     const urlParams = new URLSearchParams(window.location.search);
-                    this.selectedTeam = urlParams.get('team_id') || '';
-                    if (this.selectedTeam) {
-                      // Try to find team name from USER_TEAMS_DATA
-                      const teams = window.USER_TEAMS_DATA || [];
-                      const team = teams.find(t => t.id === this.selectedTeam);
-                      this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
+                    const requestedTeamId = urlParams.get('team_id') || '';
+                    this.selectedTeam = '';
+                    this.selectedTeamName = 'All Teams';
+
+                    if (requestedTeamId) {
+                      // Keep team scope only when it exists in known visible teams.
+                      const teams = (Array.isArray(window.USER_TEAMS_DATA) && window.USER_TEAMS_DATA.length > 0)
+                        ? window.USER_TEAMS_DATA
+                        : (Array.isArray(window.USER_TEAMS) ? window.USER_TEAMS : []);
+                      const team = teams.find(t => t.id === requestedTeamId);
+
+                      if (team) {
+                        this.selectedTeam = requestedTeamId;
+                        this.selectedTeamName = team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name;
+                      } else if (teams.length > 0) {
+                        // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
+                        const cleanUrl = new URL(window.location.href);
+                        cleanUrl.searchParams.delete('team_id');
+                        safeReplaceState({}, '', cleanUrl);
+                      }
                     }
                   },
                   loadTeams() {
@@ -6500,6 +6514,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                     For team-level access, select a specific team from the header above before creating a token.
                                 </p>
                             </div>
+                            <p class="mt-2 text-xs text-yellow-700 dark:text-yellow-300 ml-8">
+                                The header team selector is global. It filters tools, servers, prompts, and other tabs to that team context.
+                            </p>
                         </div>
                     </div>
                 </div>

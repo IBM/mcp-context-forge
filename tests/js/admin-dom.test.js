@@ -491,7 +491,20 @@ describe("getCurrentTeamId", () => {
     const f = () => win.getCurrentTeamId;
 
     test("returns null when no team selector or URL params", () => {
+        win.history.replaceState({}, "", "http://localhost/");
         expect(f()()).toBeNull();
+    });
+
+    test("returns null for stale URL team_id not in known teams", () => {
+        win.history.replaceState({}, "", "http://localhost/admin/?team_id=stale-team");
+        win.USER_TEAMS_DATA = [{ id: "known-team", name: "Known Team" }];
+        expect(f()()).toBeNull();
+    });
+
+    test("returns URL team_id when present in known teams", () => {
+        win.history.replaceState({}, "", "http://localhost/admin/?team_id=known-team");
+        win.USER_TEAMS_DATA = [{ id: "known-team", name: "Known Team" }];
+        expect(f()()).toBe("known-team");
     });
 });
 
@@ -499,6 +512,8 @@ describe("getCurrentTeamName", () => {
     const f = () => win.getCurrentTeamName;
 
     test("returns null when no team selected", () => {
+        win.history.replaceState({}, "", "http://localhost/");
+        win.USER_TEAMS_DATA = [];
         expect(f()()).toBeNull();
     });
 });

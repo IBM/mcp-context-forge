@@ -11,7 +11,7 @@ and time-based restrictions.
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 import ipaddress
 import re
@@ -20,6 +20,7 @@ from typing import List, Optional, Pattern, Tuple
 # Third-Party
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
+from sqlalchemy import and_, func, select
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
@@ -502,6 +503,78 @@ class TokenScopingMiddleware:
 
         return True
 
+    @staticmethod
+    def _parse_positive_limit(value: object) -> Optional[int]:
+        """Parse usage-limit values as positive integers.
+
+        Args:
+            value: Candidate limit value from token scope configuration.
+
+        Returns:
+            Parsed positive integer limit, or ``None`` when invalid/non-positive.
+        """
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def _check_usage_limits(self, jti: Optional[str], usage_limits: dict) -> Tuple[bool, Optional[str]]:
+        """Check token usage limits against recorded usage logs.
+
+        Args:
+            jti: Token JTI identifier.
+            usage_limits: Usage limits from token scope.
+
+        Returns:
+            Tuple[bool, Optional[str]]: (allowed, denial_reason)
+        """
+        if not isinstance(usage_limits, dict) or not usage_limits or not jti:
+            return True, None
+
+        requests_per_hour = self._parse_positive_limit(usage_limits.get("requests_per_hour"))
+        requests_per_day = self._parse_positive_limit(usage_limits.get("requests_per_day"))
+
+        if not requests_per_hour and not requests_per_day:
+            return True, None
+
+        # First-Party
+        from mcpgateway.db import get_db, TokenUsageLog  # pylint: disable=import-outside-toplevel
+
+        db = next(get_db())
+        try:
+            now = datetime.now(timezone.utc)
+
+            if requests_per_hour:
+                hour_window_start = now - timedelta(hours=1)
+                hourly_count = db.execute(
+                    # Pylint false-positive: SQLAlchemy func namespace is callable at runtime.
+                    # pylint: disable=not-callable
+                    select(func.count(TokenUsageLog.id)).where(and_(TokenUsageLog.token_jti == jti, TokenUsageLog.timestamp >= hour_window_start))
+                ).scalar()
+                if int(hourly_count or 0) >= requests_per_hour:
+                    return False, "Hourly request limit exceeded"
+
+            if requests_per_day:
+                day_window_start = now - timedelta(days=1)
+                daily_count = db.execute(
+                    # Pylint false-positive: SQLAlchemy func namespace is callable at runtime.
+                    # pylint: disable=not-callable
+                    select(func.count(TokenUsageLog.id)).where(and_(TokenUsageLog.token_jti == jti, TokenUsageLog.timestamp >= day_window_start))
+                ).scalar()
+                if int(daily_count or 0) >= requests_per_day:
+                    return False, "Daily request limit exceeded"
+        except Exception as exc:
+            logger.warning("Failed to evaluate token usage limits for jti %s: %s", jti, exc)
+            return True, None
+        finally:
+            try:
+                db.rollback()
+            finally:
+                db.close()
+
+        return True, None
+
     def _check_server_restriction(self, request_path: str, server_id: Optional[str]) -> bool:
         """Check if request path matches server restriction.
 
@@ -666,9 +739,6 @@ class TokenScopingMiddleware:
             return cached_result
 
         # Cache miss - query database
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
 
@@ -780,9 +850,6 @@ class TokenScopingMiddleware:
             return True
 
         # Import database models
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import Gateway, get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
 
@@ -1179,6 +1246,13 @@ class TokenScopingMiddleware:
             if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this operation")
+
+            # Check optional token usage limits.
+            usage_limits = scopes.get("usage_limits", {})
+            usage_allowed, usage_reason = self._check_usage_limits(payload.get("jti"), usage_limits)
+            if not usage_allowed:
+                logger.warning("Token usage limit exceeded for jti %s: %s", payload.get("jti"), usage_reason)
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=usage_reason or "Token usage limit exceeded")
 
             # All scoping checks passed, continue
             return await call_next(request)

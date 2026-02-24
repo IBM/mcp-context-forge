@@ -615,7 +615,7 @@ test:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -637,7 +637,7 @@ test-altk:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -2779,10 +2779,6 @@ lint-smart:
 			fi ;; \
 	esac
 
-# Commit range defaults for commitlint
-COMMITLINT_FROM ?= HEAD~1
-COMMITLINT_TO ?= HEAD
-
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
 LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
@@ -2847,20 +2843,6 @@ linting-workflow-reviewdog:          ## 🐶  reviewdog in local reporter mode
 		go install github.com/reviewdog/reviewdog/cmd/reviewdog@latest >/dev/null; \
 		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck= -oneline | \
 			'$(LINT_GO_ROOT)/bin/reviewdog' -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
-
-linting-workflow-commitlint:         ## 📝  Conventional Commits linting
-	@echo "📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)..."
-	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
-	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
-	@mkdir -p "$(LINT_NODE_ROOT)/commitlint" "$(LINT_NODE_ROOT)/npm-cache"
-	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/commitlint'; \
-		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
-		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional"
-	@NODE_PATH="$(LINT_NODE_ROOT)/commitlint/node_modules" \
-		node "$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js" \
-		--extends @commitlint/config-conventional \
-		--from "$(COMMITLINT_FROM)" \
-		--to "$(COMMITLINT_TO)"
 
 linting-python-fixit:                ## 🧪  Fixit Python linting
 	@echo "🧪 fixit lint of $(LINT_FIXIT_TARGET)..."
@@ -7622,8 +7604,6 @@ rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-
 COMMITLINT_ENFORCED ?= 0
 COMMITLINT_FROM ?= HEAD~1
 COMMITLINT_TO ?= HEAD
-LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
-LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 
 linting-workflow-commitlint:         ## 📝  Conventional Commits linting (toggleable)
 	@/bin/bash -c "set -euo pipefail; \

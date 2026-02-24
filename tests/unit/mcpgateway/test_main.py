@@ -2491,6 +2491,7 @@ class TestRealtimeEndpoints:
         monkeypatch.setattr(mcpgateway_main.settings, "auth_required", True)
         monkeypatch.setattr(mcpgateway_main.settings, "mcp_client_auth_enabled", False)
         monkeypatch.setattr(mcpgateway_main.settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "trust_proxy_auth_dangerously", True)
         monkeypatch.setattr(mcpgateway_main.settings, "proxy_user_header", "X-Forwarded-User")
         monkeypatch.setattr(mcpgateway_main.settings, "federation_timeout", 30)
         monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)

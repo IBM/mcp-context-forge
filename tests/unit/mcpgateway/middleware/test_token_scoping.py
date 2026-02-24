@@ -270,6 +270,33 @@ class TestTokenScopingMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_usage_limits_block_request_with_429(self, middleware, mock_request):
+        """Requests above configured token usage limits should be denied."""
+        mock_request.url.path = "/tools"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with (
+            patch.object(middleware, "_extract_token_scopes") as mock_extract,
+            patch.object(middleware, "_check_usage_limits", return_value=(False, "Hourly request limit exceeded")),
+        ):
+            mock_extract.return_value = {
+                "jti": "token-jti-1",
+                "scopes": {
+                    "permissions": ["*"],
+                    "usage_limits": {"requests_per_hour": 1},
+                },
+            }
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+            assert "Hourly request limit exceeded" in content.get("detail")
+            call_next.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_whitelisted_paths_bypass_middleware(self, middleware):
         """Test that whitelisted paths bypass all scoping checks."""
         whitelisted_paths = ["/health", "/metrics", "/docs", "/auth/email/login"]

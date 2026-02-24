@@ -582,6 +582,7 @@ class TestAdminAuthMiddleware:
 
         monkeypatch.setattr(settings, "auth_required", True)
         monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth_dangerously", True)
         monkeypatch.setattr(settings, "mcp_client_auth_enabled", False)
 
         mock_db = MagicMock()
@@ -2958,6 +2959,7 @@ class TestUtilityFunctions:
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
         monkeypatch.setattr(main_mod.settings, "auth_required", True)
         monkeypatch.setattr(main_mod.settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(main_mod.settings, "trust_proxy_auth_dangerously", True)
         monkeypatch.setattr(main_mod.settings, "proxy_user_header", "X-Forwarded-User")
 
         websocket = MagicMock()
@@ -3025,6 +3027,7 @@ class TestUtilityFunctions:
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
         monkeypatch.setattr(main_mod.settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(main_mod.settings, "trust_proxy_auth_dangerously", True)
         monkeypatch.setattr(main_mod.settings, "auth_required", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", True)
 

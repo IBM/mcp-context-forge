@@ -275,6 +275,30 @@ describe("getAuthToken", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getAuthHeaders
+// ---------------------------------------------------------------------------
+describe("getAuthHeaders", () => {
+    const f = () => win.getAuthHeaders;
+
+    test("includes Authorization and JSON content type when token exists", async () => {
+        win.document.cookie = "jwt_token=test-token-123";
+        const headers = await f()(true);
+        expect(headers.Authorization).toBe("Bearer test-token-123");
+        expect(headers["Content-Type"]).toBe("application/json");
+    });
+
+    test("omits Authorization when token is unavailable", async () => {
+        win.document.cookie =
+            "jwt_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        win.document.cookie =
+            "token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        const headers = await f()(true);
+        expect(headers.Authorization).toBeUndefined();
+        expect(headers["Content-Type"]).toBe("application/json");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // fetchWithAuth
 // ---------------------------------------------------------------------------
 describe("fetchWithAuth", () => {

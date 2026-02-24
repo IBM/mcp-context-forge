@@ -68,7 +68,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import require_auth_header_first, verify_credentials
+from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -2165,13 +2165,12 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
     Behavior:
     - If the path does not end with "/mcp", authentication is skipped.
-    - If mcp_require_auth=True (strict mode):
-      - Requests without valid auth are rejected with 401.
-    - If mcp_require_auth=False (default, permissive mode):
+    - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
+    - If mcp_require_auth=False (permissive mode):
       - Requests without auth are allowed but get public-only access (token_teams=[]).
       - Valid tokens get full scoped access based on their teams.
+      - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
     - If a Bearer token is present, it is verified using `verify_credentials`.
-    - If verification fails and mcp_require_auth=True, a 401 Unauthorized JSON response is sent.
 
     Args:
         scope: The ASGI scope dictionary, which includes request metadata.
@@ -2197,6 +2196,9 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     if not path.endswith("/mcp") and not path.endswith("/mcp/"):
         # No auth needed for other paths in this middleware usage
         return True
+    if path.startswith("/.well-known/"):
+        # RFC 9728 metadata endpoints are intentionally public and may end with /mcp.
+        return True
 
     headers = Headers(scope=scope)
 
@@ -2208,10 +2210,10 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             return True
 
     authorization = headers.get("authorization")
-    proxy_user = headers.get(settings.proxy_user_header) if settings.trust_proxy_auth else None
+    proxy_user = headers.get(settings.proxy_user_header) if is_proxy_auth_trust_active(settings) else None
 
     # Determine authentication strategy based on settings
-    if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
+    if is_proxy_auth_trust_active(settings):
         # Client auth disabled → allow proxy header
         if proxy_user:
             # Set enriched user context for proxy-authenticated sessions
@@ -2227,10 +2229,13 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
     # --- Standard JWT authentication flow (client auth enabled) ---
     token: str | None = None
+    bearer_header_supplied = False
     if authorization:
         scheme, credentials = get_authorization_scheme_param(authorization)
-        if scheme.lower() == "bearer" and credentials:
-            token = credentials
+        if scheme.lower() == "bearer":
+            bearer_header_supplied = True
+            if credentials:
+                token = credentials
 
     try:
         if token is None:
@@ -2401,7 +2406,7 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             )
     except Exception:
         # If JWT auth fails but we have a trusted proxy user, use that
-        if settings.trust_proxy_auth and proxy_user:
+        if is_proxy_auth_trust_active(settings) and proxy_user:
             user_context_var.set(
                 {
                     "email": proxy_user,
@@ -2411,6 +2416,17 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 }
             )
             return True  # Fall back to proxy authentication
+
+        # If client supplied a Bearer token but verification failed (or token was empty),
+        # fail closed even in permissive mode to avoid silently downgrading bad auth.
+        if bearer_header_supplied:
+            response = ORJSONResponse(
+                {"detail": "Invalid authentication credentials"},
+                status_code=HTTP_401_UNAUTHORIZED,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            await response(scope, receive, send)
+            return False
 
         # Check mcp_require_auth setting to determine behavior
         if settings.mcp_require_auth:
