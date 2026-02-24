@@ -278,9 +278,6 @@ def test_protocol_method_bodies():
 
 def test_get_plugin_manager_creates_manager_when_enabled():
     """Test that get_plugin_manager creates a PluginManager when plugins_enabled is True."""
-    # Standard
-    import os
-
     # First-Party
     import mcpgateway.plugins.framework as fw
 
@@ -290,16 +287,10 @@ def test_get_plugin_manager_creates_manager_when_enabled():
     original = fw._plugin_manager
     fw._plugin_manager = None
     try:
-        with patch("mcpgateway.config.settings") as mock_settings:
-            mock_settings.plugins_enabled = True
-            mock_settings.plugin_config_file = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml"
-            # Remove env var override so getattr fallback is used
-            env_val = os.environ.pop("PLUGIN_CONFIG_FILE", None)
-            try:
-                pm = fw.get_plugin_manager(observability=recorder)
-            finally:
-                if env_val is not None:
-                    os.environ["PLUGIN_CONFIG_FILE"] = env_val
+        with patch("mcpgateway.plugins.framework.settings.settings") as mock_settings:
+            mock_settings.enabled = True
+            mock_settings.config_file = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml"
+            pm = fw.get_plugin_manager(observability=recorder)
 
         assert pm is not None
         assert isinstance(pm, PluginManager)

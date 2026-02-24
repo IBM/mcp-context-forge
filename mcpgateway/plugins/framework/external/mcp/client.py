@@ -28,13 +28,13 @@ import orjson
 
 # First-Party
 from mcpgateway.common.models import TransportType
-from mcpgateway.config import settings
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
 from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, HOOK_TYPE, IGNORE_CONFIG_EXTERNAL, INVOKE_HOOK, NAME, PAYLOAD, PLUGIN_NAME, PYTHON_SUFFIX, RESULT
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
 from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 from mcpgateway.plugins.framework.models import MCPClientTLSConfig, PluginConfig, PluginContext, PluginErrorModel, PluginPayload, PluginResult
+from mcpgateway.plugins.framework.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -273,15 +273,21 @@ class ExternalPlugin(Plugin):
                 PluginError: If TLS configuration fails.
             """
 
-            # First-Party
-            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
-
             kwargs: dict[str, Any] = {"follow_redirects": True}
             if uds_path:
                 kwargs["transport"] = httpx.AsyncHTTPTransport(uds=uds_path)
             if headers:
                 kwargs["headers"] = headers
-            kwargs["timeout"] = timeout if timeout else get_http_timeout()
+            kwargs["timeout"] = (
+                timeout
+                if timeout
+                else httpx.Timeout(
+                    connect=settings.httpx_connect_timeout,
+                    read=settings.httpx_read_timeout,
+                    write=settings.httpx_write_timeout,
+                    pool=settings.httpx_pool_timeout,
+                )
+            )
             if auth is not None:
                 kwargs["auth"] = auth
 
@@ -294,7 +300,7 @@ class ExternalPlugin(Plugin):
 
             if not tls_config:
                 # Use skip_ssl_verify setting when no custom TLS config
-                kwargs["verify"] = get_default_verify()
+                kwargs["verify"] = not settings.skip_ssl_verify
                 return httpx.AsyncClient(**kwargs)
 
             # Create SSL context using the utility function

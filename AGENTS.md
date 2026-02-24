@@ -147,7 +147,7 @@ MCPGATEWAY_UI_ENABLED=false          # .env.example sets true
 MCPGATEWAY_ADMIN_API_ENABLED=false   # .env.example sets true
 MCPGATEWAY_A2A_ENABLED=true
 PLUGINS_ENABLED=false
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Logging
 LOG_LEVEL=ERROR
