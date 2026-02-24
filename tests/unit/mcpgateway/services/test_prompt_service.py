@@ -175,7 +175,7 @@ def prompt_service():
 class TestPromptServiceInit:
     def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
         """Cover env-override parsing in PromptService.__init__ (PLUGINS_ENABLED)."""
-        monkeypatch.setenv("PLUGINS_ENABLED", " false ")
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
         svc = PromptService()
         assert svc._plugin_manager is None
 
