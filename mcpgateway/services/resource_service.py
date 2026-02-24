@@ -58,6 +58,7 @@ from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -400,6 +401,7 @@ class ResourceService:
             IntegrityError: If a database integrity error occurs.
             ResourceURIConflictError: If a resource with the same URI already exists.
             ResourceError: For other resource registration errors
+            ContentSizeError: For content size exceed
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -421,6 +423,19 @@ class ResourceService:
         """
         try:
             logger.info(f"Registering resource: {resource.uri}")
+
+            # Validate content size BEFORE any database operations
+            content_security = get_content_security_service()
+            content_to_validate = ""
+
+            # Extract content from resource for validation
+            if hasattr(resource, "content") and resource.content:
+                if isinstance(resource.content, bytes):
+                    content_to_validate = resource.content.decode("utf-8", errors="ignore")
+                else:
+                    content_to_validate = str(resource.content)
+
+            content_security.validate_resource_size(content=content_to_validate, uri=resource.uri, user_email=created_by, ip_address=created_from_ip)
 
             # Extract gateway_id from resource if present
             gateway_id = getattr(resource, "gateway_id", None)
@@ -563,6 +578,21 @@ class ResourceService:
                 },
             )
             raise rce
+        except ContentSizeError as cse:
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
+                event_type="resource_size_exceed",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "visibility": visibility,
+                },
+            )
+            raise cse
         except Exception as e:
             db.rollback()
 
@@ -676,6 +706,16 @@ class ResourceService:
 
                 for resource in chunk:
                     try:
+                        # Validate content size before processing
+                        if hasattr(resource, "content") and resource.content:
+                            content_security = get_content_security_service()
+                            content_security.validate_resource_size(
+                                content=resource.content,
+                                uri=resource.uri,
+                                user_email=created_by,
+                                ip_address=created_from_ip,
+                            )
+
                         # Use provided parameters or schema values
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
                         resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
@@ -2689,6 +2729,7 @@ class ResourceService:
             ResourceError: For other update errors
             IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
+            ContentSizeError: For content size exceed
 
         Example:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -2755,6 +2796,15 @@ class ResourceService:
 
             # Update content if provided
             if resource_update.content is not None:
+                # Validate content size before updating
+                content_security = get_content_security_service()
+                content_security.validate_resource_size(
+                    content=resource_update.content,
+                    uri=resource_update.uri or resource.uri,
+                    user_email=modified_by or user_email,
+                    ip_address=modified_from_ip,
+                )
+
                 # Determine content storage
                 is_text = resource.mime_type and resource.mime_type.startswith("text/") or isinstance(resource_update.content, str)
 
@@ -2885,6 +2935,20 @@ class ResourceService:
                 error=ie,
             )
             raise ie
+        except ContentSizeError as cse:
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
+                event_type="resource_content_size_exceed",
+                component="resource_service",
+                resource_type="resource",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_id=str(resource_id),
+                error=cse,
+            )
+            raise cse
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
 
