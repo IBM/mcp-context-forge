@@ -99,7 +99,7 @@ plugins:
 
 ```bash
 PLUGINS_ENABLED=true
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 ```
 
 ## Configuration Schema

@@ -34,12 +34,20 @@ MCP_2025_BASE_URL ?=
 MCP_2025_RPC_PATH ?= /mcp/
 MCP_2025_BEARER_TOKEN ?=
 
+# Virtual-environment variables
+VENVS_DIR ?= $(HOME)/.venv
+VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
+
 # -----------------------------------------------------------------------------
 # Project-wide clean-up targets
 # -----------------------------------------------------------------------------
+COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
+LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
+METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
+
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
 	dist build site .eggs *.egg-info .cache htmlcov certs \
-	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
+	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) htmlcov-doctest htmlcov_ai_normalizer \
 	node_modules .mutmut-cache html
 
 FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-* \
@@ -82,10 +90,6 @@ METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
 # -----------------------------------------------------------------------------
 CONTAINER_MEMORY = 2048m
 CONTAINER_CPUS   = 2
-
-# Virtual-environment variables
-VENVS_DIR ?= $(HOME)/.venv
-VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
 
 # -----------------------------------------------------------------------------
 # OS Specific

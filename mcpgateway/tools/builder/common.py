@@ -415,7 +415,7 @@ def generate_kubernetes_manifests(config: MCPStackConfig, output_dir: Path, verb
     # Enable plugins if any are configured
     if config.plugins and len(config.plugins) > 0:
         gateway_dict["env_vars"]["PLUGINS_ENABLED"] = "true"
-        gateway_dict["env_vars"]["PLUGIN_CONFIG_FILE"] = "/app/config/plugins.yaml"
+        gateway_dict["env_vars"]["PLUGINS_CONFIG_FILE"] = "/app/config/plugins.yaml"
 
     # Add init containers to wait for infrastructure services
     init_containers = []
