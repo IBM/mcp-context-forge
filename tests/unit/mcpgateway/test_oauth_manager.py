@@ -185,43 +185,26 @@ class TestOAuthManager:
         assert str(error) == "Test error"
 
     @pytest.mark.asyncio
-    async def test_get_access_token_authorization_code_fallback_success(self):
-        """Test authorization code flow with client credentials fallback."""
+    async def test_get_access_token_authorization_code_requires_consent(self):
+        """Test authorization_code grant is rejected for automatic token retrieval."""
         manager = OAuthManager()
         credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
 
-        # Create mock response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={"access_token": "fallback_token"})
-        mock_response.raise_for_status = MagicMock()
-
-        # Create mock client
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        with patch.object(manager, "_get_client", return_value=mock_client):
-            result = await manager.get_access_token(credentials)
-            assert result == "fallback_token"
+        with patch.object(manager, "_get_client", new_callable=AsyncMock) as mock_get_client:
+            with pytest.raises(OAuthError, match="requires user consent"):
+                await manager.get_access_token(credentials)
+        mock_get_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_access_token_authorization_code_fallback_failure(self):
-        """Test authorization code flow with client credentials fallback failure."""
-        manager = OAuthManager(max_retries=1)  # Reduce retries for faster test execution
+        """Legacy fallback path remains disabled even when token endpoint details exist."""
+        manager = OAuthManager(max_retries=1)
         credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        # Create mock response
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        mock_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=401)))
-
-        # Create mock client
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        with patch.object(manager, "_get_client", return_value=mock_client):
-            with pytest.raises(OAuthError, match="Authorization code flow cannot be used"):
+        with patch.object(manager, "_get_client", new_callable=AsyncMock) as mock_get_client:
+            with pytest.raises(OAuthError, match="requires user consent"):
                 await manager.get_access_token(credentials)
+        mock_get_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_client_credentials_flow_with_encrypted_secret(self):
@@ -606,46 +589,18 @@ class TestOAuthManager:
         assert result is None
 
     def test_generate_state_format(self):
-        """Test state generation format with HMAC signature."""
-        # Standard
-        import base64
-        import hashlib
-        import hmac
-        import json
-        from unittest.mock import Mock, patch
+        """Test state generation uses opaque random tokens without embedded PII."""
+        manager = OAuthManager()
 
-        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
-            mock_settings = Mock()
-            mock_settings.auth_encryption_secret = SecretStr("test-secret-key")
-            mock_get_settings.return_value = mock_settings
+        state = manager._generate_state("gateway123", "test@example.com")
+        state2 = manager._generate_state("gateway123", "test@example.com")
 
-            manager = OAuthManager()
-
-            state = manager._generate_state("gateway123", "test@example.com")
-
-            # State is now base64 encoded JSON with HMAC signature
-            state_with_sig = base64.urlsafe_b64decode(state.encode())
-
-            # Split state and signature (HMAC-SHA256 is 32 bytes)
-            state_bytes = state_with_sig[:-32]
-            received_signature = state_with_sig[-32:]
-
-            # Verify HMAC signature
-            secret_key = b"test-secret-key"  # Use the same secret we mocked
-            expected_signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
-            assert hmac.compare_digest(received_signature, expected_signature)
-
-            # Parse and verify state data
-            state_json = state_bytes.decode()
-            decoded = json.loads(state_json)
-            assert decoded["gateway_id"] == "gateway123"
-            assert decoded["app_user_email"] == "test@example.com"
-            assert "nonce" in decoded
-            assert "timestamp" in decoded
-
-            # Should generate different states each time (different nonce)
-            state2 = manager._generate_state("gateway123", "test@example.com")
-            assert state != state2
+        assert isinstance(state, str)
+        assert len(state) >= 43
+        assert state != state2
+        assert "gateway123" not in state
+        assert "test@example.com" not in state
+        assert all(ch.isalnum() or ch in "-_" for ch in state)
 
     @pytest.mark.asyncio
     async def test_store_authorization_state(self):

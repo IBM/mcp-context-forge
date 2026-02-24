@@ -69,7 +69,7 @@ plugins:
       payload_templates:
         violation: |
           {
-            "text": "🚨 MCP Gateway Violation Alert",
+            "text": "🚨 ContextForge Violation Alert",
             "blocks": [
               {
                 "type": "section",

@@ -139,7 +139,7 @@ plugins:
     kind: "plugins.resource_filter.resource_filter.ResourceFilterPlugin"
     description: "Demonstrates resource pre/post fetch hooks for filtering and validation"
     version: "1.0.0"
-    author: "MCP Gateway Team"
+    author: "ContextForge Team"
     hooks: ["resource_pre_fetch", "resource_post_fetch", "prompt_post_fetch", "tool_post_invoke"]
     tags: ["resource", "filter", "security", "example"]
     mode: "disabled"  # Block resources that violate rules

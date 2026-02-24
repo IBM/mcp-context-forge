@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Locust load testing scenarios for MCP Gateway.
+"""Locust load testing scenarios for ContextForge.
 
-This module provides comprehensive load testing for MCP Gateway using Locust.
+This module provides comprehensive load testing for ContextForge using Locust.
 It includes multiple user types simulating different usage patterns.
 
 Usage:
@@ -135,7 +135,7 @@ BASIC_AUTH_USER = _get_config("BASIC_AUTH_USER", "admin")
 BASIC_AUTH_PASSWORD = _get_config("BASIC_AUTH_PASSWORD", "changeme")
 
 # JWT settings for auto-generation (if MCPGATEWAY_BEARER_TOKEN not set)
-JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "loadtest-jwt-secret-key-minimum-32-bytes")
 JWT_ALGORITHM = _get_config("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _get_config("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")
@@ -170,10 +170,15 @@ A2A_IDS: list[str] = []
 # test agents and cascading RPC tool call failures.
 A2A_TESTING_ENABLED: bool = False
 
+# Endpoint availability discovered from OpenAPI at test start.
+# Used to make feature-flagged endpoint checks conditional.
+AVAILABLE_PATHS: set[str] = set()
+
 # Names/URIs for RPC calls (tools/call uses name, resources/read uses uri, etc.)
 TOOL_NAMES: list[str] = []
 RESOURCE_URIS: list[str] = []
 PROMPT_NAMES: list[str] = []
+PROMPT_ARGUMENT_NAMES: dict[str, str] = {}
 
 # Tools that require arguments and are tested with proper arguments in specific user classes
 # These should be excluded from generic rpc_call_tool to avoid false failures
@@ -243,6 +248,19 @@ def _fetch_json(url: str, headers: dict[str, str], timeout: float = 30.0) -> tup
         return (0, None)
 
 
+def _is_endpoint_available(path: str) -> bool | None:
+    """Return endpoint availability from OpenAPI discovery cache.
+
+    Returns:
+        True: Path is present in OpenAPI
+        False: Path is absent in OpenAPI
+        None: OpenAPI discovery unavailable
+    """
+    if not AVAILABLE_PATHS:
+        return None
+    return path in AVAILABLE_PATHS
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
     """Fetch existing entity IDs for use in tests.
@@ -256,6 +274,15 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
     headers = _get_auth_headers()
 
     try:
+        # Discover available endpoints once to align checks with feature flags.
+        status, data = _fetch_json(f"{host}/openapi.json", headers)
+        if status == 200 and isinstance(data, dict):
+            paths = data.get("paths", {})
+            if isinstance(paths, dict):
+                AVAILABLE_PATHS.clear()
+                AVAILABLE_PATHS.update(str(path) for path in paths.keys())
+                logger.info(f"Discovered {len(AVAILABLE_PATHS)} OpenAPI paths")
+
         # Fetch tools
         # API returns {"tools": [...], "nextCursor": ...} or list for legacy
         status, data = _fetch_json(f"{host}/tools", headers)
@@ -297,6 +324,15 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             items = data if isinstance(data, list) else data.get("prompts", data.get("items", []))
             PROMPT_IDS.extend([str(p.get("id")) for p in items[:50] if p.get("id")])
             PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
+            for prompt in items[:50]:
+                prompt_name = prompt.get("name")
+                arguments = prompt.get("arguments", [])
+                if isinstance(prompt_name, str) and prompt_name and isinstance(arguments, list) and arguments:
+                    first_arg = arguments[0]
+                    if isinstance(first_arg, dict):
+                        arg_name = first_arg.get("name")
+                        if isinstance(arg_name, str) and arg_name:
+                            PROMPT_ARGUMENT_NAMES[prompt_name] = arg_name
             logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs, {len(PROMPT_NAMES)} prompt names")
 
         # Fetch A2A agents (only when A2A testing is enabled)
@@ -349,6 +385,7 @@ def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
     TOOL_NAMES.clear()
     RESOURCE_URIS.clear()
     PROMPT_NAMES.clear()
+    PROMPT_ARGUMENT_NAMES.clear()
 
     # Print detailed summary statistics
     _print_summary_stats(environment)
@@ -455,6 +492,8 @@ def _generate_jwt_token() -> str:
     - aud: Audience (JWT_AUDIENCE)
     - iss: Issuer (JWT_ISSUER)
     - jti: JWT ID - unique identifier for cache keying and token revocation
+    - token_use: "session" to use session-token semantics
+    - user: nested user profile with is_admin for admin route authorization
     """
     try:
         # Standard
@@ -464,6 +503,8 @@ def _generate_jwt_token() -> str:
         import jwt  # pylint: disable=import-outside-toplevel
 
         jti = str(uuid.uuid4())
+        platform_admin_email = _get_config("PLATFORM_ADMIN_EMAIL", "admin@example.com")
+        is_admin_user = JWT_USERNAME == platform_admin_email
         payload = {
             "sub": JWT_USERNAME,
             "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
@@ -471,9 +512,25 @@ def _generate_jwt_token() -> str:
             "aud": JWT_AUDIENCE,
             "iss": JWT_ISSUER,
             "jti": jti,  # JWT ID for auth cache keying and token revocation support
+            # Match gateway session tokens used by email authentication.
+            "token_use": "session",  # nosec B105 - Token type marker, not a password
+            "user": {
+                "email": JWT_USERNAME,
+                "full_name": "Locust Load Test",
+                "is_admin": is_admin_user,
+                "auth_provider": "local",
+            },
         }
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (aud={JWT_AUDIENCE}, iss={JWT_ISSUER}, jti={jti[:8]}..., expires_in={JWT_TOKEN_EXPIRY_HOURS}h)")
+        logger.info(
+            "Generated JWT token for user: %s (admin=%s, aud=%s, iss=%s, jti=%s..., expires_in=%sh)",
+            JWT_USERNAME,
+            is_admin_user,
+            JWT_AUDIENCE,
+            JWT_ISSUER,
+            jti[:8],
+            JWT_TOKEN_EXPIRY_HOURS,
+        )
         return token
     except ImportError:
         logger.warning("PyJWT not installed, falling back to basic auth. Install with: pip install pyjwt")
@@ -493,7 +550,7 @@ def _get_auth_headers() -> dict[str, str]:
     Priority:
     1. MCPGATEWAY_BEARER_TOKEN env var (if set)
     2. Auto-generated JWT token (if PyJWT available)
-    3. Basic auth fallback (for admin UI only)
+    3. Basic auth fallback (best-effort only; often rejected when API_ALLOW_BASIC_AUTH=false)
     """
     global _CACHED_TOKEN  # pylint: disable=global-statement
     headers = {"Accept": "application/json"}
@@ -508,13 +565,13 @@ def _get_auth_headers() -> dict[str, str]:
         if _CACHED_TOKEN:
             headers["Authorization"] = f"Bearer {_CACHED_TOKEN}"
         else:
-            # Fallback to basic auth (works for admin UI but not REST API)
+            # Fallback to basic auth (best-effort only; many deployments reject it)
             # Standard
             import base64  # pylint: disable=import-outside-toplevel
 
             credentials = base64.b64encode(f"{BASIC_AUTH_USER}:{BASIC_AUTH_PASSWORD}".encode()).decode()
             headers["Authorization"] = f"Basic {credentials}"
-            logger.warning("Using basic auth - REST API endpoints may fail. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
+            logger.warning("Using basic auth - API/admin endpoints may fail. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
 
     return headers
 
@@ -1673,7 +1730,7 @@ class FastTestEchoUser(BaseUser):
         "Echo echo echo",
         "The quick brown fox jumps over the lazy dog",
         "Lorem ipsum dolor sit amet",
-        "MCP Gateway load test message",
+        "ContextForge load test message",
     ]
 
     def _rpc_request(self, payload: dict, name: str):
@@ -2770,6 +2827,13 @@ class ReverseProxyUser(BaseUser):
             name="/reverse-proxy/sessions",
             catch_response=True,
         ) as response:
+            # Feature-flagged endpoint: when reverse-proxy is disabled, OpenAPI omits
+            # this route and runtime returns 404 by design.
+            if response.status_code == 404:
+                available = _is_endpoint_available("/reverse-proxy/sessions")
+                if available is False:
+                    response.success()
+                    return
             # 200=Success, 401=Unauthorized, 403=Forbidden
             self._validate_json_response(response, allowed_codes=[200, 401, 403])
 
@@ -2802,7 +2866,8 @@ def on_test_start_batch1(environment, **_kwargs):
         status, data = _fetch_json(f"{host}/rbac/roles", headers)
         if status == 200 and data:
             items = data if isinstance(data, list) else data.get("roles", data.get("items", []))
-            ROLE_IDS.extend([str(r.get("id")) for r in items[:20] if r.get("id")])
+            non_system_roles = [r for r in items if r.get("id") and not r.get("is_system_role", False)]
+            ROLE_IDS.extend([str(r.get("id")) for r in non_system_roles[:20]])
             logger.info(f"Loaded {len(ROLE_IDS)} role IDs")
 
     except Exception as e:
@@ -3925,8 +3990,7 @@ class ProtocolExtendedUser(BaseUser):
     def protocol_notifications(self):
         """POST /protocol/notifications - Send protocol notification."""
         payload = {
-            "method": "notifications/cancelled",
-            "params": {"requestId": str(uuid.uuid4())},
+            "method": "notifications/initialized",
         }
         with self.client.post(
             "/protocol/notifications",
@@ -3935,16 +3999,20 @@ class ProtocolExtendedUser(BaseUser):
             name="/protocol/notifications",
             catch_response=True,
         ) as response:
-            # Returns null/200 on success
+            # Initialized notification should consistently return 200.
             self._validate_status(response)
 
     @task(2)
     @tag("protocol", "completion")
     def protocol_completion(self):
         """POST /protocol/completion/complete - Request completion."""
+        if not PROMPT_ARGUMENT_NAMES:
+            return
+        prompt_name = random.choice(list(PROMPT_ARGUMENT_NAMES.keys()))
+        argument_name = PROMPT_ARGUMENT_NAMES[prompt_name]
         payload = {
-            "ref": {"type": "ref/prompt", "name": "test-prompt"},
-            "argument": {"name": "arg", "value": "val"},
+            "ref": {"type": "ref/prompt", "name": prompt_name},
+            "argument": {"name": argument_name, "value": "val"},
         }
         with self.client.post(
             "/protocol/completion/complete",
@@ -3962,6 +4030,11 @@ class ProtocolExtendedUser(BaseUser):
         """POST /protocol/sampling/createMessage - Create sampling message."""
         payload = {
             "messages": [{"role": "user", "content": {"type": "text", "text": "Hello"}}],
+            "modelPreferences": {
+                "costPriority": 0.3,
+                "speedPriority": 0.3,
+                "intelligencePriority": 0.4,
+            },
             "maxTokens": 10,
         }
         with self.client.post(
@@ -3979,8 +4052,7 @@ class ProtocolExtendedUser(BaseUser):
     def gateway_notifications(self):
         """POST /notifications - Send gateway notification."""
         payload = {
-            "method": "notifications/cancelled",
-            "params": {"requestId": str(uuid.uuid4())},
+            "method": "notifications/initialized",
         }
         with self.client.post(
             "/notifications",
@@ -3997,14 +4069,14 @@ class ProtocolExtendedUser(BaseUser):
         """POST /message - Send JSON-RPC message (requires session)."""
         payload = {"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": "ping", "params": {}}
         with self.client.post(
-            "/message",
+            f"/message?session_id=loadtest-{uuid.uuid4().hex[:8]}",
             json=payload,
             headers=self.auth_headers,
             name="/message",
             catch_response=True,
         ) as response:
-            # 400=Missing session_id (expected without active session)
-            self._validate_status(response, allowed_codes=[200, 400])
+            # Dummy session IDs are expected to fail auth/session ownership checks.
+            self._validate_status(response, allowed_codes=[200, 403, 404])
 
 
 class LLMExtendedUser(BaseUser):
@@ -5951,7 +6023,7 @@ class ImportExtendedUser(BaseUser):
     @tag("admin", "import", "preview")
     def admin_import_preview(self):
         """POST /admin/import/preview - Preview import."""
-        payload = {"entities": {}}
+        payload = {"data": {"tools": [], "servers": [], "resources": [], "prompts": [], "gateways": [], "roots": []}}
         with self.client.post(
             "/admin/import/preview",
             json=payload,
@@ -6409,7 +6481,14 @@ class LLMCRUDUser(BaseUser):
                     provider_id = data.get("id") or data.get("name") or provider_name
                     # GET provider details
                     time.sleep(0.05)
-                    self.client.get(f"/llm/providers/{provider_id}", headers=self.auth_headers, name="/llm/providers/[id]")
+                    with self.client.get(
+                        f"/llm/providers/{provider_id}",
+                        headers=self.auth_headers,
+                        name="/llm/providers/[id]",
+                        catch_response=True,
+                    ) as provider_get_resp:
+                        # Concurrent CRUD can legitimately delete the provider between requests.
+                        self._validate_status(provider_get_resp, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
                     # PATCH provider
                     time.sleep(0.05)
                     with self.client.patch(
@@ -6519,7 +6598,13 @@ class LLMCRUDUser(BaseUser):
                     provider = random.choice(providers)
                     pid = provider.get("id")
                     if pid:
-                        self.client.get(f"/llm/providers/{pid}", headers=self.auth_headers, name="/llm/providers/[id]")
+                        with self.client.get(
+                            f"/llm/providers/{pid}",
+                            headers=self.auth_headers,
+                            name="/llm/providers/[id]",
+                            catch_response=True,
+                        ) as provider_get_resp:
+                            self._validate_status(provider_get_resp, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             except Exception:
                 response.success()
@@ -7793,7 +7878,7 @@ class MiscEndpointsUser(BaseUser):
         """POST /admin/import/preview - Admin import preview."""
         with self.client.post(
             "/admin/import/preview",
-            json={"tools": []},
+            json={"data": {"tools": []}},
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/admin/import/preview",
             catch_response=True,
@@ -7806,7 +7891,7 @@ class MiscEndpointsUser(BaseUser):
         """POST /admin/import/configuration - Admin import configuration."""
         with self.client.post(
             "/admin/import/configuration",
-            json={"tools": [], "servers": []},
+            json={"import_data": {"tools": [], "servers": []}, "conflict_strategy": "update", "dry_run": True},
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/admin/import/configuration",
             catch_response=True,
@@ -8299,7 +8384,7 @@ class AdminUsersOpsUser(BaseUser):
                     self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Update
                 time.sleep(0.05)
-                with self.client.post(f"/admin/users/{email}/update", data=f"full_name=Updated+Load+Test", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/users/[email]/update", catch_response=True) as r:
+                with self.client.post(f"/admin/users/{email}/update", data="full_name=Updated+Load+Test", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/users/[email]/update", catch_response=True) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Delete
                 time.sleep(0.05)

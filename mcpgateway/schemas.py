@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Schema Definitions.
-This module provides Pydantic models for request/response validation in the MCP Gateway.
+ContextForge Schema Definitions.
+This module provides Pydantic models for request/response validation in ContextForge.
 It implements schemas for:
 - Tool registration and invocation
 - Resource management and subscriptions
@@ -38,6 +38,7 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
+from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -1985,7 +1986,8 @@ class ResourceSubscription(BaseModelWithConfigDict):
 
         Ensures the subscriber ID:
         - Is not empty
-        - Contains only alphanumeric characters, underscores, hyphens, and dots
+        - Contains only safe identifier characters
+        - Allows email-style IDs for authenticated subscribers
         - Does not contain HTML special characters
         - Follows standard identifier naming conventions
         - Does not exceed maximum length (255 characters)
@@ -2002,6 +2004,17 @@ class ResourceSubscription(BaseModelWithConfigDict):
         Raises:
             ValueError: If the subscriber ID violates naming conventions
         """
+        if not v:
+            raise ValueError("Subscriber ID cannot be empty")
+
+        # Allow email-like subscriber IDs while keeping strict character controls.
+        if re.match(r"^[A-Za-z0-9_.@+-]+$", v):
+            if re.search(SecurityValidator.VALIDATION_UNSAFE_URI_PATTERN, v):
+                raise ValueError("Subscriber ID cannot contain HTML special characters")
+            if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+                raise ValueError(f"Subscriber ID exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+            return v
+
         return SecurityValidator.validate_identifier(v, "Subscriber ID")
 
 
@@ -3119,18 +3132,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 # ---------------------------------------------------------------------------
 # OAuth config masking helper (used by GatewayRead.masked / A2AAgentRead.masked)
 # ---------------------------------------------------------------------------
-_SENSITIVE_OAUTH_KEYS = frozenset(
-    {
-        "client_secret",
-        "password",
-        "refresh_token",
-        "access_token",
-        "id_token",
-        "token",
-        "secret",
-        "private_key",
-    }
-)
+_SENSITIVE_OAUTH_KEYS = OAUTH_SENSITIVE_KEYS
 
 
 def _mask_oauth_config(oauth_config: Any) -> Any:
@@ -4141,6 +4143,17 @@ class ServerRead(BaseModelWithConfigDict):
         if data.get("associated_a2a_agents"):
             data["associated_a2a_agents"] = [getattr(agent, "id", agent) for agent in data["associated_a2a_agents"]]
         return data
+
+    def masked(self) -> "ServerRead":
+        """Return a masked model with oauth_config secrets redacted.
+
+        Returns:
+            ServerRead: Masked server model.
+        """
+        masked_data = self.model_dump()
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
+        return ServerRead.model_validate(masked_data)
 
 
 class GatewayTestRequest(BaseModelWithConfigDict):

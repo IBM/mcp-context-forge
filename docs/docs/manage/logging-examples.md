@@ -1,6 +1,6 @@
-# Logging Examples for MCP Gateway
+# Logging Examples for ContextForge
 
-This document provides practical examples of using the logging features in MCP Gateway.
+This document provides practical examples of using the logging features in ContextForge.
 
 !!! tip "Complete Configuration"
     For production deployments, copy `.env.example` to `.env` and configure all settings including multitenancy:

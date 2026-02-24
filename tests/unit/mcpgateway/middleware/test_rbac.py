@@ -100,6 +100,70 @@ async def test_get_current_user_with_permissions_cookie_rejected_for_api_request
 
 
 @pytest.mark.asyncio
+async def test_cookie_auth_allowed_with_admin_referer():
+    """/admin referer marks the request as a browser/UI request; cookie auth must be accepted."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin#gateways"}
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-admin", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
+    with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_allowed_with_accept_text_html():
+    """Accept: text/html header (e.g. OAuth callback fetch) must be treated as a browser request."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "text/html", "referer": "http://localhost:4444/oauth/callback"}
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-oauth", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
+    with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_rejected_with_cross_origin_oauth_referer():
+    """Cross-origin /oauth/ referer without browser headers must NOT grant cookie auth."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "application/json", "referer": "https://attacker.example/oauth/callback"}
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-xorigin")
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Cookie authentication not allowed" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_rejected_with_unrelated_referer():
+    """An unrelated referer (e.g. /api/tools) must NOT grant cookie auth — still a 401."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/api/tools"}
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-api")
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Cookie authentication not allowed" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_get_current_user_with_permissions_no_token_raises_401():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {}

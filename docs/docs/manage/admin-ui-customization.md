@@ -1,6 +1,6 @@
 # Admin UI Customization
 
-MCP Gateway's Admin UI supports flexible section visibility for embedding in third-party portals, restricting views for specific audiences, and reducing dashboard clutter. This guide covers environment-level configuration, per-request hiding, and embedded mode.
+ContextForge's Admin UI supports flexible section visibility for embedding in third-party portals, restricting views for specific audiences, and reducing dashboard clutter. This guide covers environment-level configuration, per-request hiding, and embedded mode.
 
 !!! info "UI Visibility vs. RBAC"
     Section visibility is a **UI convenience**, not a security boundary. Hidden sections are still accessible via API. Use [RBAC](rbac.md) to control data access.

@@ -68,7 +68,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import require_auth_override, verify_credentials
+from mcpgateway.utils.verify_credentials import require_auth_header_first, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -994,12 +994,13 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         req_headers = dict(request.headers)
 
         # Extract and verify user context
+        # Use require_auth_header_first to match streamable_http_auth token precedence:
+        # Authorization header > request cookies > jwt_token parameter
         auth_header = req_headers.get("authorization")
-        # In stateful session, cookie might be more reliable
         cookie_token = request.cookies.get("jwt_token")
 
         try:
-            raw_payload = await require_auth_override(auth_header=auth_header, jwt_token=cookie_token, request=request)
+            raw_payload = await require_auth_header_first(auth_header=auth_header, jwt_token=cookie_token, request=request)
             if isinstance(raw_payload, str):  # "anonymous"
                 user_ctx = {}
             elif isinstance(raw_payload, dict):
@@ -1032,7 +1033,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     ``_get_request_context_or_default`` returns an identical shape.
 
     Args:
-        payload: Raw JWT payload dict from ``require_auth_override``.
+        payload: Raw JWT payload dict from ``require_auth_header_first``.
 
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated.
@@ -1613,6 +1614,18 @@ async def complete(
             logs the exception and returns an empty completion structure.
     """
     try:
+        # Derive caller visibility scope from the current request context.
+        _, _, user_context = await _get_request_context_or_default()
+        user_email = user_context.get("email") if user_context else None
+        token_teams = user_context.get("teams") if user_context else None
+        is_admin = user_context.get("is_admin", False) if user_context else False
+
+        # Admin bypass only for explicit unrestricted context; otherwise secure default.
+        if is_admin and token_teams is None:
+            user_email = None
+        elif token_teams is None:
+            token_teams = []  # Non-admin without explicit teams -> public-only
+
         async with get_db() as db:
             params = {
                 "ref": ref.model_dump() if hasattr(ref, "model_dump") else ref,
@@ -1620,7 +1633,12 @@ async def complete(
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
             }
 
-            result = await completion_service.handle_completion(db, params)
+            result = await completion_service.handle_completion(
+                db,
+                params,
+                user_email=user_email,
+                token_teams=token_teams,
+            )
 
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):
@@ -1858,6 +1876,16 @@ class SessionManagerWrapper:
                     await send({"type": "http.response.body", "body": b""})
                     return
 
+                # Inject server_id from URL path into params for /rpc routing
+                if match:
+                    server_id = match.group("server_id")
+                    if not isinstance(json_body.get("params"), dict):
+                        json_body["params"] = {}
+                    json_body["params"]["server_id"] = server_id
+                    # Re-serialize body with injected server_id
+                    body = orjson.dumps(json_body)
+                    logger.debug(f"[HTTP_AFFINITY_FORWARDED] Injected server_id {server_id} into /rpc params")
+
                 async with httpx.AsyncClient() as client:
                     rpc_headers = {
                         "content-type": "application/json",
@@ -2003,7 +2031,7 @@ class SessionManagerWrapper:
                         # Inject server_id from URL path into params for /rpc routing
                         if match:
                             server_id = match.group("server_id")
-                            if "params" not in json_body:
+                            if not isinstance(json_body.get("params"), dict):
                                 json_body["params"] = {}
                             json_body["params"]["server_id"] = server_id
                             # Re-serialize body with injected server_id
@@ -2210,6 +2238,56 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
+            jti = user_payload.get("jti")
+            if jti:
+                # First-Party
+                from mcpgateway.auth import _check_token_revoked_sync  # pylint: disable=import-outside-toplevel
+
+                try:
+                    is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                except Exception as exc:
+                    logger.warning(f"MCP token revocation check failed for jti={jti}; allowing request (fail-open): {exc}")
+                    is_revoked = False
+                if is_revoked:
+                    response = ORJSONResponse(
+                        {"detail": "Token has been revoked"},
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                    await response(scope, receive, send)
+                    return False
+
+            user_email = user_payload.get("sub") or user_payload.get("email")
+            if user_email:
+                # First-Party
+                from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                user_lookup_succeeded = True
+                try:
+                    user_record = await asyncio.to_thread(_get_user_by_email_sync, user_email)
+                except Exception as exc:
+                    user_lookup_succeeded = False
+                    user_record = None
+                    logger.warning(f"MCP user lookup failed for user={user_email}; allowing request (fail-open): {exc}")
+
+                if user_lookup_succeeded:
+                    if user_record and not getattr(user_record, "is_active", True):
+                        response = ORJSONResponse(
+                            {"detail": "Account disabled"},
+                            status_code=HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                        await response(scope, receive, send)
+                        return False
+                    if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
+                        response = ORJSONResponse(
+                            {"detail": "User not found in database"},
+                            status_code=HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                        await response(scope, receive, send)
+                        return False
+
             # Resolve teams based on token_use claim
             token_use = user_payload.get("token_use")
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
@@ -2237,7 +2315,6 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             # SECURITY: Validate team membership for team-scoped tokens
             # Users removed from a team should lose MCP access immediately, not at token expiry
             # ═══════════════════════════════════════════════════════════════════════════
-            user_email = user_payload.get("sub") or user_payload.get("email")
             is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
 
             # Only validate membership for team-scoped tokens (non-empty teams list)

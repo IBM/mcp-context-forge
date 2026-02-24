@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Vendor-agnostic OpenTelemetry instrumentation for MCP Gateway.
+Vendor-agnostic OpenTelemetry instrumentation for ContextForge.
 Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 """
 

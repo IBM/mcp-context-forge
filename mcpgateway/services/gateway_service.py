@@ -93,6 +93,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -818,7 +819,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             else:
                 authentication_headers = None
 
-            oauth_config = getattr(gateway, "oauth_config", None)
+            oauth_config = await protect_oauth_config_for_storage(getattr(gateway, "oauth_config", None))
             ca_certificate = getattr(gateway, "ca_certificate", None)
 
             # Check if gateway is in direct_proxy mode
@@ -1267,7 +1268,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
-            app_user_email: MCP Gateway user email for token retrieval
+            app_user_email: ContextForge user email for token retrieval
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -1317,9 +1318,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Debug: Check if token was decrypted
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
-                logger.error(f"Token appears to be encrypted! Encryption service may have failed. Token length: {len(access_token)}")
+                logger.error("OAuth token decryption may have failed before gateway initialization")
             else:
-                logger.info(f"Using decrypted OAuth token for {gateway.name} (length: {len(access_token)})")
+                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
@@ -1947,7 +1948,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
-                    gateway.oauth_config = gateway_update.oauth_config
+                    gateway.oauth_config = await protect_oauth_config_for_storage(gateway_update.oauth_config, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token

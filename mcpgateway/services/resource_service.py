@@ -29,6 +29,7 @@ import os
 import re
 import ssl
 import time
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
@@ -902,6 +903,9 @@ class ResourceService:
             if token_teams is not None:
                 team_ids = token_teams
             else:
+                if db is None:
+                    logger.warning("Missing database session for team-scoped resource access check")
+                    return False
                 # First-Party
                 from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
@@ -1444,7 +1448,7 @@ class ResourceService:
                 Identity of the user making the request, used for session pool isolation.
                 Can be a string (email) or a dict with an 'email' key.
                 Defaults to "anonymous" for pool isolation if not provided.
-                OAuth token lookup always uses platform_admin_email (service account).
+                OAuth Authorization Code token lookup uses this user identity.
             meta_data (Optional[Dict[str, Any]]):
                 Additional metadata to pass to the gateway during invocation.
             resource_obj (Optional[Any]):
@@ -1538,8 +1542,7 @@ class ResourceService:
         # This is especially important when resource isn't found - we don't want to hold the transaction
         db.commit()
 
-        # Normalize user_identity to string for session pool isolation
-        # Use authenticated user for pool isolation, but keep platform_admin for OAuth token lookup
+        # Normalize user_identity to string for session pool isolation.
         if isinstance(user_identity, dict):
             pool_user_identity = user_identity.get("email") or "anonymous"
         elif isinstance(user_identity, str):
@@ -1547,8 +1550,13 @@ class ResourceService:
         else:
             pool_user_identity = "anonymous"
 
-        # OAuth token lookup uses platform admin (service account) - not changed
-        oauth_user_email = settings.platform_admin_email
+        oauth_user_email: Optional[str] = None
+        if isinstance(user_identity, dict):
+            user_email_value = user_identity.get("email")
+            if isinstance(user_email_value, str):
+                oauth_user_email = user_email_value.strip().lower() or None
+        elif isinstance(user_identity, str):
+            oauth_user_email = user_identity.strip().lower() or None
 
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
@@ -1700,9 +1708,11 @@ class ResourceService:
                                     from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
-                                    with fresh_db_session() as token_db:
-                                        token_storage = TokenStorageService(token_db)
-                                        access_token: str = await token_storage.get_user_token(gateway_id, oauth_user_email)
+                                    access_token = None
+                                    if oauth_user_email:
+                                        with fresh_db_session() as token_db:
+                                            token_storage = TokenStorageService(token_db)
+                                            access_token = await token_storage.get_user_token(gateway_id, oauth_user_email)
 
                                     if access_token:
                                         headers["Authorization"] = f"Bearer {access_token}"
@@ -2561,16 +2571,26 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to set resource state: {str(e)}")
 
-    async def subscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
+    async def subscribe_resource(
+        self,
+        db: Session,
+        subscription: ResourceSubscription,
+        *,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
         """
         Subscribe to a resource.
 
         Args:
             db: Database session
             subscription: Resource subscription object
+            user_email: Requester email used for visibility checks.
+            token_teams: Token team scope used for visibility checks.
 
         Raises:
             ResourceNotFoundError: If the resource is not found or is inactive
+            PermissionError: If the requester is not authorized for the resource
             ResourceError: For other subscription errors
 
         Examples:
@@ -2592,6 +2612,9 @@ class ResourceService:
             if not resource.enabled:
                 raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
 
+            if not await self._check_resource_access(db, resource, user_email=user_email, token_teams=token_teams):
+                raise PermissionError(f"Access denied for resource subscription: {subscription.uri}")
+
             # Create subscription
             db_sub = DbSubscription(resource_id=resource.id, subscriber_id=subscription.subscriber_id)
             db.add(db_sub)
@@ -2599,6 +2622,9 @@ class ResourceService:
 
             logger.info(f"Added subscription for {subscription.uri} by {subscription.subscriber_id}")
 
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to subscribe: {str(e)}")
@@ -2966,6 +2992,9 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "name": resource.name,
+                "visibility": getattr(resource, "visibility", "public"),
+                "team_id": getattr(resource, "team_id", None),
+                "owner_email": getattr(resource, "owner_email", None),
             }
 
             # Remove subscriptions using SQLAlchemy's delete() expression.
@@ -3151,6 +3180,9 @@ class ResourceService:
                 "uri": resource.uri,
                 "name": resource.name,
                 "enabled": True,
+                "visibility": getattr(resource, "visibility", "public"),
+                "team_id": getattr(resource, "team_id", None),
+                "owner_email": getattr(resource, "owner_email", None),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -3170,6 +3202,9 @@ class ResourceService:
                 "uri": resource.uri,
                 "name": resource.name,
                 "enabled": False,
+                "visibility": getattr(resource, "visibility", "public"),
+                "team_id": getattr(resource, "team_id", None),
+                "owner_email": getattr(resource, "owner_email", None),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -3203,19 +3238,67 @@ class ResourceService:
                 "uri": resource.uri,
                 "name": resource.name,
                 "enabled": False,
+                "visibility": getattr(resource, "visibility", "public"),
+                "team_id": getattr(resource, "team_id", None),
+                "owner_email": getattr(resource, "owner_email", None),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
-    async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
+    async def _event_visible_to_subscriber(self, event: Dict[str, Any], user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+        """Return whether a resource event is visible to a subscriber context.
+
+        Args:
+            event: Event payload emitted by the resource event stream.
+            user_email: Subscriber email. ``None`` only for unrestricted admin context.
+            token_teams: Subscriber token team scope.
+
+        Returns:
+            ``True`` when the event is visible to the subscriber, otherwise ``False``.
+        """
+        data = event.get("data") if isinstance(event, dict) else None
+        if not isinstance(data, dict):
+            return False
+
+        visibility = data.get("visibility") or "public"
+        team_id = data.get("team_id")
+        owner_email = data.get("owner_email")
+        event_resource = SimpleNamespace(visibility=visibility, team_id=team_id, owner_email=owner_email)
+
+        effective_token_teams = token_teams
+        if user_email and effective_token_teams is None:
+            # Non-admin scoped flows should pass token_teams explicitly. If not,
+            # fail closed to public-only for event filtering.
+            effective_token_teams = []
+
+        return await self._check_resource_access(
+            db=None,  # type: ignore[arg-type]
+            resource=event_resource,  # type: ignore[arg-type]
+            user_email=user_email,
+            token_teams=effective_token_teams,
+        )
+
+    async def subscribe_events(self, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to Resource events via the EventService.
+
+        Args:
+            user_email: Requesting user email. ``None`` with ``token_teams=None`` indicates unrestricted admin context.
+            token_teams: Token team scope context:
+                - ``None`` = unrestricted admin
+                - ``[]`` = public-only
+                - ``[...]`` = team-scoped access
 
         Yields:
             Resource event messages.
         """
         async for event in self._event_service.subscribe_events():
-            yield event
+            if user_email is None and token_teams is None:
+                yield event
+                continue
+
+            if await self._event_visible_to_subscriber(event, user_email, token_teams):
+                yield event
 
     def _detect_mime_type(self, uri: str, content: Union[str, bytes]) -> str:
         """Detect mime type from URI and content.
@@ -3413,6 +3496,9 @@ class ResourceService:
                 "name": resource.name,
                 "description": resource.description,
                 "enabled": resource.enabled,
+                "visibility": getattr(resource, "visibility", "public"),
+                "team_id": getattr(resource, "team_id", None),
+                "owner_email": getattr(resource, "owner_email", None),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -3431,6 +3517,9 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "enabled": resource.enabled,
+                "visibility": getattr(resource, "visibility", "public"),
+                "team_id": getattr(resource, "team_id", None),
+                "owner_email": getattr(resource, "owner_email", None),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }

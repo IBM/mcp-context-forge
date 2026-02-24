@@ -1,4 +1,4 @@
-# MCP Gateway with Phoenix Observability
+# ContextForge with Phoenix Observability
 # This extends the main docker-compose.yml with Phoenix integration
 #
 # Usage:

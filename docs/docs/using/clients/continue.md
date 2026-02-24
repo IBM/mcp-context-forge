@@ -3,7 +3,7 @@
 [Continue](https://www.continue.dev/) is an open-source AI code assistant for Visual Studio
 Code.
 Because it speaks the **Model Context Protocol (MCP)**, Continue can discover and call the
-tools you publish through **MCP Gateway** - no plug-in code required.
+tools you publish through **ContextForge** - no plug-in code required.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -28,7 +28,7 @@ tools you publish through **MCP Gateway** - no plug-in code required.
 
 ---
 
-## 🔗 Connecting Continue to MCP Gateway
+## 🔗 Connecting Continue to ContextForge
 
 There are **two ways** to attach Continue to a gateway:
 
@@ -129,4 +129,4 @@ Once VS Code restarts:
 
 * 🌐 [Continue docs](https://docs.continue.dev/)
 * 📖 [MCP Spec](https://modelcontextprotocol.io/)
-* 🛠 [MCP Gateway GitHub](https://github.com/ibm/mcp-context-forge)
+* 🛠 [ContextForge GitHub](https://github.com/ibm/mcp-context-forge)

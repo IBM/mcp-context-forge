@@ -388,8 +388,8 @@ class TestWebSocketAuthentication:
             websocket.close.assert_called_once_with(code=1008, reason="Authentication required")
 
     @pytest.mark.asyncio
-    async def test_websocket_with_token_query_param(self):
-        """Test WebSocket authentication with token in query parameters."""
+    async def test_websocket_with_authorization_header(self):
+        """Test WebSocket authentication with bearer token in Authorization header."""
         # Standard
         from unittest.mock import AsyncMock
 
@@ -400,8 +400,8 @@ class TestWebSocketAuthentication:
         # Create mock WebSocket
         websocket = AsyncMock(spec=WebSocket)
         token = jwt.encode({"sub": "test-user"}, TEST_JWT_SECRET, algorithm="HS256")
-        websocket.query_params = {"token": token}
-        websocket.headers = {}
+        websocket.query_params = {}
+        websocket.headers = {"authorization": f"Bearer {token}"}
         websocket.accept = AsyncMock()
         websocket.receive_text = AsyncMock(side_effect=Exception("Test complete"))
 
@@ -409,10 +409,11 @@ class TestWebSocketAuthentication:
         with patch("mcpgateway.main.settings") as mock_settings:
             mock_settings.mcp_client_auth_enabled = True
             mock_settings.auth_required = True
+            mock_settings.mcpgateway_ws_relay_enabled = True
             mock_settings.port = 8000
 
-            # Mock verify_jwt_token to succeed
-            with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "test-user"})):
+            # Mock websocket auth helper to succeed
+            with patch("mcpgateway.main._authenticate_websocket_user", new=AsyncMock(return_value=(token, None))):
                 # First-Party
                 from mcpgateway.main import websocket_endpoint
 

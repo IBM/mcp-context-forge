@@ -5,7 +5,7 @@
 !!! warning "Security Warning"
     Query parameter authentication is **inherently insecure** (CWE-598). API keys in URLs may appear in proxy logs, browser history, and server access logs. Only use this authentication method when the upstream MCP server **requires** it (e.g., Tavily MCP).
 
-MCP Gateway supports API key authentication via URL query parameters for upstream MCP servers that mandate this authentication method. This feature is disabled by default and requires explicit opt-in.
+ContextForge supports API key authentication via URL query parameters for upstream MCP servers that mandate this authentication method. This feature is disabled by default and requires explicit opt-in.
 
 !!! tip "Admin UI URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444/admin/`

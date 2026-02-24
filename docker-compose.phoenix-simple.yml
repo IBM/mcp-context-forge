@@ -1,9 +1,9 @@
-# Simplified Phoenix Observability Stack for MCP Gateway
+# Simplified Phoenix Observability Stack for ContextForge
 #
 # Usage:
 #   Start Phoenix: docker-compose -f docker-compose.phoenix-simple.yml up -d
 #   Stop Phoenix: docker-compose -f docker-compose.phoenix-simple.yml down
-#   With MCP Gateway: docker-compose -f docker-compose.yml -f docker-compose.phoenix-simple.yml up -d
+#   With ContextForge: docker-compose -f docker-compose.yml -f docker-compose.phoenix-simple.yml up -d
 
 services:
   # ──────────────────────────────────────────────────────────────────────

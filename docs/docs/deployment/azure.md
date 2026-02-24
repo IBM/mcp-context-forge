@@ -1,6 +1,6 @@
 # 🔷 Azure
 
-MCP Gateway can be deployed on Azure in multiple ways:
+ContextForge can be deployed on Azure in multiple ways:
 
 - **Azure Container Apps** (serverless)
 - **Azure App Service** (PaaS for containers)

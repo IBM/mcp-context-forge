@@ -238,7 +238,7 @@
   "time": {"from": "now-15m", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
-  "title": "MCP Gateway Application",
+  "title": "ContextForge Application",
   "uid": "mcpgateway-application",
   "version": 1
 }

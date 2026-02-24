@@ -171,6 +171,12 @@ class Vault(Plugin):
 
         if not system_key:
             logger.warning("System cannot be determined from gateway metadata.")
+            # SECURITY: Strip vault header even when system cannot be determined
+            hdrs: dict[str, str] = payload.headers.model_dump() if payload.headers else {}
+            if self._sconfig.vault_header_name in hdrs:
+                del hdrs[self._sconfig.vault_header_name]
+                payload.headers = HttpHeaderPayload(root=hdrs)
+                return ToolPreInvokeResult(modified_payload=payload)
             return ToolPreInvokeResult()
 
         modified = False
@@ -182,10 +188,23 @@ class Vault(Plugin):
             return ToolPreInvokeResult()
 
         try:
-            vault_tokens: dict[str, str] = orjson.loads(headers[self._sconfig.vault_header_name])
+            vault_tokens = orjson.loads(headers[self._sconfig.vault_header_name])
         except (orjson.JSONDecodeError, TypeError) as e:
             logger.error(f"Failed to parse vault tokens from header: {e}")
-            return ToolPreInvokeResult()
+            # SECURITY: Always remove vault header even on parse error
+            del headers[self._sconfig.vault_header_name]
+            payload.headers = HttpHeaderPayload(root=headers)
+            return ToolPreInvokeResult(modified_payload=payload)
+
+        # SECURITY: Always remove vault header immediately after successful parsing
+        # This header should NEVER be sent to the MCP server
+        del headers[self._sconfig.vault_header_name]
+
+        if not isinstance(vault_tokens, dict):
+            logger.error(f"Vault tokens header is not a JSON object: {type(vault_tokens).__name__}")
+            payload.headers = HttpHeaderPayload(root=headers)
+            return ToolPreInvokeResult(modified_payload=payload)
+        logger.debug(f"Removed vault header '{self._sconfig.vault_header_name}' from headers")
 
         vault_handling = self._sconfig.vault_handling
 
@@ -237,17 +256,18 @@ class Vault(Plugin):
                     headers["Authorization"] = f"Bearer {token_value}"
                     modified = True
 
-            # Remove vault header after processing
-            if modified and self._sconfig.vault_header_name in headers:
-                del headers[self._sconfig.vault_header_name]
-
             payload.headers = HttpHeaderPayload(root=headers)
 
         if modified:
             logger.info(f"Modified tool '{payload.name}' to add auth header")
             return ToolPreInvokeResult(modified_payload=payload)
 
-        return ToolPreInvokeResult()
+        # Even if we didn't modify headers (no token match), we still removed the vault header
+        # so we need to return the modified payload
+        if not token_value:
+            logger.warning(f"Vault tokens provided but no match found for system '{system_key}' - possible misconfiguration")
+        payload.headers = HttpHeaderPayload(root=headers)
+        return ToolPreInvokeResult(modified_payload=payload)
 
     async def shutdown(self) -> None:
         """Shutdown the plugin gracefully.

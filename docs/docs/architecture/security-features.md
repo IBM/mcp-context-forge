@@ -1,4 +1,4 @@
-# MCP Gateway Security Features
+# ContextForge Security Features
 
 **Current Version: 1.0.0-RC-1** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
@@ -25,7 +25,7 @@
 
 #### JWT ID (JTI) Claim
 
-The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [RFC 7519 Section 4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7). MCP Gateway uses JTI for:
+The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [RFC 7519 Section 4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7). ContextForge uses JTI for:
 
 1. **Token Revocation**: Each token can be individually revoked by its JTI without invalidating all tokens for a user. The `TokenRevocation` table stores revoked JTIs.
 2. **Auth Cache Keying**: The authentication cache uses `{email}:{jti}` as the cache key pattern (`mcpgateway/cache/auth_cache.py`). This enables per-token caching and prevents cache collisions when users have multiple active tokens.
@@ -72,7 +72,7 @@ For production deployments, always include JTI in issued tokens to enable proper
 - **Hashed personal and team tokens.** `TokenCatalogService` stores only SHA-256 hashes (`token_hash`) of issued tokens (`EmailApiToken`) and keeps the raw secret in memory just long enough to present it once.
 - **Fine-grained scopes.** Tokens can be confined to a server, a permission list, IP CIDRs, and time-of-day or usage quotas via `TokenScope`.
 - **Usage analytics.** Every request records method, endpoint, IP, user-agent, latency, and block reason in `TokenUsageLog`, supporting anomaly detection.
-- **Immediate revocation.** `TokenRevocation` entries are enforced before gateway execution, guaranteeing revoked tokens cannot be replayed.
+- **Immediate revocation (normal path).** `TokenRevocation` entries are enforced before gateway execution; when the revocation store is unavailable, auth paths currently fail open to preserve availability.
 
 ### OAuth & SSO Federation
 

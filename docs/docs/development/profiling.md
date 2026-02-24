@@ -1,6 +1,6 @@
 # Performance Profiling Guide
 
-This guide covers tools and techniques for profiling MCP Gateway performance under load. Use these methods to identify bottlenecks, optimize queries, and diagnose production issues.
+This guide covers tools and techniques for profiling ContextForge performance under load. Use these methods to identify bottlenecks, optimize queries, and diagnose production issues.
 
 ---
 

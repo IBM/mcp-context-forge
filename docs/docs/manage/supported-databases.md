@@ -1,6 +1,6 @@
 # Supported Databases
 
-MCP Gateway supports multiple database backends with full feature parity across all supported systems.
+ContextForge supports multiple database backends with full feature parity across all supported systems.
 
 ## Database Support Matrix
 
@@ -32,7 +32,7 @@ DATABASE_URL=mysql+pymysql://mcpuser:mypassword@192.168.1.100:3306/mcp_productio
 
 ### Driver Requirements
 
-The `pymysql` driver is included by default in all MCP Gateway installations:
+The `pymysql` driver is included by default in all ContextForge installations:
 
 ```bash
 # Already included - no additional installation needed
@@ -41,12 +41,12 @@ pip install mcp-contextforge-gateway
 
 ### Database Schema Compatibility
 
-MCP Gateway's database schema is fully compatible with MariaDB/MySQL:
+ContextForge's database schema is fully compatible with MariaDB/MySQL:
 
 - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
 - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
 - Complete feature parity with SQLite and PostgreSQL
-- Supports all MCP Gateway features including federation, caching, and A2A agents
+- Supports all ContextForge features including federation, caching, and A2A agents
 
 ## Known Limitations
 
@@ -114,7 +114,7 @@ CREATE INDEX idx_prompts_team_name ON prompts(team_id, name);
 
 ### PostgreSQL to MariaDB Migration
 
-MariaDB is fully compatible with PostgreSQL schemas used by MCP Gateway. Simply update your `DATABASE_URL` to point to MariaDB:
+MariaDB is fully compatible with PostgreSQL schemas used by ContextForge. Simply update your `DATABASE_URL` to point to MariaDB:
 
 ```bash
 # Change from PostgreSQL

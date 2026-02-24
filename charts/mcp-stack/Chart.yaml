@@ -8,7 +8,7 @@ name: mcp-stack
 description: |
   A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
   & Registry - Context-Forge**.  It bundles:
-    - MCP Gateway application (HTTP / WebSocket server)
+    - ContextForge application (HTTP / WebSocket server)
     - PostgreSQL database with persistent storage
     - Redis cache for sessions & completions
     - Optional PgAdmin and Redis-Commander web UIs

@@ -6,7 +6,7 @@
 
 ## Context
 
-Organizations deploying MCP Gateway need to pre-configure custom RBAC roles that match their organizational structure and access policies. Currently, the only way to create custom roles is through the Admin API after deployment, which creates additional manual steps and potential security gaps during the initial deployment window.
+Organizations deploying ContextForge need to pre-configure custom RBAC roles that match their organizational structure and access policies. Currently, the only way to create custom roles is through the Admin API after deployment, which creates additional manual steps and potential security gaps during the initial deployment window.
 
 Common use cases requiring custom roles:
 

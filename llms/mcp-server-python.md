@@ -96,7 +96,7 @@ name = "awesome-server"
 version = "0.1.0"
 description = "Example FastMCP 2 server"
 authors = [
-  { name = "MCP Context Forge", email = "noreply@example.com" }
+  { name = "ContextForge", email = "noreply@example.com" }
 ]
 license = { text = "MIT" }
 readme = "README.md"

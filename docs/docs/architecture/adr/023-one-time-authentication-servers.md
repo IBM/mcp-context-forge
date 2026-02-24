@@ -7,7 +7,7 @@
 
 ## Context and Problem Statement
 
-Context Forge Gateway allows users to register MCP servers with authentication credentials to proxy and expose their tools through virtual servers. Prior to this implementation, the gateway required storing authentication credentials (bearer tokens, basic auth) in the database to maintain persistent connections and perform health checks on registered MCP servers.
+ContextForge Gateway allows users to register MCP servers with authentication credentials to proxy and expose their tools through virtual servers. Prior to this implementation, the gateway required storing authentication credentials (bearer tokens, basic auth) in the database to maintain persistent connections and perform health checks on registered MCP servers.
 
 However, a significant use case emerged: organizations and users who want to leverage the gateway's tool proxying capabilities but cannot or will not store authentication credentials in the gateway database due to security policies, compliance requirements, or organizational constraints. These users still needed a mechanism to register MCP servers with authentication, discover available tools, and access them through the gateway using runtime-provided credentials via passthrough headers.
 

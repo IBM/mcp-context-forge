@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-HTMX and dynamic UI interaction tests for MCP Gateway Admin UI.
+HTMX and dynamic UI interaction tests for ContextForge Admin UI.
 """
 
 # Standard
@@ -24,7 +24,7 @@ from .pages.tools_page import ToolsPage
 
 
 class TestHTMXInteractions:
-    """HTMX and UI interaction tests for MCP Gateway Admin UI.
+    """HTMX and UI interaction tests for ContextForge Admin UI.
 
     Tests dynamic content loading, form submissions, modals, and real-time updates
     that are powered by HTMX in the admin interface.

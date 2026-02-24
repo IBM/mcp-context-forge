@@ -282,7 +282,7 @@ class TestPluginHookBehavior:
 
 @pytest.mark.asyncio
 class TestCustomAuthExamplePlugin:
-    """Integration tests for the custom_auth_example plugin with full MCP Gateway.
+    """Integration tests for the custom_auth_example plugin with full ContextForge.
 
     These tests verify the complete authentication flow including:
     - Successful API key authentication

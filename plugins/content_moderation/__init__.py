@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Content Moderation Plugin for MCP Gateway.
+"""Content Moderation Plugin for ContextForge.
 
 This package provides advanced content moderation capabilities using multiple
 AI providers including IBM Watson, IBM Granite Guardian, OpenAI, Azure, and AWS.

@@ -1,5 +1,5 @@
 ########################################################################
-# DEPLOYMENT - MCP Context-Forge (Gateway)
+# DEPLOYMENT - ContextForge (Gateway)
 #
 # - Spins up the HTTP / WebSocket gateway pods.
 # - Injects release-scoped hosts for Postgres & Redis.

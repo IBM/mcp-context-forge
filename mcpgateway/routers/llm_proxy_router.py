@@ -14,10 +14,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.llm_schemas import ChatCompletionRequest, ChatCompletionResponse
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.llm_provider_service import (
     LLMModelNotFoundError,
     LLMProviderNotFoundError,
@@ -53,10 +53,11 @@ llm_proxy_service = LLMProxyService()
         500: {"description": "Provider error"},
     },
 )
+@require_permission("llm.invoke")
 async def chat_completions(
     request: ChatCompletionRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
 ):
     """Create a chat completion.
 
@@ -134,9 +135,10 @@ async def chat_completions(
     summary="List Models",
     description="List available models from configured providers. OpenAI-compatible API.",
 )
+@require_permission("llm.read")
 async def list_models(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
 ):
     """List available models.
 
