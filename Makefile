@@ -1255,6 +1255,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
+	@echo "OWASP ZAP            http://localhost:8090         DAST daemon (default ZAP_TARGET_URL=http://nginx:80)"
 	@echo ""
 	@echo "   📝 Auto-registered:"
 	@echo "      • MCP gateway: fast_test (from fast_test_server)"
@@ -1272,7 +1273,7 @@ testing-down:                              ## Stop testing stack
 .PHONY: testing-status
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
-	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|a2a_echo_agent|locust|mcp_inspector)" || \
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|a2a_echo_agent|locust|mcp_inspector|zap)" || \
 		echo "   No testing services running. Start with 'make testing-up'"
 	@WORKERS=$$($(COMPOSE_CMD_MONITOR) ps | grep -c "locust_worker" || true); \
 		echo "   🦗 Locust workers: $$WORKERS"
@@ -6693,8 +6694,10 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui-record       - Run Playwright UI tests and record videos + screenshots (headless)
 # help: test-ui-update-snapshots - Update Playwright visual regression snapshots
 # help: test-ui-clean        - Clean up Playwright test artifacts
+# help: test-owasp           - Run OWASP access-control security tests (no ZAP required)
+# help: test-zap             - Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
 
-.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-headless-parallel test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
+.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-headless-parallel test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean test-zap test-owasp
 
 # Playwright test variables
 PLAYWRIGHT_DIR := tests/playwright
@@ -6703,6 +6706,14 @@ PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
 PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
+ZAP_BASE_URL   ?= http://localhost:8090
+ZAP_API_KEY    ?= changeme
+# URL ZAP uses internally to spider the app. nginx exposes port 80 on mcpnet
+# (host sees it as 8080 via port mapping), so ZAP inside Docker must use port 80.
+# Works on both Linux and macOS/Windows Docker Desktop.
+# Override only if your setup differs (e.g. a standalone ZAP outside mcpnet).
+ZAP_TARGET_URL ?= http://nginx:80
+ZAP_REPORTS   := tests/reports
 # Optional install flags for Playwright browser installation (e.g. --with-deps in Linux CI)
 PLAYWRIGHT_INSTALL_FLAGS ?=
 PLAYWRIGHT_CI_SMOKE_TESTS := \
@@ -6887,6 +6898,38 @@ test-ui-clean:
 	@rm -rf test-results/
 	@rm -f playwright-report-*.html test-results-*.xml
 	@echo "✅ Playwright artifacts cleaned!"
+
+## --- OWASP / ZAP Security Testing ------------------------------------------
+test-owasp: playwright-install  ## 🔒 Run OWASP access-control security tests (no ZAP required)
+	@echo "🔒 Running OWASP access-control security tests..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(ZAP_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
+		uv run --active pytest tests/playwright/security/owasp/ \
+			-v -m owasp_a01 --tb=short \
+			|| { echo '❌ OWASP security tests failed!'; exit 1; }"
+	@echo "✅ OWASP security tests completed!"
+
+test-zap: playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
+	@echo "🔒 Running ZAP DAST security scan against $(TEST_BASE_URL)..."
+	@if [ -z "$(ZAP_BASE_URL)" ]; then \
+		echo "❌ ZAP_BASE_URL is not set. Start the testing stack with: make testing-up"; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(ZAP_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
+		export ZAP_BASE_URL='$(ZAP_BASE_URL)' && \
+		export ZAP_API_KEY='$(ZAP_API_KEY)' && \
+		export ZAP_TARGET_URL='$(ZAP_TARGET_URL)' && \
+		uv run --active pytest tests/playwright/security/owasp/ \
+			-v -m owasp_a01_zap --tb=short \
+			|| { echo '❌ ZAP DAST scan failed!'; exit 1; }"
+	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
 
 ## --- Combined Testing -------------------------------------------------------
 test-all: test test-js test-ui-headless
