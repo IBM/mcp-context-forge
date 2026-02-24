@@ -6127,6 +6127,78 @@ class LLMModel(Base):
         return f"<LLMModel(id='{self.id}', model_id='{self.model_id}', provider_id='{self.provider_id}')>"
 
 
+# ---------------------------------------------------------------------------
+# IP Access Control Models
+# ---------------------------------------------------------------------------
+
+
+class IPRule(Base):
+    """IP access control rule for allowlist/blocklist evaluation.
+
+    Rules are evaluated in priority order (ascending). First matching rule wins.
+    """
+
+    __tablename__ = "ip_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ip_pattern: Mapped[str] = mapped_column(String(45), nullable=False)
+    rule_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    path_pattern: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_hit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (Index("idx_ip_rules_active_priority", "is_active", "priority"),)
+
+    def __repr__(self) -> str:
+        """Return string representation.
+
+        Returns:
+            String representation of the IP rule.
+        """
+        return f"<IPRule(id='{self.id}', ip_pattern='{self.ip_pattern}', rule_type='{self.rule_type}')>"
+
+
+class IPBlock(Base):
+    """Temporary IP block for immediate access denial.
+
+    Blocks override all rules and expire automatically after a configured duration.
+    """
+
+    __tablename__ = "ip_blocks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    blocked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    blocked_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    unblocked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    unblocked_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("idx_ip_blocks_active_expires", "is_active", "expires_at"),
+        Index("idx_ip_blocks_ip_active", "ip_address", "is_active"),
+    )
+
+    def __repr__(self) -> str:
+        """Return string representation.
+
+        Returns:
+            String representation of the IP block.
+        """
+        return f"<IPBlock(id='{self.id}', ip_address='{self.ip_address}', is_active={self.is_active})>"
+
+
 class AuditTrail(Base):
     """Comprehensive audit trail for data access and changes.
 

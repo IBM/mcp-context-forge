@@ -2023,6 +2023,14 @@ else:
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Add IP access control middleware (before validation, after security headers)
+if settings.ip_control_enabled:
+    # First-Party
+    from mcpgateway.middleware.ip_control import IPControlMiddleware
+
+    app.add_middleware(IPControlMiddleware)
+    logger.info(f"IP access control middleware enabled (mode={settings.ip_control_mode}, log_only={settings.ip_control_log_only})")
+
 # Add validation middleware if explicitly enabled
 if settings.validation_middleware_enabled:
     app.add_middleware(ValidationMiddleware)
@@ -7722,6 +7730,14 @@ if settings.mcpgateway_tool_cancellation_enabled:
         logger.debug("Orchestrate router not available")
 else:
     logger.info("Tool cancellation feature disabled - cancellation endpoints not available")
+
+# IP access control router (admin endpoints for managing rules and blocks)
+if settings.ip_control_enabled:
+    # First-Party
+    from mcpgateway.routers.ip_control_router import router as ip_control_router
+
+    app.include_router(ip_control_router)
+    logger.info("IP access control router included")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled

@@ -1241,6 +1241,26 @@ class Settings(BaseSettings):
         description="Enable permission audit logging for RBAC checks (writes a row per permission check)",
     )
 
+    # IP Access Control Configuration
+    # Controls IP-based access control with allowlist/blocklist modes.
+    ip_control_enabled: bool = Field(default=False, description="Enable IP-based access control middleware")
+    ip_control_mode: str = Field(
+        default="disabled",
+        description="IP control mode: 'disabled' (no enforcement), 'allowlist' (deny by default, allow matched), 'blocklist' (allow by default, deny matched)",
+    )
+    ip_control_log_only: bool = Field(default=False, description="Log IP denials without blocking (dry-run mode)")
+    ip_control_skip_paths: List[str] = Field(
+        default_factory=lambda: ["/health", "/healthz", "/ready"],
+        description="Paths to skip IP control checks (e.g. health endpoints)",
+    )
+    ip_control_trust_proxy_headers: bool = Field(
+        default=False,
+        description="Trust X-Forwarded-For and X-Real-IP headers for client IP extraction",
+    )
+    ip_control_cache_ttl: int = Field(default=300, ge=0, description="TTL in seconds for IP evaluation cache (0 to disable)")
+    ip_control_cache_size: int = Field(default=10000, ge=1, description="Maximum number of entries in the IP evaluation cache")
+    ip_control_default_priority: int = Field(default=100, ge=1, description="Default priority for new IP rules (lower = higher priority)")
+
     # Security Logging Configuration
     # Security event logging is disabled by default for performance.
     # When enabled, it logs authentication attempts, authorization failures, and security events.

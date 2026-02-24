@@ -7763,3 +7763,119 @@ class PerformanceHistoryResponse(BaseModel):
     aggregates: List[PerformanceAggregateRead] = Field(default_factory=list, description="Historical aggregates")
     period_type: str = Field(..., description="Aggregation period type")
     total_count: int = Field(0, description="Total matching records")
+
+
+# ---------------------------------------------------------------------------
+# IP Access Control Schemas
+# ---------------------------------------------------------------------------
+
+
+class IPRuleCreate(BaseModelWithConfigDict):
+    """Schema for creating a new IP access control rule."""
+
+    ip_pattern: str = Field(..., description="IP address or CIDR notation (e.g. '10.0.0.0/8')")
+    rule_type: str = Field(..., description="Rule type: 'allow' or 'deny'")
+    priority: Optional[int] = Field(None, ge=1, description="Priority (lower = higher priority)")
+    path_pattern: Optional[str] = Field(None, description="Optional regex pattern to match request paths")
+    description: Optional[str] = Field(None, description="Human-readable description")
+    is_active: Optional[bool] = Field(True, description="Whether the rule is active")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiration timestamp")
+    metadata_json: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
+
+
+class IPRuleUpdate(BaseModelWithConfigDict):
+    """Schema for updating an existing IP access control rule."""
+
+    ip_pattern: Optional[str] = Field(None, description="IP address or CIDR notation")
+    rule_type: Optional[str] = Field(None, description="Rule type: 'allow' or 'deny'")
+    priority: Optional[int] = Field(None, ge=1, description="Priority (lower = higher priority)")
+    path_pattern: Optional[str] = Field(None, description="Regex pattern to match request paths")
+    description: Optional[str] = Field(None, description="Human-readable description")
+    is_active: Optional[bool] = Field(None, description="Whether the rule is active")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiration timestamp")
+    metadata_json: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
+
+
+class IPRuleResponse(BaseModelWithConfigDict):
+    """Response schema for an IP access control rule."""
+
+    id: str = Field(..., description="Rule ID")
+    ip_pattern: str = Field(..., description="IP address or CIDR notation")
+    rule_type: str = Field(..., description="Rule type: 'allow' or 'deny'")
+    priority: int = Field(..., description="Priority (lower = higher priority)")
+    path_pattern: Optional[str] = Field(None, description="Regex pattern to match request paths")
+    description: Optional[str] = Field(None, description="Human-readable description")
+    is_active: bool = Field(..., description="Whether the rule is active")
+    created_by: Optional[str] = Field(None, description="Email of user who created the rule")
+    updated_by: Optional[str] = Field(None, description="Email of user who last updated the rule")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiration timestamp")
+    hit_count: int = Field(0, description="Number of times this rule matched a request")
+    last_hit_at: Optional[datetime] = Field(None, description="Last time this rule matched")
+    metadata_json: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
+
+
+class IPRuleListResponse(BaseModelWithConfigDict):
+    """Paginated response for IP access control rules."""
+
+    rules: List[IPRuleResponse] = Field(default_factory=list, description="List of IP rules")
+    total: int = Field(0, description="Total number of matching rules")
+    limit: int = Field(50, description="Page size")
+    offset: int = Field(0, description="Page offset")
+
+
+class IPBlockCreate(BaseModelWithConfigDict):
+    """Schema for creating a temporary IP block."""
+
+    ip_address: str = Field(..., description="IP address to block")
+    reason: str = Field(..., description="Reason for the block")
+    duration_minutes: int = Field(..., ge=1, description="Block duration in minutes")
+
+
+class IPBlockResponse(BaseModelWithConfigDict):
+    """Response schema for a temporary IP block."""
+
+    id: str = Field(..., description="Block ID")
+    ip_address: str = Field(..., description="Blocked IP address")
+    reason: str = Field(..., description="Reason for the block")
+    blocked_at: datetime = Field(..., description="When the block was created")
+    expires_at: datetime = Field(..., description="When the block expires")
+    blocked_by: Optional[str] = Field(None, description="Email of user who created the block")
+    is_active: bool = Field(..., description="Whether the block is still active")
+    unblocked_at: Optional[datetime] = Field(None, description="When the block was removed")
+    unblocked_by: Optional[str] = Field(None, description="Email of user who removed the block")
+
+
+class IPTestRequest(BaseModelWithConfigDict):
+    """Schema for testing an IP against current rules."""
+
+    ip_address: str = Field(..., description="IP address to test")
+    path: str = Field(default="/", description="Request path to test against")
+
+
+class IPTestResponse(BaseModelWithConfigDict):
+    """Response schema for IP test results."""
+
+    ip_address: str = Field(..., description="Tested IP address")
+    path: str = Field(..., description="Tested request path")
+    allowed: bool = Field(..., description="Whether the IP would be allowed")
+    matched_rule_id: Optional[str] = Field(None, description="ID of the matching rule")
+    matched_rule_type: Optional[str] = Field(None, description="Type of the matching rule")
+    blocked_by_temp_block: bool = Field(False, description="Whether blocked by a temporary block")
+    mode: str = Field(..., description="Current IP control mode")
+
+
+class IPControlStatusResponse(BaseModelWithConfigDict):
+    """Response schema for IP control system status."""
+
+    enabled: bool = Field(..., description="Whether IP control is enabled")
+    mode: str = Field(..., description="Current mode (disabled/allowlist/blocklist)")
+    log_only: bool = Field(..., description="Whether log-only (dry-run) mode is active")
+    total_rules: int = Field(0, description="Total number of rules")
+    active_rules: int = Field(0, description="Number of active rules")
+    total_blocks: int = Field(0, description="Total number of blocks")
+    active_blocks: int = Field(0, description="Number of active non-expired blocks")
+    cache_size: int = Field(0, description="Current cache size")
+    cache_ttl: int = Field(0, description="Cache TTL in seconds")
+    skip_paths: List[str] = Field(default_factory=list, description="Paths skipped by IP control")
