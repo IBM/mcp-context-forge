@@ -2199,5 +2199,31 @@ class TestRedisNoneFallthroughPaths:
         assert await manager._validate_and_retrieve_state("gw", "s") is None
 
 
+@pytest.mark.asyncio
+async def test_legacy_state_fallback_extracts_email_from_request_context():
+    """If app_user_email is missing from state and legacy, but present in request context, it is used."""
+    manager = OAuthManager(token_storage=AsyncMock())
+    manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
+
+    # Simulate state and legacy payload both missing app_user_email
+    with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), \
+         patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok", "expires_in": 3600}), \
+         patch.object(manager, "_extract_user_id", return_value="user-1"):
+        # Simulate request context with user email in request.state.user
+        class DummyRequest:
+            class state:
+                user = SimpleNamespace(email="fallback@test.com")
+        result = await manager.complete_authorization_code_flow(
+            "gw1",
+            "code",
+            "legacy-state-token",
+            {"client_id": "cid"},
+            request=DummyRequest(),
+        )
+    assert result["success"] is True
+    manager.token_storage.store_tokens.assert_awaited_once()
+    assert manager.token_storage.store_tokens.await_args.kwargs["app_user_email"] == "fallback@test.com"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

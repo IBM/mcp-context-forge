@@ -119,6 +119,7 @@ The gateway configuration form maps user inputs to the OAuth configuration struc
 
 ## Token Verification
 
+
 ### Gateway OAuth Tokens
 
 OAuth tokens obtained through the Authorization Code flow are used to authenticate requests to upstream MCP servers. These tokens are:
@@ -126,7 +127,10 @@ OAuth tokens obtained through the Authorization Code flow are used to authentica
 1. **Stored encrypted**: Using `AUTH_ENCRYPTION_SECRET`
 2. **Scoped per user**: Each user's token is stored separately per gateway
 3. **Automatically refreshed**: When access tokens expire and refresh tokens are available
-4. **Not validated locally**: The gateway trusts the upstream OAuth provider's token response
+4. **Forwarded as-is**: The stored token is sent directly to the upstream MCP server as a `Bearer` header. The MCP server is responsible for validating the token's audience, scopes, and issuer.
+
+!!! note "Known Gap: No local audience/scope pre-validation"
+    The gateway does not currently inspect the token's `aud` or `scope` claims before forwarding it to the MCP server. In multi-tenant Entra ID setups with multiple app registrations, a misconfigured resource parameter could produce a token scoped for the wrong audience; the MCP server will return a 401 but the error message will not identify the root cause. Tracked for a future hardening pass.
 
 ### Relationship to Gateway Authentication
 

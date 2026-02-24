@@ -547,7 +547,7 @@ async def oauth_callback(
             # Strip query for auto-derived (RFC 8707 SHOULD NOT)
             oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
-        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
+        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource, request=request)
 
         logger.info(f"Completed OAuth flow for gateway {gateway_id}, user {result.get('user_id')}")
 
