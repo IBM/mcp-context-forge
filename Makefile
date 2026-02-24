@@ -615,7 +615,7 @@ test:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -637,7 +637,7 @@ test-altk:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
