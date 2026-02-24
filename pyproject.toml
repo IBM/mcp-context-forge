@@ -77,6 +77,7 @@ dependencies = [
     "starlette-compress>=1.7.0",
     "typer>=0.23.0",
     "uvicorn[standard]>=0.40.0",
+    "scalene>=2.1.4",
 ]
 
 # ----------------------------------------------------------------

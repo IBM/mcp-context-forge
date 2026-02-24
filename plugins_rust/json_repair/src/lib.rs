@@ -72,7 +72,7 @@ impl JSONRepairPluginRust {
 impl JSONRepairPluginRust {
     /// Fast validity check used to gate conservative repairs.
     fn try_parse(s: &str) -> bool {
-        serde_json::from_str::<serde_json::Value>(s).is_ok()
+        serde_json::from_str::<serde::de::IgnoredAny>(s).is_ok()
     }
 }
 
