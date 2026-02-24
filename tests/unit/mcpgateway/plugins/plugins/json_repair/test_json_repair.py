@@ -75,6 +75,11 @@ class _BoomRust:
         raise RuntimeError("boom")
 
 
+class _NoopRust:
+    def repair(self, _text):
+        return None
+
+
 @pytest.mark.asyncio
 async def test_rust_exception_falls_back_to_python(monkeypatch, plugin_config, plugin_ctx):
     """Test that if the Rust implementation raises an exception, the plugin falls back to the Python repair method."""
@@ -89,3 +94,21 @@ async def test_rust_exception_falls_back_to_python(monkeypatch, plugin_config, p
     assert res.modified_payload is not None
     assert res.metadata == {"repaired": True}
     json.loads(res.modified_payload.result)  # Should not raise
+
+
+@pytest.mark.asyncio
+async def test_rust_path_skips_python_pre_parse(monkeypatch, plugin_config, plugin_ctx):
+    """Rust-enabled path should not run Python _try_parse before repair."""
+
+    monkeypatch.setattr(json_repair_module, "_RUST_AVAILABLE", True)
+    monkeypatch.setattr(json_repair_module, "JSONRepairPluginRust", lambda: _NoopRust())
+
+    def _boom_pre_parse(_s):
+        raise AssertionError("python _try_parse should not run on rust path")
+
+    monkeypatch.setattr(json_repair_module, "_try_parse", _boom_pre_parse)
+
+    plugin = json_repair_module.JSONRepairPlugin(plugin_config)
+    res = await plugin.tool_post_invoke(ToolPostInvokePayload(name="x", result='{"ok": true}'), plugin_ctx)
+
+    assert res.modified_payload is None

@@ -3,6 +3,7 @@
 
 use pyo3::prelude::*;
 use regex::Regex;
+use serde::de::IgnoredAny;
 
 /// Rust-backed JSON repair helper exposed to Python via PyO3.
 #[pyclass]
@@ -72,7 +73,7 @@ impl JSONRepairPluginRust {
 impl JSONRepairPluginRust {
     /// Fast validity check used to gate conservative repairs.
     fn try_parse(s: &str) -> bool {
-        serde_json::from_str::<serde_json::Value>(s).is_ok()
+        serde_json::from_str::<IgnoredAny>(s).is_ok()
     }
 }
 

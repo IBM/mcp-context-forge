@@ -121,16 +121,19 @@ class JSONRepairPlugin(Plugin):
         """
         if isinstance(payload.result, str):
             text = payload.result
-            if _try_parse(text):
-                return ToolPostInvokeResult(continue_processing=True)
-            repaired = None
             if self._rust_helper is not None:
                 try:
+                    # Let Rust handle validity check + repair in one path to avoid
+                    # duplicate parse checks across Python and Rust.
                     repaired = self._rust_helper.repair(text)
                 except Exception as e:
                     logger.warning("Rust json_repair failed; falling back to Python repair: %s", e)
+                    if _try_parse(text):
+                        return ToolPostInvokeResult(continue_processing=True)
                     repaired = _repair(text)
             else:
+                if _try_parse(text):
+                    return ToolPostInvokeResult(continue_processing=True)
                 repaired = _repair(text)
             if repaired is not None:
                 return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=repaired), metadata={"repaired": True})
