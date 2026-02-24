@@ -110,14 +110,31 @@ class TestHttpAuthMiddlewareIntegration:
 
         # Patch where get_plugin_manager is USED (in auth.py)
         with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_plugin_manager):
-            # Also need to patch the middleware's plugin_manager attribute
-            # Find the middleware instance and set its plugin_manager
+            # Ensure HttpAuthMiddleware is in the middleware list with our mock
+            from starlette.middleware import Middleware
+            from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
+
+            found = False
             for middleware in app.user_middleware:
                 if hasattr(middleware, "cls") and middleware.cls.__name__ == "HttpAuthMiddleware":
                     middleware.kwargs["plugin_manager"] = mock_plugin_manager
+                    found = True
 
-            client = TestClient(app)
-            yield client
+            if not found:
+                app.user_middleware.insert(0, Middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager))
+
+            # Force Starlette to rebuild the middleware stack so our changes take effect.
+            # The cached middleware_stack holds already-instantiated middleware objects,
+            # so modifying user_middleware alone has no effect without this reset.
+            saved_stack = app.middleware_stack
+            app.middleware_stack = None
+
+            try:
+                client = TestClient(app)
+                yield client
+            finally:
+                # Restore original middleware stack to avoid affecting other tests
+                app.middleware_stack = saved_stack
 
     def test_x_api_key_transformation_and_authentication(self, test_client_with_http_auth):
         """Test that X-API-Key is transformed to Authorization and user is authenticated."""
