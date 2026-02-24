@@ -49,7 +49,11 @@ logger = logging.getLogger(__name__)
 # Format: version-trace_id-parent_id-trace_flags
 _TRACEPARENT_RE: Pattern[str] = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 
-# Context variable for tracking the current trace_id across async calls
+# Context variable for tracking the current trace_id across async calls.
+# NOTE: The plugin framework maintains a separate ContextVar in
+# mcpgateway.plugins.framework.observability.current_trace_id.
+# ObservabilityMiddleware bridges both — any new code path that sets this
+# variable must also set the framework copy to keep plugin tracing in sync.
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
 
 

@@ -40,6 +40,7 @@ from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.memory import copyonwrite
 from mcpgateway.plugins.framework.models import Config, GlobalContext, PluginContext, PluginContextTable, PluginErrorModel, PluginMode, PluginPayload, PluginResult
+from mcpgateway.plugins.framework.observability import current_trace_id, ObservabilityProvider
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 from mcpgateway.plugins.framework.utils import payload_matches
 
@@ -82,15 +83,17 @@ class PluginExecutor:
         >>> # )
     """
 
-    def __init__(self, config: Optional[Config] = None, timeout: int = DEFAULT_PLUGIN_TIMEOUT):
+    def __init__(self, config: Optional[Config] = None, timeout: int = DEFAULT_PLUGIN_TIMEOUT, observability: Optional[ObservabilityProvider] = None):
         """Initialize the plugin executor.
 
         Args:
             timeout: Maximum execution time per plugin in seconds.
             config: the plugin manager configuration.
+            observability: Optional observability provider implementing ObservabilityProvider protocol.
         """
         self.timeout = timeout
         self.config = config
+        self.observability = observability
 
     async def execute(
         self,
@@ -305,61 +308,57 @@ class PluginExecutor:
 
         Raises:
             asyncio.TimeoutError: If plugin exceeds timeout.
+            Exception: Re-raised from plugin hook execution failures.
         """
-        # Add observability tracing for plugin execution
+        # Start observability span if tracing is active
+        trace_id = current_trace_id.get()
+        span_id = None
+
+        if trace_id and self.observability:
+            try:
+                span_id = self.observability.start_span(
+                    trace_id=trace_id,
+                    name=f"plugin.execute.{hook_ref.plugin_ref.name}",
+                    kind="internal",
+                    resource_type="plugin",
+                    resource_name=hook_ref.plugin_ref.name,
+                    attributes={
+                        "plugin.name": hook_ref.plugin_ref.name,
+                        "plugin.uuid": hook_ref.plugin_ref.uuid,
+                        "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
+                        "plugin.priority": hook_ref.plugin_ref.priority,
+                        "plugin.timeout": self.timeout,
+                    },
+                )
+            except Exception as e:
+                logger.debug("Plugin observability start_span failed: %s", e)
+
+        # Execute plugin
         try:
-            # First-Party
-            # pylint: disable=import-outside-toplevel
-            from mcpgateway.db import SessionLocal
-            from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-
-            # pylint: enable=import-outside-toplevel
-
-            trace_id = current_trace_id.get()
-            if trace_id:
-                db = SessionLocal()
+            result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        except Exception:
+            if span_id is not None:
                 try:
-                    service = ObservabilityService()
-                    span_id = service.start_span(
-                        db=db,
-                        trace_id=trace_id,
-                        name=f"plugin.execute.{hook_ref.plugin_ref.name}",
-                        kind="internal",
-                        resource_type="plugin",
-                        resource_name=hook_ref.plugin_ref.name,
-                        attributes={
-                            "plugin.name": hook_ref.plugin_ref.name,
-                            "plugin.uuid": hook_ref.plugin_ref.uuid,
-                            "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
-                            "plugin.priority": hook_ref.plugin_ref.priority,
-                            "plugin.timeout": self.timeout,
-                        },
-                    )
+                    self.observability.end_span(span_id=span_id, status="error")
+                except Exception:  # nosec B110
+                    pass
+            raise
 
-                    # Execute plugin
-                    result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        # End span with success
+        if span_id is not None:
+            try:
+                self.observability.end_span(
+                    span_id=span_id,
+                    status="ok",
+                    attributes={
+                        "plugin.had_violation": result.violation is not None,
+                        "plugin.modified_payload": result.modified_payload is not None,
+                    },
+                )
+            except Exception as e:
+                logger.debug("Plugin observability end_span failed: %s", e)
 
-                    # End span with success
-                    service.end_span(
-                        db=db,
-                        span_id=span_id,
-                        status="ok",
-                        attributes={
-                            "plugin.had_violation": result.violation is not None,
-                            "plugin.modified_payload": result.modified_payload is not None,
-                        },
-                    )
-                    return result
-                finally:
-                    db.close()  # Observability service handles its own commits
-            else:
-                # No active trace, execute without instrumentation
-                return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
-
-        except Exception as e:
-            # If observability setup fails, continue without instrumentation
-            logger.debug("Plugin observability setup failed: %s", e)
-            return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        return result
 
     def _validate_payload_size(self, payload: Any) -> None:
         """Validate that payload doesn't exceed size limits.
@@ -432,7 +431,7 @@ class PluginManager:
     _config_path: str | None = None
     _executor: PluginExecutor = PluginExecutor()
 
-    def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT):
+    def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT, observability: Optional[ObservabilityProvider] = None):
         """Initialize plugin manager.
 
         PluginManager implements a thread-safe Borg singleton:
@@ -448,6 +447,7 @@ class PluginManager:
         Args:
             config: Path to plugin configuration file (YAML).
             timeout: Maximum execution time per plugin in seconds.
+            observability: Optional observability provider implementing ObservabilityProvider protocol.
 
         Examples:
             >>> # Initialize with configuration file
@@ -468,9 +468,10 @@ class PluginManager:
                         self._config = ConfigLoader.load_config(config)
                         self._config_path = config
 
-                    # Update executor timeouts
+                    # Update executor timeouts and observability
                     self._executor.config = self._config
                     self._executor.timeout = timeout
+                    self._executor.observability = observability
 
     @classmethod
     def reset(cls) -> None:
@@ -522,6 +523,27 @@ class PluginManager:
             True if the plugin manager has been initialized.
         """
         return self._initialized
+
+    @property
+    def observability(self) -> Optional[ObservabilityProvider]:
+        """Current observability provider.
+
+        Returns:
+            The observability provider or None if not configured.
+        """
+        return self._executor.observability
+
+    @observability.setter
+    def observability(self, provider: Optional[ObservabilityProvider]) -> None:
+        """Set the observability provider.
+
+        Thread-safe: uses lock to prevent races with concurrent readers.
+
+        Args:
+            provider: ObservabilityProvider to inject into the executor.
+        """
+        with self.__lock:
+            self._executor.observability = provider
 
     def get_plugin(self, name: str) -> Optional[Plugin]:
         """Get a plugin by name.
