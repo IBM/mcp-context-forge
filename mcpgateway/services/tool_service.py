@@ -674,8 +674,6 @@ class ToolService:
             "output_schema": tool.output_schema,
             "annotations": tool.annotations or {},
             "auth_type": tool.auth_type,
-            "auth_value": tool.auth_value,
-            "oauth_config": getattr(tool, "oauth_config", None),
             "jsonpath_filter": tool.jsonpath_filter,
             "custom_name": tool.custom_name,
             "custom_name_slug": tool.custom_name_slug,
@@ -701,9 +699,6 @@ class ToolService:
                 "capabilities": gateway.capabilities or {},
                 "passthrough_headers": gateway.passthrough_headers or [],
                 "auth_type": gateway.auth_type,
-                "auth_value": gateway.auth_value,
-                "auth_query_params": getattr(gateway, "auth_query_params", None),  # Query param auth
-                "oauth_config": getattr(gateway, "oauth_config", None),
                 "ca_certificate": getattr(gateway, "ca_certificate", None),
                 "ca_certificate_sig": getattr(gateway, "ca_certificate_sig", None),
                 "enabled": bool(gateway.enabled),
@@ -3025,9 +3020,19 @@ class ToolService:
         tool_headers = _decrypt_tool_headers_for_runtime(tool_payload.get("headers") or {})
         tool_auth_type = tool_payload.get("auth_type")
         tool_auth_value = tool_payload.get("auth_value")
+        if tool is not None:
+            runtime_tool_auth_value = getattr(tool, "auth_value", None)
+            if isinstance(runtime_tool_auth_value, str):
+                tool_auth_value = runtime_tool_auth_value
+        if not isinstance(tool_auth_value, str):
+            tool_auth_value = None
         tool_jsonpath_filter = tool_payload.get("jsonpath_filter")
         tool_output_schema = tool_payload.get("output_schema")
-        tool_oauth_config = tool_payload.get("oauth_config")
+        tool_oauth_config = tool_payload.get("oauth_config") if isinstance(tool_payload.get("oauth_config"), dict) else None
+        if tool is not None:
+            runtime_tool_oauth_config = getattr(tool, "oauth_config", None)
+            if isinstance(runtime_tool_oauth_config, dict):
+                tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
 
         # Get effective timeout: per-tool timeout_ms (in seconds) or global fallback
@@ -3041,13 +3046,50 @@ class ToolService:
         gateway_url = gateway_payload.get("url") if has_gateway else None
         gateway_name = gateway_payload.get("name") if has_gateway else None
         gateway_auth_type = gateway_payload.get("auth_type") if has_gateway else None
-        gateway_auth_value = gateway_payload.get("auth_value") if has_gateway else None
-        gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway else None
-        gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway else None
+        gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
+        gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
+        gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
+        if has_gateway and gateway is not None:
+            runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
+            if isinstance(runtime_gateway_auth_value, str):
+                gateway_auth_value = runtime_gateway_auth_value
+            runtime_gateway_query_params = getattr(gateway, "auth_query_params", None)
+            if isinstance(runtime_gateway_query_params, dict):
+                gateway_auth_query_params = runtime_gateway_query_params
+            runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
+            if isinstance(runtime_gateway_oauth_config, dict):
+                gateway_oauth_config = runtime_gateway_oauth_config
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+
+        # Cache payload intentionally excludes sensitive auth material. For cache hits
+        # (tool is None), hydrate auth-related fields from DB only when needed.
+        if tool is None:
+            requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth"}
+            requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param"}
+            if requires_tool_auth_hydration or requires_gateway_auth_hydration:
+                tool_id_for_hydration = tool_payload.get("id")
+                if tool_id_for_hydration:
+                    tool_auth_row = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.id == tool_id_for_hydration)).scalar_one_or_none()
+                    if tool_auth_row:
+                        hydrated_tool_auth_value = getattr(tool_auth_row, "auth_value", None)
+                        if isinstance(hydrated_tool_auth_value, str):
+                            tool_auth_value = hydrated_tool_auth_value
+                        hydrated_tool_oauth_config = getattr(tool_auth_row, "oauth_config", None)
+                        if isinstance(hydrated_tool_oauth_config, dict):
+                            tool_oauth_config = hydrated_tool_oauth_config
+                        if has_gateway and tool_auth_row.gateway:
+                            hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
+                            if isinstance(hydrated_gateway_auth_value, str):
+                                gateway_auth_value = hydrated_gateway_auth_value
+                            hydrated_gateway_query_params = getattr(tool_auth_row.gateway, "auth_query_params", None)
+                            if isinstance(hydrated_gateway_query_params, dict):
+                                gateway_auth_query_params = hydrated_gateway_query_params
+                            hydrated_gateway_oauth_config = getattr(tool_auth_row.gateway, "oauth_config", None)
+                            if isinstance(hydrated_gateway_oauth_config, dict):
+                                gateway_oauth_config = hydrated_gateway_oauth_config
 
         # Decrypt and apply query param auth to URL if applicable
         gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -3204,7 +3246,7 @@ class ToolService:
                 headers = tool_headers.copy()
                 if tool_integration_type == "REST":
                     # Handle OAuth authentication for REST tools
-                    if tool_auth_type == "oauth" and tool_oauth_config:
+                    if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
                             access_token = await self.oauth_manager.get_access_token(tool_oauth_config)
                             headers["Authorization"] = f"Bearer {access_token}"
@@ -3212,7 +3254,7 @@ class ToolService:
                             logger.error(f"Failed to obtain OAuth access token for tool {tool_name_computed}: {e}")
                             raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
                     else:
-                        credentials = decode_auth(tool_auth_value)
+                        credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
                         # Filter out empty header names/values to avoid "Illegal header name" errors
                         filtered_credentials = {k: v for k, v in credentials.items() if k and v}
                         headers.update(filtered_credentials)
@@ -3374,7 +3416,7 @@ class ToolService:
 
                     # Handle OAuth authentication for the gateway (using local variables)
                     # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
-                    if has_gateway and gateway_auth_type == "oauth" and gateway_oauth_config:
+                    if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                         if grant_type == "authorization_code":
@@ -3410,7 +3452,7 @@ class ToolService:
                                 logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
-                        headers = decode_auth(gateway_auth_value)
+                        headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:

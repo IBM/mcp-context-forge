@@ -428,7 +428,10 @@ async def create_sso_provider(
     if existing:
         raise HTTPException(status_code=409, detail=f"SSO provider '{provider_data.id}' already exists")
 
-    provider = await sso_service.create_provider(provider_data.model_dump())
+    try:
+        provider = await sso_service.create_provider(provider_data.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     result = {
         "id": provider.id,
@@ -566,7 +569,11 @@ async def update_sso_provider(
     if not update_data:
         raise HTTPException(status_code=400, detail="No update data provided")
 
-    provider = await sso_service.update_provider(provider_id, update_data)
+    try:
+        provider = await sso_service.update_provider(provider_id, update_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 

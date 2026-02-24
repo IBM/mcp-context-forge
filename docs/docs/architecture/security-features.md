@@ -78,9 +78,9 @@ For production deployments, always include JTI in issued tokens to enable proper
 
 - **Multi-provider SSO.** `mcpgateway/services/sso_service.py` supports GitHub, Google, IBM Security Verify, Microsoft Entra ID, Okta, Keycloak, and generic OIDC providers. Secrets are encrypted with a Fernet key derived from `AUTH_ENCRYPTION_SECRET`.
 - **Security-state tracking.** `SSOAuthSession` persists OAuth state tokens, PKCE `code_verifier`, and nonces to prevent CSRF and replay attacks.
-- **Per-user OAuth vault.** `TokenStorageService` encrypts access/refresh tokens using AES-GCM (`oauth_encryption.py`) and keys them by both gateway and gateway user to prevent cross-tenant leakage.
+- **Per-user OAuth vault.** `TokenStorageService` encrypts access/refresh tokens via `EncryptionService` (Argon2id-derived Fernet keys) and keys them by both gateway and gateway user to prevent cross-tenant leakage.
 - **Dynamic Client Registration (DCR).** `DcrService` discovers OAuth metadata (RFC 8414), honours issuer allowlists (`DCR_ALLOWED_ISSUERS`), registers clients, and encrypts the resulting client secrets and registration access tokens before storing them (`RegisteredOAuthClient`).
-- **Tool credential encryption.** The same `AUTH_ENCRYPTION_SECRET` powers `services_auth.encode_auth()` to store upstream tool auth blobs as AES-GCM tokens inside the database.
+- **Tool credential encryption.** The same `AUTH_ENCRYPTION_SECRET` powers `services_auth.encode_auth()` to store upstream tool auth blobs as AES-GCM encrypted values inside the database.
 
 ## Authorization & Access Control
 

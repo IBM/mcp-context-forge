@@ -3757,6 +3757,11 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
+            if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
+                LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
+                root_path = request.scope.get("root_path", "")
+                return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
+
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
 

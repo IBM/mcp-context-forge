@@ -584,6 +584,7 @@ class TestWebSocketAuthentication:
             mock_settings.auth_required = True
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
+            mock_settings.trust_proxy_auth_dangerously = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
 
             with (
@@ -1120,6 +1121,7 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.auth_required = True
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
+            mock_settings.trust_proxy_auth_dangerously = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
 
             await websocket_endpoint(mock_websocket, Mock())
