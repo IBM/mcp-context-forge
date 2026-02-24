@@ -26,10 +26,10 @@ The metadata response fields (per RFC 9728 Section 2):
 
 ```json
 {
-  "resource": "https://gateway.example.com/servers/abc-123/mcp",
-  "authorization_servers": ["https://auth.example.com"],
-  "bearer_methods_supported": ["header"],
-  "scopes_supported": ["read", "write"]
+    "resource": "https://gateway.example.com/servers/abc-123/mcp",
+    "authorization_servers": ["https://auth.example.com"],
+    "bearer_methods_supported": ["header"],
+    "scopes_supported": ["read", "write"]
 }
 ```
 
@@ -43,7 +43,7 @@ The metadata response fields (per RFC 9728 Section 2):
 
 **Authentication:** None required (per RFC 9728)
 
-**Implementation:** [`mcpgateway/routers/well_known.py:118`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L118)
+**Implementation:** [`mcpgateway/routers/well_known.py:118`](https://github.com/IBM/mcp-context-forge/blob/3e8c2ed1500caf330f6c0c2c9d688747e431330b/mcpgateway/routers/well_known.py#L118)
 
 **Features:**
 
@@ -64,16 +64,16 @@ curl https://gateway.example.com/.well-known/oauth-protected-resource/servers/55
 
 ```json
 {
-  "resource": "https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000/mcp",
-  "authorization_servers": ["https://auth.example.com"],
-  "bearer_methods_supported": ["header"],
-  "scopes_supported": ["openid", "profile", "email"]
+    "resource": "https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000/mcp",
+    "authorization_servers": ["https://auth.example.com"],
+    "bearer_methods_supported": ["header"],
+    "scopes_supported": ["openid", "profile", "email"]
 }
 ```
 
 ### Service Layer
 
-**Implementation:** [`mcpgateway/services/server_service.py:1913`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/services/server_service.py#L1913)
+**Implementation:** [`mcpgateway/services/server_service.py:1913`](https://github.com/IBM/mcp-context-forge/blob/3e8c2ed1500caf330f6c0c2c9d688747e431330b/mcpgateway/services/server_service.py#L1913)
 
 The `get_oauth_protected_resource_metadata()` method:
 
@@ -105,7 +105,7 @@ The endpoint validates that `server_id` is a valid UUID using regex pattern matc
 - Private/team servers return 404 (prevents information leakage)
 - OAuth must be explicitly enabled on the server
 
-**Implementation:** [`mcpgateway/routers/well_known.py:39`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L39)
+**Implementation:** [`mcpgateway/routers/well_known.py:39`](https://github.com/IBM/mcp-context-forge/blob/3e8c2ed1500caf330f6c0c2c9d688747e431330b/mcpgateway/routers/well_known.py#L39)
 
 ```python
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
@@ -141,13 +141,13 @@ To enable OAuth Protected Resource Metadata for a server, configure the server's
 
 ```json
 {
-  "oauth_enabled": true,
-  "oauth_config": {
-    "authorization_servers": ["https://auth.example.com"],
-    "scopes_supported": ["openid", "profile", "email"],
-    "client_id": "your-client-id",
-    "client_secret": "your-client-secret"
-  }
+    "oauth_enabled": true,
+    "oauth_config": {
+        "authorization_servers": ["https://auth.example.com"],
+        "scopes_supported": ["openid", "profile", "email"],
+        "client_id": "your-client-id",
+        "client_secret": "your-client-secret"
+    }
 }
 ```
 
@@ -167,7 +167,7 @@ For backward compatibility, the system also accepts a singular string form:
 
 ```json
 {
-  "authorization_server": "https://auth.example.com"
+    "authorization_server": "https://auth.example.com"
 }
 ```
 
