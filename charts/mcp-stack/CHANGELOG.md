@@ -44,6 +44,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **Opt-out**: Set `METRICS_DELETE_RAW_AFTER_ROLLUP=false` to preserve previous behavior
 * **External observability**: If using ELK, Datadog, or similar platforms, raw metrics are redundant - the new defaults are optimal
 
+#### **🩹 Upgrade Workaround for Legacy BETA-2 Releases**
+* **Scope**: Applies to upgrades starting from a release originally installed with chart/app `1.0.0-BETA-2`
+* **Symptom**: `helm upgrade` may fail with immutable selector error on MinIO Deployment (`spec.selector ... field is immutable`)
+* **Workaround**: Delete only the MinIO Deployment, then rerun upgrade
+  - `kubectl delete deployment -n <namespace> <release>-minio`
+  - `helm upgrade <release> charts/mcp-stack -n <namespace> ...`
+* **Data safety**: This workaround preserves existing PVCs and recreates the MinIO Deployment with current labels
+
+#### **📦 MinIO Default Disabled by Default**
+* `minio.enabled` default changed from `true` to `false`
+* **Rationale**: MinIO in this chart is used by PostgreSQL major-upgrade backup/restore flow and is not needed on the regular request path
+* **Migration**: Set `minio.enabled=true` when using `postgres.upgrade.enabled=true`
+* **Upgrade safety**: If your existing release still needs MinIO, pin `minio.enabled=true` in your values before upgrade to avoid MinIO resources being pruned
+* **Validation**: Chart now fails template rendering if `postgres.upgrade.enabled=true` while `minio.enabled=false`
+
 ## [0.9.1] - 2025-12-03
 
 ### Added

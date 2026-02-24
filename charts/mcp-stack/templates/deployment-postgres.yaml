@@ -15,6 +15,10 @@
 {{- $postgresImage = printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag -}}
 {{- end -}}
 
+{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") (not .Values.minio.enabled) -}}
+{{- fail "postgres.upgrade.enabled=true requires minio.enabled=true (chart uses MinIO for PostgreSQL upgrade backup/restore flow)" -}}
+{{- end -}}
+
 {{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
 apiVersion: apps/v1
 kind: Deployment

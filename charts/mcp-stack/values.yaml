@@ -107,11 +107,11 @@ mcpContextForge:
   # Kubernetes resource requests / limits
   resources:
     limits:
-      cpu: 200m
-      memory: 1024Mi
+      cpu: "2"
+      memory: 2Gi
     requests:
-      cpu: 100m
-      memory: 512Mi
+      cpu: 500m
+      memory: 768Mi
 
   # Optional ingress for HTTP traffic
   ingress:
@@ -164,7 +164,7 @@ mcpContextForge:
     HTTP_SERVER: "gunicorn"             # gunicorn (default) or granian
 
     # ─ Gunicorn settings (used when HTTP_SERVER=gunicorn) ─
-    GUNICORN_WORKERS: "auto"            # number of worker processes ("auto" = 2*CPU+1, capped at 16)
+    GUNICORN_WORKERS: "2"               # fixed worker count to avoid oversubscription in constrained clusters
     GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
     GUNICORN_MAX_REQUESTS: "100000"     # max requests per worker before restart
     GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
@@ -1063,11 +1063,11 @@ migration:
   # Resource limits for the migration job
   resources:
     limits:
-      cpu: 200m
-      memory: 512Mi
+      cpu: 500m
+      memory: 1Gi
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 250m
+      memory: 512Mi
 
   # Migration command configuration
   command:
@@ -1116,11 +1116,11 @@ postgres:
   # ─── Resource limits & requests ───
   resources:
     limits:
-      cpu: 1000m          # 1 core hard cap
-      memory: 1Gi
+      cpu: "2"            # 2 cores hard cap
+      memory: 2Gi
     requests:
       cpu: 500m           # guaranteed half-core
-      memory: 64Mi
+      memory: 512Mi
 
   # ─── Health & readiness probes ───
 
@@ -1209,10 +1209,10 @@ pgbouncer:
   # Resource limits
   resources:
     limits:
-      cpu: 500m
+      cpu: "1"
       memory: 256Mi
     requests:
-      cpu: 100m
+      cpu: 250m
       memory: 128Mi
 
   # Health probes
@@ -1268,11 +1268,11 @@ redis:
   # ─── Resource limits & requests ───
   resources:
     limits:
-      cpu: 100m          # cap at 0.1 core, 256 MiB
-      memory: 256Mi
+      cpu: "1"          # cap at 1 core, 1 GiB
+      memory: 1Gi
     requests:
-      cpu: 50m           # reserve 0.05 core, 128 MiB
-      memory: 16Mi
+      cpu: 250m         # reserve 0.25 core, 256 MiB
+      memory: 256Mi
 
   # ─── Health & readiness probes ───
   probes:
@@ -1414,7 +1414,7 @@ redisCommander:
 # MINIO - S3 Compatible Object Storage
 ########################################################################
 minio:
-  enabled: true # Set to true to deploy MinIO (required for PostgreSQL backups during upgrade)
+  enabled: false # Enable only when needed for PostgreSQL major upgrade backup/restore flow
 
   image:
     repository: minio/minio

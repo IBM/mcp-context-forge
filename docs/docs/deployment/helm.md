@@ -403,6 +403,17 @@ flowchart TD
 
         Use `helm history mcp-stack -n mcp-private` to list available revisions before rolling back.
 
+    !!! warning "Legacy `1.0.0-BETA-2` upgrade note"
+        If your release was originally installed from chart/app `1.0.0-BETA-2`, direct upgrade can fail on MinIO with immutable selector errors.
+
+        One-time workaround:
+        ```bash
+        kubectl delete deployment -n mcp-private mcp-stack-minio
+        helm upgrade mcp-stack . -n mcp-private -f my-values.yaml --wait --timeout 15m
+        ```
+
+        If your deployment still needs MinIO, pin `minio.enabled=true` in your values before upgrade.
+
 ---
 
 ## 🧹 Uninstall
