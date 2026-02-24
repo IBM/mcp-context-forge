@@ -1047,7 +1047,7 @@ def test_mcp_require_auth_defaults_to_auth_required_false():
 
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
     """AUTH_REQUIRED=true with explicit MCP_REQUIRE_AUTH=false should warn."""
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.config")
 
     s = Settings(
         auth_required=True,
@@ -1062,7 +1062,7 @@ def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
 
 def test_allow_unauthenticated_admin_warns_when_auth_disabled(caplog):
     """Explicit unauthenticated-admin override should emit warning when auth is disabled."""
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.config")
 
     s = Settings(
         auth_required=False,

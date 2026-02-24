@@ -2196,6 +2196,9 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     if not path.endswith("/mcp") and not path.endswith("/mcp/"):
         # No auth needed for other paths in this middleware usage
         return True
+    if path.startswith("/.well-known/"):
+        # RFC 9728 metadata endpoints are intentionally public and may end with /mcp.
+        return True
 
     headers = Headers(scope=scope)
 

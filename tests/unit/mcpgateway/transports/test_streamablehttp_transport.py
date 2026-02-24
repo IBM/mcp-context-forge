@@ -1103,6 +1103,21 @@ async def test_streamable_http_auth_skips_non_mcp():
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_skips_well_known_rfc9728_even_when_strict(monkeypatch):
+    """RFC 9728 well-known metadata paths should bypass MCP auth gate."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    scope = _make_scope("/.well-known/oauth-protected-resource/servers/550e8400-e29b-41d4-a716-446655440000/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is True
+    assert called == []
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_skips_cors_preflight():
     """Auth returns True for CORS preflight requests (OPTIONS with Origin and Access-Control-Request-Method)."""
     # CORS preflight requests cannot carry Authorization headers, so they must be exempt from auth
@@ -6939,7 +6954,9 @@ async def test_streamable_http_auth_revocation_check_exception_fails_open(monkey
         return {
             "sub": "user@example.com",
             "jti": "jti-1",
-            "teams": ["team-a"],
+            # Keep public-only to avoid team-membership DB checks; this test targets
+            # revocation-check failure behavior only.
+            "teams": [],
         }
 
     active_user = MagicMock()
