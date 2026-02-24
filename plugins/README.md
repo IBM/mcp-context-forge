@@ -9,7 +9,7 @@ ContextForge Plugin Framework provides a powerful, production-ready system for A
 1. Set environment variables in `.env`:
 ```bash
 PLUGINS_ENABLED=true
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 PLUGINS_CLI_COMPLETION=false
 PLUGINS_CLI_MARKUP_MODE=rich
 ```
