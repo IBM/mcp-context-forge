@@ -2338,7 +2338,7 @@ Disallow: /
                 self.auth_required,
             )
         elif self.auth_required and self.mcp_require_auth is False:
-            logger.warning("AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false. " "MCP endpoints (/servers/*/mcp) allow unauthenticated access to public items.")
+            logger.warning("AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false. MCP endpoints (/servers/*/mcp) allow unauthenticated access to public items.")
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and self.trust_proxy_auth and not self.trust_proxy_auth_dangerously:

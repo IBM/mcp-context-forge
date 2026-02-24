@@ -1231,6 +1231,27 @@ async def test_streamable_http_auth_bearer_no_token(monkeypatch):
     assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
 
 
+@pytest.mark.asyncio
+async def test_streamable_http_auth_bearer_no_token_permissive_mode(monkeypatch):
+    """Bearer-without-token should still return 401 when mcp_require_auth=False."""
+
+    async def fake_verify(token):
+        raise AssertionError("Should not be called")
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called and called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+
 # ---------------------------------------------------------------------------
 # Session Manager tests
 # ---------------------------------------------------------------------------
