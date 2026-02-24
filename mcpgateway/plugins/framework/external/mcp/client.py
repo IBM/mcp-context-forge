@@ -78,11 +78,11 @@ class ExternalPlugin(Plugin):
 
         if not self._config.mcp:
             raise PluginError(error=PluginErrorModel(message="The mcp section must be defined for external plugin", plugin_name=self.name))
-        
+
         # Load reconnect configuration
         self._reconnect_attempts = self._config.mcp.reconnect_attempts
         self._reconnect_delay = self._config.mcp.reconnect_delay
-        
+
         if self._config.mcp.proto == TransportType.STDIO:
             if not (self._config.mcp.script or self._config.mcp.cmd):
                 raise PluginError(error=PluginErrorModel(message="STDIO transport requires script or cmd", plugin_name=self.name))
@@ -350,7 +350,7 @@ class ExternalPlugin(Plugin):
 
     async def _cleanup_session(self) -> None:
         """Clean up existing session without full shutdown.
-        
+
         Closes exit stacks and resets session state to prepare for reconnection.
         """
         if self._exit_stack:
@@ -368,49 +368,39 @@ class ExternalPlugin(Plugin):
 
     async def _reconnect_session(self) -> None:
         """Tear down old session and reconnect to MCP server.
-        
+
         Implements retry logic with exponential backoff, matching the pattern
         used in the Unix socket client.
-        
+
         Raises:
             PluginError: If reconnection fails after all attempts.
         """
         logger.info("Attempting to reconnect to MCP server: %s", self.name)
-        
+
         # Clean up existing session
         await self._cleanup_session()
-        
+
         last_error: Optional[Exception] = None
         for attempt in range(1, self._reconnect_attempts + 1):
             try:
-                logger.debug("Reconnection attempt %d/%d to %s",
-                            attempt, self._reconnect_attempts, self.name)
-                
+                logger.debug("Reconnection attempt %d/%d to %s", attempt, self._reconnect_attempts, self.name)
+
                 # Re-run connection based on transport type
                 if self._config.mcp.proto == TransportType.STREAMABLEHTTP:
                     await self.__connect_to_http_server(self._config.mcp.url)
                 elif self._config.mcp.proto == TransportType.STDIO:
-                    await self.__connect_to_stdio_server(
-                        self._config.mcp.script,
-                        self._config.mcp.cmd,
-                        self._config.mcp.env,
-                        self._config.mcp.cwd
-                    )
-                
+                    await self.__connect_to_stdio_server(self._config.mcp.script, self._config.mcp.cmd, self._config.mcp.env, self._config.mcp.cwd)
+
                 logger.info("Reconnected to MCP server on attempt %d: %s", attempt, self.name)
                 return
             except Exception as e:
                 last_error = e
                 if attempt < self._reconnect_attempts:
                     delay = self._reconnect_delay * attempt  # Exponential backoff
-                    logger.warning("Reconnection attempt %d failed: %s. Retrying in %.2fs...",
-                                  attempt, e, delay)
+                    logger.warning("Reconnection attempt %d failed: %s. Retrying in %.2fs...", attempt, e, delay)
                     await asyncio.sleep(delay)
-        
-        raise PluginError(error=PluginErrorModel(
-            message=f"Failed to reconnect after {self._reconnect_attempts} attempts: {last_error}",
-            plugin_name=self.name
-        ))
+
+        raise PluginError(error=PluginErrorModel(message=f"Failed to reconnect after {self._reconnect_attempts} attempts: {last_error}", plugin_name=self.name))
 
     async def invoke_hook(self, hook_type: str, payload: PluginPayload, context: PluginContext) -> PluginResult:
         """Invoke an external plugin hook using the MCP protocol.
