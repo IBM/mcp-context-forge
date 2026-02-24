@@ -2136,6 +2136,81 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
+    async def test_update_user_case_insensitive_email(self, service, mock_db, mock_user):
+        """Test updating user with a case-insensitive email."""
+        original_email = "user@example.com"
+        mock_user.email = original_email.lower() # Ensure mock user has a lowercase email
+
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_user
+        # Ensure that db.execute is called with the lowercased email
+        mock_db.execute.return_value = mock_execute_result
+
+        # Call with a mixed-case email
+        updated_user = await service.update_user(
+            email="UsEr@eXaMpLe.CoM",
+            full_name="New Full Name",
+        )
+
+        assert updated_user is mock_user
+        assert updated_user.full_name == "New Full Name"
+        # Verify that the query for the user used the lowercased, stripped email
+        mock_db.execute.assert_called_once()
+        stmt = mock_db.execute.call_args[0][0]
+        # Check the WHERE clause for the email comparison
+        compiled_stmt = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "WHERE email_users.email = 'user@example.com'" in compiled_stmt
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_user_email_with_whitespace(self, service, mock_db, mock_user):
+        """Test updating user with an email containing leading/trailing whitespace."""
+        original_email = "user@example.com"
+        mock_user.email = original_email.lower()
+
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_execute_result
+
+        # Call with an email that has whitespace
+        updated_user = await service.update_user(
+            email="  user@example.com  ",
+            full_name="New Full Name With Whitespace Email",
+        )
+
+        assert updated_user is mock_user
+        assert updated_user.full_name == "New Full Name With Whitespace Email"
+        # Verify that the query for the user used the lowercased, stripped email
+        mock_db.execute.assert_called_once()
+        stmt = mock_db.execute.call_args[0][0]
+        compiled_stmt = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "WHERE email_users.email = 'user@example.com'" in compiled_stmt
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_user_with_none_requesting_user_email(self, service, mock_db, mock_user):
+        """Test updating user when requesting_user_email is None."""
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_execute_result
+
+        # Update a non-admin user (to avoid self-demotion checks)
+        mock_user.is_admin = False
+        updated_user = await service.update_user(
+            email="test@example.com",
+            full_name="Updated Name by System",
+            requesting_user_email=None,
+        )
+
+        assert updated_user is mock_user
+        assert updated_user.full_name == "Updated Name by System"
+        mock_db.commit.assert_called_once()
+        # Ensure no ValueError is raised related to requesting_user_email being None
+
+
+
+
+    @pytest.mark.asyncio
     async def test_update_user_protect_self_demotion(self, service, mock_db, monkeypatch):
         """Test that blocks admin from self demoting."""
         # First-Party
@@ -2753,3 +2828,62 @@ class TestEmailAuthServiceAdminCounting:
 
         result = await service.is_last_active_admin("admin@test.com")
         assert result is True
+
+    @pytest.fixture
+    def mock_user_admin(self):
+        """Create a mock admin user object."""
+        user = MagicMock(spec=EmailUser)
+        user.email = "admin@example.com"
+        user.password_hash = "existing_hash"
+        user.full_name = "Admin User"
+        user.is_admin = True
+        user.is_active = True
+        user.failed_login_attempts = 0
+        user.account_locked_until = None
+        user.is_account_locked.return_value = False
+        user.increment_failed_attempts.return_value = False
+        user.reset_failed_attempts = MagicMock()
+        return user
+
+    @pytest.mark.asyncio
+    async def test_update_user_demote_admin_success(self, service, mock_db, mock_user_admin):
+        """Test successful demotion of an admin user by an admin."""
+        # Mock the db.execute().scalar_one_or_none() call within update_user to return mock_user_admin
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_user_admin
+        mock_db.execute.return_value = mock_execute_result
+
+        # Mock is_last_active_admin to allow demotion
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.protect_all_admins = False
+                mock_settings.default_admin_role = "platform_admin"
+                mock_settings.default_user_role = "user"
+
+                # Mock role service to avoid issues with role assignment during demotion
+                mock_role_service_instance = MagicMock()
+                mock_role_service_instance.get_role_by_name = AsyncMock(side_effect=[
+                    MagicMock(id="admin_role_id", name="platform_admin"),  # For admin role in demotion
+                    MagicMock(id="user_role_id", name="user")               # For user role in demotion
+                ])
+                mock_role_service_instance.revoke_role_from_user = AsyncMock(return_value=True)
+                mock_role_service_instance.assign_role_to_user = AsyncMock(return_value=True)
+                mock_role_service_instance.get_user_role_assignment = AsyncMock(return_value=None)
+
+                with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service_instance):
+                    updated_user = await service.update_user(
+                        email="admin@example.com",
+                        is_admin=False,
+                        admin_origin_source="test",
+                        requesting_user_email="superadmin@example.com",
+                    )
+
+                    assert updated_user is mock_user_admin
+                    assert updated_user.is_admin is False
+                    mock_db.commit.assert_called_once()
+
+                    # Verify role service calls
+                    mock_role_service_instance.get_role_by_name.assert_any_call("platform_admin", "global")
+                    mock_role_service_instance.get_role_by_name.assert_any_call("user", "global")
+                    mock_role_service_instance.revoke_role_from_user.assert_called_once_with(user_email="admin@example.com", role_id="admin_role_id", scope="global", scope_id=None)
+                    mock_role_service_instance.assign_role_to_user.assert_called_once_with(user_email="admin@example.com", role_id="user_role_id", scope="global", scope_id=None, granted_by="admin@example.com")
