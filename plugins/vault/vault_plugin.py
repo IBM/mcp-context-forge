@@ -185,13 +185,13 @@ class Vault(Plugin):
 
         # Check if vault header exists
         if self._sconfig.vault_header_name not in headers:
-            logger.debug(f"Vault header '{self._sconfig.vault_header_name}' not found in headers")
+            logger.debug("Vault header '%s' not found in headers", self._sconfig.vault_header_name)
             return ToolPreInvokeResult()
 
         try:
             vault_tokens = orjson.loads(headers[self._sconfig.vault_header_name])
         except (orjson.JSONDecodeError, TypeError) as e:
-            logger.error(f"Failed to parse vault tokens from header: {e}")
+            logger.error("Failed to parse vault tokens from header: %s", e)
             # SECURITY: Always remove vault header even on parse error
             del headers[self._sconfig.vault_header_name]
             payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
@@ -252,20 +252,18 @@ class Vault(Plugin):
                     modified = True
             else:
                 # Unknown token type, use default behavior
-                logger.warning(f"Unknown token type '{token_type}', using default Bearer token")
+                logger.warning("Unknown token type '%s', using default Bearer token", token_type)
                 if vault_handling == VaultHandling.RAW:
                     headers["Authorization"] = f"Bearer {token_value}"
                     modified = True
 
-            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
-
         if modified:
             logger.debug("Modified tool '%s' to add auth header", payload.name)
-
-        # Even if we didn't modify headers (no token match), we still removed the vault header
-        # so we need to return the modified payload
-        if not token_value:
+        elif not token_value:
+            # Even if we didn't modify headers (no token match), we still removed the vault header
             logger.warning("Vault tokens provided but no match found for system '%s' - possible misconfiguration", system_key)
+
+        # Always return modified payload since the vault header was stripped
         payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
         return ToolPreInvokeResult(modified_payload=payload)
 

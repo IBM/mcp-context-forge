@@ -255,3 +255,103 @@ class TestSecurityValidatorParity:
         gateway_set = {p.pattern for p in gateway_patterns}
         framework_set = {p.pattern for p in framework_patterns}
         assert gateway_set == framework_set, f"Framework patterns {framework_set} differ from gateway {gateway_set}"
+
+    def test_dangerous_html_pattern_parity(self):
+        """Framework HTML XSS pattern must match the gateway's pattern (ignoring inline flags)."""
+        import re
+
+        from mcpgateway.config import settings as gw_settings
+        from mcpgateway.plugins.framework.validators import _DANGEROUS_HTML_PATTERN
+
+        # Strip inline flags like (?i) for comparison — both compile with IGNORECASE
+        gw_pattern = re.sub(r"^\(\?[aiLmsux]+\)", "", gw_settings.validation_dangerous_html_pattern)
+        assert _DANGEROUS_HTML_PATTERN.pattern == gw_pattern, (
+            f"Framework HTML pattern differs from gateway: "
+            f"{_DANGEROUS_HTML_PATTERN.pattern!r} vs {gw_pattern!r}"
+        )
+
+    def test_dangerous_js_pattern_parity(self):
+        """Framework JS/event-handler pattern must match the gateway's pattern (ignoring inline flags)."""
+        import re
+
+        from mcpgateway.config import settings as gw_settings
+        from mcpgateway.plugins.framework.validators import _DANGEROUS_JS_PATTERN
+
+        # Strip inline flags like (?i) for comparison — both compile with IGNORECASE
+        gw_pattern = re.sub(r"^\(\?[aiLmsux]+\)", "", gw_settings.validation_dangerous_js_pattern)
+        assert _DANGEROUS_JS_PATTERN.pattern == gw_pattern, (
+            f"Framework JS pattern differs from gateway: "
+            f"{_DANGEROUS_JS_PATTERN.pattern!r} vs {gw_pattern!r}"
+        )
+
+    def test_blocked_networks_cover_standard_private_ranges(self):
+        """Framework SSRF blocked networks must include standard private/reserved ranges."""
+        from mcpgateway.plugins.framework.validators import _BLOCKED_NETWORKS
+
+        blocked = {str(n) for n in _BLOCKED_NETWORKS}
+        expected = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16"}
+        assert expected.issubset(blocked), f"Missing standard private ranges: {expected - blocked}"
+
+
+class TestDangerousPatternDetection:
+    """Functional tests for HTML/JS XSS pattern detection."""
+
+    @pytest.mark.parametrize(
+        "html",
+        [
+            "<script>alert(1)</script>",
+            "<SCRIPT>alert(1)</SCRIPT>",
+            "<iframe src='evil'>",
+            "<object data='x'>",
+            "<embed src='x'>",
+            "<img src=x onerror=alert(1)>",
+            "<svg onload=alert(1)>",
+            "<form action='evil'>",
+        ],
+    )
+    def test_dangerous_html_pattern_matches(self, html):
+        from mcpgateway.plugins.framework.validators import _DANGEROUS_HTML_PATTERN
+
+        assert _DANGEROUS_HTML_PATTERN.search(html), f"Pattern should match: {html!r}"
+
+    @pytest.mark.parametrize(
+        "safe",
+        [
+            "plain text with no tags",
+            "<p>paragraph</p>",
+            "<div>content</div>",
+            "<span>inline</span>",
+        ],
+    )
+    def test_dangerous_html_pattern_ignores_safe_tags(self, safe):
+        from mcpgateway.plugins.framework.validators import _DANGEROUS_HTML_PATTERN
+
+        assert not _DANGEROUS_HTML_PATTERN.search(safe), f"Pattern should not match: {safe!r}"
+
+    @pytest.mark.parametrize(
+        "js",
+        [
+            "javascript:alert(1)",
+            "vbscript:MsgBox",
+            ' onclick=alert(1)',
+            ' onload=evil()',
+            '<script src="x">',
+        ],
+    )
+    def test_dangerous_js_pattern_matches(self, js):
+        from mcpgateway.plugins.framework.validators import _DANGEROUS_JS_PATTERN
+
+        assert _DANGEROUS_JS_PATTERN.search(js), f"Pattern should match: {js!r}"
+
+    @pytest.mark.parametrize(
+        "safe",
+        [
+            "just some text",
+            "function call()",
+            "data = 42",
+        ],
+    )
+    def test_dangerous_js_pattern_ignores_safe_input(self, safe):
+        from mcpgateway.plugins.framework.validators import _DANGEROUS_JS_PATTERN
+
+        assert not _DANGEROUS_JS_PATTERN.search(safe), f"Pattern should not match: {safe!r}"

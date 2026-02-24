@@ -118,16 +118,5 @@ Inside the gateway, plugin settings are exposed under `settings.plugins`.
 | `PLUGINS_UNIX_SOCKET_PATH`     | Path to Unix domain socket                       | (none)  | string  |
 
 !!! note "Backwards Compatibility"
-    Runtime/plugin settings still accept `PLUGIN_CONFIG_FILE` as an alias for
-    `PLUGINS_CONFIG_FILE`.
-
-    `PLUGIN_CONFIG_FILE` is deprecated and scheduled for removal in `v1.2.0`.
-    When used, the plugin framework logs a deprecation warning at runtime.
-
-    Helm chart templates prefer `PLUGINS_CONFIG_FILE`. For upgrade safety,
-    if `PLUGINS_CONFIG_FILE` is left at its default and legacy
-    `PLUGIN_CONFIG_FILE` is set, the chart mount path will honor
-    `PLUGIN_CONFIG_FILE`.
-
     `UNIX_SOCKET_PATH` is also accepted as an alias for
     `PLUGINS_UNIX_SOCKET_PATH`.

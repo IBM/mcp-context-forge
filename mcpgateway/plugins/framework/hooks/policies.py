@@ -108,7 +108,14 @@ def apply_policy(
     for field in type(modified).model_fields:
         old_val = getattr(original, field, _SENTINEL)
         new_val = getattr(modified, field, _SENTINEL)
-        if new_val is _SENTINEL or new_val == old_val:
+        if new_val is _SENTINEL:
+            continue
+        # Use model_dump() for BaseModel comparisons to ensure reliable
+        # equality across StructuredData / extra="allow" instances.
+        if isinstance(old_val, BaseModel) and isinstance(new_val, BaseModel):
+            if old_val.model_dump() == new_val.model_dump():
+                continue
+        elif new_val == old_val:
             continue
         if field in policy.writable_fields:
             updates[field] = new_val

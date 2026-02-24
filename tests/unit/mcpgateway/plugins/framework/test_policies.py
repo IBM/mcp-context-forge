@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 # Third-Party
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 # First-Party
 from mcpgateway.plugins.framework.hooks.policies import apply_policy, DefaultHookPolicy, HookPayloadPolicy
@@ -119,7 +119,7 @@ class TestPluginPayloadFrozen:
 
     def test_payload_is_immutable(self):
         payload = SamplePayload(name="test", args={}, secret="s")
-        with pytest.raises(Exception):  # ValidationError for frozen model
+        with pytest.raises(ValidationError, match="frozen"):
             payload.name = "changed"  # type: ignore[misc]
 
     def test_payload_model_copy(self):
@@ -550,15 +550,13 @@ class TestCrossTypePolicyHandling:
 
     @pytest.mark.asyncio
     async def test_cross_type_result_accepted_when_policy_exists(self):
-        """When modified_payload is a different type from the input, the policy's
-        presence authorises the hook and the result is accepted directly."""
-        from pydantic import BaseModel
-
+        """When modified_payload is a different PluginPayload subtype from the
+        input, the policy's presence authorises the hook and the result is accepted."""
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
-        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginPayload, PluginResult
 
-        class DifferentResult(BaseModel):
+        class DifferentResult(PluginPayload):
             granted: bool = True
             reason: str = "ok"
 

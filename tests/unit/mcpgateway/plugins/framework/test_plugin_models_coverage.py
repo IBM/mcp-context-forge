@@ -159,7 +159,7 @@ class TestGRPCServerConfigFromEnv:
 
     def test_from_env_invalid_port(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_GRPC_SERVER_PORT", "not_a_number")
-        with pytest.raises((ValueError, ValidationError)):
+        with pytest.raises((ValueError, ValidationError), match="valid integer"):
             GRPCServerConfig.from_env()
 
     def test_from_env_empty(self, monkeypatch):
@@ -272,7 +272,7 @@ class TestMCPServerConfigFromEnv:
 
     def test_from_env_invalid_port(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_SERVER_PORT", "not_a_number")
-        with pytest.raises((ValueError, ValidationError)):
+        with pytest.raises((ValueError, ValidationError), match="valid integer"):
             MCPServerConfig.from_env()
 
     def test_from_env_with_uds(self, monkeypatch, tmp_path):
@@ -347,7 +347,7 @@ class TestMCPServerTLSConfigFromEnv:
 
     def test_invalid_cert_reqs(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_SERVER_SSL_CERT_REQS", "invalid")
-        with pytest.raises(ValueError):
+        with pytest.raises((ValueError, ValidationError), match="valid integer"):
             MCPServerTLSConfig.from_env()
 
 

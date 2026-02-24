@@ -70,15 +70,15 @@ class TestExternalPluginServerInit:
         assert server._config is not None
 
     def test_init_with_default_path(self):
-        """Test initialization with default config path."""
+        """Test initialization uses config_file when config_path is not set."""
         # Temporarily remove env var if it exists
         env_backup = os.environ.pop("PLUGINS_CONFIG_PATH", None)
         try:
-            with patch("os.path.join", return_value="./resources/plugins/config.yaml"):
-                with patch("mcpgateway.plugins.framework.loader.config.ConfigLoader.load_config") as mock_load:
-                    mock_load.return_value = Mock(plugins=[], server_settings=None)
-                    server = ExternalPluginServer()
-                    assert "./resources/plugins/config.yaml" in server._config_path
+            with patch("mcpgateway.plugins.framework.loader.config.ConfigLoader.load_config") as mock_load:
+                mock_load.return_value = Mock(plugins=[], server_settings=None)
+                server = ExternalPluginServer()
+                # Falls through config_path (None) to config_file (default: "plugins/config.yaml")
+                assert server._config_path == "plugins/config.yaml"
         finally:
             if env_backup:
                 os.environ["PLUGINS_CONFIG_PATH"] = env_backup

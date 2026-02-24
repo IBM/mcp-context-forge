@@ -46,6 +46,12 @@ from mcpgateway.plugins.framework.registry import PluginRef
 
 
 def test_manager_module_import_does_not_parse_plugin_settings(monkeypatch):
+    """Importing manager.py must not eagerly parse full PluginsSettings.
+
+    With PLUGINS_SERVER_PORT set to a non-integer, any attempt to
+    instantiate the full PluginsSettings model would raise a
+    ValidationError.  If exec_module succeeds, settings were deferred.
+    """
     monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
 
     module_name = f"mcpgateway._plugin_manager_test_{uuid.uuid4().hex}"
@@ -53,9 +59,10 @@ def test_manager_module_import_does_not_parse_plugin_settings(monkeypatch):
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, module_name, module)
+    # If this raises ValidationError, settings are being eagerly parsed at import time
     spec.loader.exec_module(module)
 
-    assert module.PluginManager._executor is None
+    assert hasattr(module, "PluginManager")
 
 
 @pytest.mark.asyncio

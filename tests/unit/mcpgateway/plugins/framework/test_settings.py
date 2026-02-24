@@ -26,7 +26,7 @@ class TestPluginsSettingsDefaults:
     def _clean_plugins_env(self, monkeypatch):
         """Remove PLUGINS_ env vars and .env file so tests verify true defaults."""
         for key in list(os.environ):
-            if key.startswith("PLUGINS_") or key in ("PLUGIN_CONFIG_FILE", "UNIX_SOCKET_PATH"):
+            if key.startswith("PLUGINS_") or key == "UNIX_SOCKET_PATH":
                 monkeypatch.delenv(key, raising=False)
         # Prevent values from .env file leaking into tests
         monkeypatch.setattr(PluginsSettings, "model_config", {**PluginsSettings.model_config, "env_file": None})
@@ -179,12 +179,6 @@ class TestPluginsSettingsEnvOverrides:
         s = PluginsSettings()
         assert s.config_file == "/custom/path.yaml"
 
-    def test_config_file_legacy_alias_override(self, monkeypatch):
-        """PLUGIN_CONFIG_FILE (without PLUGINS_ prefix) is supported for backwards compatibility."""
-        monkeypatch.setenv("PLUGIN_CONFIG_FILE", "/legacy/path.yaml")
-        s = PluginsSettings()
-        assert s.config_file == "/legacy/path.yaml"
-
     def test_cli_markup_mode_override(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_CLI_MARKUP_MODE", "markdown")
         s = PluginsSettings()
@@ -308,17 +302,6 @@ class TestPluginsSettingsStartupIsolation:
         finally:
             settings.cache_clear()
 
-    def test_config_file_legacy_alias(self, monkeypatch):
-        from mcpgateway.plugins.framework.settings import settings
-
-        monkeypatch.setenv("PLUGIN_CONFIG_FILE", "/legacy/plugins.yaml")
-        monkeypatch.delenv("PLUGINS_CONFIG_FILE", raising=False)
-        settings.cache_clear()
-        try:
-            assert settings.config_file == "/legacy/plugins.yaml"
-        finally:
-            settings.cache_clear()
-
     def test_plugin_timeout_env_override(self, monkeypatch):
         from mcpgateway.plugins.framework.settings import settings
 
@@ -329,32 +312,6 @@ class TestPluginsSettingsStartupIsolation:
         finally:
             settings.cache_clear()
 
-    def test_deprecation_warning_emitted_for_legacy_config_key(self, monkeypatch, caplog):
-        from mcpgateway.plugins.framework.settings import settings
-
-        monkeypatch.setenv("PLUGIN_CONFIG_FILE", "/legacy/plugins.yaml")
-        monkeypatch.delenv("PLUGINS_CONFIG_FILE", raising=False)
-        settings.cache_clear()
-        try:
-            with caplog.at_level("WARNING"):
-                _ = settings.config_file
-            assert "PLUGIN_CONFIG_FILE is deprecated" in caplog.text
-            assert "removed in v1.2.0" in caplog.text
-        finally:
-            settings.cache_clear()
-
-    def test_no_deprecation_warning_without_legacy_key(self, monkeypatch, caplog):
-        from mcpgateway.plugins.framework.settings import settings
-
-        monkeypatch.delenv("PLUGIN_CONFIG_FILE", raising=False)
-        monkeypatch.setenv("PLUGINS_CONFIG_FILE", "/new/plugins.yaml")
-        settings.cache_clear()
-        try:
-            with caplog.at_level("WARNING"):
-                _ = settings.config_file
-            assert "PLUGIN_CONFIG_FILE is deprecated" not in caplog.text
-        finally:
-            settings.cache_clear()
 
 
 class TestPluginsSettingsEnabledFlag:
@@ -449,7 +406,7 @@ class TestLazySettingsWrapperProperties:
     @pytest.fixture(autouse=True)
     def _clean_env(self, monkeypatch):
         for key in list(os.environ):
-            if key.startswith("PLUGINS_") or key in ("PLUGIN_CONFIG_FILE", "UNIX_SOCKET_PATH"):
+            if key.startswith("PLUGINS_") or key == "UNIX_SOCKET_PATH":
                 monkeypatch.delenv(key, raising=False)
 
     def test_ssrf_protection_enabled_property(self, monkeypatch):

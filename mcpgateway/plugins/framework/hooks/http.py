@@ -40,7 +40,13 @@ class HttpHeaderPayload(RootModel[dict[str, str]], PluginPayload):
         return self.root[item]
 
     def __setitem__(self, key: str, value: str) -> None:
-        """Custom setitem function to override root attribute.
+        """Mutation helper — operates on the underlying dict.
+
+        .. warning::
+           Because ``PluginPayload`` is frozen, this should only be used
+           on freshly-created copies (e.g. inside ``model_copy``).  The
+           executor deep-copies payloads before handing them to plugins,
+           so in-place writes on the copy are safe.
 
         Args:
             key: The http header key.

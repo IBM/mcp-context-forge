@@ -227,14 +227,24 @@ class PluginExecutor:
                         # Cross-type payload (e.g. HTTP hooks returning a different
                         # result type than the input).  Field-level filtering is not
                         # applicable; the policy's presence authorises the hook.
-                        logger.debug(
-                            "Plugin %s returned cross-type payload (%s -> %s) on hook %s; accepting without field filtering",
-                            hook_ref.plugin_ref.name,
-                            type(effective_payload).__name__,
-                            type(result.modified_payload).__name__,
-                            hook_type,
-                        )
-                        current_payload = result.modified_payload
+                        # Guard: only accept PluginPayload subtypes or dict (used
+                        # by http_auth_resolve_user and similar hooks).
+                        if isinstance(result.modified_payload, (PluginPayload, dict)):
+                            logger.debug(
+                                "Plugin %s returned cross-type payload (%s -> %s) on hook %s; accepting without field filtering",
+                                hook_ref.plugin_ref.name,
+                                type(effective_payload).__name__,
+                                type(result.modified_payload).__name__,
+                                hook_type,
+                            )
+                            current_payload = result.modified_payload
+                        else:
+                            logger.warning(
+                                "Plugin %s returned unexpected type %s on hook %s; ignoring modification",
+                                hook_ref.plugin_ref.name,
+                                type(result.modified_payload).__name__,
+                                hook_type,
+                            )
                 elif self.default_hook_policy == DefaultHookPolicy.ALLOW:
                     # No explicit policy + default=allow -- accept all modifications
                     current_payload = result.modified_payload
@@ -246,7 +256,7 @@ class PluginExecutor:
                         hook_type,
                     )
 
-            if not result.continue_processing and hook_ref.plugin_ref.mode == PluginMode.ENFORCE:
+            if not result.continue_processing and hook_ref.plugin_ref.mode in (PluginMode.ENFORCE, PluginMode.ENFORCE_IGNORE_ERROR):
                 return (
                     PluginResult(
                         continue_processing=False,
@@ -562,6 +572,8 @@ class PluginManager:
                     executor.timeout = timeout
                 if not executor.hook_policies:
                     executor.hook_policies = hook_policies
+                elif executor.hook_policies != hook_policies:
+                    logger.warning("PluginManager: hook_policies already set; ignoring new policies (call reset() first to replace them)")
                 if observability and not executor.observability:
                     executor.observability = observability
         elif self._executor is None:

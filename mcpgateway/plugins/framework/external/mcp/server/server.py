@@ -97,7 +97,7 @@ class ExternalPluginServer:
             >>> server is not None
             True
         """
-        self._config_path = config_path or get_settings().config_path or os.path.join(".", "resources", "plugins", "config.yaml")
+        self._config_path = config_path or get_settings().config_path or get_settings().config_file or os.path.join(".", "resources", "plugins", "config.yaml")
         self._config = ConfigLoader.load_config(self._config_path, use_jinja=False)
         self._plugin_manager = PluginManager(self._config_path)
 

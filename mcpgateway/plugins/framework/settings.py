@@ -40,7 +40,7 @@ class PluginsSettings(BaseSettings):
             " this only affects custom hook types. Set to 'deny' for stricter production environments."
         ),
     )
-    config_file: str = Field(default="plugins/config.yaml", description="Path to main plugins configuration file", validation_alias=AliasChoices("PLUGINS_CONFIG_FILE", "PLUGIN_CONFIG_FILE"))
+    config_file: str = Field(default="plugins/config.yaml", description="Path to main plugins configuration file")
     plugin_timeout: int = Field(default=30, description="Plugin execution timeout in seconds")
     log_level: str = Field(default="INFO", description="Logging level for plugin framework components")
     skip_ssl_verify: bool = Field(
@@ -167,7 +167,7 @@ class PluginsStartupSettings(BaseSettings):
     prevent the gateway from booting.
     """
 
-    config_file: str = Field(default="plugins/config.yaml", validation_alias=AliasChoices("PLUGINS_CONFIG_FILE", "PLUGIN_CONFIG_FILE"))
+    config_file: str = Field(default="plugins/config.yaml")
     plugin_timeout: int = 30
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -293,13 +293,6 @@ class PluginsHttpClientSettings(BaseSettings):
     httpx_pool_timeout: float = 10.0
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-
-class PluginsLegacyConfigDeprecationSettings(BaseSettings):
-    """Lightweight settings for legacy config-key deprecation detection."""
-
-    plugins_config_file: str | None = Field(default=None, validation_alias="PLUGINS_CONFIG_FILE")
-    plugin_config_file: str | None = Field(default=None, validation_alias="PLUGIN_CONFIG_FILE")
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 class PluginsCliSettings(BaseSettings):
@@ -462,29 +455,6 @@ def get_http_client_settings() -> PluginsHttpClientSettings:
     return PluginsHttpClientSettings()
 
 
-@lru_cache()
-def get_legacy_config_deprecation_settings() -> PluginsLegacyConfigDeprecationSettings:
-    """Get cached lightweight settings for config-key deprecation checks.
-
-    Returns:
-        PluginsLegacyConfigDeprecationSettings: A cached instance.
-    """
-    return PluginsLegacyConfigDeprecationSettings()
-
-
-@lru_cache()
-def warn_if_legacy_plugin_config_file_used() -> None:
-    """Emit one-time deprecation warning when legacy PLUGIN_CONFIG_FILE is configured."""
-    deprecation_settings = get_legacy_config_deprecation_settings()
-    legacy_value = (deprecation_settings.plugin_config_file or "").strip()
-    new_value = (deprecation_settings.plugins_config_file or "").strip()
-    if not legacy_value:
-        return
-    if new_value:
-        logger.warning("PLUGIN_CONFIG_FILE is deprecated and will be removed in v1.2.0. " "PLUGINS_CONFIG_FILE is the preferred key; when both are set, PLUGINS_CONFIG_FILE takes precedence.")
-        return
-    logger.warning("PLUGIN_CONFIG_FILE is deprecated and will be removed in v1.2.0. " "Please migrate to PLUGINS_CONFIG_FILE.")
-
 
 @lru_cache()
 def get_cli_settings() -> PluginsCliSettings:
@@ -540,7 +510,6 @@ class LazySettingsWrapper:
         Returns:
             The plugin configuration file path.
         """
-        warn_if_legacy_plugin_config_file_used()
         return get_startup_settings().config_file
 
     @property
@@ -628,8 +597,6 @@ class LazySettingsWrapper:
         get_client_mtls_settings.cache_clear()
         get_mcp_server_settings.cache_clear()
         get_http_client_settings.cache_clear()
-        get_legacy_config_deprecation_settings.cache_clear()
-        warn_if_legacy_plugin_config_file_used.cache_clear()
         get_cli_settings.cache_clear()
         get_grpc_client_mtls_settings.cache_clear()
         get_grpc_server_settings.cache_clear()

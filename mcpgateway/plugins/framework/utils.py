@@ -12,6 +12,7 @@ plugins.
 # Standard
 from functools import cache
 import importlib
+import logging
 from types import ModuleType
 from typing import Any, Optional
 
@@ -19,6 +20,8 @@ from typing import Any, Optional
 from fastapi.responses import JSONResponse
 import orjson
 from pydantic import BaseModel, ConfigDict
+
+logger = logging.getLogger(__name__)
 
 # First-Party
 from mcpgateway.plugins.framework.models import GlobalContext, PluginCondition
@@ -64,13 +67,16 @@ def coerce_messages(v: Any) -> Any:
 
 
 _COERCE_MAX_DEPTH = 20
+_COERCE_MAX_BREADTH = 500
 
 
 def coerce_nested(v: Any, *, _depth: int = 0) -> Any:
     """Recursively convert dicts to :class:`StructuredData` for attribute access.
 
     Already-constructed Pydantic models (e.g. a real ``PromptResult``
-    passed by the gateway) are returned as-is.
+    passed by the gateway) are returned as-is.  Depth is capped at
+    ``_COERCE_MAX_DEPTH`` and breadth (keys per dict / items per list)
+    at ``_COERCE_MAX_BREADTH`` to guard against resource exhaustion.
 
     Args:
         v: Value to coerce — dict, list, or scalar.
@@ -95,8 +101,14 @@ def coerce_nested(v: Any, *, _depth: int = 0) -> Any:
     if isinstance(v, BaseModel):
         return v
     if isinstance(v, dict):
+        if len(v) > _COERCE_MAX_BREADTH:
+            logger.warning("coerce_nested: dict has %d keys (limit %d); returning as plain dict", len(v), _COERCE_MAX_BREADTH)
+            return v
         return StructuredData(**{k: coerce_nested(val, _depth=_depth + 1) for k, val in v.items()})
     if isinstance(v, list):
+        if len(v) > _COERCE_MAX_BREADTH:
+            logger.warning("coerce_nested: list has %d items (limit %d); skipping coercion", len(v), _COERCE_MAX_BREADTH)
+            return v
         return [coerce_nested(item, _depth=_depth + 1) for item in v]
     return v
 
