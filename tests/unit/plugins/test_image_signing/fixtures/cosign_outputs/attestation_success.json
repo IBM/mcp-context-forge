@@ -1,0 +1,11 @@
+[
+    {
+        "payloadType": "application/vnd.in-toto+json",
+        "payload": "{\"predicateType\":\"https://slsa.dev/provenance/v0.2\",\"predicate\":{\"builder\":{\"id\":\"https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml\"},\"buildType\":\"https://github.com/slsa-framework/slsa-github-generator/generic@v1\"}}",
+        "signatures": [
+            {
+                "sig": "MEUCIQDx..."
+            }
+        ]
+    }
+]
