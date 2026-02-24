@@ -46,6 +46,25 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 FROM rust-builder-base AS rust-builder
 
 ###############################################################################
+# Node.js builder stage - builds Tailwind CSS
+###############################################################################
+# Use official Red Hat UBI10 Node.js 24 image
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1771303073 AS node-builder
+
+WORKDIR /build
+
+# Copy only files needed for CSS build (with proper ownership for non-root user)
+COPY --chown=1001:1001 package.json package-lock.json* ./
+COPY --chown=1001:1001 tailwind.config.js postcss.config.js ./
+COPY --chown=1001:1001 mcpgateway/templates/ ./mcpgateway/templates/
+COPY --chown=1001:1001 mcpgateway/static/ ./mcpgateway/static/
+
+# Install dependencies and build CSS
+RUN npm ci && \
+    npm run build:css && \
+    echo "✅ Tailwind CSS built successfully"
+
+###############################################################################
 # Main application stage
 ###############################################################################
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557
@@ -83,6 +102,9 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 
 # Copy project files into container
 COPY . /app
+
+# Copy pre-built Tailwind CSS from node-builder
+COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpgateway/static/css/
 
 # Copy Rust plugin wheels from builder (if any exist)
 COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/

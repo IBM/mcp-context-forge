@@ -19,19 +19,7 @@
       href="{{ root_path }}/static/favicon.ico"
     />
     <!-- Tailwind CSS -->
-    {% if ui_airgapped %}
-    <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
-    {% else %}
-    <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
-    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-    {% endif %}
-    <script>
-      if (window.tailwind && typeof window.tailwind === "object") {
-        window.tailwind.config = {
-          darkMode: "class",
-        };
-      }
-    </script>
+    <link rel="stylesheet" href="{{ root_path }}/static/css/tailwind.min.css" />
     <!-- HTMX for dynamic interactions -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
@@ -297,7 +285,7 @@
       crossorigin="anonymous">
     </script>
     {% endif %}
-    <!-- Alpine.js -->
+    <!-- Alpine.js (requires unsafe-eval for reactive system) -->
     {% if ui_airgapped %}
     <script
       src="{{ root_path }}/static/vendor/alpinejs/alpine.min.js"

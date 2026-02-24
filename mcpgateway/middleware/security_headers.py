@@ -274,9 +274,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Content Security Policy
         # This CSP is designed to work with the Admin UI while providing security
         # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting to stay consistent
+        # NOTE: 'unsafe-eval' is required for Alpine.js v3 reactive system (uses Function() constructor)
+        # This will be removed in Phase 2 when Alpine.js is replaced with CSP-compatible alternative
         csp_directives = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com",
             "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
             "img-src 'self' data: https:",
             "font-src 'self' data: https://cdnjs.cloudflare.com",

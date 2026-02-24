@@ -68,6 +68,25 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 
 FROM rust-builder-base AS rust-builder
 
+###############################################################################
+# Node.js builder stage - builds Tailwind CSS
+###############################################################################
+# Use official Red Hat UBI10 Node.js 24 image
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1771303073 AS node-builder
+
+WORKDIR /build
+
+# Copy only files needed for CSS build (with proper ownership for non-root user)
+COPY --chown=1001:1001 package.json package-lock.json* ./
+COPY --chown=1001:1001 tailwind.config.js postcss.config.js ./
+COPY --chown=1001:1001 mcpgateway/templates/ ./mcpgateway/templates/
+COPY --chown=1001:1001 mcpgateway/static/ ./mcpgateway/static/
+
+# Install dependencies and build CSS
+RUN npm ci && \
+    npm run build:css && \
+    echo "✅ Tailwind CSS built successfully"
+
 ###########################
 # Builder stage
 ###########################
@@ -160,6 +179,9 @@ COPY mcpgateway/ /app/mcpgateway/
 COPY gunicorn.config.py /app/
 COPY plugins/ /app/plugins/
 COPY mcp-catalog.yml /app/
+
+# Copy pre-built Tailwind CSS from node-builder
+COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpgateway/static/css/
 
 # Optional: Copy run.sh if it's needed in production
 COPY run.sh /app/

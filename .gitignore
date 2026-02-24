@@ -121,6 +121,11 @@ snyk-helm-results.json
 aibom.json
 sbom-cyclonedx.json
 sbom-spdx.json
+# ========================================
+# Build Artifacts - CSS
+# ========================================
+mcpgateway/static/css/tailwind.min.css
+
 
 # ========================================
 # Security reports

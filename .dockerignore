@@ -264,8 +264,24 @@ jwt/
 
 # Generated files
 public/
-static/
 media/
+
+# Static directory handling:
+# - The static/ directory MUST be included for Tailwind CSS build
+# - Node.js builder stage scans static/**/*.js for Tailwind classes
+# - Source file static/css/tailwind.src.css is required
+# - However, we exclude generated/downloaded files to avoid conflicts
+
+# Exclude generated CSS (built during Docker build)
+mcpgateway/static/css/tailwind.min.css
+
+# Exclude vendor directory (downloaded during Docker build via download-cdn-assets.sh)
+# This ensures fresh CDN assets are downloaded for each build
+mcpgateway/static/vendor/
+
+# Exclude generated/temporary files in static/
+mcpgateway/static/**/*.map
+mcpgateway/static/**/*.tmp
 
 # Application instances
 instance/
