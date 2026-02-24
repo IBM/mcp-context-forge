@@ -359,5 +359,3 @@ class TestInvokeHookWithReconnection:
 
                 # Verify error is about connection, not reconnection
                 assert "Connection lost" in str(exc_info.value.error.message) or "Reconnection failed" in str(exc_info.value.error.message)
-
-# Made with Bob
