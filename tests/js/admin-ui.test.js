@@ -2,7 +2,7 @@
  * Unit tests for admin.js notification, password, and selection functions.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, test, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -442,24 +442,59 @@ describe("dedupeSelectorItems", () => {
 describe("copyToClipboard", () => {
     const f = () => win.copyToClipboard;
 
-    test("selects element and calls execCommand('copy')", () => {
+    test("uses Clipboard API when available", async () => {
         const input = doc.createElement("input");
         input.id = "token-value";
         input.value = "my-secret-token";
         doc.body.appendChild(input);
 
-        // Mock execCommand
-        let copyCalled = false;
-        doc.execCommand = (cmd) => {
-            if (cmd === "copy") copyCalled = true;
-            return true;
-        };
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: { writeText },
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => true);
 
-        f()("token-value");
-        expect(copyCalled).toBe(true);
+        await f()("token-value");
+        expect(writeText).toHaveBeenCalledWith("my-secret-token");
+        expect(doc.execCommand).not.toHaveBeenCalled();
     });
 
-    test("does not throw when element does not exist", () => {
-        expect(() => f()("nonexistent")).not.toThrow();
+    test("falls back to execCommand('copy') when Clipboard API is unavailable", async () => {
+        const input = doc.createElement("input");
+        input.id = "token-value";
+        input.value = "my-secret-token";
+        doc.body.appendChild(input);
+
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: undefined,
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => true);
+
+        await f()("token-value");
+        expect(doc.execCommand).toHaveBeenCalledWith("copy");
+    });
+
+    test("falls back to execCommand when Clipboard API write fails", async () => {
+        const input = doc.createElement("input");
+        input.id = "token-value";
+        input.value = "my-secret-token";
+        doc.body.appendChild(input);
+
+        const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: { writeText },
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => true);
+
+        await f()("token-value");
+        expect(writeText).toHaveBeenCalledWith("my-secret-token");
+        expect(doc.execCommand).toHaveBeenCalledWith("copy");
+    });
+
+    test("does not throw when element does not exist", async () => {
+        await expect(f()("nonexistent")).resolves.toBeUndefined();
     });
 });

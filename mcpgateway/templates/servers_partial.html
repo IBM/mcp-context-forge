@@ -18,6 +18,24 @@
     </tr>
   </thead>
   <tbody id="servers-table-body" data-testid="server-list" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+  {% if data|length == 0 %}
+  <tr data-testid="servers-empty-state">
+    <td colspan="13" class="px-6 py-8 text-center">
+      <p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+        {% if query_params is defined and query_params.get('team_id') %}
+        No servers found in the selected team.
+        {% else %}
+        No servers found.
+        {% endif %}
+      </p>
+      {% if query_params is defined and query_params.get('team_id') %}
+      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        Switch the header selector back to <strong>All Teams</strong> to view servers outside this team scope.
+      </p>
+      {% endif %}
+    </td>
+  </tr>
+  {% endif %}
   {% for server in data %}
   {% set server_label = server.name or server.id %}
   {% set can_modify = is_admin or server.ownerEmail == current_user_email or (server.visibility == 'team' and server.teamId and user_team_roles.get(server.teamId|string) == 'owner') %}

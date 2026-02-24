@@ -930,6 +930,38 @@ def test_create_authorization_url_with_pkce_no_scopes(oauth_manager):
     assert "scope" not in url
 
 
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_uses_legacy_fallback(oauth_manager):
+    import mcpgateway.services.oauth_manager as om
+
+    with (
+        patch("mcpgateway.services.oauth_manager.get_settings", return_value=MagicMock(cache_type="memory")),
+        patch.dict(om._oauth_states, {}, clear=True),
+        patch.dict(om._oauth_state_lookup, {}, clear=True),
+        patch.object(oauth_manager, "_extract_legacy_state_payload", return_value={"gateway_id": "legacy-gw"}) as mock_legacy,
+    ):
+        result = await oauth_manager.resolve_gateway_id_from_state("legacy-state", allow_legacy_fallback=True)
+
+    assert result == "legacy-gw"
+    mock_legacy.assert_called_once_with("legacy-state")
+
+
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_skips_legacy_fallback_when_disabled(oauth_manager):
+    import mcpgateway.services.oauth_manager as om
+
+    with (
+        patch("mcpgateway.services.oauth_manager.get_settings", return_value=MagicMock(cache_type="memory")),
+        patch.dict(om._oauth_states, {}, clear=True),
+        patch.dict(om._oauth_state_lookup, {}, clear=True),
+        patch.object(oauth_manager, "_extract_legacy_state_payload", return_value={"gateway_id": "legacy-gw"}) as mock_legacy,
+    ):
+        result = await oauth_manager.resolve_gateway_id_from_state("legacy-state", allow_legacy_fallback=False)
+
+    assert result is None
+    mock_legacy.assert_not_called()
+
+
 # ---------- OAuthError ----------
 
 

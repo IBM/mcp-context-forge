@@ -27,7 +27,7 @@ from __future__ import annotations
 # Standard
 import base64
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import uuid
 
 # Third-Party
@@ -616,6 +616,23 @@ async def test_require_docs_auth_override_no_header_no_cookie_raises_not_authent
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_docs_auth_override_enforces_revocation_and_user_status(monkeypatch):
+    """Docs auth override should run the same revocation/user checks as API auth paths."""
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    verified_payload = {"sub": "alice@example.com", "jti": "token-jti"}
+    with patch("mcpgateway.utils.verify_credentials.verify_credentials", new=AsyncMock(return_value=verified_payload)), patch(
+        "mcpgateway.utils.verify_credentials._enforce_revocation_and_active_user",
+        new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked")),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await vc.require_docs_auth_override(auth_header="Bearer token", jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "revoked" in exc.value.detail.lower()
 
 
 # Integration test for /docs endpoint (requires test_client fixture and create_test_jwt_token helper)
@@ -1635,6 +1652,7 @@ async def test_require_auth_header_first_proxy_auth_returns_proxy_user(monkeypat
     """Proxy user is returned when mcp_client_auth_enabled=False and trust_proxy_auth=True."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
 
@@ -1652,6 +1670,7 @@ async def test_require_auth_header_first_proxy_auth_missing_header_raises_401(mo
     """When proxy auth is required but header missing, raises 401."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
 
@@ -1685,10 +1704,31 @@ async def test_require_auth_header_first_no_auth_method_configured_raises_401(mo
 
 
 @pytest.mark.asyncio
+async def test_require_auth_header_first_proxy_trust_without_ack_is_ignored(monkeypatch):
+    """Proxy trust mode is ignored unless explicitly acknowledged."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", False, raising=False)
+    monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"x-authenticated-user": "proxy-user@example.com"}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Authentication required but no auth method configured" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_require_auth_header_first_proxy_trust_no_header_auth_not_required_returns_anonymous(monkeypatch):
     """Line 928: trust_proxy_auth=True but no proxy header and auth_required=False returns 'anonymous'."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
 

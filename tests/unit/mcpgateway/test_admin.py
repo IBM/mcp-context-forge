@@ -13375,6 +13375,8 @@ class TestAuthLogin:
     async def test_admin_login_handler_success(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.password_change_enforcement_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_preserve_admin_auth", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.environment", "development", raising=False)
 
@@ -13393,6 +13395,32 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+
+    @pytest.mark.asyncio
+    async def test_admin_login_handler_non_admin_requires_sso(self, monkeypatch, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_preserve_admin_auth", True, raising=False)
+
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_user.password_change_required = False
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
+        monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
+        create_access_token_mock = AsyncMock(return_value=("fake-token", None))
+        monkeypatch.setattr("mcpgateway.admin.create_access_token", create_access_token_mock)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value={"email": "user@test.com", "password": "secret123"})
+
+        result = await admin_login_handler(request, mock_db)
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert "error=sso_required" in result.headers["location"]
+        create_access_token_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_password_expired_requires_change(self, monkeypatch, mock_db):

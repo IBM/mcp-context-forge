@@ -28,6 +28,7 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-        if settings.trust_proxy_auth:
+        if is_proxy_auth_trust_active(settings):
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
@@ -273,8 +274,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         if is_browser_request:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
 
-        # If auth is disabled, return the stock admin user
-        if not settings.auth_required:
+        # AUTH_REQUIRED=false no longer implies admin access.
+        # Preserve explicit unsafe override for local-only compatibility.
+        if not settings.auth_required and getattr(settings, "allow_unauthenticated_admin", False) is True:
             return {
                 "email": settings.platform_admin_email,
                 "full_name": "Platform Admin",
@@ -285,6 +287,21 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 "auth_method": "disabled",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
+            }
+
+        if not settings.auth_required:
+            return {
+                "email": "anonymous",
+                "full_name": "Anonymous User",
+                "is_admin": False,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "db": None,  # Session closed; use endpoint's db param instead
+                "auth_method": "anonymous",
+                "request_id": getattr(request.state, "request_id", None),
+                "team_id": getattr(request.state, "team_id", None),
+                "plugin_context_table": getattr(request.state, "plugin_context_table", None),
+                "plugin_global_context": getattr(request.state, "plugin_global_context", None),
             }
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")

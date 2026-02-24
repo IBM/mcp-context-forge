@@ -71,6 +71,81 @@ def test_check_time_restrictions_weekend(monkeypatch: pytest.MonkeyPatch):
     assert middleware._check_time_restrictions({"weekdays_only": True}) is False
 
 
+def test_check_usage_limits_hourly_exceeded():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    hourly_count_result = MagicMock()
+    hourly_count_result.scalar.return_value = 3
+    mock_db.execute.return_value = hourly_count_result
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_hour": 3})
+
+    assert allowed is False
+    assert reason == "Hourly request limit exceeded"
+    mock_db.rollback.assert_called_once()
+    mock_db.close.assert_called_once()
+
+
+def test_check_usage_limits_daily_exceeded():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    daily_count_result = MagicMock()
+    daily_count_result.scalar.return_value = 7
+    mock_db.execute.return_value = daily_count_result
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_day": 7})
+
+    assert allowed is False
+    assert reason == "Daily request limit exceeded"
+
+
+def test_check_usage_limits_allows_when_under_limits():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    hourly_count_result = MagicMock()
+    hourly_count_result.scalar.return_value = 2
+    daily_count_result = MagicMock()
+    daily_count_result.scalar.return_value = 5
+    mock_db.execute.side_effect = [hourly_count_result, daily_count_result]
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits(
+            "jti-123",
+            {"requests_per_hour": 3, "requests_per_day": 10},
+        )
+
+    assert allowed is True
+    assert reason is None
+
+
+def test_check_usage_limits_ignores_non_positive_limits_without_db_call():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_hour": "bad", "requests_per_day": 0})
+
+    assert allowed is True
+    assert reason is None
+    mock_db.execute.assert_not_called()
+
+
+def test_check_usage_limits_db_failure_fails_open():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = RuntimeError("db-error")
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_day": 3})
+
+    assert allowed is True
+    assert reason is None
+    mock_db.rollback.assert_called_once()
+    mock_db.close.assert_called_once()
+
+
 def test_check_server_and_permission_restrictions():
     middleware = TokenScopingMiddleware()
     assert middleware._check_server_restriction("/servers/abc/tools", "abc") is True

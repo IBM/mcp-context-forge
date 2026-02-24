@@ -638,11 +638,12 @@ class OAuthManager:
                     return {"gateway_id": gateway_id}
         return None
 
-    async def resolve_gateway_id_from_state(self, state: str) -> Optional[str]:
+    async def resolve_gateway_id_from_state(self, state: str, allow_legacy_fallback: bool = True) -> Optional[str]:
         """Resolve gateway ID for a callback state token without consuming it.
 
         Args:
             state: OAuth callback state parameter
+            allow_legacy_fallback: Whether to decode legacy callback state formats.
 
         Returns:
             Gateway ID when resolvable, otherwise ``None``.
@@ -690,9 +691,10 @@ class OAuthManager:
             if gateway_id:
                 return gateway_id
 
-        legacy_payload = self._extract_legacy_state_payload(state)
-        if legacy_payload:
-            return legacy_payload.get("gateway_id")
+        if allow_legacy_fallback:
+            legacy_payload = self._extract_legacy_state_payload(state)
+            if legacy_payload:
+                return legacy_payload.get("gateway_id")
         return None
 
     async def _store_authorization_state(

@@ -1,5 +1,19 @@
 /* global marked, DOMPurify, safeReplaceState, _logRestrictedContext, getPaginationParams, buildTableUrl */
 const MASKED_AUTH_VALUE = "*****";
+let ADMIN_DEBUG_LOGGING_ENABLED = false;
+try {
+    ADMIN_DEBUG_LOGGING_ENABLED =
+        window.localStorage.getItem("MCPGATEWAY_ADMIN_DEBUG") === "1";
+} catch (_e) {
+    ADMIN_DEBUG_LOGGING_ENABLED = false;
+}
+
+window._originalConsoleLog = console.log;
+window._originalConsoleDebug = console.debug;
+if (!ADMIN_DEBUG_LOGGING_ENABLED) {
+    console.log = () => {};
+    console.debug = () => {};
+}
 
 // Runtime fallbacks when admin.js is loaded outside admin.html
 window._restrictedContextLogged = window._restrictedContextLogged || false;
@@ -21200,6 +21214,25 @@ function setupTokenListEventHandlers(container) {
  * Get the currently selected team ID from the team selector
  */
 function getCurrentTeamId() {
+    const isKnownTeamId = (teamId) => {
+        if (!teamId) {
+            return false;
+        }
+
+        const teamsData = Array.isArray(window.USER_TEAMS_DATA)
+            ? window.USER_TEAMS_DATA
+            : Array.isArray(window.USER_TEAMS)
+              ? window.USER_TEAMS
+              : [];
+
+        // If team data is unavailable, do not block existing behavior.
+        if (teamsData.length === 0) {
+            return true;
+        }
+
+        return teamsData.some((team) => team && team.id === teamId);
+    };
+
     // First, try to get from Alpine.js component (most reliable)
     const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
     if (
@@ -21215,7 +21248,7 @@ function getCurrentTeamId() {
             return null;
         }
 
-        return selectedTeam;
+        return isKnownTeamId(selectedTeam) ? selectedTeam : null;
     }
 
     // Fallback: check URL parameters
@@ -21226,7 +21259,7 @@ function getCurrentTeamId() {
         return null;
     }
 
-    return teamId;
+    return isKnownTeamId(teamId) ? teamId : null;
 }
 
 /**
@@ -21516,20 +21549,40 @@ async function createToken(form) {
         scope.usage_limits = {};
         payload.scope = scope;
 
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
             method: "POST",
-            headers: {
-                Authorization: `Bearer ${await getAuthToken()}`,
-                "Content-Type": "application/json",
-            },
+            headers: requestHeaders,
             body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
-            const errorMsg = await parseErrorResponse(
+            let errorMsg = await parseErrorResponse(
                 response,
                 `Failed to create token (${response.status})`,
             );
+
+            // Common conflict path: duplicate token name (same user + same team scope).
+            const genericCreateTokenError =
+                "Unable to complete the operation. Please try again.";
+            if (
+                response.status === 409 &&
+                errorMsg === genericCreateTokenError
+            ) {
+                const scopeLabel = currentTeamId
+                    ? "the selected team"
+                    : "All Teams (public-only)";
+                errorMsg = `Token name already exists in ${scopeLabel}. Choose a different token name.`;
+            }
+            if (
+                response.status === 400 &&
+                typeof errorMsg === "string" &&
+                errorMsg.startsWith("Team not found:")
+            ) {
+                errorMsg =
+                    "Selected team is no longer available. Switch the header selector to All Teams and try again.";
+            }
+
             throw new Error(errorMsg);
         }
 
@@ -21599,7 +21652,7 @@ function showTokenCreatedModal(tokenData) {
                             id="new-token-value"
                         />
                         <button
-                            onclick="copyToClipboard('new-token-value')"
+                            data-copy-token-target="new-token-value"
                             class="px-3 py-2 bg-indigo-600 text-white text-sm rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                             Copy
@@ -21636,6 +21689,22 @@ function showTokenCreatedModal(tokenData) {
             });
         });
 
+    // Bind copy action without relying on inline handlers
+    const copyTokenButton = modal.querySelector("[data-copy-token-target]");
+    if (copyTokenButton) {
+        copyTokenButton.addEventListener("click", function (event) {
+            event.preventDefault();
+            const elementId = event.currentTarget.getAttribute(
+                "data-copy-token-target",
+            );
+            if (elementId) {
+                copyToClipboard(elementId).catch((error) => {
+                    console.warn("Copy token action failed", error);
+                });
+            }
+        });
+    }
+
     // Focus the token input for easy selection
     const tokenInput = modal.querySelector("#new-token-value");
     tokenInput.focus();
@@ -21645,13 +21714,65 @@ function showTokenCreatedModal(tokenData) {
 /**
  * Copy text to clipboard
  */
-function copyToClipboard(elementId) {
+async function copyToClipboard(elementId) {
     const element = document.getElementById(elementId);
-    if (element) {
-        element.select();
-        document.execCommand("copy");
-        showNotification("Token copied to clipboard", "success");
+    if (!element) {
+        return;
     }
+
+    const textToCopy =
+        typeof element.value === "string"
+            ? element.value
+            : (element.textContent || "").trim();
+
+    const fallbackCopy = () => {
+        if (typeof element.focus === "function") {
+            element.focus();
+        }
+        if (typeof element.select === "function") {
+            element.select();
+        }
+        if (typeof element.setSelectionRange === "function") {
+            element.setSelectionRange(0, textToCopy.length);
+        }
+
+        if (typeof document.execCommand !== "function") {
+            return false;
+        }
+        try {
+            return document.execCommand("copy");
+        } catch (error) {
+            console.warn("Fallback copy failed", error);
+            return false;
+        }
+    };
+
+    if (!textToCopy) {
+        showNotification("No token available to copy", "error");
+        return;
+    }
+
+    const hasClipboardApi =
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function";
+
+    if (hasClipboardApi) {
+        try {
+            await navigator.clipboard.writeText(textToCopy);
+            showNotification("Token copied to clipboard", "success");
+            return;
+        } catch (error) {
+            console.warn("Clipboard API copy failed, trying fallback", error);
+        }
+    }
+
+    if (fallbackCopy()) {
+        showNotification("Token copied to clipboard", "success");
+        return;
+    }
+
+    showNotification("Failed to copy token. Please copy it manually.", "error");
 }
 
 /**
@@ -21667,14 +21788,12 @@ async function revokeToken(tokenId, tokenName) {
     }
 
     try {
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/tokens/${tokenId}`,
             {
                 method: "DELETE",
-                headers: {
-                    Authorization: `Bearer ${await getAuthToken()}`,
-                    "Content-Type": "application/json",
-                },
+                headers: requestHeaders,
                 body: JSON.stringify({
                     reason: "Revoked by user via admin interface",
                 }),
@@ -21702,13 +21821,11 @@ async function revokeToken(tokenId, tokenName) {
  */
 async function viewTokenUsage(tokenId) {
     try {
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/tokens/${tokenId}/usage`,
             {
-                headers: {
-                    Authorization: `Bearer ${await getAuthToken()}`,
-                    "Content-Type": "application/json",
-                },
+                headers: requestHeaders,
             },
         );
 
@@ -22081,6 +22198,24 @@ async function getAuthToken() {
         }
     }
     return token || "";
+}
+
+/**
+ * Build auth headers for API requests.
+ * Avoids sending an empty Bearer header when token is not JS-readable (e.g., HttpOnly cookie auth).
+ */
+async function getAuthHeaders(includeJsonContentType = false) {
+    const headers = {};
+    if (includeJsonContentType) {
+        headers["Content-Type"] = "application/json";
+    }
+
+    const token = await getAuthToken();
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+
+    return headers;
 }
 
 /**

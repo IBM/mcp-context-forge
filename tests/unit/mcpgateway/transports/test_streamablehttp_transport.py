@@ -1103,6 +1103,21 @@ async def test_streamable_http_auth_skips_non_mcp():
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_skips_well_known_rfc9728_even_when_strict(monkeypatch):
+    """RFC 9728 well-known metadata paths should bypass MCP auth gate."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    scope = _make_scope("/.well-known/oauth-protected-resource/servers/550e8400-e29b-41d4-a716-446655440000/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is True
+    assert called == []
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_skips_cors_preflight():
     """Auth returns True for CORS preflight requests (OPTIONS with Origin and Access-Control-Request-Method)."""
     # CORS preflight requests cannot carry Authorization headers, so they must be exempt from auth
@@ -1219,6 +1234,27 @@ async def test_streamable_http_auth_bearer_no_token(monkeypatch):
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called and called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_bearer_no_token_permissive_mode(monkeypatch):
+    """Bearer-without-token should still return 401 when mcp_require_auth=False."""
+
+    async def fake_verify(token):
+        raise AssertionError("Should not be called")
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
     called = []
 
@@ -3690,6 +3726,7 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
     """Test auth sets user context for proxy user when client auth disabled (lines 1740-1750)."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -3727,7 +3764,9 @@ async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypat
         raise ValueError("invalid token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -3761,7 +3800,9 @@ async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch)
         return "string_payload"
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -4087,6 +4128,7 @@ async def test_streamable_http_auth_no_proxy_user_when_client_auth_disabled(monk
     """Test auth continues to JWT flow when client auth disabled but no proxy user header (line 1740->1753)."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
@@ -6912,7 +6954,9 @@ async def test_streamable_http_auth_revocation_check_exception_fails_open(monkey
         return {
             "sub": "user@example.com",
             "jti": "jti-1",
-            "teams": ["team-a"],
+            # Keep public-only to avoid team-membership DB checks; this test targets
+            # revocation-check failure behavior only.
+            "teams": [],
         }
 
     active_user = MagicMock()
@@ -8396,7 +8440,7 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeypatch):
-    """Test auth exception fallback when permissive mode enabled and no proxy user."""
+    """Bearer verification errors should return 401 even in permissive mode without proxy fallback."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import streamable_http_auth, user_context_var
 
@@ -8405,6 +8449,7 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
 
     # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-user")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
@@ -8414,15 +8459,15 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
     async def send(msg):
         sent.append(msg)
 
-    # Should catch exception, fail proxy check (no header), then succeed via permissive check
+    # Should catch exception, fail proxy fallback (no proxy header), and reject invalid bearer.
     result = await streamable_http_auth(scope, None, send)
 
-    assert result is True
-    assert sent == []
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == tr.HTTP_401_UNAUTHORIZED
 
     ctx = user_context_var.get()
-    assert ctx["is_authenticated"] is False
-    assert ctx["teams"] == []
+    assert ctx is not None
 
 
 # ---------------------------------------------------------------------------

@@ -76,7 +76,7 @@ dependencies = [
     "sse-starlette>=3.2.0",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
-    "typer>=0.24.1",
+    "typer>=0.23.0",
     "uvicorn[standard]>=0.41.0",
 ]
 
