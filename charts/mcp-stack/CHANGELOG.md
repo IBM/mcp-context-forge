@@ -59,6 +59,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **Upgrade safety**: If your existing release still needs MinIO, pin `minio.enabled=true` in your values before upgrade to avoid MinIO resources being pruned
 * **Validation**: Chart now fails template rendering if `postgres.upgrade.enabled=true` while `minio.enabled=false`
 
+#### **🗄️ PostgreSQL Upgrade Safety Hardening**
+* Internal PostgreSQL Deployment now always uses `strategy.type=Recreate` to prevent overlapping old/new DB pods on the same PVC
+* Added `postgres.terminationGracePeriodSeconds` (default: `120`) for graceful shutdown window
+* Added `postgres.lifecycle.preStop.enabled` (default: `true`) to run a clean `pg_ctl ... stop` before termination
+* Added `postgres.persistence.useReadWriteOncePod` (default: `true`) to prefer strict single-pod mount semantics where supported
+* **Compatibility**: If your storage class does not support `ReadWriteOncePod`, set `postgres.persistence.useReadWriteOncePod=false` and keep `accessModes: [ReadWriteOnce]`
+
 ## [0.9.1] - 2025-12-03
 
 ### Added

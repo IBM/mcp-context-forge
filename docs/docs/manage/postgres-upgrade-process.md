@@ -11,6 +11,38 @@ Before proceeding with the upgrade, ensure:
 - You have sufficient disk space for backup operations
 - You can accept brief downtime during the upgrade process
 
+## Upgrade Safety Rules (Required)
+
+Before any PostgreSQL image/tag upgrade in Kubernetes:
+
+1. Take a backup you can restore from.
+2. Ensure Postgres does not run overlapping old/new pods on the same PVC.
+3. Ensure graceful shutdown to flush checkpoints/WAL before pod termination.
+4. Prefer strict single-pod mounts (`ReadWriteOncePod`) when supported by your storage class.
+
+Example pre-upgrade backup command:
+
+```bash
+kubectl exec -n mcp deploy/mcp-stack-postgres -- \
+  pg_dump -U admin -d postgresdb > pg-backup-$(date +%Y%m%d-%H%M%S).sql
+```
+
+The chart now applies these safety defaults for internal Postgres:
+
+- `Deployment` strategy is always `Recreate` (non-overlapping updates)
+- `terminationGracePeriodSeconds=120`
+- `lifecycle.preStop` hook runs `pg_ctl ... stop`
+- `postgres.persistence.useReadWriteOncePod=true` by default
+
+If your storage class does not support `ReadWriteOncePod`, set:
+
+```yaml
+postgres:
+  persistence:
+    useReadWriteOncePod: false
+    accessModes: [ReadWriteOnce]
+```
+
 ## Upgrade Process
 
 The upgrade process occurs in stages and requires two separate Helm operations:
@@ -138,6 +170,9 @@ helm upgrade mcp-stack ./charts/mcp-stack -n mcp-private -f my-values.yaml --wai
 | `postgres.upgrade.targetVersion` | Target PostgreSQL version (currently supports "18") | `"18"` |
 | `postgres.upgrade.backupCompleted` | Internal flag - set to false to trigger backup | `false` |
 | `minio.enabled` | Enable MinIO for backup storage | `false` (set `true` for upgrades) |
+| `postgres.terminationGracePeriodSeconds` | Grace period before force-kill on pod shutdown | `120` |
+| `postgres.lifecycle.preStop.enabled` | Run clean shutdown hook before container termination | `true` |
+| `postgres.persistence.useReadWriteOncePod` | Prefer strict single-pod mount mode | `true` |
 
 ### Storage Configuration
 
@@ -158,6 +193,8 @@ postgres:
 - **PVC Compatibility**: The PVC will be reused but the data will be migrated through the backup/restore process
 - **MinIO Required**: MinIO must be enabled and operational for the upgrade to work
 - **Validation Guard**: Chart rendering fails fast if upgrade mode is enabled without MinIO
+- **Single Writer Safety**: Chart forces Postgres `Recreate` strategy to avoid overlapping pod mounts on one PVC
+- **Graceful Stop**: Chart sets preStop + termination grace period to reduce checkpoint/WAL corruption risk
 
 ## Cleanup After Successful Upgrade
 

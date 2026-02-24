@@ -1098,6 +1098,8 @@ postgres:
                                 #   GKE: "standard", "ssd", "premium-rw"
                                 #   Azure AKS: "default", "managed-premium", "azurefile"
                                 #   Bare Metal: "local-path", "nfs-client"
+    useReadWriteOncePod: true    # Prefer strict single-pod mount semantics when supported by your CSI/storage class
+                                 # Set false to fall back to accessModes below on clusters/storage classes without RWOP support
     accessModes: [ReadWriteOnce]
     size: 5Gi
     reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
@@ -1121,6 +1123,12 @@ postgres:
     requests:
       cpu: 500m           # guaranteed half-core
       memory: 512Mi
+
+  # Graceful shutdown helps prevent WAL/checkpoint corruption on restart.
+  terminationGracePeriodSeconds: 120
+  lifecycle:
+    preStop:
+      enabled: true       # Run pg_ctl stop before SIGKILL during pod termination
 
   # ─── Health & readiness probes ───
 

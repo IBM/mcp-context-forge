@@ -814,6 +814,7 @@ Kubernetes: `>=1.21.0-0`
 | postgres.service.port | int | `5432` |  |
 | postgres.persistence.enabled | bool | `true` |  |
 | postgres.persistence.storageClassName | string | `""` |  |
+| postgres.persistence.useReadWriteOncePod | bool | `true` |  |
 | postgres.persistence.accessModes[0] | string | `"ReadWriteOnce"` |  |
 | postgres.persistence.size | string | `"5Gi"` |  |
 | postgres.persistence.reclaimPolicy | string | `"Retain"` |  |
@@ -826,6 +827,8 @@ Kubernetes: `>=1.21.0-0`
 | postgres.resources.limits.memory | string | `"2Gi"` |  |
 | postgres.resources.requests.cpu | string | `"500m"` |  |
 | postgres.resources.requests.memory | string | `"512Mi"` |  |
+| postgres.terminationGracePeriodSeconds | int | `120` |  |
+| postgres.lifecycle.preStop.enabled | bool | `true` |  |
 | postgres.external.enabled | bool | `false` |  |
 | postgres.external.existingSecret | string | `""` |  |
 | postgres.external.host | string | `""` |  |

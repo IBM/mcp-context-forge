@@ -403,6 +403,29 @@ flowchart TD
 
         Use `helm history mcp-stack -n mcp-private` to list available revisions before rolling back.
 
+    !!! warning "PostgreSQL upgrade safety rules"
+        Before changing PostgreSQL image/tag, take a backup and ensure single-writer semantics.
+
+        Recommended pre-upgrade backup:
+        ```bash
+        kubectl exec -n mcp-private deploy/mcp-stack-postgres -- \
+          pg_dump -U admin -d postgresdb > pg-backup-$(date +%Y%m%d-%H%M%S).sql
+        ```
+
+        Chart defaults now enforce:
+        - `Deployment.strategy.type=Recreate` for internal Postgres (no overlapping old/new DB pods)
+        - `postgres.terminationGracePeriodSeconds=120`
+        - `postgres.lifecycle.preStop.enabled=true` for clean stop before termination
+        - `postgres.persistence.useReadWriteOncePod=true` for stricter mount semantics
+
+        If your storage class does not support `ReadWriteOncePod`, set:
+        ```yaml
+        postgres:
+          persistence:
+            useReadWriteOncePod: false
+            accessModes: [ReadWriteOnce]
+        ```
+
     !!! warning "Legacy `1.0.0-BETA-2` upgrade note"
         If your release was originally installed from chart/app `1.0.0-BETA-2`, direct upgrade can fail on MinIO with immutable selector errors.
 

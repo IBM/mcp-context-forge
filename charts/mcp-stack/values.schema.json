@@ -1304,7 +1304,12 @@
             "storageClassName": {
               "type": "string",
               "description": "Storage class name",
-              "default": "manual"
+              "default": ""
+            },
+            "useReadWriteOncePod": {
+              "type": "boolean",
+              "description": "Prefer strict single-pod PVC mount semantics using ReadWriteOncePod when supported",
+              "default": true
             },
             "accessModes": {
               "type": "array",
@@ -1313,7 +1318,7 @@
                 "type": "string",
                 "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
               },
-              "default": ["ReadWriteMany"]
+              "default": ["ReadWriteOnce"]
             },
             "size": {
               "type": "string",
@@ -1368,6 +1373,31 @@
         "resources": {
           "$ref": "#/$defs/resources",
           "description": "Resource limits and requests"
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "description": "Grace period for PostgreSQL pod termination in seconds",
+          "minimum": 0,
+          "default": 120
+        },
+        "lifecycle": {
+          "type": "object",
+          "description": "Container lifecycle hooks for PostgreSQL",
+          "properties": {
+            "preStop": {
+              "type": "object",
+              "description": "PreStop hook configuration",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Run pg_ctl stop before termination",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         },
         "probes": {
           "type": "object",

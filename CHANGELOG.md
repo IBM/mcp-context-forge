@@ -131,6 +131,19 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 >    `kubectl delete deployment -n <namespace> <release>-minio`
 >    `helm upgrade <release> charts/mcp-stack -n <namespace> --wait --timeout 15m`
 
+#### **🗄️ Helm Chart: PostgreSQL Single-Writer Upgrade Safety Defaults**
+
+* Internal PostgreSQL Deployment now always uses `strategy.type=Recreate` to avoid overlapping old/new DB pods mounting the same PVC during upgrades
+* Internal PostgreSQL now defaults `terminationGracePeriodSeconds=120` and enables a `preStop` clean shutdown hook (`pg_ctl ... stop`)
+* Internal PostgreSQL persistence now defaults `postgres.persistence.useReadWriteOncePod=true` (strict single-pod mount semantics where supported)
+
+> **Migration**:
+> 1. Before Postgres image/tag upgrades, take a restorable backup (snapshot or `pg_dump`)
+> 2. If your storage class does not support `ReadWriteOncePod`, set:
+>    `postgres.persistence.useReadWriteOncePod=false`
+>    `postgres.persistence.accessModes=[ReadWriteOnce]`
+> 3. Long-term roadmap remains StatefulSet for PostgreSQL; current immediate hardening keeps Deployment with enforced `Recreate`
+
 ### Added
 
 #### **🛡️ SSRF CIDR Allowlist** (S-01)

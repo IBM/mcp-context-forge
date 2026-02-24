@@ -33,11 +33,10 @@ spec:
   selector:
     matchLabels:
       app: {{ include "mcp-stack.fullname" . }}-postgres
-  {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") }}
-  # For PostgreSQL 18 upgrade, we need to perform a rolling update
+  # Force non-overlapping updates for single-writer Postgres PVCs.
+  # StatefulSet is the long-term direction; Recreate is immediate protection.
   strategy:
-    type: Recreate  # Recreate strategy to ensure clean transition during upgrade
-  {{- end }}
+    type: Recreate
   template:
     metadata:
       labels:
@@ -53,6 +52,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.postgres.terminationGracePeriodSeconds }}
       initContainers:
       {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") .Values.postgres.upgrade.backupCompleted }}
         # Init container to upgrade PostgreSQL data from version 17 to 18
@@ -193,6 +193,21 @@ spec:
           env:
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+
+          {{- if .Values.postgres.lifecycle.preStop.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "PreStop hook: stopping PostgreSQL cleanly"
+                    PGDATA_DIR="${PGDATA:-/var/lib/postgresql/data/pgdata}"
+                    if [ -d "$PGDATA_DIR" ]; then
+                      pg_ctl -D "$PGDATA_DIR" -m fast -w stop || true
+                    fi
+          {{- end }}
 
           # Mount PVC for data durability
           volumeMounts:

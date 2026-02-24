@@ -442,6 +442,24 @@ For production deployments, consider:
 3. **Database Dumps**: Regular `pg_dump` for PostgreSQL
 4. **Monitoring**: Set up alerts for storage usage
 
+### PostgreSQL Upgrade Safety Defaults
+
+To reduce risk of PostgreSQL data corruption during chart upgrades, internal Postgres now uses:
+
+1. `Deployment` update strategy `Recreate` (prevents overlapping old/new DB pods on one PVC)
+2. `terminationGracePeriodSeconds: 120`
+3. `lifecycle.preStop` clean stop (`pg_ctl ... stop`) before termination
+4. `postgres.persistence.useReadWriteOncePod: true` (strict single-pod mount when supported)
+
+If your storage class does not support `ReadWriteOncePod`, set:
+
+```yaml
+postgres:
+  persistence:
+    useReadWriteOncePod: false
+    accessModes: [ReadWriteOnce]
+```
+
 ### What MinIO Is Used For In This Chart
 
 MinIO is not on the normal request path for ContextForge traffic. In this chart, MinIO is used for PostgreSQL major-version upgrade backup/restore flow:
