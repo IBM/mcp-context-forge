@@ -124,6 +124,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.content_security import ContentSizeError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -4496,6 +4497,9 @@ async def create_resource(
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+    except ContentSizeError as e:
+        logger.error(f"Content size exceeded in creating resource: {e}")
+        return ORJSONResponse(status_code=413, content={"detail": str(e)})
 
 
 @resource_router.get("/{resource_id}")
@@ -4676,6 +4680,9 @@ async def update_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ContentSizeError as e:
+        logger.error(f"Content size exceeded in updating resource: {e}")
+        return ORJSONResponse(status_code=413, content={"detail": str(e)})
     db.commit()
     db.close()
     await invalidate_resource_cache(resource_id)
@@ -4995,6 +5002,9 @@ async def create_prompt(
             # If there is an integrity error, return a 409 Conflict error
             logger.error(f"Integrity error while creating prompt: {e}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
+        if isinstance(e, ContentSizeError):
+            logger.error(f"Content size exceeded in creating prompt: {e}")
+            return ORJSONResponse(status_code=413, content={"detail": str(e)})
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while creating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
@@ -5187,6 +5197,9 @@ async def update_prompt(
         if isinstance(e, PromptError):
             # If there is a general prompt error, return a 400 Bad Request error
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        if isinstance(e, ContentSizeError):
+            logger.error(f"Content size exceeded in in updating prompt: {e}")
+            return ORJSONResponse(status_code=413, content={"detail": str(e)})
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while updating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")
