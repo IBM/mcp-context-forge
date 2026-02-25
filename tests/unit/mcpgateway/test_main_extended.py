@@ -6239,7 +6239,7 @@ class TestRemainingCoverageGaps:
         )
         monkeypatch.setattr(
             plugin_settings_mod,
-            "get_settings",
+            "get_startup_settings",
             lambda **_kwargs: SimpleNamespace(config_file="plugins/config.yaml", plugin_timeout=30),
         )
 

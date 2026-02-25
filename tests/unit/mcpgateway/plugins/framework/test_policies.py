@@ -756,3 +756,111 @@ class TestFrameworkImportIsolation:
                         violations.append(f"{py_file.relative_to(framework_dir)}:{node.lineno} -> {node.module}")
 
         assert violations == [], "Framework still imports from gateway internals:\n" + "\n".join(violations)
+
+
+class TestMultiPluginDictChain:
+    """Tests for multi-plugin chains where an earlier plugin returns a dict payload."""
+
+    @pytest.mark.asyncio
+    async def test_dict_payload_deep_copied_for_next_plugin(self):
+        """When plugin 1 returns a dict, the next plugin receives a deep-copied
+        dict without crashing on model_copy (which dicts don't have)."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class AuthPlugin(Plugin):
+            async def auth_hook(self, payload, context):
+                return PluginResult(continue_processing=True, modified_payload={"email": "user@test.com", "role": "admin"})
+
+        class AuditPlugin(Plugin):
+            async def auth_hook(self, payload, context):
+                # Second plugin just passes through
+                return PluginResult(continue_processing=True)
+
+        auth_config = PluginConfig(name="auth", kind="test.Plugin", version="1.0", hooks=["auth_hook"])
+        audit_config = PluginConfig(name="audit", kind="test.Plugin", version="1.0", hooks=["auth_hook"])
+
+        auth_plugin = AuthPlugin(auth_config)
+        audit_plugin = AuditPlugin(audit_config)
+
+        hook_refs = [
+            HookRef("auth_hook", PluginRef(auth_plugin)),
+            HookRef("auth_hook", PluginRef(audit_plugin)),
+        ]
+
+        policies = {"auth_hook": HookPayloadPolicy(writable_fields=frozenset())}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="original")
+        global_ctx = GlobalContext(request_id="multi-1")
+
+        result, _ = await executor.execute(hook_refs, payload, global_ctx, hook_type="auth_hook")
+        assert result.continue_processing is True
+        assert result.modified_payload == {"email": "user@test.com", "role": "admin"}
+
+    @pytest.mark.asyncio
+    async def test_dict_to_dict_accepted_without_apply_policy(self):
+        """When effective_payload is a dict and plugin also returns a dict,
+        the result is accepted directly (not routed through apply_policy)."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class FirstAuth(Plugin):
+            async def auth_hook(self, payload, context):
+                return PluginResult(continue_processing=True, modified_payload={"email": "first@test.com"})
+
+        class SecondAuth(Plugin):
+            async def auth_hook(self, payload, context):
+                return PluginResult(continue_processing=True, modified_payload={"email": "second@test.com", "enriched": True})
+
+        first_config = PluginConfig(name="first", kind="test.Plugin", version="1.0", hooks=["auth_hook"])
+        second_config = PluginConfig(name="second", kind="test.Plugin", version="1.0", hooks=["auth_hook"])
+
+        hook_refs = [
+            HookRef("auth_hook", PluginRef(FirstAuth(first_config))),
+            HookRef("auth_hook", PluginRef(SecondAuth(second_config))),
+        ]
+
+        policies = {"auth_hook": HookPayloadPolicy(writable_fields=frozenset())}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="original")
+        global_ctx = GlobalContext(request_id="multi-2")
+
+        result, _ = await executor.execute(hook_refs, payload, global_ctx, hook_type="auth_hook")
+        assert result.continue_processing is True
+        assert result.modified_payload == {"email": "second@test.com", "enriched": True}
+
+    @pytest.mark.asyncio
+    async def test_empty_dict_payload_not_dropped_by_truthiness(self):
+        """An empty dict returned by a plugin must not be replaced by the
+        original payload due to falsy truthiness evaluation."""
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class EmptyDictPlugin(Plugin):
+            async def auth_hook(self, payload, context):
+                return PluginResult(continue_processing=True, modified_payload={})
+
+        class PassthroughPlugin(Plugin):
+            """Runs after EmptyDictPlugin; receives the empty dict if chaining works."""
+
+            async def auth_hook(self, payload, context):
+                return PluginResult(continue_processing=True)
+
+        hook_refs = [
+            HookRef("auth_hook", PluginRef(EmptyDictPlugin(PluginConfig(name="empty", kind="test.Plugin", version="1.0", hooks=["auth_hook"])))),
+            HookRef("auth_hook", PluginRef(PassthroughPlugin(PluginConfig(name="pass", kind="test.Plugin", version="1.0", hooks=["auth_hook"])))),
+        ]
+
+        policies = {"auth_hook": HookPayloadPolicy(writable_fields=frozenset())}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="original")
+        global_ctx = GlobalContext(request_id="multi-3")
+
+        result, _ = await executor.execute(hook_refs, payload, global_ctx, hook_type="auth_hook")
+        assert result.modified_payload == {}, "Empty dict should be preserved, not replaced by original payload"

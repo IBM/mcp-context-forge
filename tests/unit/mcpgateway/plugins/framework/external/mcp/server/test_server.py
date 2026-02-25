@@ -69,31 +69,19 @@ class TestExternalPluginServerInit:
         assert server._config_path == "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
         assert server._config is not None
 
-    def test_init_with_default_path(self):
-        """Test initialization uses config_file when config_path is not set."""
-        # Temporarily remove env var if it exists
-        env_backup = os.environ.pop("PLUGINS_CONFIG_PATH", None)
-        try:
-            with patch("mcpgateway.plugins.framework.loader.config.ConfigLoader.load_config") as mock_load:
-                mock_load.return_value = Mock(plugins=[], server_settings=None)
-                server = ExternalPluginServer()
-                # Falls through config_path (None) to config_file (default: "plugins/config.yaml")
-                assert server._config_path == "plugins/config.yaml"
-        finally:
-            if env_backup:
-                os.environ["PLUGINS_CONFIG_PATH"] = env_backup
+    def test_init_with_default_path(self, monkeypatch):
+        """Test initialization falls back to resources/plugins/config.yaml for standalone servers."""
+        monkeypatch.delenv("PLUGINS_CONFIG_PATH", raising=False)
+        with patch("mcpgateway.plugins.framework.loader.config.ConfigLoader.load_config") as mock_load:
+            mock_load.return_value = Mock(plugins=[], server_settings=None)
+            server = ExternalPluginServer()
+            assert server._config_path == os.path.join(".", "resources", "plugins", "config.yaml")
 
-    def test_init_with_invalid_config(self):
-        """Test initialization with invalid config path uses defaults or raises error."""
-        # ConfigLoader may handle missing files by returning empty config
-        # This test verifies the server can be instantiated (or raises if validation fails)
-        try:
-            server = ExternalPluginServer(config_path="./nonexistent/path/config.yaml")
-            # If it succeeds, just verify server was created
-            assert server is not None
-        except Exception:
-            # If it raises, that's also acceptable behavior
-            pass
+    def test_init_with_nonexistent_config_returns_empty(self):
+        """ConfigLoader returns an empty config for a nonexistent path."""
+        server = ExternalPluginServer(config_path="./nonexistent/path/config.yaml")
+        assert server._config is not None
+        assert server._config.plugins == []
 
 
 class TestGetPluginConfigs:

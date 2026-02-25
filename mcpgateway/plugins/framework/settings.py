@@ -24,6 +24,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 
+def _empty_string_to_none(value: Any) -> Any:
+    """Treat empty optional env vars as unset (None).
+
+    Shared validator for optional fields that may arrive as empty strings
+    from the environment.  Used by ``@field_validator(..., mode="before")``
+    across multiple lightweight settings classes.
+
+    Args:
+        value: The raw value from the environment variable.
+
+    Returns:
+        None if the value is an empty string, otherwise the original value.
+    """
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    return value
+
+
 class PluginsSettings(BaseSettings):
     """Plugin framework configuration.
 
@@ -130,17 +148,8 @@ class PluginsSettings(BaseSettings):
     )
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Treat empty optional env vars as unset (None).
-
-        Args:
-            value: The raw value from the environment variable.
-
-        Returns:
-            None if the value is an empty string, otherwise the original value.
-        """
-        if isinstance(value, str) and value.strip() == "":
-            return None
-        return value
+        """Delegate to shared validator."""
+        return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -207,17 +216,8 @@ class PluginsClientMtlsSettings(BaseSettings):
     @field_validator("client_mtls_verify", "client_mtls_check_hostname", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Treat empty optional env vars as unset (None).
-
-        Args:
-            value: The raw value from the environment variable.
-
-        Returns:
-            None if the value is an empty string, otherwise the original value.
-        """
-        if isinstance(value, str) and value.strip() == "":
-            return None
-        return value
+        """Delegate to shared validator."""
+        return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -238,17 +238,8 @@ class PluginsMcpServerSettings(BaseSettings):
     @field_validator("server_ssl_cert_reqs", "server_port", "server_ssl_enabled", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Treat empty optional env vars as unset (None).
-
-        Args:
-            value: The raw value from the environment variable.
-
-        Returns:
-            None if the value is an empty string, otherwise the original value.
-        """
-        if isinstance(value, str) and value.strip() == "":
-            return None
-        return value
+        """Delegate to shared validator."""
+        return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -265,17 +256,8 @@ class PluginsGrpcClientMtlsSettings(BaseSettings):
     @field_validator("grpc_client_mtls_verify", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Treat empty optional env vars as unset (None).
-
-        Args:
-            value: The raw value from the environment variable.
-
-        Returns:
-            None if the value is an empty string, otherwise the original value.
-        """
-        if isinstance(value, str) and value.strip() == "":
-            return None
-        return value
+        """Delegate to shared validator."""
+        return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -292,7 +274,6 @@ class PluginsHttpClientSettings(BaseSettings):
     httpx_write_timeout: float = 30.0
     httpx_pool_timeout: float = 10.0
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
-
 
 
 class PluginsCliSettings(BaseSettings):
@@ -319,17 +300,8 @@ class PluginsGrpcServerSettings(BaseSettings):
     @field_validator("grpc_server_port", "grpc_server_ssl_enabled", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Treat empty optional env vars as unset (None).
-
-        Args:
-            value: The raw value from the environment variable.
-
-        Returns:
-            None if the value is an empty string, otherwise the original value.
-        """
-        if isinstance(value, str) and value.strip() == "":
-            return None
-        return value
+        """Delegate to shared validator."""
+        return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -453,7 +425,6 @@ def get_http_client_settings() -> PluginsHttpClientSettings:
         PluginsHttpClientSettings: A cached instance.
     """
     return PluginsHttpClientSettings()
-
 
 
 @lru_cache()
