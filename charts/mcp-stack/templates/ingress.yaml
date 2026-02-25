@@ -2,67 +2,96 @@
 Ingress
 - Gateway and Fast-Time Server ingress are rendered independently so they can be enabled separately.
 */ -}}
+{{- $fullName := include "mcp-stack.fullname" . -}}
 {{- if .Values.mcpContextForge.ingress.enabled }}
+{{- $gatewayIngress := .Values.mcpContextForge.ingress -}}
+{{- $gatewayClassName := lower ($gatewayIngress.className | default "") -}}
+{{- $gatewayAnnotations := dict -}}
+{{- if and $gatewayIngress.tls.enabled (contains "nginx" $gatewayClassName) -}}
+{{- $_ := set $gatewayAnnotations "nginx.ingress.kubernetes.io/ssl-redirect" "true" -}}
+{{- $_ := set $gatewayAnnotations "nginx.ingress.kubernetes.io/force-ssl-redirect" "true" -}}
+{{- $_ := set $gatewayAnnotations "nginx.ingress.kubernetes.io/hsts" "true" -}}
+{{- $_ := set $gatewayAnnotations "nginx.ingress.kubernetes.io/hsts-max-age" "31536000" -}}
+{{- $_ := set $gatewayAnnotations "nginx.ingress.kubernetes.io/hsts-include-subdomains" "true" -}}
+{{- end -}}
+{{- range $key, $value := ($gatewayIngress.annotations | default dict) -}}
+{{- $_ := set $gatewayAnnotations $key (toString $value) -}}
+{{- end -}}
+{{- $gatewayTlsSecretName := $gatewayIngress.tls.secretName | default (printf "%s-ingress-tls" $fullName) -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "mcp-stack.fullname" . }}-ingress
+  name: {{ $fullName }}-ingress
+  {{- if $gatewayAnnotations }}
   annotations:
-    {{- range $key, $value := .Values.mcpContextForge.ingress.annotations }}
+    {{- range $key, $value := $gatewayAnnotations }}
     {{ $key }}: {{ $value | quote }}
     {{- end }}
+  {{- end }}
 spec:
-  ingressClassName: {{ .Values.mcpContextForge.ingress.className }}
-  {{- if .Values.mcpContextForge.ingress.tls.enabled }}
+  ingressClassName: {{ $gatewayIngress.className }}
+  {{- if $gatewayIngress.tls.enabled }}
   tls:
     - hosts:
-        - {{ .Values.mcpContextForge.ingress.host }}
-      {{- if .Values.mcpContextForge.ingress.tls.secretName }}
-      secretName: {{ .Values.mcpContextForge.ingress.tls.secretName }}
-      {{- end }}
+        - {{ $gatewayIngress.host }}
+      secretName: {{ $gatewayTlsSecretName }}
   {{- end }}
   rules:
-    - host: {{ .Values.mcpContextForge.ingress.host }}
+    - host: {{ $gatewayIngress.host }}
       http:
         paths:
-          - path: {{ .Values.mcpContextForge.ingress.path }}
-            pathType: {{ .Values.mcpContextForge.ingress.pathType }}
+          - path: {{ $gatewayIngress.path }}
+            pathType: {{ $gatewayIngress.pathType }}
             backend:
               service:
-                name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+                name: {{ $fullName }}-mcpgateway
                 port:
                   number: {{ .Values.mcpContextForge.service.port }}
 {{- end }}
 
 {{- if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
+{{- $fastTimeIngress := .Values.mcpFastTimeServer.ingress -}}
+{{- $fastTimeClassName := lower ($fastTimeIngress.className | default "") -}}
+{{- $fastTimeAnnotations := dict -}}
+{{- if and $fastTimeIngress.tls.enabled (contains "nginx" $fastTimeClassName) -}}
+{{- $_ := set $fastTimeAnnotations "nginx.ingress.kubernetes.io/ssl-redirect" "true" -}}
+{{- $_ := set $fastTimeAnnotations "nginx.ingress.kubernetes.io/force-ssl-redirect" "true" -}}
+{{- $_ := set $fastTimeAnnotations "nginx.ingress.kubernetes.io/hsts" "true" -}}
+{{- $_ := set $fastTimeAnnotations "nginx.ingress.kubernetes.io/hsts-max-age" "31536000" -}}
+{{- $_ := set $fastTimeAnnotations "nginx.ingress.kubernetes.io/hsts-include-subdomains" "true" -}}
+{{- end -}}
+{{- range $key, $value := ($fastTimeIngress.annotations | default dict) -}}
+{{- $_ := set $fastTimeAnnotations $key (toString $value) -}}
+{{- end -}}
+{{- $fastTimeTlsSecretName := $fastTimeIngress.tls.secretName | default (printf "%s-fast-time-ingress-tls" $fullName) -}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "mcp-stack.fullname" . }}-fast-time-ingress
+  name: {{ $fullName }}-fast-time-ingress
+  {{- if $fastTimeAnnotations }}
   annotations:
-    {{- range $key, $value := .Values.mcpFastTimeServer.ingress.annotations }}
+    {{- range $key, $value := $fastTimeAnnotations }}
     {{ $key }}: {{ $value | quote }}
     {{- end }}
+  {{- end }}
 spec:
-  ingressClassName: {{ .Values.mcpFastTimeServer.ingress.className }}
-  {{- if .Values.mcpFastTimeServer.ingress.tls.enabled }}
+  ingressClassName: {{ $fastTimeIngress.className }}
+  {{- if $fastTimeIngress.tls.enabled }}
   tls:
     - hosts:
-        - {{ .Values.mcpFastTimeServer.ingress.host }}
-      {{- if .Values.mcpFastTimeServer.ingress.tls.secretName }}
-      secretName: {{ .Values.mcpFastTimeServer.ingress.tls.secretName }}
-      {{- end }}
+        - {{ $fastTimeIngress.host }}
+      secretName: {{ $fastTimeTlsSecretName }}
   {{- end }}
   rules:
-    - host: {{ .Values.mcpFastTimeServer.ingress.host }}
+    - host: {{ $fastTimeIngress.host }}
       http:
         paths:
-          - path: {{ .Values.mcpFastTimeServer.ingress.path }}
-            pathType: {{ .Values.mcpFastTimeServer.ingress.pathType }}
+          - path: {{ $fastTimeIngress.path }}
+            pathType: {{ $fastTimeIngress.pathType }}
             backend:
               service:
-                name: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+                name: {{ $fullName }}-mcp-fast-time-server
                 port:
-                  number: {{ .Values.mcpFastTimeServer.ingress.servicePort }}
+                  number: {{ $fastTimeIngress.servicePort }}
 {{- end }}

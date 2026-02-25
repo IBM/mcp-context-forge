@@ -24,8 +24,39 @@ serviceAccount:
   annotations: {}
     # eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/my-role
     # iam.gke.io/gcp-service-account: my-sa@project.iam.gserviceaccount.com
-  # -- Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting)
-  automountServiceAccountToken: true
+  # -- Mount the ServiceAccount token in pods (applies at PodSpec level in chart templates)
+  automountServiceAccountToken: false
+
+########################################################################
+# NETWORK POLICIES
+# Conservative, ingress-focused micro-segmentation for in-cluster data
+# services. Disable globally if your CNI does not enforce NetworkPolicy
+# or if you need to troubleshoot connectivity.
+########################################################################
+networkPolicies:
+  enabled: true
+
+  postgres:
+    enabled: true
+    allowPgBouncer: true
+    allowPgAdmin: true
+    allowMigrationJob: true
+    allowUpgradeJobs: true
+    allowMonitoringExporter: true
+
+  redis:
+    enabled: true
+    allowRedisCommander: true
+    allowMonitoringExporter: true
+
+  pgbouncer:
+    enabled: true
+    allowPgAdmin: true
+    allowMonitoringExporter: true
+
+  minio:
+    enabled: true
+    allowUpgradeJobs: true
 
 ########################################################################
 # MCP CONTEXT-FORGE (Gateway / API tier)
@@ -88,30 +119,30 @@ mcpContextForge:
       type: http
       path: /ready
       port: 4444
-      initialDelaySeconds: 15 # wait 15 s after container start
-      periodSeconds: 10       # check every 10 s
-      timeoutSeconds: 2       # fail if no response in 2 s
+      initialDelaySeconds: 30 # wait longer before first readiness check under high-load start
+      periodSeconds: 15       # reduce probe pressure during benchmark spikes
+      timeoutSeconds: 70      # tolerate slow responses during heavy load
       successThreshold: 1     # one success flips it back to healthy
-      failureThreshold: 3     # three failures mark pod un-ready
+      failureThreshold: 8     # require sustained readiness failures before removing pod
 
     liveness:
       type: http
       path: /health
       port: 4444
-      initialDelaySeconds: 10 # wait 10 s after container start
-      periodSeconds: 15
-      timeoutSeconds: 2
+      initialDelaySeconds: 120 # avoid restarts while app is recovering from heavy queue buildup
+      periodSeconds: 30
+      timeoutSeconds: 70
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 10
 
   # Kubernetes resource requests / limits
   resources:
     limits:
-      cpu: 200m
-      memory: 1024Mi
+      cpu: "2"
+      memory: 2Gi
     requests:
-      cpu: 100m
-      memory: 512Mi
+      cpu: 500m
+      memory: 768Mi
 
   # Optional ingress for HTTP traffic
   ingress:
@@ -120,11 +151,11 @@ mcpContextForge:
     host: gateway.local         # CHANGE to your FQDN (e.g. api.example.com)
     path: /
     pathType: Prefix
-    annotations: {}             # Custom ingress annotations (optional)
+    annotations: {}             # Custom ingress annotations; merged on top of secure nginx TLS defaults when TLS is enabled
       # nginx.ingress.kubernetes.io/rewrite-target: /
       # cert-manager.io/cluster-issuer: letsencrypt-prod
     tls:
-      enabled: false            # Set to true to enable TLS
+      enabled: true             # TLS enabled by default for encrypted ingress traffic
       secretName: ""            # Name of the TLS secret (auto-generated if empty)
 
   ####################################################################
@@ -164,7 +195,7 @@ mcpContextForge:
     HTTP_SERVER: "gunicorn"             # gunicorn (default) or granian
 
     # ─ Gunicorn settings (used when HTTP_SERVER=gunicorn) ─
-    GUNICORN_WORKERS: "auto"            # number of worker processes ("auto" = 2*CPU+1, capped at 16)
+    GUNICORN_WORKERS: "2"               # fixed worker count to avoid oversubscription in constrained clusters
     GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
     GUNICORN_MAX_REQUESTS: "100000"     # max requests per worker before restart
     GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
@@ -360,6 +391,10 @@ mcpContextForge:
     # Prevents gateway from accessing internal resources or cloud metadata services.
     # Default: strict mode (external endpoints only).
     # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
+    # Helm testing registration uses private in-cluster Service DNS names by default:
+    #   fast-time: http://<release>-mcp-fast-time-server:80/http
+    #   fast-test: http://<release>-fast-test-server:8880/mcp
+    # With strict defaults, those targets are rejected with HTTP 422 during gateway registration.
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
     SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
     SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
@@ -372,6 +407,11 @@ mcpContextForge:
     # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     # SSRF_DNS_FAIL_CLOSED: "true"
     # SSRF_ALLOWED_NETWORKS: '["10.20.0.0/16"]'
+    # For local benchmark/testing profiles (broadest allowance):
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+    # For safer Kubernetes setup, keep private networks blocked and allow only Service CIDRs:
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    # SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example only, adjust to your cluster CIDR
 
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -815,7 +855,7 @@ mcpContextForge:
     BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
     API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
-    MCP_REQUIRE_AUTH: "false"              # require auth for /mcp endpoints (false = allow public-only access)
+    MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
     JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
@@ -1063,11 +1103,11 @@ migration:
   # Resource limits for the migration job
   resources:
     limits:
-      cpu: 200m
-      memory: 512Mi
+      cpu: 500m
+      memory: 1Gi
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 250m
+      memory: 512Mi
 
   # Migration command configuration
   command:
@@ -1098,6 +1138,8 @@ postgres:
                                 #   GKE: "standard", "ssd", "premium-rw"
                                 #   Azure AKS: "default", "managed-premium", "azurefile"
                                 #   Bare Metal: "local-path", "nfs-client"
+    useReadWriteOncePod: true    # Prefer strict single-pod mount semantics when supported by your CSI/storage class
+                                 # Set false to fall back to accessModes below on clusters/storage classes without RWOP support
     accessModes: [ReadWriteOnce]
     size: 5Gi
     reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
@@ -1116,11 +1158,17 @@ postgres:
   # ─── Resource limits & requests ───
   resources:
     limits:
-      cpu: 1000m          # 1 core hard cap
-      memory: 1Gi
+      cpu: "2"            # 2 cores hard cap
+      memory: 2Gi
     requests:
       cpu: 500m           # guaranteed half-core
-      memory: 64Mi
+      memory: 512Mi
+
+  # Graceful shutdown helps prevent WAL/checkpoint corruption on restart.
+  terminationGracePeriodSeconds: 120
+  lifecycle:
+    preStop:
+      enabled: true       # Run pg_ctl stop before SIGKILL during pod termination
 
   # ─── Health & readiness probes ───
 
@@ -1154,19 +1202,19 @@ postgres:
       type: exec
       command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
       initialDelaySeconds: 15
-      periodSeconds: 10
-      timeoutSeconds: 3
+      periodSeconds: 15
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 6
 
     liveness:
       type: exec
       command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
       initialDelaySeconds: 10
-      periodSeconds: 15
-      timeoutSeconds: 3
+      periodSeconds: 20
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 5
+      failureThreshold: 8
 
   # ─── PostgreSQL Upgrade Configuration ───
   upgrade:
@@ -1209,10 +1257,10 @@ pgbouncer:
   # Resource limits
   resources:
     limits:
-      cpu: 500m
+      cpu: "1"
       memory: 256Mi
     requests:
-      cpu: 100m
+      cpu: 250m
       memory: 128Mi
 
   # Health probes
@@ -1265,34 +1313,61 @@ redis:
     port: 6379
     db: 0
 
+  # ─── Authentication ───
+  auth:
+    enabled: true
+    # Use an existing secret for Redis password (optional)
+    existingSecret: ""
+    passwordKey: "REDIS_PASSWORD"
+    password: "change-me-redis"      # CHANGE ME in production!
+  # Transport recommendation:
+  # For production, prefer TLS (for example rediss:// via redis.external.url
+  # or a managed Redis endpoint with TLS enabled).
+
   # ─── Resource limits & requests ───
   resources:
     limits:
-      cpu: 100m          # cap at 0.1 core, 256 MiB
-      memory: 256Mi
+      cpu: "1"          # cap at 1 core, 1 GiB
+      memory: 1Gi
     requests:
-      cpu: 50m           # reserve 0.05 core, 128 MiB
-      memory: 16Mi
+      cpu: 250m         # reserve 0.25 core, 256 MiB
+      memory: 256Mi
 
   # ─── Health & readiness probes ───
   probes:
     readiness:
       type: exec
-      command: ["redis-cli", "PING"]
+      command:
+        - sh
+        - -c
+        - |
+          if [ -n "${REDIS_PASSWORD:-}" ]; then
+            redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
+          else
+            redis-cli PING
+          fi
       initialDelaySeconds: 10
-      periodSeconds: 10
-      timeoutSeconds: 2
+      periodSeconds: 15
+      timeoutSeconds: 5
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 6
 
     liveness:
       type: exec
-      command: ["redis-cli", "PING"]
+      command:
+        - sh
+        - -c
+        - |
+          if [ -n "${REDIS_PASSWORD:-}" ]; then
+            redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
+          else
+            redis-cli PING
+          fi
       initialDelaySeconds: 5
-      periodSeconds: 15
-      timeoutSeconds: 2
+      periodSeconds: 20
+      timeoutSeconds: 5
       successThreshold: 1
-      failureThreshold: 5
+      failureThreshold: 8
 
   # ─── Persistence configuration ───
   persistence:
@@ -1314,7 +1389,7 @@ redis:
 # PGADMIN - Web UI for Postgres
 ########################################################################
 pgadmin:
-  enabled: true
+  enabled: false                    # Hardened default: enable only for temporary admin workflows
 
   image:
     repository: dpage/pgadmin4
@@ -1368,7 +1443,7 @@ pgadmin:
 # REDIS-COMMANDER - Web UI for Redis
 ########################################################################
 redisCommander:
-  enabled: true
+  enabled: false                    # Hardened default: enable only for temporary troubleshooting
 
   image:
     repository: rediscommander/redis-commander
@@ -1414,7 +1489,7 @@ redisCommander:
 # MINIO - S3 Compatible Object Storage
 ########################################################################
 minio:
-  enabled: true # Set to true to deploy MinIO (required for PostgreSQL backups during upgrade)
+  enabled: false # Enable only when needed for PostgreSQL major upgrade backup/restore flow
 
   image:
     repository: minio/minio
@@ -1480,7 +1555,7 @@ mcpFastTimeServer:
     servicePort: 80
     annotations: {}
     tls:
-      enabled: false
+      enabled: true
       secretName: ""
 
   # ─── Health & readiness probes ───
@@ -1490,20 +1565,20 @@ mcpFastTimeServer:
       path: /health
       port: 8080
       initialDelaySeconds: 3
-      periodSeconds: 10
-      timeoutSeconds: 2
+      periodSeconds: 15
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 6
 
     liveness:
       type: http
       path: /health
       port: 8080
       initialDelaySeconds: 3
-      periodSeconds: 15
-      timeoutSeconds: 2
+      periodSeconds: 20
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 8
 
   # Tiny Go process: ~10 MB runtime footprint
   resources:
@@ -1812,6 +1887,8 @@ testing:
   fastTime:
     register:
       enabled: false
+      # Uses in-cluster Service URL: http://<release>-mcp-fast-time-server:80/http
+      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
       gatewayName: fast_time
       gatewayPath: /http
       transport: STREAMABLEHTTP
@@ -1862,6 +1939,8 @@ testing:
   fastTest:
     register:
       enabled: true
+      # Uses in-cluster Service URL: http://<release>-fast-test-server:8880/mcp
+      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
       gatewayName: fast_test
       gatewayPath: /mcp
       transport: STREAMABLEHTTP

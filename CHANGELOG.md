@@ -115,6 +115,35 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 > **Migration**: Automation that relied on permissive behavior for RPC tool execution, root endpoints, OAuth fetch-tools, invalid server SSE IDs, or import ownership override fields must be updated to satisfy the new RBAC/scope requirements.
 
+#### **📦 Helm Chart: MinIO Default Disabled + Legacy BETA-2 Upgrade Workaround**
+
+* `charts/mcp-stack` now defaults `minio.enabled=false`
+* MinIO in this chart is used for PostgreSQL major-upgrade backup/restore flow and is not on the regular gateway request path
+* For PostgreSQL major upgrade workflow, enable both `minio.enabled=true` and `postgres.upgrade.enabled=true`
+* Chart template rendering now fails fast if PostgreSQL upgrade mode is enabled while MinIO is disabled
+* Releases originally installed from chart/app `1.0.0-BETA-2` may fail direct upgrade on MinIO Deployment immutable selector (`spec.selector ... field is immutable`)
+
+> **Migration**:
+> 1. If you need to keep MinIO on an existing release, pin `minio.enabled=true` in your values before upgrade (otherwise MinIO resources can be pruned)
+> 2. For PostgreSQL major upgrade workflow, explicitly enable MinIO in your values
+> 3. For normal deployments not using that workflow, leave MinIO disabled
+> 4. For legacy BETA-2 upgrades, perform one-time MinIO Deployment recreation and retry:
+>    `kubectl delete deployment -n <namespace> <release>-minio`
+>    `helm upgrade <release> charts/mcp-stack -n <namespace> --wait --timeout 15m`
+
+#### **🗄️ Helm Chart: PostgreSQL Single-Writer Upgrade Safety Defaults**
+
+* Internal PostgreSQL Deployment now always uses `strategy.type=Recreate` to avoid overlapping old/new DB pods mounting the same PVC during upgrades
+* Internal PostgreSQL now defaults `terminationGracePeriodSeconds=120` and enables a `preStop` clean shutdown hook (`pg_ctl ... stop`)
+* Internal PostgreSQL persistence now defaults `postgres.persistence.useReadWriteOncePod=true` (strict single-pod mount semantics where supported)
+
+> **Migration**:
+> 1. Before Postgres image/tag upgrades, take a restorable backup (snapshot or `pg_dump`)
+> 2. If your storage class does not support `ReadWriteOncePod`, set:
+>    `postgres.persistence.useReadWriteOncePod=false`
+>    `postgres.persistence.accessModes=[ReadWriteOnce]`
+> 3. Long-term roadmap remains StatefulSet for PostgreSQL; current immediate hardening keeps Deployment with enforced `Recreate`
+
 ### Added
 
 #### **🛡️ SSRF CIDR Allowlist** (S-01)

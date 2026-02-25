@@ -57,7 +57,7 @@ dependencies = [
     "httpx[http2]>=0.28.1",
     "jinja2>=3.1.6",
     "jq>=1.11.0",
-    "jsonpath-ng>=1.7.0",
+    "jsonpath-ng>=1.8.0",
     "jsonschema>=4.26.0",
     "mcp>=1.26.0",
     "orjson>=3.11.7",
@@ -72,7 +72,7 @@ dependencies = [
     "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
-    "sqlalchemy>=2.0.46",
+    "sqlalchemy>=2.0.47",
     "sse-starlette>=3.2.0",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
@@ -233,7 +233,7 @@ observability = [
 # Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
 # Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
 granian = [
-    "granian[pname,uvloop,reload]>=2.7.1",
+    "granian[pname,uvloop,reload]>=2.7.2",
 ]
 
 # Async SQLite Driver (optional)
