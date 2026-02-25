@@ -1748,7 +1748,7 @@
         "enabled": {
           "type": "boolean",
           "description": "Enable PgAdmin",
-          "default": true
+          "default": false
         },
         "image": {
           "type": "object",
@@ -1850,7 +1850,7 @@
         "enabled": {
           "type": "boolean",
           "description": "Enable Redis Commander",
-          "default": true
+          "default": false
         },
         "image": {
           "type": "object",

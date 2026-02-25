@@ -944,7 +944,7 @@ Kubernetes: `>=1.21.0-0`
 | redis.persistence.size | string | `"1Gi"` |  |
 | redis.persistence.reclaimPolicy | string | `"Retain"` |  |
 | redis.persistence.annotations | object | `{}` |  |
-| pgadmin.enabled | bool | `true` |  |
+| pgadmin.enabled | bool | `false` |  |
 | pgadmin.image.repository | string | `"dpage/pgadmin4"` |  |
 | pgadmin.image.tag | string | `"latest"` |  |
 | pgadmin.image.pullPolicy | string | `"IfNotPresent"` |  |
@@ -974,7 +974,7 @@ Kubernetes: `>=1.21.0-0`
 | pgadmin.probes.liveness.timeoutSeconds | int | `5` |  |
 | pgadmin.probes.liveness.successThreshold | int | `1` |  |
 | pgadmin.probes.liveness.failureThreshold | int | `3` |  |
-| redisCommander.enabled | bool | `true` |  |
+| redisCommander.enabled | bool | `false` |  |
 | redisCommander.image.repository | string | `"rediscommander/redis-commander"` |  |
 | redisCommander.image.tag | string | `"latest"` |  |
 | redisCommander.image.pullPolicy | string | `"IfNotPresent"` |  |

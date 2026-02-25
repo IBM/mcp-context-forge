@@ -1322,7 +1322,7 @@ redis:
 # PGADMIN - Web UI for Postgres
 ########################################################################
 pgadmin:
-  enabled: true
+  enabled: false                    # Hardened default: enable only for temporary admin workflows
 
   image:
     repository: dpage/pgadmin4
@@ -1376,7 +1376,7 @@ pgadmin:
 # REDIS-COMMANDER - Web UI for Redis
 ########################################################################
 redisCommander:
-  enabled: true
+  enabled: false                    # Hardened default: enable only for temporary troubleshooting
 
   image:
     repository: rediscommander/redis-commander
