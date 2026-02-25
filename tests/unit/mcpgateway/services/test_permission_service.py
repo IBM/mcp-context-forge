@@ -152,6 +152,14 @@ async def test_check_permission_admin_bypass(svc):
 
 
 @pytest.mark.asyncio
+async def test_check_permission_public_only_token_blocks_admin_permissions(svc):
+    """Public-only token scope must deny admin.* permissions even for admin identities."""
+    with patch.object(svc, "_is_user_admin", return_value=True):
+        result = await svc.check_permission("admin@test.com", "admin.system_config", token_teams=[])
+    assert result is False
+
+
+@pytest.mark.asyncio
 async def test_check_permission_has_exact_perm(svc):
     """User with exact permission gets access."""
     with patch.object(svc, "_is_user_admin", return_value=False):

@@ -73,6 +73,7 @@ class PermissionService:
         resource_type: Optional[str] = None,
         resource_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
         allow_admin_bypass: bool = True,
@@ -89,6 +90,9 @@ class PermissionService:
             resource_type: Type of resource being accessed
             resource_id: Specific resource ID if applicable
             team_id: Team context for the permission check
+            token_teams: Normalized token team scope from auth context.
+                        `[]` means public-only scope; `None` means unrestricted
+                        admin scope (when allowed by token semantics).
             ip_address: IP address for audit logging
             user_agent: User agent for audit logging
             allow_admin_bypass: If True, admin users bypass all permission checks.
@@ -115,6 +119,12 @@ class PermissionService:
             True
         """
         try:
+            # SECURITY: Public-only tokens (teams=[]) must never satisfy admin.*
+            # permissions, even when the backing user identity is an admin.
+            if permission.startswith("admin.") and token_teams is not None and len(token_teams) == 0:
+                logger.warning(f"Permission denied for public-only token: user={user_email}, permission={permission}")
+                return False
+
             # Check if user is admin (bypass all permission checks if allowed)
             if allow_admin_bypass and await self._is_user_admin(user_email):
                 return True
