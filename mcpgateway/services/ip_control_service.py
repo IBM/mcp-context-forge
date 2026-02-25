@@ -291,7 +291,7 @@ class IPControlService:
                     try:
                         db.rollback()
                     except Exception:
-                        pass
+                        pass  # nosec B110 - Best effort cleanup on hit count update failure
                 return rule.rule_type == "allow"
 
         # 5. Default based on mode
