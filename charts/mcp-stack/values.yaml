@@ -24,8 +24,8 @@ serviceAccount:
   annotations: {}
     # eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/my-role
     # iam.gke.io/gcp-service-account: my-sa@project.iam.gserviceaccount.com
-  # -- Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting)
-  automountServiceAccountToken: true
+  # -- Mount the ServiceAccount token in pods (applies at PodSpec level in chart templates)
+  automountServiceAccountToken: false
 
 ########################################################################
 # MCP CONTEXT-FORGE (Gateway / API tier)

@@ -55,7 +55,7 @@
         "automountServiceAccountToken": {
           "type": "boolean",
           "description": "Mount the ServiceAccount token in pods",
-          "default": true
+          "default": false
         }
       },
       "additionalProperties": false

@@ -35,7 +35,7 @@ Kubernetes: `>=1.21.0-0`
 | serviceAccount.create | bool | `false` | Create a ServiceAccount for all pods in this release |
 | serviceAccount.name | string | `""` | ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default" |
 | serviceAccount.annotations | object | `{}` | Annotations for the ServiceAccount (e.g., AWS IRSA, GCP Workload Identity) |
-| serviceAccount.automountServiceAccountToken | bool | `true` | Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting) |
+| serviceAccount.automountServiceAccountToken | bool | `false` | Mount the ServiceAccount token in pods (applies at PodSpec level in chart templates) |
 | mcpContextForge.pluginConfig.enabled | bool | `false` |  |
 | mcpContextForge.pluginConfig.plugins | string | `"# plugin file\n"` |  |
 | mcpContextForge.replicaCount | int | `2` |  |
@@ -1409,4 +1409,3 @@ Kubernetes: `>=1.21.0-0`
 | inspector.resources.limits.memory | string | `"512Mi"` |  |
 | inspector.resources.requests.cpu | string | `"250m"` |  |
 | inspector.resources.requests.memory | string | `"128Mi"` |  |
-

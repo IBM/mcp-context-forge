@@ -54,14 +54,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- /* --------------------------------------------------------------------
-     Helper: mcp-stack.postgresConfigName
-     Returns the ConfigMap name for Postgres settings.
-     -------------------------------------------------------------------- */}}
-{{- define "mcp-stack.postgresConfigName" -}}
-{{- printf "%s-postgres-config" (include "mcp-stack.fullname" .) }}
-{{- end }}
-
-{{- /* --------------------------------------------------------------------
      Helper: mcp-stack.pgadminSecretName
      Returns the Secret name for PgAdmin credentials.
      -------------------------------------------------------------------- */}}

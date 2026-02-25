@@ -31,6 +31,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: pgadmin
           image: "{{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}"

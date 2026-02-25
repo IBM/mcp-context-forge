@@ -22,6 +22,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: minio
           image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
