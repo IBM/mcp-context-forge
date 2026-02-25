@@ -474,6 +474,9 @@ class LLMProxyService:
 
         Yields:
             SSE-formatted string chunks.
+
+        Raises:
+            LLMProxyRequestError: If request fails.
         """
         if not self._client:
             await self.initialize()

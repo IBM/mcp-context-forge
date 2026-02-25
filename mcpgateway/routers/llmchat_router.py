@@ -939,8 +939,13 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         Yields:
             bytes: UTF-8 encoded SSE formatted lines.
         """
-        yield f"event: {event_type}\n".encode("utf-8")
-        yield f"data: {orjson.dumps(data).decode()}\n\n".encode("utf-8")
+        safe_event_type = html.escape(event_type)
+        # Escape HTML-significant characters in JSON for defense-in-depth against XSS.
+        # Unicode escapes (\u003c etc.) are valid JSON that clients parse correctly.
+        json_str = orjson.dumps(data).decode()
+        json_str = json_str.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        yield f"event: {safe_event_type}\n".encode("utf-8")
+        yield f"data: {json_str}\n\n".encode("utf-8")
 
     try:
         async for ev in chat_service.chat_events(message):
@@ -1155,8 +1160,9 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
     # Remove user config
     await delete_user_config(user_id)
 
+    safe_user_id = html.escape(user_id)
     if not chat_service:
-        return {"status": "no_active_session", "user_id": user_id, "message": "No active session to disconnect"}
+        return {"status": "no_active_session", "user_id": safe_user_id, "message": "No active session to disconnect"}
 
     try:
         # Clear chat history on disconnect
@@ -1164,11 +1170,11 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
         logger.info(f"Chat session disconnected for {user_id}")
 
         await chat_service.shutdown()
-        return {"status": "disconnected", "user_id": user_id, "message": "Successfully disconnected"}
+        return {"status": "disconnected", "user_id": safe_user_id, "message": "Successfully disconnected"}
     except Exception as e:
         logger.error(f"Error during disconnect for user {user_id}: {e}", exc_info=True)
         # Session already removed, so return success with warning
-        return {"status": "disconnected_with_errors", "user_id": user_id, "message": "Disconnected but cleanup encountered errors", "warning": str(e)}
+        return {"status": "disconnected_with_errors", "user_id": safe_user_id, "message": "Disconnected but cleanup encountered errors", "warning": html.escape(str(e))}
 
 
 @llmchat_router.get("/status/{user_id}")
@@ -1213,7 +1219,7 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
     """
     resolved_user_id = _resolve_user_id(user_id, user)
     connected = bool(await get_active_session(resolved_user_id))
-    return {"user_id": resolved_user_id, "connected": connected}
+    return {"user_id": html.escape(resolved_user_id) if resolved_user_id else resolved_user_id, "connected": connected}
 
 
 @llmchat_router.get("/config/{user_id}")
@@ -1332,4 +1338,4 @@ async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
             }
     except Exception as e:
         logger.error(f"Failed to get gateway models: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve gateway models: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve gateway models: {html.escape(str(e))}")
