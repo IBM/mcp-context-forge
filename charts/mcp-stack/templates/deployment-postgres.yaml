@@ -53,6 +53,9 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: {{ .Values.postgres.terminationGracePeriodSeconds }}
       initContainers:
       {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") .Values.postgres.upgrade.backupCompleted }}
@@ -159,10 +162,13 @@ spec:
             - name: postgres-initdb
               mountPath: /docker-entrypoint-initdb.d
           securityContext:
+            allowPrivilegeEscalation: false
             runAsUser: 0  # Run as root to have permission to move files
       {{- end }}
       containers:
         - name: postgres
+          securityContext:
+            allowPrivilegeEscalation: false
           image: "{{ $postgresImage }}"
           imagePullPolicy: "{{ .Values.postgres.image.pullPolicy }}"
 

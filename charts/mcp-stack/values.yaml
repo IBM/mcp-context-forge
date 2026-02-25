@@ -28,6 +28,37 @@ serviceAccount:
   automountServiceAccountToken: false
 
 ########################################################################
+# NETWORK POLICIES
+# Conservative, ingress-focused micro-segmentation for in-cluster data
+# services. Disable globally if your CNI does not enforce NetworkPolicy
+# or if you need to troubleshoot connectivity.
+########################################################################
+networkPolicies:
+  enabled: true
+
+  postgres:
+    enabled: true
+    allowPgBouncer: true
+    allowPgAdmin: true
+    allowMigrationJob: true
+    allowUpgradeJobs: true
+    allowMonitoringExporter: true
+
+  redis:
+    enabled: true
+    allowRedisCommander: true
+    allowMonitoringExporter: true
+
+  pgbouncer:
+    enabled: true
+    allowPgAdmin: true
+    allowMonitoringExporter: true
+
+  minio:
+    enabled: true
+    allowUpgradeJobs: true
+
+########################################################################
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:

@@ -35,8 +35,13 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
+          securityContext:
+            allowPrivilegeEscalation: false
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
 

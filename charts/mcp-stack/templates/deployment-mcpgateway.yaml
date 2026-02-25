@@ -39,8 +39,17 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mcp-context-forge
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
           imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
 
