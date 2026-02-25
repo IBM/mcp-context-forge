@@ -391,6 +391,10 @@ mcpContextForge:
     # Prevents gateway from accessing internal resources or cloud metadata services.
     # Default: strict mode (external endpoints only).
     # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
+    # Helm testing registration uses private in-cluster Service DNS names by default:
+    #   fast-time: http://<release>-mcp-fast-time-server:80/http
+    #   fast-test: http://<release>-fast-test-server:8880/mcp
+    # With strict defaults, those targets are rejected with HTTP 422 during gateway registration.
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
     SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
     SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
@@ -403,6 +407,11 @@ mcpContextForge:
     # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     # SSRF_DNS_FAIL_CLOSED: "true"
     # SSRF_ALLOWED_NETWORKS: '["10.20.0.0/16"]'
+    # For local benchmark/testing profiles (broadest allowance):
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+    # For safer Kubernetes setup, keep private networks blocked and allow only Service CIDRs:
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    # SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example only, adjust to your cluster CIDR
 
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -1878,6 +1887,8 @@ testing:
   fastTime:
     register:
       enabled: false
+      # Uses in-cluster Service URL: http://<release>-mcp-fast-time-server:80/http
+      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
       gatewayName: fast_time
       gatewayPath: /http
       transport: STREAMABLEHTTP
@@ -1928,6 +1939,8 @@ testing:
   fastTest:
     register:
       enabled: true
+      # Uses in-cluster Service URL: http://<release>-fast-test-server:8880/mcp
+      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
       gatewayName: fast_test
       gatewayPath: /mcp
       transport: STREAMABLEHTTP

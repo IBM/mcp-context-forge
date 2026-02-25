@@ -25,6 +25,50 @@ A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 
 Kubernetes: `>=1.21.0-0`
 
+## SSRF and In-Cluster Tool Registration
+
+By default, the chart uses strict SSRF settings:
+
+- `mcpContextForge.config.SSRF_ALLOW_LOCALHOST="false"`
+- `mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS="false"`
+- `mcpContextForge.config.SSRF_ALLOWED_NETWORKS="[]"`
+
+This is the recommended production baseline.  
+When you enable testing registration jobs (`testing.fastTime.register.enabled` or
+`testing.fastTest.register.enabled`), those jobs create gateways that point to
+in-cluster service URLs:
+
+- `fast-time`: `http://<release>-mcp-fast-time-server:80/http`
+- `fast-test`: `http://<release>-fast-test-server:8880/mcp`
+
+Those destinations are private cluster addresses and will be blocked under strict SSRF defaults.
+
+### Example: Allow only expected cluster CIDRs (preferred)
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust for your cluster
+    SSRF_DNS_FAIL_CLOSED: "true"
+```
+
+### Example: Local benchmark profile (broader allowance)
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+    SSRF_DNS_FAIL_CLOSED: "true"
+```
+
+If registration fails with `422` and mentions blocked private network addresses, update SSRF values and
+retry the Helm upgrade.
+
 ## Values
 
 | Key | Type | Default | Description |

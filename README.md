@@ -495,6 +495,12 @@ kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
   --username admin@yourcompany.com --exp 10080 --secret your-secret-key
 ```
 
+> SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
+> If you register in-cluster tool URLs (for example fast-time or fast-test services),
+> allow only your cluster CIDRs via `mcpContextForge.config.SSRF_ALLOWED_NETWORKS` or,
+> for local-only benchmark setups, temporarily set `SSRF_ALLOW_PRIVATE_NETWORKS=true`.
+> See `docs/docs/manage/configuration.md#ssrf-protection` and `docs/docs/deployment/helm.md`.
+
 **Enterprise Features:**
 - 🔄 **Auto-scaling** - HPA with CPU/memory targets
 - 🗄️ **Database Choice** - PostgreSQL, MariaDB, or MySQL
