@@ -5081,6 +5081,51 @@ sso-test-login:
 	@echo "🧪 Running SSO smoke checks..."
 	@COMPOSE_CMD="$(COMPOSE_CMD)" ./scripts/test-sso-flow.sh
 
+# ─── LDAP ───────────────────────────────────────────────────────────
+
+compose-ldap: compose-validate ## 🔐 Start stack with LDAP profile (OpenLDAP + phpLDAPadmin)
+	@if [ ! -f "docker-compose.ldap.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.ldap.yml"; \
+		exit 1; \
+	fi
+	@echo "🔐 Starting stack with LDAP profile (OpenLDAP)..."
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap up -d
+	@echo "✅ LDAP stack started."
+	@echo "   Gateway:      http://localhost:8080"
+	@echo "   LDAP:         ldap://localhost:389 (cn=admin,dc=example,dc=org / admin)"
+	@echo "   phpLDAPadmin: http://localhost:8380"
+	@echo ""
+	@echo "📋 Seed LDAP data:"
+	@echo "   docker cp infra/ldap/seed.ldif ldap:/seed.ldif"
+	@echo '   docker exec ldap ldapadd -x -D "cn=admin,dc=example,dc=org" -w admin -f /seed.ldif'
+
+compose-ldap-seed: ## 📋 Seed OpenLDAP with demo users and groups
+	@echo "📋 Seeding LDAP with demo data..."
+	docker cp infra/ldap/seed.ldif ldap:/seed.ldif
+	docker exec ldap ldapadd -x -D "cn=admin,dc=example,dc=org" -w admin -f /seed.ldif
+	@echo "✅ LDAP seeded with demo users (alice, bob, charlie, diana, eve) and groups (admins, data-science, finance, engineering)."
+
+compose-ldap-down: compose-validate ## 🛑 Stop LDAP stack
+	@if [ ! -f "docker-compose.ldap.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.ldap.yml"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping LDAP stack..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap down --remove-orphans
+	@echo "✅ LDAP stack stopped."
+
+compose-ldap-clean: compose-validate ## 🧹 Stop LDAP stack and remove volumes
+	@if [ ! -f "docker-compose.ldap.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.ldap.yml"; \
+		exit 1; \
+	fi
+	@echo "🧹 Stopping LDAP stack and removing volumes..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap down -v --remove-orphans
+	@echo "✅ LDAP stack and volumes removed."
+
 compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
 	@if [ ! -f "docker-compose.override.lite.yml" ]; then \
 		echo "❌ Compose override file not found: docker-compose.override.lite.yml"; \

@@ -208,6 +208,11 @@ llmchat = [
     "langgraph>=1.0.9",
 ]
 
+# LDAP / Active Directory authentication
+ldap = [
+    "ldap3>=2.9.1",
+]
+
 # Fuzzing and property-based testing
 fuzz = [
     "hypothesis>=6.151.9",
