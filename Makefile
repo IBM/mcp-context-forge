@@ -1,13 +1,13 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #   🐍 ContextForge AI Gateway - Makefile
-#   (A unified gateway for Tools, Agents, Models, and APIs)
+#   (AI Gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
 # Authors: Mihai Criveti, Manav Gupta
 # Description: Build & automation helpers for ContextForge project
 # Usage: run `make` or `make help` to view available targets
 #
-# help: 🐍 ContextForge AI Gateway  (A unified gateway for Tools, Agents, Models, and APIs)
+# help: 🐍 ContextForge AI Gateway  (AI Gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs)
 #
 # ──────────────────────────────────────────────────────────────────────────
 SHELL := /bin/bash
@@ -34,12 +34,20 @@ MCP_2025_BASE_URL ?=
 MCP_2025_RPC_PATH ?= /mcp/
 MCP_2025_BEARER_TOKEN ?=
 
+# Virtual-environment variables
+VENVS_DIR ?= $(HOME)/.venv
+VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
+
 # -----------------------------------------------------------------------------
 # Project-wide clean-up targets
 # -----------------------------------------------------------------------------
+COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
+LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
+METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
+
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
 	dist build site .eggs *.egg-info .cache htmlcov certs \
-	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
+	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) htmlcov-doctest htmlcov_ai_normalizer \
 	node_modules .mutmut-cache html
 
 FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-* \
@@ -82,10 +90,6 @@ METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
 # -----------------------------------------------------------------------------
 CONTAINER_MEMORY = 2048m
 CONTAINER_CPUS   = 2
-
-# Virtual-environment variables
-VENVS_DIR ?= $(HOME)/.venv
-VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
 
 # -----------------------------------------------------------------------------
 # OS Specific
@@ -615,7 +619,7 @@ test:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -637,7 +641,7 @@ test-altk:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -2779,10 +2783,6 @@ lint-smart:
 			fi ;; \
 	esac
 
-# Commit range defaults for commitlint
-COMMITLINT_FROM ?= HEAD~1
-COMMITLINT_TO ?= HEAD
-
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
 LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
@@ -2847,20 +2847,6 @@ linting-workflow-reviewdog:          ## 🐶  reviewdog in local reporter mode
 		go install github.com/reviewdog/reviewdog/cmd/reviewdog@latest >/dev/null; \
 		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck= -oneline | \
 			'$(LINT_GO_ROOT)/bin/reviewdog' -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
-
-linting-workflow-commitlint:         ## 📝  Conventional Commits linting
-	@echo "📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)..."
-	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
-	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
-	@mkdir -p "$(LINT_NODE_ROOT)/commitlint" "$(LINT_NODE_ROOT)/npm-cache"
-	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/commitlint'; \
-		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
-		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional"
-	@NODE_PATH="$(LINT_NODE_ROOT)/commitlint/node_modules" \
-		node "$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js" \
-		--extends @commitlint/config-conventional \
-		--from "$(COMMITLINT_FROM)" \
-		--to "$(COMMITLINT_TO)"
 
 linting-python-fixit:                ## 🧪  Fixit Python linting
 	@echo "🧪 fixit lint of $(LINT_FIXIT_TARGET)..."
@@ -6546,12 +6532,14 @@ test-full: coverage test-js test-ui-report
 # help: gitleaks-install    - Install gitleaks secret scanner
 # help: gitleaks            - Scan git history for secrets
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
+# help: sri-generate        - Generate SRI hashes for CDN resources
+# help: sri-verify          - Verify SRI hashes match current CDN content
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit devskim
+SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit devskim sri-verify
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -6814,6 +6802,19 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 		echo "   • Or install .NET SDK and run: dotnet tool install --global Microsoft.CST.DevSkim.CLI"; \
 		echo "   • Then add to PATH: export PATH=\"\$$PATH:\$$HOME/.dotnet/tools\""; \
 	fi
+
+## --------------------------------------------------------------------------- ##
+##  SRI (Subresource Integrity) Management
+## --------------------------------------------------------------------------- ##
+
+.PHONY: sri-generate sri-verify
+
+sri-generate:                       ## 🔐 Generate SRI hashes for CDN resources
+	@echo "🔐 Generating SRI hashes for CDN resources..."
+	@python3 scripts/generate-sri-hashes.py
+
+sri-verify:                         ## ✅ Verify SRI hashes match current CDN content
+	@python3 scripts/verify-sri-hashes.py
 
 ## --------------------------------------------------------------------------- ##
 ##  Security reporting and advanced targets
@@ -7607,8 +7608,6 @@ rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-
 COMMITLINT_ENFORCED ?= 0
 COMMITLINT_FROM ?= HEAD~1
 COMMITLINT_TO ?= HEAD
-LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
-LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 
 linting-workflow-commitlint:         ## 📝  Conventional Commits linting (toggleable)
 	@/bin/bash -c "set -euo pipefail; \

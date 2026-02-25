@@ -27,7 +27,7 @@ from __future__ import annotations
 # Standard
 import base64
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import uuid
 
 # Third-Party
@@ -186,6 +186,22 @@ async def test_verify_credentials_enriches(monkeypatch):
     assert enriched["token"] == tok
 
 
+def test_extract_websocket_bearer_token_uses_authorization_header_only():
+    token = vc.extract_websocket_bearer_token(
+        {"token": "query-token"},
+        {"authorization": "Bearer header-token"},
+    )
+    assert token == "header-token"
+
+
+def test_extract_websocket_bearer_token_rejects_query_only_token():
+    token = vc.extract_websocket_bearer_token(
+        {"token": "query-token"},
+        {},
+    )
+    assert token is None
+
+
 # ---------------------------------------------------------------------------
 # require_auth
 # ---------------------------------------------------------------------------
@@ -217,6 +233,92 @@ async def test_require_auth_missing_token(monkeypatch):
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_rejects_revoked_token(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+    monkeypatch.setattr(
+        vc,
+        "verify_credentials_cached",
+        AsyncMock(return_value={"sub": "user@example.com", "jti": "jti-1", "token": "token"}),
+    )
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: True)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=True))
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Token has been revoked"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_rejects_inactive_user(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+    monkeypatch.setattr(
+        vc,
+        "verify_credentials_cached",
+        AsyncMock(return_value={"sub": "user@example.com", "jti": "jti-1", "token": "token"}),
+    )
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=False))
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Account disabled"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_allows_missing_user_when_not_required_in_db(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+    monkeypatch.setattr(vc, "verify_credentials_cached", AsyncMock(return_value={"sub": "ghost@example.com", "token": "token"}))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    payload = await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+    assert payload["sub"] == "ghost@example.com"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_rejects_missing_user_when_required_in_db(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", True, raising=False)
+    monkeypatch.setattr(vc.settings, "platform_admin_email", "admin@example.com", raising=False)
+    monkeypatch.setattr(vc, "verify_credentials_cached", AsyncMock(return_value={"sub": "ghost@example.com", "token": "token"}))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "User not found in database"
 
 
 @pytest.mark.asyncio
@@ -514,6 +616,23 @@ async def test_require_docs_auth_override_no_header_no_cookie_raises_not_authent
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_docs_auth_override_enforces_revocation_and_user_status(monkeypatch):
+    """Docs auth override should run the same revocation/user checks as API auth paths."""
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    verified_payload = {"sub": "alice@example.com", "jti": "token-jti"}
+    with patch("mcpgateway.utils.verify_credentials.verify_credentials", new=AsyncMock(return_value=verified_payload)), patch(
+        "mcpgateway.utils.verify_credentials._enforce_revocation_and_active_user",
+        new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked")),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await vc.require_docs_auth_override(auth_header="Bearer token", jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "revoked" in exc.value.detail.lower()
 
 
 # Integration test for /docs endpoint (requires test_client fixture and create_test_jwt_token helper)
@@ -1075,6 +1194,76 @@ async def test_require_admin_auth_email_auth_uses_token_from_bearer_credentials(
 
 
 @pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_rejects_revoked_token(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return MagicMock(email=email, is_admin=True, is_active=True)
+
+    revoked_check = MagicMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "admin@example.com", "jti": "revoked-jti"}))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", revoked_check)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=True))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    revoked_check.assert_called_once_with("revoked-jti")
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_rejects_inactive_admin_user(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool, is_active: bool):
+            self.email = email
+            self.is_admin = is_admin
+            self.is_active = is_active
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=True, is_active=False)
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "admin@example.com", "jti": "active-jti"}))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=True))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
 async def test_require_admin_auth_email_auth_non_admin_user_falls_back_to_basic(monkeypatch):
     """Email auth non-admin path raises internally but falls back to basic auth."""
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
@@ -1463,6 +1652,7 @@ async def test_require_auth_header_first_proxy_auth_returns_proxy_user(monkeypat
     """Proxy user is returned when mcp_client_auth_enabled=False and trust_proxy_auth=True."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
 
@@ -1480,6 +1670,7 @@ async def test_require_auth_header_first_proxy_auth_missing_header_raises_401(mo
     """When proxy auth is required but header missing, raises 401."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
 
@@ -1513,10 +1704,31 @@ async def test_require_auth_header_first_no_auth_method_configured_raises_401(mo
 
 
 @pytest.mark.asyncio
+async def test_require_auth_header_first_proxy_trust_without_ack_is_ignored(monkeypatch):
+    """Proxy trust mode is ignored unless explicitly acknowledged."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", False, raising=False)
+    monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"x-authenticated-user": "proxy-user@example.com"}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Authentication required but no auth method configured" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_require_auth_header_first_proxy_trust_no_header_auth_not_required_returns_anonymous(monkeypatch):
     """Line 928: trust_proxy_auth=True but no proxy header and auth_required=False returns 'anonymous'."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
 

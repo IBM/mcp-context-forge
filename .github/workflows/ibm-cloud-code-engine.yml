@@ -107,11 +107,15 @@ jobs:
           CF_DEFAULT_USER_PASSWORD: ${{ secrets.CF_DEFAULT_USER_PASSWORD }}
         run: |
           missing=()
+          placeholder=()
           for var in CF_IBM_CLOUD_API_KEY CF_JWT_SECRET_KEY CF_BASIC_AUTH_PASSWORD \
                      CF_AUTH_ENCRYPTION_SECRET CF_PLATFORM_ADMIN_PASSWORD \
                      CF_DEFAULT_USER_PASSWORD; do
-            if [ -z "${!var}" ]; then
+            val="${!var}"
+            if [ -z "$val" ]; then
               missing+=("$var")
+            elif [ "$val" = "-" ] || [ "$val" = "changeme" ] || [ "$val" = "CHANGE_ME" ]; then
+              placeholder+=("$var")
             fi
           done
           for var in IBM_CLOUD_REGION REGISTRY_HOSTNAME ICR_NAMESPACE \
@@ -123,6 +127,11 @@ jobs:
           done
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::Required secrets/variables are empty or unconfigured: ${missing[*]}"
+            exit 1
+          fi
+          if [ ${#placeholder[@]} -gt 0 ]; then
+            echo "::error::Secrets contain placeholder values (e.g. '-', 'changeme'): ${placeholder[*]}"
+            echo "::error::Update these in GitHub → Settings → Environments → production → Secrets"
             exit 1
           fi
           echo "All required secrets and variables are present."
@@ -200,6 +209,11 @@ jobs:
           # Build .env from .env.example, replacing secret placeholders.
           # Uses Python to avoid shell quoting issues (sed delimiter
           # collisions with |, &, \) and grep exit-code edge cases.
+          #
+          # IMPORTANT: Output ONLY uncommented KEY=VALUE lines.
+          # CE's --from-env-file silently skips updates when the file
+          # contains comments, blank lines, or section headers from
+          # .env.example.  Stripping to clean KEY=VALUE lines fixes this.
           python3 -c "
           import os, sys
           replacements = {
@@ -214,18 +228,23 @@ jobs:
               lines = f.readlines()
           with open('.env.deploy', 'w') as out:
               for line in lines:
-                  stripped = line.lstrip()
-                  if '=' in stripped and not stripped.startswith('#'):
-                      key = stripped.split('=', 1)[0]
-                      if key in replacements:
-                          val = replacements[key]
-                          if '\n' in val or '\r' in val:
-                              print(f'::error::Secret for {key} contains embedded newlines')
-                              raise SystemExit(1)
-                          out.write(f'{key}={val}\n')
-                          replaced.add(key)
-                          continue
-                  out.write(line)
+                  stripped = line.strip()
+                  # Skip comments and blank lines — CE --from-env-file
+                  # needs a clean KEY=VALUE-only file to reliably update.
+                  if not stripped or stripped.startswith('#'):
+                      continue
+                  if '=' not in stripped:
+                      continue
+                  key = stripped.split('=', 1)[0]
+                  if key in replacements:
+                      val = replacements[key]
+                      if '\n' in val or '\r' in val:
+                          print(f'::error::Secret for {key} contains embedded newlines')
+                          raise SystemExit(1)
+                      out.write(f'{key}={val}\n')
+                      replaced.add(key)
+                  else:
+                      out.write(f'{stripped}\n')
           missing = set(replacements) - replaced
           if missing:
               print(f'::error::Keys not found in .env.example: {missing}')
@@ -233,20 +252,38 @@ jobs:
               sys.exit(1)
           "
 
-          echo "✅ Generated .env.deploy from template + GitHub Secrets"
+          echo "✅ Generated .env.deploy ($(wc -l < .env.deploy) KEY=VALUE lines)"
 
           # Update the secret if it exists, otherwise create it.
-          # 'secret update --from-env-file' merges keys (does not prune
-          # removed keys), so stale keys may linger if .env.example drops
-          # a variable. This is benign (unused env vars) and far safer
-          # than delete+create which leaves no secret if create fails.
           if ibmcloud ce secret get --name mcpgateway-dev > /dev/null 2>&1; then
             ibmcloud ce secret update --name mcpgateway-dev --from-env-file .env.deploy
           else
             ibmcloud ce secret create --name mcpgateway-dev --format generic --from-env-file .env.deploy
           fi
 
+          # Belt-and-suspenders: explicitly set each secret with --from-literal
+          # to guarantee overwrite regardless of --from-env-file parsing quirks.
+          ibmcloud ce secret update --name mcpgateway-dev \
+            --from-literal "JWT_SECRET_KEY=$CF_JWT_SECRET_KEY" \
+            --from-literal "BASIC_AUTH_PASSWORD=$CF_BASIC_AUTH_PASSWORD" \
+            --from-literal "AUTH_ENCRYPTION_SECRET=$CF_AUTH_ENCRYPTION_SECRET" \
+            --from-literal "PLATFORM_ADMIN_PASSWORD=$CF_PLATFORM_ADMIN_PASSWORD" \
+            --from-literal "DEFAULT_USER_PASSWORD=$CF_DEFAULT_USER_PASSWORD"
+
           echo "✅ Code Engine secret 'mcpgateway-dev' synced"
+
+          # Verify the 5 critical secrets are no longer placeholders
+          echo "🔍 Verifying secret values were updated..."
+          for key in JWT_SECRET_KEY BASIC_AUTH_PASSWORD AUTH_ENCRYPTION_SECRET \
+                     PLATFORM_ADMIN_PASSWORD DEFAULT_USER_PASSWORD; do
+            val=$(ibmcloud ce secret get --name mcpgateway-dev --decode -o json 2>/dev/null \
+                  | python3 -c "import json,sys; print(json.load(sys.stdin).get('data',{}).get('$key',''))" 2>/dev/null || echo "")
+            if [ "$val" = "-" ] || [ -z "$val" ]; then
+              echo "::error::Secret key $key still has placeholder value after update"
+              exit 1
+            fi
+          done
+          echo "✅ All 5 secrets verified (no placeholders)"
 
       # -----------------------------------------------------------
       # 9️⃣  Deploy (create or update) Code Engine application

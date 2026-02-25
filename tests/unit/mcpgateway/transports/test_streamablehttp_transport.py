@@ -1103,6 +1103,21 @@ async def test_streamable_http_auth_skips_non_mcp():
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_skips_well_known_rfc9728_even_when_strict(monkeypatch):
+    """RFC 9728 well-known metadata paths should bypass MCP auth gate."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    scope = _make_scope("/.well-known/oauth-protected-resource/servers/550e8400-e29b-41d4-a716-446655440000/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is True
+    assert called == []
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_skips_cors_preflight():
     """Auth returns True for CORS preflight requests (OPTIONS with Origin and Access-Control-Request-Method)."""
     # CORS preflight requests cannot carry Authorization headers, so they must be exempt from auth
@@ -1219,6 +1234,27 @@ async def test_streamable_http_auth_bearer_no_token(monkeypatch):
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called and called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_bearer_no_token_permissive_mode(monkeypatch):
+    """Bearer-without-token should still return 401 when mcp_require_auth=False."""
+
+    async def fake_verify(token):
+        raise AssertionError("Should not be called")
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
     called = []
 
@@ -3308,6 +3344,114 @@ async def test_complete_dict_result(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_complete_defaults_non_admin_without_teams_to_public_only_scope(monkeypatch):
+    """Completion should use public-only scope when non-admin context has teams=None."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {"email": "viewer@example.com", "teams": None, "is_admin": False})),
+    )
+
+    mock_result = {"completion": {"values": ["public"], "total": 1, "hasMore": False}}
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value=mock_result)
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        result = await complete(ref, argument)
+        assert isinstance(result, mcp_types.Completion)
+        assert result.values == ["public"]
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "viewer@example.com"
+        assert mock_cs.handle_completion.await_args.kwargs["token_teams"] == []
+
+
+@pytest.mark.asyncio
+async def test_complete_preserves_admin_bypass_for_null_teams_context(monkeypatch):
+    """Admin completion with explicit teams=None keeps unrestricted bypass semantics."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {"email": "admin@example.com", "teams": None, "is_admin": True})),
+    )
+
+    mock_result = {"completion": {"values": ["all"], "total": 1, "hasMore": False}}
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value=mock_result)
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        result = await complete(ref, argument)
+        assert isinstance(result, mcp_types.Completion)
+        assert result.values == ["all"]
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] is None
+        assert mock_cs.handle_completion.await_args.kwargs["token_teams"] is None
+
+
+@pytest.mark.asyncio
+async def test_complete_preserves_explicit_team_scope(monkeypatch):
+    """Completion should preserve explicit token team scope from user context."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {"email": "member@example.com", "teams": ["team-1"], "is_admin": False})),
+    )
+
+    mock_result = {"completion": {"values": ["team"], "total": 1, "hasMore": False}}
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value=mock_result)
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        result = await complete(ref, argument)
+        assert isinstance(result, mcp_types.Completion)
+        assert result.values == ["team"]
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "member@example.com"
+        assert mock_cs.handle_completion.await_args.kwargs["token_teams"] == ["team-1"]
+
+
+@pytest.mark.asyncio
 async def test_complete_nested_completion(monkeypatch):
     """Test complete handles nested completion result (line 1200-1202)."""
     # Third-Party
@@ -3582,6 +3726,7 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
     """Test auth sets user context for proxy user when client auth disabled (lines 1740-1750)."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -3619,7 +3764,9 @@ async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypat
         raise ValueError("invalid token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -3653,7 +3800,9 @@ async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch)
         return "string_payload"
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
 
     scope = _make_scope(
@@ -3979,6 +4128,7 @@ async def test_streamable_http_auth_no_proxy_user_when_client_auth_disabled(monk
     """Test auth continues to JWT flow when client auth disabled but no proxy user header (line 1740->1753)."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
@@ -6738,6 +6888,130 @@ async def test_streamable_http_auth_verify_credentials_non_dict_payload(monkeypa
     assert sent == []
 
 
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_revoked_jwt(monkeypatch):
+    """Revoked JWTs should be rejected before user context is populated."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "user@example.com",
+            "jti": "revoked-jti",
+            "teams": ["team-a"],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=True):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_inactive_user(monkeypatch):
+    """Inactive users should be rejected after JWT validation."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "disabled@example.com",
+            "jti": "active-jti",
+            "teams": ["team-a"],
+        }
+
+    disabled_user = MagicMock()
+    disabled_user.is_active = False
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=disabled_user),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_revocation_check_exception_fails_open(monkeypatch):
+    """Revocation-check backend failures should fail open and allow the request."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "user@example.com",
+            "jti": "jti-1",
+            # Keep public-only to avoid team-membership DB checks; this test targets
+            # revocation-check failure behavior only.
+            "teams": [],
+        }
+
+    active_user = MagicMock()
+    active_user.is_active = True
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", side_effect=RuntimeError("db unavailable")),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=active_user),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_missing_user_when_required(monkeypatch):
+    """When require_user_in_db is enabled, unknown users should be rejected."""
+
+    async def fake_verify(_token):
+        return {
+            "sub": "missing@example.com",
+            "jti": "ok-jti",
+            "teams": ["team-a"],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.platform_admin_email", "admin@example.com")
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+    assert any(m.get("type") == "http.response.body" and b"User not found in database" in m.get("body", b"") for m in sent)
+
+
 # ---------------------------------------------------------------------------
 # Proxy function tests - comprehensive coverage for direct_proxy mode
 # ---------------------------------------------------------------------------
@@ -8166,7 +8440,7 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeypatch):
-    """Test auth exception fallback when permissive mode enabled and no proxy user."""
+    """Bearer verification errors should return 401 even in permissive mode without proxy fallback."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import streamable_http_auth, user_context_var
 
@@ -8175,6 +8449,7 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
 
     # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-user")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
@@ -8184,15 +8459,15 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
     async def send(msg):
         sent.append(msg)
 
-    # Should catch exception, fail proxy check (no header), then succeed via permissive check
+    # Should catch exception, fail proxy fallback (no proxy header), and reject invalid bearer.
     result = await streamable_http_auth(scope, None, send)
 
-    assert result is True
-    assert sent == []
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == tr.HTTP_401_UNAUTHORIZED
 
     ctx = user_context_var.get()
-    assert ctx["is_authenticated"] is False
-    assert ctx["teams"] == []
+    assert ctx is not None
 
 
 # ---------------------------------------------------------------------------

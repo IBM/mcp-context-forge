@@ -184,7 +184,7 @@ The LLM Chat functionality is powered by the following REST API endpoints:
 {
   "user_id": "some-string",
   "server": {
-    "url": "http://localhost:8000/mcp",
+    "url": "https://mcp.example.com/mcp",
     "transport": "streamable_http",
     "auth_token": "optional-jwt-token"
   },
@@ -196,6 +196,8 @@ The LLM Chat functionality is powered by the following REST API endpoints:
   "streaming": false
 }
 ```
+
+`/llmchat/connect` validates user-supplied server URLs with SSRF protections. Under strict defaults, localhost/private addresses are rejected unless explicitly allowed (for example via `SSRF_ALLOWED_NETWORKS` or local development overrides).
 
 **Response**:
 

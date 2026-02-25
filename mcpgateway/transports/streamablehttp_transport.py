@@ -68,7 +68,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import require_auth_header_first, verify_credentials
+from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -1614,6 +1614,18 @@ async def complete(
             logs the exception and returns an empty completion structure.
     """
     try:
+        # Derive caller visibility scope from the current request context.
+        _, _, user_context = await _get_request_context_or_default()
+        user_email = user_context.get("email") if user_context else None
+        token_teams = user_context.get("teams") if user_context else None
+        is_admin = user_context.get("is_admin", False) if user_context else False
+
+        # Admin bypass only for explicit unrestricted context; otherwise secure default.
+        if is_admin and token_teams is None:
+            user_email = None
+        elif token_teams is None:
+            token_teams = []  # Non-admin without explicit teams -> public-only
+
         async with get_db() as db:
             params = {
                 "ref": ref.model_dump() if hasattr(ref, "model_dump") else ref,
@@ -1621,7 +1633,12 @@ async def complete(
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
             }
 
-            result = await completion_service.handle_completion(db, params)
+            result = await completion_service.handle_completion(
+                db,
+                params,
+                user_email=user_email,
+                token_teams=token_teams,
+            )
 
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):
@@ -2148,13 +2165,12 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
     Behavior:
     - If the path does not end with "/mcp", authentication is skipped.
-    - If mcp_require_auth=True (strict mode):
-      - Requests without valid auth are rejected with 401.
-    - If mcp_require_auth=False (default, permissive mode):
+    - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
+    - If mcp_require_auth=False (permissive mode):
       - Requests without auth are allowed but get public-only access (token_teams=[]).
       - Valid tokens get full scoped access based on their teams.
+      - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
     - If a Bearer token is present, it is verified using `verify_credentials`.
-    - If verification fails and mcp_require_auth=True, a 401 Unauthorized JSON response is sent.
 
     Args:
         scope: The ASGI scope dictionary, which includes request metadata.
@@ -2180,6 +2196,9 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     if not path.endswith("/mcp") and not path.endswith("/mcp/"):
         # No auth needed for other paths in this middleware usage
         return True
+    if path.startswith("/.well-known/"):
+        # RFC 9728 metadata endpoints are intentionally public and may end with /mcp.
+        return True
 
     headers = Headers(scope=scope)
 
@@ -2191,10 +2210,10 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             return True
 
     authorization = headers.get("authorization")
-    proxy_user = headers.get(settings.proxy_user_header) if settings.trust_proxy_auth else None
+    proxy_user = headers.get(settings.proxy_user_header) if is_proxy_auth_trust_active(settings) else None
 
     # Determine authentication strategy based on settings
-    if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
+    if is_proxy_auth_trust_active(settings):
         # Client auth disabled → allow proxy header
         if proxy_user:
             # Set enriched user context for proxy-authenticated sessions
@@ -2210,10 +2229,13 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
     # --- Standard JWT authentication flow (client auth enabled) ---
     token: str | None = None
+    bearer_header_supplied = False
     if authorization:
         scheme, credentials = get_authorization_scheme_param(authorization)
-        if scheme.lower() == "bearer" and credentials:
-            token = credentials
+        if scheme.lower() == "bearer":
+            bearer_header_supplied = True
+            if credentials:
+                token = credentials
 
     try:
         if token is None:
@@ -2221,6 +2243,56 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
+            jti = user_payload.get("jti")
+            if jti:
+                # First-Party
+                from mcpgateway.auth import _check_token_revoked_sync  # pylint: disable=import-outside-toplevel
+
+                try:
+                    is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                except Exception as exc:
+                    logger.warning(f"MCP token revocation check failed for jti={jti}; allowing request (fail-open): {exc}")
+                    is_revoked = False
+                if is_revoked:
+                    response = ORJSONResponse(
+                        {"detail": "Token has been revoked"},
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                    await response(scope, receive, send)
+                    return False
+
+            user_email = user_payload.get("sub") or user_payload.get("email")
+            if user_email:
+                # First-Party
+                from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                user_lookup_succeeded = True
+                try:
+                    user_record = await asyncio.to_thread(_get_user_by_email_sync, user_email)
+                except Exception as exc:
+                    user_lookup_succeeded = False
+                    user_record = None
+                    logger.warning(f"MCP user lookup failed for user={user_email}; allowing request (fail-open): {exc}")
+
+                if user_lookup_succeeded:
+                    if user_record and not getattr(user_record, "is_active", True):
+                        response = ORJSONResponse(
+                            {"detail": "Account disabled"},
+                            status_code=HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                        await response(scope, receive, send)
+                        return False
+                    if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
+                        response = ORJSONResponse(
+                            {"detail": "User not found in database"},
+                            status_code=HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                        await response(scope, receive, send)
+                        return False
+
             # Resolve teams based on token_use claim
             token_use = user_payload.get("token_use")
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
@@ -2248,7 +2320,6 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             # SECURITY: Validate team membership for team-scoped tokens
             # Users removed from a team should lose MCP access immediately, not at token expiry
             # ═══════════════════════════════════════════════════════════════════════════
-            user_email = user_payload.get("sub") or user_payload.get("email")
             is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
 
             # Only validate membership for team-scoped tokens (non-empty teams list)
@@ -2335,7 +2406,7 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             )
     except Exception:
         # If JWT auth fails but we have a trusted proxy user, use that
-        if settings.trust_proxy_auth and proxy_user:
+        if is_proxy_auth_trust_active(settings) and proxy_user:
             user_context_var.set(
                 {
                     "email": proxy_user,
@@ -2345,6 +2416,17 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 }
             )
             return True  # Fall back to proxy authentication
+
+        # If client supplied a Bearer token but verification failed (or token was empty),
+        # fail closed even in permissive mode to avoid silently downgrading bad auth.
+        if bearer_header_supplied:
+            response = ORJSONResponse(
+                {"detail": "Invalid authentication credentials"},
+                status_code=HTTP_401_UNAUTHORIZED,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            await response(scope, receive, send)
+            return False
 
         # Check mcp_require_auth setting to determine behavior
         if settings.mcp_require_auth:

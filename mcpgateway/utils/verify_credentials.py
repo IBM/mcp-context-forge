@@ -51,9 +51,10 @@ Examples:
 """
 
 # Standard
+import asyncio
 from base64 import b64decode
 import binascii
-from typing import Optional
+from typing import Any, Optional
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -72,6 +73,59 @@ security = HTTPBearer(auto_error=False)
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def is_proxy_auth_trust_active(settings_obj: Any | None = None) -> bool:
+    """Return whether proxy-header trust mode is explicitly active.
+
+    Args:
+        settings_obj: Optional settings object override (defaults to global settings).
+
+    Returns:
+        ``True`` when proxy-header trust is explicitly enabled and acknowledged;
+        otherwise ``False``.
+    """
+    current_settings = settings_obj or settings
+
+    if current_settings.mcp_client_auth_enabled or not current_settings.trust_proxy_auth:
+        return False
+
+    if getattr(current_settings, "trust_proxy_auth_dangerously", False) is True:
+        return True
+
+    if not getattr(is_proxy_auth_trust_active, "_warned", False):
+        logger.warning("Ignoring trusted proxy auth because TRUST_PROXY_AUTH_DANGEROUSLY is false while MCP client auth is disabled.")
+        is_proxy_auth_trust_active._warned = True  # type: ignore[attr-defined]
+    return False
+
+
+def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_param_warning: Optional[str] = None) -> Optional[str]:
+    """Extract bearer token from WebSocket Authorization headers.
+
+    Args:
+        query_params: WebSocket query parameters mapping-like object.
+        headers: WebSocket headers mapping-like object.
+        query_param_warning: Optional warning message when legacy query token is detected.
+
+    Returns:
+        Bearer token value when present, otherwise None.
+    """
+    # Do not accept tokens from query parameters. This avoids leaking bearer
+    # secrets through URL logs/history/proxy telemetry.
+    query = query_params or {}
+    legacy_token = query.get("token") if hasattr(query, "get") else None
+    if legacy_token and query_param_warning:
+        logger.warning(f"{query_param_warning}; token ignored")
+
+    header_values = headers or {}
+    auth_header = header_values.get("authorization") if hasattr(header_values, "get") else None
+    if not auth_header and hasattr(header_values, "get"):
+        auth_header = header_values.get("Authorization")
+    if auth_header:
+        scheme, _, credentials = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and credentials:
+            return credentials.strip()
+    return None
 
 
 async def verify_jwt_token(token: str) -> dict:
@@ -277,6 +331,64 @@ async def verify_credentials_cached(token: str, request: Optional[Request] = Non
     return {**payload, "token": token}
 
 
+def _raise_auth_401(detail: str) -> None:
+    """Raise a standardized bearer-auth 401 error.
+
+    Args:
+        detail: Error detail message for the response body.
+
+    Raises:
+        HTTPException: Always raises 401 Unauthorized with Bearer auth header.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _enforce_revocation_and_active_user(payload: dict) -> None:
+    """Enforce token revocation and active-user checks for JWT-authenticated flows.
+
+    Args:
+        payload: Verified JWT payload used to derive revocation and user status checks.
+
+    Raises:
+        HTTPException: 401 when the token is revoked, the account is disabled,
+            or strict user-in-db mode rejects a missing user.
+    """
+    # First-Party
+    from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync
+
+    jti = payload.get("jti")
+    if jti:
+        try:
+            if await asyncio.to_thread(_check_token_revoked_sync, jti):
+                _raise_auth_401("Token has been revoked")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Token revocation check failed for JTI %s: %s", jti, exc)
+
+    username = payload.get("sub") or payload.get("email") or payload.get("username")
+    if not username:
+        return
+
+    try:
+        user = await asyncio.to_thread(_get_user_by_email_sync, username)
+    except Exception as exc:
+        logger.warning("User status check failed for %s: %s", username, exc)
+        return
+
+    if user is None:
+        if settings.require_user_in_db and username != getattr(settings, "platform_admin_email", "admin@example.com"):
+            _raise_auth_401("User not found in database")
+        return
+
+    if not user.is_active:
+        _raise_auth_401("Account disabled")
+
+
 async def require_auth(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(default=None)) -> str | dict:
     """Require authentication via JWT token or proxy headers.
 
@@ -359,7 +471,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
     """
     # If MCP client auth is disabled and proxy auth is trusted, use proxy headers
     if not settings.mcp_client_auth_enabled:
-        if settings.trust_proxy_auth:
+        if is_proxy_auth_trust_active():
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
@@ -401,12 +513,14 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         token = jwt_token
 
     if settings.auth_required and not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return await verify_credentials_cached(token, request) if token else "anonymous"
+        _raise_auth_401("Not authenticated")
+
+    if not token:
+        return "anonymous"
+
+    payload = await verify_credentials_cached(token, request)
+    await _enforce_revocation_and_active_user(payload)
+    return payload
 
 
 async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
@@ -732,8 +846,11 @@ async def require_docs_auth_override(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Validate the JWT token
-    return await verify_credentials(token)
+    # Validate JWT and enforce standard token/account status checks.
+    payload = await verify_credentials(token)
+    if isinstance(payload, dict):
+        await _enforce_revocation_and_active_user(payload)
+    return payload
 
 
 async def require_auth_override(
@@ -915,7 +1032,7 @@ async def require_auth_header_first(
 
     # Proxy auth path — identical to require_auth
     if not settings.mcp_client_auth_enabled:
-        if settings.trust_proxy_auth:
+        if is_proxy_auth_trust_active():
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
                 return {"sub": proxy_user, "source": "proxy", "token": None}  # nosec B105 - None is not a password
@@ -1018,12 +1135,16 @@ async def require_admin_auth(
                 try:
                     # Decode and verify JWT token (use cached version for performance)
                     payload = await verify_jwt_token_cached(token, request)
+                    await _enforce_revocation_and_active_user(payload)
                     username = payload.get("sub") or payload.get("username")  # Support both new and legacy formats
 
                     if username:
                         # Get user from database
                         auth_service = EmailAuthService(db_session)
                         current_user = await auth_service.get_user_by_email(username)
+
+                        if current_user and not getattr(current_user, "is_active", True):
+                            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
 
                         if current_user and current_user.is_admin:
                             return current_user.email

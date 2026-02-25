@@ -457,6 +457,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `10`                  | int > 0 |
 | `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `1`                   | int > 0 |
 | `ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED` | Send lockout notification emails      | `true`                | bool    |
+| `FAILED_LOGIN_MIN_RESPONSE_MS` | Minimum failed-login response duration to reduce timing side channels | `250` | int >= 0 |
 | `PASSWORD_RESET_ENABLED`      | Enable self-service forgot-password/reset flow   | `true`                | bool    |
 | `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` | Password reset token expiry window     | `60`                  | int > 0 |
 | `PASSWORD_RESET_RATE_LIMIT`   | Max reset requests per email in rate window      | `5`                   | int > 0 |
@@ -574,6 +575,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_GENERIC_TOKEN_URL`             | Token endpoint URL                               | (none)                     | string  |
 | `SSO_GENERIC_USERINFO_URL`          | Userinfo endpoint URL                            | (none)                     | string  |
 | `SSO_GENERIC_ISSUER`                | OIDC issuer URL                                  | (none)                     | string  |
+| `SSO_GENERIC_JWKS_URI`             | JWKS endpoint URL for id_token signature verification | (auto-discovered)     | string  |
 | `SSO_GENERIC_SCOPE`                 | OAuth scopes (space-separated)                   | `openid profile email`     | string  |
 
 **Okta OIDC:**
@@ -666,9 +668,10 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 | Setting                     | Description                                                      | Default | Options |
 | --------------------------- | ---------------------------------------------------------------- | ------- | ------- |
 | `SSRF_PROTECTION_ENABLED`   | Master switch for SSRF protection                                | `true`  | bool    |
-| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `true`  | bool    |
-| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `true`  | bool    |
-| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `false` | bool    |
+| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `false` | bool    |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `false` | bool    |
+| `SSRF_ALLOWED_NETWORKS`     | Optional private CIDR allowlist when private networks are blocked | `[]`  | JSON array |
+| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `true`  | bool    |
 | `SSRF_BLOCKED_NETWORKS`     | CIDR ranges always blocked (cloud metadata by default)          | See below | JSON array |
 | `SSRF_BLOCKED_HOSTS`        | Hostnames always blocked (case-insensitive)                     | See below | JSON array |
 
@@ -688,24 +691,24 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 !!! note "DNS Resolution Behavior"
     The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
 
-    - **DNS fail-open** (default): Unresolvable hostnames are allowed (hostname blocklist still applies)
-    - **DNS fail-closed** (`SSRF_DNS_FAIL_CLOSED=true`): Unresolvable hostnames are rejected
-
-    For maximum security, enable `SSRF_DNS_FAIL_CLOSED=true` in production. Note that DNS rebinding attacks (where DNS changes between validation and connection) require additional mitigations like a dedicated SSRF proxy.
+    - **DNS fail-closed** (default): Unresolvable hostnames are rejected
+    - **DNS fail-open** (`SSRF_DNS_FAIL_CLOSED=false`): Unresolvable hostnames are allowed (hostname blocklist still applies)
 
 !!! tip "Configuration Modes"
-    **Development/Internal Mode** (default): Localhost and private networks allowed, only cloud metadata blocked.
-    ```bash
-    SSRF_PROTECTION_ENABLED=true
-    SSRF_ALLOW_LOCALHOST=true
-    SSRF_ALLOW_PRIVATE_NETWORKS=true
-    ```
-
-    **Strict Production Mode** (external endpoints only):
+    **Strict Mode (default)**: External endpoints only.
     ```bash
     SSRF_PROTECTION_ENABLED=true
     SSRF_ALLOW_LOCALHOST=false
     SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_DNS_FAIL_CLOSED=true
+    ```
+
+    **Controlled Internal Access** (explicit CIDR exceptions):
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=false
+    SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_ALLOWED_NETWORKS='["10.20.0.0/16","192.168.50.0/24"]'
     ```
 
     **Custom Blocked Networks** (add additional ranges):
@@ -713,6 +716,43 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
     SSRF_BLOCKED_NETWORKS='["169.254.169.254/32","169.254.0.0/16","100.64.0.0/10"]'
     ```
     The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
+
+#### Helm/Kubernetes registration examples
+
+When deployed with the Helm chart, the testing registration jobs create gateways pointing to
+in-cluster Service DNS names:
+
+- Fast-time: `http://<release>-mcp-fast-time-server:80/http`
+- Fast-test: `http://<release>-fast-test-server:8880/mcp`
+
+Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private
+destinations are rejected with `422` during `/gateways` creation.
+
+Recommended approach for cluster deployments is to keep private networks blocked globally and allow only
+known internal CIDRs:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust to your environment
+    SSRF_DNS_FAIL_CLOSED: "true"
+```
+
+For local benchmark profiles where broad private access is acceptable, use:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+```
+
+!!! note "Local Development Defaults"
+    The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
+    (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
+    Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
 
 ### Ed25519 Certificate Signing
 
@@ -845,12 +885,16 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                   | Description                        | Default | Options                         |
 | ------------------------- | ---------------------------------- | ------- | ------------------------------- |
 | `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
+| `MCPGATEWAY_WS_RELAY_ENABLED` | Enable `/ws` JSON-RPC WebSocket relay | `false` | bool                       |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | Enable `/reverse-proxy/*` endpoints | `false` | bool                     |
 | `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
 | `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
 | `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
 | `SSE_KEEPALIVE_INTERVAL`  | SSE keepalive interval (secs)      | `30`    | int > 0                         |
 | `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
 | `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
+
+`MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
 ### Federation
 
@@ -1015,20 +1059,115 @@ The gateway includes built-in observability features for tracking HTTP requests,
 !!! warning "Security Warning"
     Header passthrough is disabled by default for security. Only enable if you understand the implications.
 
-### Plugin Configuration
+### Plugins Configuration
+
+The plugin framework uses its own `PluginsSettings` class (via `pydantic-settings`) with the `PLUGINS_` env var prefix. When used standalone (e.g., via the `mcpplugins` CLI or as a library), only these `PLUGINS_`-prefixed variables are needed. Inside the gateway, the plugin settings are accessed via `settings.plugins`.
+
+**Core Settings:**
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
-| `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
-| `PLUGINS_CLIENT_MTLS_CA_BUNDLE`      | Default CA bundle for external plugin mTLS | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_CERTFILE`       | Gateway client certificate for plugin mTLS | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE`        | Gateway client key for plugin mTLS         | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD` | Password for plugin client key           | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_VERIFY`         | Verify remote plugin certificates          | `true`                | bool    |
-| `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME` | Enforce hostname verification for plugins  | `true`                | bool    |
-| `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
-| `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
+| `PLUGINS_CONFIG_FILE`         | Path to plugin configuration file                | `plugins/config.yaml` | string  |
+| `PLUGINS_PLUGIN_TIMEOUT`      | Plugin execution timeout (seconds)               | `30`                  | int     |
+| `PLUGINS_LOG_LEVEL`           | Plugin framework log level                       | `INFO`                | string  |
+| `PLUGINS_SKIP_SSL_VERIFY`     | Skip TLS verification for plugin HTTP requests   | `false`               | bool    |
+
+**HTTP Client Settings:**
+
+| Setting                                   | Description                                      | Default | Options |
+| ----------------------------------------- | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_HTTPX_MAX_CONNECTIONS`           | Max total concurrent HTTP connections             | `200`   | int     |
+| `PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Max idle keepalive connections to retain          | `100`   | int     |
+| `PLUGINS_HTTPX_KEEPALIVE_EXPIRY`          | Idle keepalive connection expiry (seconds)        | `30.0`  | float   |
+| `PLUGINS_HTTPX_CONNECT_TIMEOUT`           | TCP connect timeout (seconds)                    | `5.0`   | float   |
+| `PLUGINS_HTTPX_READ_TIMEOUT`             | Read timeout (seconds)                            | `120.0` | float   |
+| `PLUGINS_HTTPX_WRITE_TIMEOUT`            | Write timeout (seconds)                           | `30.0`  | float   |
+| `PLUGINS_HTTPX_POOL_TIMEOUT`             | Connection pool timeout (seconds)                 | `10.0`  | float   |
+
+**CLI Settings:**
+
+| Setting                        | Description                                      | Default | Options |
+| ------------------------------ | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_CLI_COMPLETION`      | Enable shell auto-completion for `mcpplugins` CLI | `false` | bool    |
+| `PLUGINS_CLI_MARKUP_MODE`     | Markup renderer for CLI output                   | (none)  | `rich`, `markdown`, `disabled` |
+
+**MCP Client mTLS Settings:**
+
+| Setting                                  | Description                                      | Default | Options |
+| ---------------------------------------- | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_CLIENT_MTLS_CERTFILE`          | Path to PEM client certificate for mTLS          | (none)  | string  |
+| `PLUGINS_CLIENT_MTLS_KEYFILE`           | Path to PEM client private key for mTLS          | (none)  | string  |
+| `PLUGINS_CLIENT_MTLS_CA_BUNDLE`         | Path to CA bundle for client cert verification   | (none)  | string  |
+| `PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD`  | Password for encrypted client private key        | (none)  | string  |
+| `PLUGINS_CLIENT_MTLS_VERIFY`            | Verify the upstream server certificate           | (none)  | bool    |
+| `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME`    | Enable hostname verification                     | (none)  | bool    |
+
+**MCP Server SSL Settings:**
+
+| Setting                                  | Description                                      | Default | Options |
+| ---------------------------------------- | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_SERVER_SSL_KEYFILE`            | Path to PEM server private key                   | (none)  | string  |
+| `PLUGINS_SERVER_SSL_CERTFILE`           | Path to PEM server certificate                   | (none)  | string  |
+| `PLUGINS_SERVER_SSL_CA_CERTS`           | Path to CA certificates for client verification  | (none)  | string  |
+| `PLUGINS_SERVER_SSL_KEYFILE_PASSWORD`   | Password for encrypted server private key        | (none)  | string  |
+| `PLUGINS_SERVER_SSL_CERT_REQS`          | Client certificate requirement                   | (none)  | `0` (NONE), `1` (OPTIONAL), `2` (REQUIRED) |
+
+**MCP Server Settings:**
+
+| Setting                        | Description                                      | Default | Options |
+| ------------------------------ | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_SERVER_HOST`         | MCP server host to bind to                       | (none)  | string  |
+| `PLUGINS_SERVER_PORT`         | MCP server port to bind to                       | (none)  | int     |
+| `PLUGINS_SERVER_UDS`          | Unix domain socket path for MCP streamable HTTP  | (none)  | string  |
+| `PLUGINS_SERVER_SSL_ENABLED`  | Enable SSL/TLS for the MCP server                | (none)  | bool    |
+
+**MCP Runtime Settings:**
+
+| Setting                        | Description                                      | Default | Options |
+| ------------------------------ | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_CONFIG_PATH`         | Path to plugin config file for external servers  | (none)  | string  |
+| `PLUGINS_TRANSPORT`           | Transport type for external MCP server           | (none)  | `http`, `stdio` |
+
+**gRPC Client mTLS Settings:**
+
+| Setting                                      | Description                                      | Default | Options |
+| -------------------------------------------- | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_GRPC_CLIENT_MTLS_CERTFILE`         | Path to PEM client certificate for gRPC mTLS     | (none)  | string  |
+| `PLUGINS_GRPC_CLIENT_MTLS_KEYFILE`          | Path to PEM client private key for gRPC mTLS     | (none)  | string  |
+| `PLUGINS_GRPC_CLIENT_MTLS_CA_BUNDLE`        | Path to CA bundle for gRPC client verification   | (none)  | string  |
+| `PLUGINS_GRPC_CLIENT_MTLS_KEYFILE_PASSWORD` | Password for encrypted gRPC client private key   | (none)  | string  |
+| `PLUGINS_GRPC_CLIENT_MTLS_VERIFY`           | Verify the gRPC upstream server certificate      | (none)  | bool    |
+
+**gRPC Server SSL Settings:**
+
+| Setting                                      | Description                                      | Default | Options |
+| -------------------------------------------- | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_GRPC_SERVER_SSL_KEYFILE`           | Path to PEM gRPC server private key              | (none)  | string  |
+| `PLUGINS_GRPC_SERVER_SSL_CERTFILE`          | Path to PEM gRPC server certificate              | (none)  | string  |
+| `PLUGINS_GRPC_SERVER_SSL_CA_CERTS`          | Path to CA certificates for gRPC client verification | (none) | string |
+| `PLUGINS_GRPC_SERVER_SSL_KEYFILE_PASSWORD`  | Password for encrypted gRPC server private key   | (none)  | string  |
+| `PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH`       | gRPC client certificate requirement              | (none)  | `none`, `optional`, `require` |
+
+**gRPC Server Settings:**
+
+| Setting                            | Description                                      | Default | Options |
+| ---------------------------------- | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_GRPC_SERVER_HOST`        | gRPC server host to bind to                      | (none)  | string  |
+| `PLUGINS_GRPC_SERVER_PORT`        | gRPC server port to bind to                      | (none)  | int     |
+| `PLUGINS_GRPC_SERVER_UDS`         | Unix domain socket path for gRPC server          | (none)  | string  |
+| `PLUGINS_GRPC_SERVER_SSL_ENABLED` | Enable SSL/TLS for the gRPC server               | (none)  | bool    |
+
+**Unix Socket Settings:**
+
+| Setting                        | Description                                      | Default | Options |
+| ------------------------------ | ------------------------------------------------ | ------- | ------- |
+| `PLUGINS_UNIX_SOCKET_PATH`    | Path to the Unix domain socket                   | (none)  | string  |
+
+
+!!! note "Backwards Compatibility"
+    `PLUGIN_CONFIG_FILE` (without the `S`) is still accepted as an alias for `PLUGINS_CONFIG_FILE`. Similarly, `UNIX_SOCKET_PATH` is accepted as an alias for `PLUGINS_UNIX_SOCKET_PATH`.
+
 
 ### HTTP Retry Configuration
 

@@ -63,10 +63,10 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
-| `developer` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
-| `viewer` | team | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
-| `platform_viewer` | global | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
+| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `developer` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `viewer` | team | admin.dashboard, gateways.read, servers.read, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `platform_viewer` | global | admin.dashboard, gateways.read, servers.read, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
 !!! info "Default Role Assignment"
     **New users automatically receive up to two roles upon creation:**
@@ -293,6 +293,17 @@ Token scoping is enforced consistently across all access paths:
 | WebSocket | ✅ | ✅ | Forwards auth to /rpc |
 | MCP Transport | ✅ | N/A | Streamable HTTP protocol filtering |
 
+### Method-Level RBAC Examples
+
+The `/rpc` endpoint applies method-level authorization for sensitive operations.
+These checks are aligned with equivalent REST endpoints.
+
+| Method / Endpoint | Required Permission | Notes |
+|-------------------|---------------------|-------|
+| JSON-RPC `logging/setLevel` (`POST /rpc`) | `admin.system_config` | Same permission as `POST /logging/setLevel` |
+| Utility SSE (`GET /sse`) | `tools.execute` | Canonical tool execution permission |
+| Utility message relay (`POST /message`) | `tools.execute` | Canonical tool execution permission |
+
 ---
 
 ## Token Types and Use Cases
@@ -450,31 +461,21 @@ Permissions are defined in the `Permissions` class and control what actions user
 └─────────────────────────────┘
     │
     ▼
-┌─────────────────────────────┐
-│ Fallback Permission Check   │ ← Implicit permissions (see below)
-└─────────────────────────────┘
-    │
-    ▼
   GRANT or DENY
 ```
 
-### Fallback Permissions
+### Explicit Team/Token Defaults
 
-The system grants implicit permissions without explicit role assignment. These are **not** shown in `/rbac/my/permissions` but are effective:
+Team and token management behavior is now controlled through explicit role permissions, not implicit fallback checks.
 
-| User Context | Implicit Permissions |
-|--------------|---------------------|
-| Any authenticated user | teams.create, teams.read |
-| Team member | teams.read (for their teams) |
-| Team owner | teams.read, teams.update, teams.delete, teams.manage_members |
-| Any authenticated user | tokens.* (for own tokens only) |
+| Role | Explicit Baseline Grants |
+|------|--------------------------|
+| `team_admin` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
+| `developer` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
+| `viewer` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
+| `platform_viewer` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
 
-!!! info "Why Fallback Permissions Exist"
-    Fallback permissions enable basic functionality without requiring explicit role assignment:
-
-    - Users can always create and view teams they belong to
-    - Team owners automatically have management rights
-    - Users can always manage their own API tokens
+Users without role assignments do not receive implicit team/token permissions.
 
 ### Admin API RBAC
 

@@ -1,6 +1,6 @@
-# ContextForge AI Gateway
+# ContextForge
 
-> A unified gateway for Tools, Agents, Models, and APIs — with federation, virtual servers, retries, security, and an optional admin UI.
+> An open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. Optimizes Agent & Tool calling, and supports plugins.
 
 ![](docs/docs/images/contextforge-banner.png)
 
@@ -23,11 +23,10 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
 
 
-**ContextForge** is a production-grade AI gateway that federates tools, agents, models, and APIs into one clean endpoint for your AI clients:
+**ContextForge** is an open source registry and proxy that federates tools, agents, and APIs into one clean endpoint for your AI clients. It provides centralized governance, discovery, and observability across your AI infrastructure:
 
 - **Tools Gateway** — MCP, REST, gRPC-to-MCP translation, and TOON compression
 - **Agent Gateway** — A2A protocol, OpenAI-compatible and Anthropic agent routing
-- **Model Gateway** — LLM proxy with OpenAI API spec supporting 8+ providers (watsonx, OpenAI, Anthropic, Ollama, vLLM, and more)
 - **API Gateway** — Rate limiting, auth, retries, and reverse proxy for REST services
 - **Plugin Extensibility** — 40+ plugins for additional transports, protocols, and integrations
 - **Observability** — OpenTelemetry tracing with Phoenix, Jaeger, Zipkin, and other OTLP backends
@@ -71,7 +70,7 @@ It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scal
 
 ## Overview & Goals
 
-**ContextForge** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server or REST API-exposing a unified endpoint for all your AI clients. See the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for more details.
+**ContextForge** is an open source registry and proxy that federates any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server, or REST/gRPC API, providing centralized governance, discovery, and observability. It optimizes agent and tool calling, and supports plugins. See the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for more details.
 
 It currently supports:
 
@@ -94,7 +93,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <details>
 <summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
 
-* Sits in front of any MCP server or REST API
+* Federates any MCP server or REST API
 * Lets you choose your MCP protocol version (e.g., `2025-06-18`)
 * Exposes a single, unified interface for diverse backends
 
@@ -494,6 +493,12 @@ kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
   python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@yourcompany.com --exp 10080 --secret your-secret-key
 ```
+
+> SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
+> If you register in-cluster tool URLs (for example fast-time or fast-test services),
+> allow only your cluster CIDRs via `mcpContextForge.config.SSRF_ALLOWED_NETWORKS` or,
+> for local-only benchmark setups, temporarily set `SSRF_ALLOW_PRIVATE_NETWORKS=true`.
+> See `docs/docs/manage/configuration.md#ssrf-protection` and `docs/docs/deployment/helm.md`.
 
 **Enterprise Features:**
 - 🔄 **Auto-scaling** - HPA with CPU/memory targets
@@ -900,7 +905,21 @@ tests/               # Test suite (400+ tests)
 docs/docs/           # Full documentation (MkDocs)
 charts/              # Kubernetes/Helm charts
 plugins/             # Plugin framework and implementations
+mcp-servers/         # Sample/test MCP servers (see note below)
 ```
+
+> **Note:** The `mcp-servers/` directory contains **unsupported sample and test servers**,
+> most originating from community contributions, provided for demonstration and integration
+> testing purposes only. They generally lack session management, persistent state,
+> multi-tenancy, authentication, and other production concerns. They do not go through
+> the same review, testing, and security rigor as the core ContextForge codebase and
+> **should not be run in production**.
+>
+> **Security:** Never run untrusted MCP servers directly on your local filesystem.
+> Always use a sandbox, container, or microVM (e.g. gVisor, Firecracker) with
+> restricted capabilities. Exercise caution when registering any remote MCP server,
+> including servers from public catalogs — perform your own security evaluation
+> before granting access to your gateway.
 
 For complete structure, see [CONTRIBUTING.md](./CONTRIBUTING.md) or run `tree -L 2`.
 

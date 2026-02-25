@@ -1200,6 +1200,23 @@ class TestResourceSubscriptions:
         assert "exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_subscribe_resource_denied_when_visibility_check_fails(self, resource_service, mock_db, mock_resource):
+        """Subscription should be denied when the requester cannot access the resource."""
+        subscription = ResourceSubscription(uri="http://example.com/resource", subscriber_id="subscriber1")
+
+        mock_resource.visibility = "private"
+        mock_resource.owner_email = "owner@example.com"
+
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+
+        with pytest.raises(PermissionError):
+            await resource_service.subscribe_resource(mock_db, subscription, user_email="other@example.com", token_teams=[])
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_unsubscribe_resource_success(self, resource_service, mock_db, mock_resource):
         """Test successful resource unsubscription."""
         subscription = ResourceSubscription(uri="test://resource", subscriber_id="subscriber1")
@@ -1265,6 +1282,119 @@ class TestResourceSubscriptions:
 
         assert event["type"] == "resource_created"
         resource_service._event_service.subscribe_events.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_filters_private_events_for_non_owner(self, resource_service):
+        """Scoped subscriptions should not receive private events for other users."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://private",
+                    "visibility": "private",
+                    "owner_email": "owner@example.com",
+                    "team_id": None,
+                },
+            }
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://public",
+                    "visibility": "public",
+                    "owner_email": None,
+                    "team_id": None,
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="other@example.com", token_teams=[]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_allows_team_events_for_member_scope(self, resource_service):
+        """Scoped team subscribers should receive team-visible events for their teams."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://team",
+                    "visibility": "team",
+                    "owner_email": None,
+                    "team_id": "team-1",
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="member@example.com", token_teams=["team-1"]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://team"
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_team_without_db_fails_closed(self, resource_service):
+        """Team-scoped access checks should fail closed when DB context is missing."""
+        resource = MagicMock()
+        resource.visibility = "team"
+        resource.team_id = "team-1"
+        resource.owner_email = None
+
+        allowed = await resource_service._check_resource_access(
+            db=None,
+            resource=resource,
+            user_email="member@example.com",
+            token_teams=None,
+        )
+        assert allowed is False
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_ignores_malformed_event_data(self, resource_service):
+        """Malformed event payloads should be ignored by scoped subscriptions."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": "not-a-dict"}
+            yield {"type": "resource_updated", "data": {"uri": "resource://public", "visibility": "public"}}
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="user@example.com", token_teams=[]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_user_with_none_token_teams_fails_closed(self, resource_service):
+        """User-scoped subscriptions with missing token_teams should normalize to public-only."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://team",
+                    "visibility": "team",
+                    "team_id": "team-1",
+                    "owner_email": None,
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="member@example.com", token_teams=None):
+            events.append(event)
+
+        assert events == []
 
 
 # --------------------------------------------------------------------------- #
@@ -5060,9 +5190,77 @@ class TestInvokeResourceCoverageEdges:
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+            out = await svc.invoke_resource(
+                db,
+                "res-1",
+                "http://ignored",
+                resource_obj=resource,
+                gateway_obj=gateway,
+                user_identity={"email": "caller@example.com"},
+            )
         assert out == "ok"
         assert captured_headers.get("Authorization") == "Bearer tok"
+        mock_tss.return_value.get_user_token.assert_awaited_once_with("gw-1", "caller@example.com")
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_oauth_authorization_code_without_user_identity_skips_token_lookup(self):
+        """OAuth auth_code flow should not use fallback identities for token lookup."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type="oauth", auth_value={}, oauth_config={"grant_type": "authorization_code"}, auth_query_params=None)
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        captured_headers: dict[str, object] = {}
+
+        def _capture_headers(*_a, **kw):
+            captured_headers.update(kw.get("headers") or {})
+            return mock_sse.return_value
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_fresh.return_value.__enter__.return_value = MagicMock()
+            mock_fresh.return_value.__exit__.return_value = False
+            mock_tss.return_value.get_user_token = AsyncMock(return_value="tok")
+
+            mock_sse.side_effect = _capture_headers
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+        assert out == "ok"
+        assert "Authorization" not in captured_headers
+        mock_tss.return_value.get_user_token.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_invoke_resource_oauth_authorization_code_token_lookup_error_marks_span_unhealthy(self):

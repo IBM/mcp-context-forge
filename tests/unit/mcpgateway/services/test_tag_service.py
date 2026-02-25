@@ -8,13 +8,17 @@ Tests for Tag Service.
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 # First-Party
+from mcpgateway.db import Base, Resource as DbResource
 from mcpgateway.services.tag_service import TagService
 import mcpgateway.services.tag_service as tag_service_module
 
@@ -40,6 +44,82 @@ def tag_service():
 def mock_db():
     """Create a mock database session."""
     return MagicMock(spec=Session)
+
+
+@pytest.mark.asyncio
+async def test_resolve_team_ids_uses_team_management_service_when_token_teams_absent(tag_service, monkeypatch):
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, _user_email):
+            return [SimpleNamespace(id="team-a"), SimpleNamespace(id="team-b")]
+
+    monkeypatch.setattr("mcpgateway.services.team_management_service.TeamManagementService", MockTeamService)
+
+    team_ids = await tag_service._resolve_team_ids(db=object(), user_email="member@example.com", token_teams=None)
+    assert team_ids == ["team-a", "team-b"]
+
+
+@pytest.fixture
+def tag_visibility_db():
+    """Create an in-memory DB with visibility-scoped resource tags."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    from sqlalchemy.orm import sessionmaker
+
+    SessionLocal = sessionmaker(bind=engine)
+    db = SessionLocal()
+
+    db.add_all(
+        [
+            DbResource(
+                uri="file://public.txt",
+                name="Public Resource",
+                text_content="public",
+                visibility="public",
+                owner_email="owner@example.com",
+                tags=["public-tag", "shared-tag"],
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://team-1.txt",
+                name="Team Resource",
+                text_content="team",
+                visibility="team",
+                team_id="team-1",
+                owner_email="teammate@example.com",
+                tags=["team-tag", "shared-tag"],
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://team-2.txt",
+                name="Other Team Resource",
+                text_content="team2",
+                visibility="team",
+                team_id="team-2",
+                owner_email="other@example.com",
+                tags=["other-team-tag"],
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://private.txt",
+                name="Private Resource",
+                text_content="private",
+                visibility="private",
+                owner_email="owner@example.com",
+                tags=["private-tag", "shared-tag"],
+                enabled=True,
+            ),
+        ]
+    )
+    db.commit()
+
+    try:
+        yield db
+    finally:
+        db.close()
+        engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -82,6 +162,52 @@ async def test_get_all_tags_with_tools(tag_service, mock_db):
     assert api_tag.stats.tools == 2
     assert api_tag.stats.resources == 0
     assert api_tag.stats.total == 2
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_public_only_token_filters_non_public(tag_service, tag_visibility_db):
+    """Public-only token should only see tags present on public entities."""
+    tags = await tag_service.get_all_tags(
+        tag_visibility_db,
+        entity_types=["resources"],
+        include_entities=False,
+        user_email="owner@example.com",
+        token_teams=[],
+    )
+    tag_names = {tag.name for tag in tags}
+    assert tag_names == {"public-tag", "shared-tag"}
+    assert "team-tag" not in tag_names
+    assert "private-tag" not in tag_names
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_team_scoped_token_filters_other_teams(tag_service, tag_visibility_db):
+    """Team-scoped token should see public + own-team tags, but not private/other-team."""
+    tags = await tag_service.get_all_tags(
+        tag_visibility_db,
+        entity_types=["resources"],
+        include_entities=False,
+        user_email="member@example.com",
+        token_teams=["team-1"],
+    )
+    tag_names = {tag.name for tag in tags}
+    assert {"public-tag", "team-tag", "shared-tag"} <= tag_names
+    assert "other-team-tag" not in tag_names
+    assert "private-tag" not in tag_names
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_admin_bypass_sees_all(tag_service, tag_visibility_db):
+    """Explicit admin bypass context should return all tags across visibility levels."""
+    tags = await tag_service.get_all_tags(
+        tag_visibility_db,
+        entity_types=["resources"],
+        include_entities=False,
+        user_email=None,
+        token_teams=None,
+    )
+    tag_names = {tag.name for tag in tags}
+    assert {"public-tag", "team-tag", "other-team-tag", "private-tag", "shared-tag"} <= tag_names
 
 
 @pytest.mark.asyncio
@@ -293,6 +419,33 @@ async def test_get_entities_by_tag(tag_service, mock_db):
     assert resource_entity.id == "resource://test"
     assert resource_entity.name == "Test Resource"
     assert resource_entity.description is None
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_public_only_token_denies_team_entity(tag_service, tag_visibility_db):
+    """Public-only token must not receive team-tag entity listings."""
+    entities = await tag_service.get_entities_by_tag(
+        tag_visibility_db,
+        "team-tag",
+        entity_types=["resources"],
+        user_email="owner@example.com",
+        token_teams=[],
+    )
+    assert entities == []
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_team_token_sees_team_entity(tag_service, tag_visibility_db):
+    """Team-scoped token should list entities tagged within its team scope."""
+    entities = await tag_service.get_entities_by_tag(
+        tag_visibility_db,
+        "team-tag",
+        entity_types=["resources"],
+        user_email="member@example.com",
+        token_teams=["team-1"],
+    )
+    assert len(entities) == 1
+    assert entities[0].name == "Team Resource"
 
 
 @pytest.mark.asyncio

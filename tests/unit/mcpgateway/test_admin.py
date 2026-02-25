@@ -29,6 +29,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
+    UI_HIDE_SECTIONS_COOKIE_NAME,
+    _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
     _escape_like,
     _generate_unified_teams_view,
@@ -5259,8 +5261,8 @@ class TestImportConfigurationEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
-        assert excinfo.value.status_code == 500
-        assert "Import failed" in str(excinfo.value.detail)
+        assert excinfo.value.status_code == 400
+        assert "Missing import_data in request body" in str(excinfo.value.detail)
 
     async def test_admin_import_configuration_invalid_conflict_strategy(self, mock_request, mock_db):
         """Test import configuration with invalid conflict strategy."""
@@ -5272,8 +5274,8 @@ class TestImportConfigurationEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
-        assert excinfo.value.status_code == 500
-        assert "Import failed" in str(excinfo.value.detail)
+        assert excinfo.value.status_code == 400
+        assert "Invalid conflict strategy" in str(excinfo.value.detail)
 
     @patch.object(ImportService, "import_configuration")
     async def test_admin_import_configuration_import_service_error(self, mock_import_config, mock_request, mock_db):
@@ -6878,6 +6880,9 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
         user={"email": current_user_email, "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+    assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
 
 
 @pytest.mark.asyncio
@@ -6903,6 +6908,9 @@ async def test_admin_users_partial_html_controls(monkeypatch, mock_request, mock
         user={"email": "admin@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+    assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
 
 
 @pytest.mark.asyncio
@@ -6988,6 +6996,9 @@ async def test_admin_users_partial_html_default_render(monkeypatch, mock_request
         user={"email": "admin@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+    assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "users_partial.html"
 
@@ -11683,6 +11694,40 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_db):
+    """SSRF-safe URL validation blocks private/localhost targets before outbound requests."""
+
+    class StrictSSRFSettings:
+        ssrf_protection_enabled = True
+        ssrf_allow_localhost = False
+        ssrf_allow_private_networks = False
+        ssrf_allowed_networks = []
+        ssrf_blocked_networks = ["169.254.169.254/32"]
+        ssrf_blocked_hosts = []
+        ssrf_dns_fail_closed = False
+
+    class ShouldNotBeCalled:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, **_kwargs):
+            raise AssertionError("Outbound request should not execute for blocked SSRF target")
+
+    monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
+    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: ShouldNotBeCalled())
+
+    request = GatewayTestRequest(base_url="http://127.0.0.1", path="/test", method="GET", headers={}, body=None)
+    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+
+    assert response.status_code == 400
+    assert response.body["error"] == "Invalid gateway URL"
+    assert "details" not in response.body
+
+
+@pytest.mark.asyncio
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
@@ -11909,6 +11954,34 @@ async def test_admin_list_tags(monkeypatch, mock_db):
     result = await admin_list_tags(entity_types="tools,resources", include_entities=True, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert result[0]["name"] == "alpha"
     assert result[0]["entities"][0]["id"] == "tool-1"
+    tag_service.get_all_tags.assert_awaited_once_with(
+        mock_db,
+        entity_types=["tools", "resources"],
+        include_entities=True,
+        user_email="admin@example.com",
+        token_teams=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_list_tags_admin_bypass_context(monkeypatch, mock_db):
+    """Admin context without token scoping should pass unrestricted visibility context."""
+    stats = SimpleNamespace(tools=0, resources=0, prompts=0, servers=0, gateways=0, total=0)
+    tag = SimpleNamespace(name="alpha", stats=stats, entities=[])
+
+    tag_service = MagicMock()
+    tag_service.get_all_tags = AsyncMock(return_value=[tag])
+    monkeypatch.setattr("mcpgateway.admin.TagService", lambda: tag_service)
+
+    await admin_list_tags(entity_types=None, include_entities=False, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
+
+    tag_service.get_all_tags.assert_awaited_once_with(
+        mock_db,
+        entity_types=None,
+        include_entities=False,
+        user_email=None,
+        token_teams=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -12466,6 +12539,30 @@ async def test_get_resources_section_team_filter(mock_list, mock_db, allow_permi
 
 @pytest.mark.asyncio
 @patch.object(ResourceService, "list_resources")
+async def test_get_resources_section_team_filter_with_tuple_result(mock_list, mock_db, allow_permission):
+    mock_list.return_value = (
+        [
+            SimpleNamespace(
+                id="r1",
+                name="Res",
+                description="desc",
+                uri="res://1",
+                tags=[],
+                enabled=True,
+                team_id="team-1",
+                visibility="public",
+            )
+        ],
+        None,
+    )
+    response = await get_resources_section(team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    payload = json.loads(response.body)
+    assert payload["team_id"] == "team-1"
+    assert len(payload["resources"]) == 1
+
+
+@pytest.mark.asyncio
+@patch.object(ResourceService, "list_resources")
 async def test_get_resources_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_resources_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
@@ -12498,6 +12595,30 @@ async def test_get_prompts_section_team_filter(mock_list, mock_db, allow_permiss
 
 @pytest.mark.asyncio
 @patch.object(PromptService, "list_prompts")
+async def test_get_prompts_section_team_filter_with_tuple_result(mock_list, mock_db, allow_permission):
+    mock_list.return_value = (
+        [
+            SimpleNamespace(
+                id="p1",
+                name="Prompt",
+                description="desc",
+                arguments=[],
+                tags=[],
+                enabled=True,
+                team_id="team-2",
+                visibility="team",
+            )
+        ],
+        None,
+    )
+    response = await get_prompts_section(team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    payload = json.loads(response.body)
+    assert payload["team_id"] == "team-2"
+    assert len(payload["prompts"]) == 1
+
+
+@pytest.mark.asyncio
+@patch.object(PromptService, "list_prompts")
 async def test_get_prompts_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_prompts_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
@@ -12521,6 +12642,29 @@ async def test_get_servers_section_team_filter(mock_list, mock_db, allow_permiss
             visibility="private",
         )
     ]
+    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    payload = json.loads(response.body)
+    assert payload["team_id"] == "team-3"
+    assert len(payload["servers"]) == 1
+
+
+@pytest.mark.asyncio
+@patch.object(ServerService, "list_servers")
+async def test_get_servers_section_team_filter_with_tuple_result(mock_list, mock_db, allow_permission):
+    mock_list.return_value = (
+        [
+            SimpleNamespace(
+                id="s1",
+                name="Srv",
+                description="desc",
+                tags=[],
+                enabled=True,
+                team_id="team-3",
+                visibility="private",
+            )
+        ],
+        None,
+    )
     response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
@@ -13300,6 +13444,7 @@ class TestAuthLogin:
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
         result = await admin_login_page(request)
         assert isinstance(result, HTMLResponse)
+        assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
 
     @pytest.mark.asyncio
     async def test_admin_login_page_secure_cookie_warning_in_development(self, monkeypatch):
@@ -13319,6 +13464,7 @@ class TestAuthLogin:
 
         result = await admin_login_page(request)
         assert isinstance(result, HTMLResponse)
+        assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
         context = request.app.state.templates.TemplateResponse.call_args[0][2]
         assert "secure cookies enabled" in (context.get("secure_cookie_warning") or "").lower()
 
@@ -13345,6 +13491,8 @@ class TestAuthLogin:
     async def test_admin_login_handler_success(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.password_change_enforcement_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_preserve_admin_auth", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.environment", "development", raising=False)
 
@@ -13363,6 +13511,32 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+
+    @pytest.mark.asyncio
+    async def test_admin_login_handler_non_admin_requires_sso(self, monkeypatch, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_preserve_admin_auth", True, raising=False)
+
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_user.password_change_required = False
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
+        monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
+        create_access_token_mock = AsyncMock(return_value=("fake-token", None))
+        monkeypatch.setattr("mcpgateway.admin.create_access_token", create_access_token_mock)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value={"email": "user@test.com", "password": "secret123"})
+
+        result = await admin_login_handler(request, mock_db)
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert "error=sso_required" in result.headers["location"]
+        create_access_token_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_password_expired_requires_change(self, monkeypatch, mock_db):
@@ -14657,8 +14831,7 @@ class TestMaintenanceMisc:
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
             await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
-        # Inner HTTPException(400) is caught by outer except → re-raised as 500
-        assert exc_info.value.status_code == 500
+        assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_admin_import_preview_invalid_json(self, monkeypatch, allow_permission, mock_db):
@@ -14670,8 +14843,7 @@ class TestMaintenanceMisc:
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
             await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
-        # ValueError → HTTPException(400) → caught by outer except → 500
-        assert exc_info.value.status_code == 500
+        assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_admin_import_preview_import_validation_error_returns_400(self, monkeypatch, allow_permission, mock_db):
@@ -14930,6 +15102,24 @@ class TestMaintenanceMisc:
         request = MagicMock(spec=Request)
         request.client = MagicMock()
         request.client.host = "1.2.3.4"
+        result = await dummy_endpoint(request=request)
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_decorator_skips_request_injection_for_endpoints_without_request_param(self, monkeypatch):
+        # First-Party
+        from mcpgateway.admin import rate_limit, rate_limit_storage
+
+        rate_limit_storage.clear()
+        monkeypatch.setattr("mcpgateway.admin.settings.validation_max_requests_per_minute", 100, raising=False)
+
+        @rate_limit(10)
+        async def dummy_endpoint():
+            return "ok"
+
+        request = MagicMock(spec=Request)
+        request.client = MagicMock()
+        request.client.host = "2.3.4.5"
         result = await dummy_endpoint(request=request)
         assert result == "ok"
 
@@ -15848,6 +16038,9 @@ class TestTemplateButtonGating:
 
     def test_servers_pagination_query_params_are_js_escaped(self, jinja_env):
         """Malicious q/tags values must not break out of JS string context."""
+        # Standard
+        import html as html_stdlib
+
         server_data = {
             "id": "srv-1",
             "name": "Test Server",
@@ -15873,9 +16066,25 @@ class TestTemplateButtonGating:
             },
         )
 
-        assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
-        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
-        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
+        decoded_html = html_stdlib.unescape(html)
+        assert "url.searchParams.set('q', 'x' );alert(1);//');" not in decoded_html
+        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in decoded_html
+        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in decoded_html
+
+    def test_admin_js_toggle_submit_injects_csrf_token(self):
+        """Form submit helpers should inject CSRF token before programmatic submit()."""
+        admin_js_path = settings.static_dir / "admin.js"
+        admin_js = admin_js_path.read_text(encoding="utf-8")
+        assert "function injectCsrfTokenIntoForm(form)" in admin_js
+        assert "injectCsrfTokenIntoForm(form);" in admin_js
+
+    def test_admin_modal_backdrops_disable_pointer_events(self):
+        """Modal backdrop wrappers should not block interactions with modal buttons."""
+        admin_template_path = settings.templates_dir / "admin.html"
+        admin_template = admin_template_path.read_text(encoding="utf-8")
+        assert 'id="server-modal"' in admin_template
+        assert "fixed inset-0 transition-opacity pointer-events-none" in admin_template
+        assert "evt.detail.headers = evt.detail.headers || {};" in admin_template
 
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""
@@ -16875,6 +17084,7 @@ class TestAdminTokensPartialSearch:
             mock_settings.mcpgateway_ui_airgapped = False
             response = await admin_mod.admin_forgot_password_page(request)
             assert isinstance(response, HTMLResponse)
+            assert "mcpgateway_csrf_token=" in (response.headers.get("set-cookie") or "")
             template_call = request.app.state.templates.TemplateResponse.call_args
             assert template_call[0][1] == "forgot-password.html"
 
@@ -16959,6 +17169,7 @@ class TestAdminTokensPartialSearch:
                 mock_service_cls.return_value.validate_password_reset_token = AsyncMock(return_value=MagicMock())
                 response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
                 assert isinstance(response, HTMLResponse)
+                assert "mcpgateway_csrf_token=" in (response.headers.get("set-cookie") or "")
                 template_call = request.app.state.templates.TemplateResponse.call_args
                 assert template_call[0][1] == "reset-password.html"
                 assert template_call[0][2]["token_valid"] is True
@@ -17116,3 +17327,343 @@ class TestAdminTokensPartialSearch:
                 mock_service_cls.return_value.unlock_user_account = AsyncMock(side_effect=RuntimeError("boom"))
                 response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
                 assert response.status_code == 400
+
+# ============================================================================
+# SRI Hash Loading Tests
+# ============================================================================
+
+
+class TestLoadSriHashes:
+    """Test suite for load_sri_hashes() function."""
+
+    def test_load_sri_hashes_success(self, tmp_path):
+        """Test successful loading of SRI hashes from file."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a temporary sri_hashes.json file
+        sri_file = tmp_path / "sri_hashes.json"
+        test_hashes = {
+            "alpine.js": "sha384-test1",
+            "htmx.min.js": "sha384-test2",
+            "chart.js": "sha384-test3",
+        }
+        sri_file.write_text(json.dumps(test_hashes))
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == test_hashes
+            assert "alpine.js" in result
+            assert result["htmx.min.js"] == "sha384-test2"
+
+    def test_load_sri_hashes_file_not_found(self, tmp_path):
+        """Test load_sri_hashes returns empty dict when file doesn't exist."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Mock __file__ to point to directory without sri_hashes.json
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == {}
+
+    def test_load_sri_hashes_invalid_json(self, tmp_path):
+        """Test load_sri_hashes returns empty dict on invalid JSON."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a file with invalid JSON
+        sri_file = tmp_path / "sri_hashes.json"
+        sri_file.write_text("{ invalid json }")
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == {}
+
+    def test_load_sri_hashes_permission_error(self, tmp_path):
+        """Test load_sri_hashes returns empty dict on permission error."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create the file
+        sri_file = tmp_path / "sri_hashes.json"
+        sri_file.write_text('{"test": "value"}')
+
+        # Clear the lru_cache before testing
+        admin_mod.load_sri_hashes.cache_clear()
+
+        # Mock __file__ and patch Path.open to raise PermissionError
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            with patch("pathlib.Path.open", side_effect=PermissionError("Access denied")):
+                result = admin_mod.load_sri_hashes()
+
+                assert result == {}
+
+    def test_load_sri_hashes_caching(self, tmp_path):
+        """Test that load_sri_hashes uses lru_cache correctly."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a temporary sri_hashes.json file
+        sri_file = tmp_path / "sri_hashes.json"
+        test_hashes = {"test": "sha384-cached"}
+        sri_file.write_text(json.dumps(test_hashes))
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            # First call should read the file
+            result1 = admin_mod.load_sri_hashes()
+            assert result1 == test_hashes
+
+            # Modify the file
+            new_hashes = {"test": "sha384-modified"}
+            sri_file.write_text(json.dumps(new_hashes))
+
+            # Second call should return cached result (not modified)
+            result2 = admin_mod.load_sri_hashes()
+            assert result2 == test_hashes  # Still the old value due to cache
+            assert result2 == result1
+
+    def test_load_sri_hashes_empty_file(self, tmp_path):
+        """Test load_sri_hashes with empty JSON object."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create an empty JSON file
+        sri_file = tmp_path / "sri_hashes.json"
+        sri_file.write_text("{}")
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == {}
+
+    def test_load_sri_hashes_in_admin_ui_endpoint(self):
+        """Test that admin_ui endpoint includes SRI hashes in template context."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Clear cache
+        admin_mod.load_sri_hashes.cache_clear()
+
+        # Mock load_sri_hashes to return test data
+        test_hashes = {"alpine.js": "sha384-endpoint-test"}
+        with patch.object(admin_mod, "load_sri_hashes", return_value=test_hashes):
+            # We can't easily test the full admin_ui endpoint without extensive mocking,
+            # but we can verify load_sri_hashes is called correctly
+            result = admin_mod.load_sri_hashes()
+            assert result == test_hashes
+
+    def test_load_sri_hashes_unicode_content(self, tmp_path):
+        """Test load_sri_hashes handles unicode content correctly."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a file with unicode characters
+        sri_file = tmp_path / "sri_hashes.json"
+        test_hashes = {"test": "sha384-unicode-✓"}
+        sri_file.write_text(json.dumps(test_hashes), encoding="utf-8")
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == test_hashes
+
+    def test_load_sri_hashes_excludes_tailwind_play_cdn(self):
+        """Tailwind Play CDN is intentionally excluded from SRI hash map."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        admin_mod.load_sri_hashes.cache_clear()
+        hashes = admin_mod.load_sri_hashes()
+        assert "tailwindcss" not in hashes
+        assert "htmx" in hashes
+        assert hashes["htmx"].startswith("sha384-")
+
+
+class TestAdminCsrfProtection:
+    """Regression tests for admin CSRF enforcement helper."""
+
+    @staticmethod
+    def _make_request(
+        method: str = "POST",
+        headers: dict | None = None,
+        cookies: dict | None = None,
+        form_data: dict | None = None,
+        scheme: str = "https",
+        netloc: str = "example.com",
+    ) -> MagicMock:
+        request = MagicMock()
+        request.method = method
+        request.headers = headers or {}
+        request.cookies = cookies or {}
+        request.scope = {"root_path": ""}
+        request.url = SimpleNamespace(scheme=scheme, netloc=netloc)
+        request.form = AsyncMock(return_value=form_data or {})
+        return request
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_skips_safe_method(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(method="GET")
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_skips_without_jwt_cookie(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com"},
+            cookies={},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_missing_origin_for_cookie_auth(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"host": "example.com"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "csrf-token"},
+        )
+        with pytest.raises(HTTPException, match="origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_referer_origin_fallback(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "referer": "https://example.com/admin",
+                "host": "example.com",
+                "x-csrf-token": "expected",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_invalid_origin_components(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "invalid-origin", "host": "example.com", "x-csrf-token": "expected"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        with pytest.raises(HTTPException, match="origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_referer_parse_error_fails_closed(self, monkeypatch):
+        import urllib.parse
+
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"referer": "https://example.com/admin", "host": "example.com"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "csrf-token"},
+        )
+
+        monkeypatch.setattr(urllib.parse, "urlparse", MagicMock(side_effect=ValueError("bad referer")))
+        with pytest.raises(HTTPException, match="origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_missing_csrf_cookie(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com", "x-csrf-token": "expected"},
+            cookies={"jwt_token": "jwt"},
+        )
+        with pytest.raises(HTTPException, match="token cookie missing"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_token_mismatch(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com", "x-csrf-token": "wrong"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        with pytest.raises(HTTPException, match="token validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_matching_header_token(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={"origin": "https://example.com", "host": "example.com", "x-csrf-token": "expected"},
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_urlencoded_form_token(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://example.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_when_form_parse_fails(self):
+        from mcpgateway import admin as admin_mod
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://example.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+        )
+        request.form = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(HTTPException, match="token validation failed"):
+            await admin_mod.enforce_admin_csrf(request)

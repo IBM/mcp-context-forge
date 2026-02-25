@@ -529,7 +529,7 @@ class TestGetCurrentUser:
                     assert exc_info.value.detail == "Account disabled"
 
     @pytest.mark.asyncio
-    async def test_logging_debug_messages(self, caplog):
+    async def test_logging_debug_messages(self, caplog, monkeypatch):
         """Test that appropriate debug messages are logged during authentication."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test_token_for_logging")
 
@@ -546,7 +546,9 @@ class TestGetCurrentUser:
             updated_at=datetime.now(timezone.utc),
         )
 
-        caplog.set_level(logging.DEBUG)
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.auth")
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
@@ -2464,6 +2466,43 @@ class TestFallbackPathWithRequest:
         assert request.state.token_teams == ["team-1"]
         assert request.state.team_id == "team-1"
         assert request.state.auth_method == "jwt"
+
+    @pytest.mark.asyncio
+    async def test_fallback_multi_team_api_token_does_not_set_single_team_id(self, monkeypatch):
+        """Multi-team API tokens should not collapse to a single request.state.team_id."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        payload = {
+            "sub": "user@example.com",
+            "teams": ["team-1", "team-2"],
+            "token_use": "api",
+            "user": {"auth_provider": "local"},
+        }
+
+        mock_user = EmailUser(
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
+            await get_current_user(credentials=credentials, request=request)
+
+        assert request.state.token_teams == ["team-1", "team-2"]
+        assert request.state.team_id is None
+        assert request.state.token_use == "api"
 
 
 class TestApiTokenWithRequest:

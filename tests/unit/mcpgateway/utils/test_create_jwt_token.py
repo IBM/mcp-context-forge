@@ -244,6 +244,29 @@ def test_main_decode_mode(capsys):
     assert decoded["z"] == 9  # Check the custom claim is present
 
 
+def test_main_admin_without_teams_includes_null_teams(capsys):
+    """CLI rich admin tokens should emit explicit teams=null when --teams is omitted."""
+    sys.argv = [
+        "prog",
+        "-u",
+        "admin@example.com",
+        "--admin",
+        "-e",
+        "0",
+        "-s",
+        TEST_SECRET,
+        "--algo",
+        TEST_ALGO,
+    ]
+    main_cli()
+
+    token = capsys.readouterr().out.strip().splitlines()[-1]
+    decoded = jwt.decode(token, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+    assert decoded["user"]["is_admin"] is True
+    assert "teams" in decoded
+    assert decoded["teams"] is None
+
+
 # --------------------------------------------------------------------------- #
 # Rich token creation tests                                                    #
 # --------------------------------------------------------------------------- #
@@ -265,6 +288,39 @@ def test_create_token_with_user_data():
     assert dec["user"]["full_name"] == "Test User"
     assert dec["user"]["is_admin"] is True
     assert dec["user"]["auth_provider"] == "cli"
+
+
+def test_create_token_with_user_data_explicit_null_teams():
+    """Explicit teams=None serializes to JSON null for rich tokens."""
+    payload: Dict[str, Any] = {"sub": "admin@example.com"}
+    user_data = {
+        "email": "admin@example.com",
+        "full_name": "Admin User",
+        "is_admin": True,
+        "auth_provider": "cli",
+    }
+
+    tok = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO, user_data=user_data, teams=None)
+    dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+
+    assert "teams" in dec
+    assert dec["teams"] is None
+
+
+def test_create_token_with_user_data_omits_teams_when_not_provided():
+    """Omitting teams keeps the claim absent even when user_data is present."""
+    payload: Dict[str, Any] = {"sub": "admin@example.com"}
+    user_data = {
+        "email": "admin@example.com",
+        "full_name": "Admin User",
+        "is_admin": True,
+        "auth_provider": "cli",
+    }
+
+    tok = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO, user_data=user_data)
+    dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+
+    assert "teams" not in dec
 
 
 def test_create_token_with_teams():

@@ -1154,6 +1154,7 @@ class SecurityValidator:
             - ssrf_blocked_hosts: Hostnames always blocked
             - ssrf_allow_localhost: If False, blocks 127.0.0.0/8 and localhost
             - ssrf_allow_private_networks: If False, blocks RFC 1918 private ranges
+            - ssrf_allowed_networks: Optional CIDR allowlist for private ranges
 
         Examples:
             Cloud metadata (always blocked):
@@ -1186,6 +1187,7 @@ class SecurityValidator:
 
             >>> mock_settings.ssrf_allow_localhost = True
             >>> mock_settings.ssrf_allow_private_networks = True
+            >>> mock_settings.ssrf_allowed_networks = []
             >>> with patch('mcpgateway.common.validators.settings', mock_settings):
             ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
         """
@@ -1248,7 +1250,20 @@ class SecurityValidator:
             # Check private networks (if not allowed)
             if not settings.ssrf_allow_private_networks:
                 if ip_addr.is_private and not ip_addr.is_loopback:
-                    raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
+                    allowed_private = False
+                    allowed_networks = getattr(settings, "ssrf_allowed_networks", []) or []
+                    for network_str in allowed_networks:
+                        try:
+                            network = ipaddress.ip_network(network_str, strict=False)
+                        except ValueError:
+                            logger.warning(f"Invalid CIDR in ssrf_allowed_networks: {network_str}")
+                            continue
+                        if ip_addr in network:
+                            allowed_private = True
+                            break
+
+                    if not allowed_private:
+                        raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:

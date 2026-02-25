@@ -1442,6 +1442,7 @@ class TestSpecificAttackVectors:
         mock_settings.ssrf_protection_enabled = True
         mock_settings.ssrf_allow_localhost = False  # Strict mode
         mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_allowed_networks = []
         mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
         mock_settings.ssrf_blocked_hosts = []
         mock_settings.ssrf_dns_fail_closed = False
@@ -1461,6 +1462,7 @@ class TestSpecificAttackVectors:
         mock_settings.ssrf_protection_enabled = True
         mock_settings.ssrf_allow_localhost = True
         mock_settings.ssrf_allow_private_networks = False  # Strict mode
+        mock_settings.ssrf_allowed_networks = []
         mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
         mock_settings.ssrf_blocked_hosts = []
         mock_settings.ssrf_dns_fail_closed = False
@@ -1482,6 +1484,7 @@ class TestSpecificAttackVectors:
         mock_settings.ssrf_protection_enabled = True
         mock_settings.ssrf_allow_localhost = True
         mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_allowed_networks = []
         mock_settings.ssrf_blocked_networks = []
         mock_settings.ssrf_blocked_hosts = []
         mock_settings.ssrf_dns_fail_closed = True  # Fail closed
@@ -1508,6 +1511,7 @@ class TestSpecificAttackVectors:
         mock_settings.ssrf_protection_enabled = True
         mock_settings.ssrf_allow_localhost = True
         mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_allowed_networks = []
         mock_settings.ssrf_blocked_networks = []
         mock_settings.ssrf_blocked_hosts = []
         mock_settings.ssrf_dns_fail_closed = False  # Fail open (default)

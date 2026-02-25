@@ -106,18 +106,82 @@ async def test_set_get_delete_user_config_in_memory():
 
 
 @pytest.mark.asyncio
+async def test_get_user_config_in_memory_respects_ttl(monkeypatch: pytest.MonkeyPatch):
+    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+    start = 1000.0
+    monkeypatch.setattr(llmchat_router.time, "monotonic", lambda: start)
+    await llmchat_router.set_user_config("u1", config)
+
+    monkeypatch.setattr(llmchat_router.time, "monotonic", lambda: start + llmchat_router.USER_CONFIG_TTL + 1)
+    assert await llmchat_router.get_user_config("u1") is None
+    assert "u1" not in llmchat_router.user_configs
+
+
+@pytest.mark.asyncio
 async def test_set_get_delete_user_config_redis(monkeypatch: pytest.MonkeyPatch):
+    config = llmchat_router.build_config(
+        ConnectInput(
+            user_id="u1",
+            llm=LLMInput(model="gpt", config={"api_key": "llm-secret"}),
+            server=ServerInput(url="https://api.example.com/mcp", auth_token="server-secret"),
+        )
+    )
+    redis_mock = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    await llmchat_router.set_user_config("u1", config)
+    redis_mock.set.assert_awaited_once()
+    set_args = redis_mock.set.await_args
+    assert set_args.kwargs["ex"] == llmchat_router.USER_CONFIG_TTL
+    serialized_payload = set_args.args[1]
+    parsed_payload = llmchat_router.orjson.loads(serialized_payload)
+    assert llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY in parsed_payload
+    assert b"llm-secret" not in serialized_payload
+    assert b"server-secret" not in serialized_payload
+
+    redis_mock.get.return_value = serialized_payload
+    assert await llmchat_router.get_user_config("u1") == config
+    await llmchat_router.delete_user_config("u1")
+    redis_mock.get.assert_awaited()
+    redis_mock.delete.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_user_config_redis_supports_legacy_plaintext(monkeypatch: pytest.MonkeyPatch):
     config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
     redis_mock = AsyncMock()
     redis_mock.get.return_value = llmchat_router.orjson.dumps(config.model_dump())
     monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
 
-    await llmchat_router.set_user_config("u1", config)
-    assert await llmchat_router.get_user_config("u1") == config
-    await llmchat_router.delete_user_config("u1")
-    redis_mock.set.assert_awaited()
-    redis_mock.get.assert_awaited()
-    redis_mock.delete.assert_awaited()
+    result = await llmchat_router.get_user_config("u1")
+    assert result == config
+
+
+def test_deserialize_user_config_rejects_invalid_payload(caplog: pytest.LogCaptureFixture):
+    caplog.set_level("WARNING")
+    assert llmchat_router._deserialize_user_config_from_storage(b"{not-json") is None
+    assert "Failed to parse stored LLM chat config payload" in caplog.text
+
+
+def test_deserialize_user_config_rejects_missing_or_invalid_encrypted_payload(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    caplog.set_level("WARNING")
+
+    missing_payload = llmchat_router.orjson.dumps(
+        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: ""}
+    )
+    assert llmchat_router._deserialize_user_config_from_storage(missing_payload) is None
+
+    monkeypatch.setattr(llmchat_router, "decode_auth", lambda *_args, **_kwargs: ["invalid"])
+    invalid_decoded = llmchat_router.orjson.dumps(
+        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: "ciphertext"}
+    )
+    assert llmchat_router._deserialize_user_config_from_storage(invalid_decoded) is None
+    assert "Decoded encrypted LLM chat config is invalid" in caplog.text
+
+
+def test_deserialize_user_config_rejects_non_dict_legacy_payload():
+    legacy_non_dict = llmchat_router.orjson.dumps(["not-a-dict"])
+    assert llmchat_router._deserialize_user_config_from_storage(legacy_non_dict) is None
 
 
 @pytest.mark.asyncio
@@ -286,6 +350,79 @@ async def test_connect_success(monkeypatch: pytest.MonkeyPatch):
     assert result["status"] == "connected"
     assert result["tool_count"] == 1
     assert await llmchat_router.get_active_session("user1") is not None
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_ssrf_server_url(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    def _reject_url(_url: str, _field_name: str = "URL") -> str:
+        raise ValueError("localhost is blocked")
+
+    monkeypatch.setattr(llmchat_router.SecurityValidator, "validate_url", _reject_url)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="http://127.0.0.1/mcp", auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "Invalid server URL"
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_private_server_url_in_strict_ssrf_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    class StrictSSRFSettings:
+        ssrf_protection_enabled = True
+        ssrf_allow_localhost = False
+        ssrf_allow_private_networks = False
+        ssrf_allowed_networks = []
+        ssrf_blocked_networks = ["169.254.169.254/32"]
+        ssrf_blocked_hosts = []
+        ssrf_dns_fail_closed = False
+
+    monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="http://127.0.0.1/mcp", auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "Invalid server URL"
+
+
+@pytest.mark.asyncio
+async def test_connect_validates_user_supplied_server_url(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+    seen: dict[str, str] = {}
+
+    def _accept_url(url: str, _field_name: str = "URL") -> str:
+        seen["url"] = url
+        return url
+
+    monkeypatch.setattr(llmchat_router.SecurityValidator, "validate_url", _accept_url)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="https://api.example.com/mcp", auth_token="token"))
+
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+
+    assert result["status"] == "connected"
+    assert seen["url"] == "https://api.example.com/mcp"
 
 
 @pytest.mark.asyncio
@@ -460,13 +597,33 @@ async def test_status_connected(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.asyncio
 async def test_get_config_sanitizes(monkeypatch: pytest.MonkeyPatch):
-    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+    config = llmchat_router.build_config(
+        ConnectInput(
+            user_id="u1",
+            llm=LLMInput(model="gpt"),
+            server=ServerInput(url="https://api.example.com/mcp", auth_token="server-token"),
+        )
+    )
     await llmchat_router.set_user_config("u1", config)
 
     result = await llmchat_router.get_config("u1", user={"id": "u1"})
 
-    assert "api_key" not in result["llm"]["config"]
-    assert "auth_token" not in result["llm"]["config"]
+    assert result["mcp_server"]["auth_token"] == llmchat_router.settings.masked_auth_value
+
+
+def test_mask_sensitive_config_values_masks_nested_fields():
+    data = {
+        "api_key": "k",
+        "nested": {"client_secret": "s"},
+        "list": [{"password": "p"}],
+        "plain": "value",
+    }
+
+    masked = llmchat_router._mask_sensitive_config_values(data)
+    assert masked["api_key"] == llmchat_router.settings.masked_auth_value
+    assert masked["nested"]["client_secret"] == llmchat_router.settings.masked_auth_value
+    assert masked["list"][0]["password"] == llmchat_router.settings.masked_auth_value
+    assert masked["plain"] == "value"
 
 
 @pytest.mark.asyncio

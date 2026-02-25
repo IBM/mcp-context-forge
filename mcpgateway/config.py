@@ -55,7 +55,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TYPE_CHECKING, TypedDict
 from urllib.parse import urlparse
 
 # Third-Party
@@ -64,6 +64,10 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
 from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.plugins.framework.settings import PluginsSettings
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -248,6 +252,10 @@ class Settings(BaseSettings):
     jwt_audience_verification: bool = True
     jwt_issuer_verification: bool = True
     auth_required: bool = True
+    allow_unauthenticated_admin: bool = Field(
+        default=False,
+        description="Allow unauthenticated requests to receive platform-admin context when AUTH_REQUIRED=false (dangerous; development-only override).",
+    )
     token_expiry: int = 10080  # minutes
 
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
@@ -356,13 +364,22 @@ class Settings(BaseSettings):
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
-    mcp_require_auth: bool = Field(
-        default=False,
-        description="Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. " "If true, all /mcp requests must include a valid Bearer token.",
+    mcp_require_auth: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Require authentication for /mcp endpoints. "
+            "When unset, inherits AUTH_REQUIRED. "
+            "Set false explicitly to allow unauthenticated access to public items only; "
+            "set true to require a valid Bearer token for all /mcp requests."
+        ),
     )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
+    )
+    trust_proxy_auth_dangerously: bool = Field(
+        default=False,
+        description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
@@ -414,25 +431,28 @@ class Settings(BaseSettings):
     )
 
     ssrf_allow_localhost: bool = Field(
-        default=True,
-        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Set to false to block localhost access for stricter security. " "Default true for development compatibility."),
+        default=False,
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Default false for safer production behavior."),
     )
 
     ssrf_allow_private_networks: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). "
-            "Set to false if the gateway should only access public internet endpoints. "
-            "Default true for internal deployment compatibility."
+            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). " "When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
         ),
     )
 
+    ssrf_allowed_networks: List[str] = Field(
+        default_factory=list,
+        description=("Optional CIDR allowlist for internal/private destinations. " "Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
+    )
+
     ssrf_dns_fail_closed: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
-            "are rejected. When false (default), unresolvable hostnames are allowed through "
-            "(hostname blocklist still applies). Set to true for stricter security."
+            "are rejected. When false, unresolvable hostnames are allowed through "
+            "(hostname blocklist still applies)."
         ),
     )
 
@@ -519,6 +539,7 @@ class Settings(BaseSettings):
     max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
     account_lockout_notification_enabled: bool = Field(default=True, description="Send lockout notification emails when accounts are locked")
+    failed_login_min_response_ms: int = Field(default=250, description="Minimum response duration for failed login attempts to reduce timing side channels")
 
     # Self-service password reset
     password_reset_enabled: bool = Field(default=True, description="Enable self-service password reset workflow (set false to disable public forgot/reset endpoints)")
@@ -1388,6 +1409,8 @@ class Settings(BaseSettings):
         return v_up
 
     # Transport
+    mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
+    mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect
@@ -1674,14 +1697,6 @@ class Settings(BaseSettings):
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
-
-    # Core plugin settings
-    plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
-    plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
-
-    # Plugin CLI settings
-    plugins_cli_completion: bool = Field(default=False, description="Enable auto-completion for plugins CLI")
-    plugins_cli_markup_mode: Literal["markdown", "rich", "disabled"] | None = Field(default=None, description="Set markup mode for plugins CLI")
 
     # Development
     dev_mode: bool = False
@@ -2308,13 +2323,38 @@ Disallow: /
                 app_domain_host = urlparse(str(self.app_domain)).hostname or "localhost"
                 self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
 
+        # MCP transport auth policy:
+        # - If MCP_REQUIRE_AUTH is unset, derive it from AUTH_REQUIRED
+        # - If AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false is explicit, emit a warning
+        if self.mcp_require_auth is None:
+            self.mcp_require_auth = bool(self.auth_required)
+            logger.info(
+                "MCP_REQUIRE_AUTH not set; defaulting to %s to match AUTH_REQUIRED=%s.",
+                self.mcp_require_auth,
+                self.auth_required,
+            )
+        elif self.auth_required and self.mcp_require_auth is False:
+            logger.warning("AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false. MCP endpoints (/servers/*/mcp) allow unauthenticated access to public items.")
+
         # Validate proxy auth configuration
-        if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
+        if not self.mcp_client_auth_enabled and self.trust_proxy_auth and not self.trust_proxy_auth_dangerously:
+            logger.warning(
+                "TRUST_PROXY_AUTH=true ignored because TRUST_PROXY_AUTH_DANGEROUSLY is false "
+                "while MCP_CLIENT_AUTH_ENABLED=false. Set TRUST_PROXY_AUTH_DANGEROUSLY=true "
+                "only behind a strictly trusted authentication proxy."
+            )
+            self.trust_proxy_auth = False
+        elif not self.mcp_client_auth_enabled and self.trust_proxy_auth and self.trust_proxy_auth_dangerously:
+            logger.warning("TRUST_PROXY_AUTH_DANGEROUSLY=true acknowledged. Requests may trust identity headers from the upstream proxy.")
+        elif not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
             logger.warning(
                 "MCP client authentication is disabled but trust_proxy_auth is not set. "
                 "This is a security risk! Set TRUST_PROXY_AUTH=true only if ContextForge "
                 "is behind a trusted authentication proxy."
             )
+
+        if not self.auth_required and self.allow_unauthenticated_admin:
+            logger.warning("ALLOW_UNAUTHENTICATED_ADMIN=true acknowledged while AUTH_REQUIRED=false. Unauthenticated requests may receive admin context.")
 
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"
@@ -2386,6 +2426,18 @@ def generate_settings_schema() -> dict[str, Any]:
 # Lazy "instance" of settings
 class LazySettingsWrapper:
     """Lazily initialize settings singleton on getattr"""
+
+    @property
+    def plugins(self) -> "PluginsSettings":
+        """Access plugin framework settings via ``settings.plugins``.
+
+        Returns:
+            PluginsSettings: The plugin framework settings instance.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.settings import get_settings as _get_plugin_settings  # pylint: disable=import-outside-toplevel
+
+        return _get_plugin_settings()
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it
