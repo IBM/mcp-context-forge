@@ -27,8 +27,6 @@ on:
     paths:
       - "mcpgateway/**"
       - ".github/workflows/bandit.yml" # must be a subset of the push branches
-  schedule:
-    - cron: "26 11 * * 6" # Saturday @ 11:26 UTC - catch new CVEs
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

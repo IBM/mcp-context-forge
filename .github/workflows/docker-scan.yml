@@ -33,8 +33,6 @@ on:
       - 'plugins/**'
       - 'pyproject.toml'
       - '.github/workflows/docker-scan.yml'
-  schedule:
-    - cron: "17 18 * * 2"  # Weekly scan (Tuesday 18:17 UTC) for new CVEs
   workflow_dispatch:
 
 concurrency:

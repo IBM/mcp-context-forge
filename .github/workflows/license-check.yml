@@ -18,8 +18,6 @@ on:
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/license-check.yml"
-  schedule:
-    - cron: "15 10 * * 6"  # Weekly Saturday 10:15 UTC
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

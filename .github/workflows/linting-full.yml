@@ -52,6 +52,9 @@ jobs:
       - name: Run pre-commit
         run: make --no-print-directory pre-commit
 
+      - name: Verify SRI hashes
+        run: make sri-verify
+
       - name: Determine commitlint range
         id: commit_range
         shell: bash

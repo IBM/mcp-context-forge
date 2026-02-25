@@ -45,8 +45,6 @@ on:
       - ".github/workflows/dependency-review.yml"
   # Weekly safety-net run - useful for catching newly-disclosed CVEs
   # or upstream license changes even when no PR is open.
-  schedule:
-    - cron: "31 12 * * 6" # Saturday @ 12:31 UTC
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
