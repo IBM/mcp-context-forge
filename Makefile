@@ -7900,7 +7900,7 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 .PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
-.PHONY: rust-gateway-build rust-gateway-test rust-gateway-fmt-check rust-gateway-clippy
+.PHONY: rust-gateway-build rust-gateway-install rust-gateway-test rust-gateway-test-verbose rust-gateway-check rust-gateway-fmt rust-gateway-fmt-check rust-gateway-clippy rust-gateway-clean rust-gateway-verify rust-gateway-info
 .PHONY: rust-mcp-build rust-mcp-test rust-mcp-fmt-check rust-mcp-clippy
 .PHONY: rust-plugins-build rust-plugins-test rust-plugins-fmt-check rust-plugins-clippy
 .PHONY: rust-tools-build rust-tools-test rust-tools-fmt-check rust-tools-clippy
@@ -8157,7 +8157,44 @@ rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-
 	@echo "✅ Full cross-compilation setup and build complete"
 
 # -----------------------------------------------------------------------------
-# Per subfolder: crates/gateway (mcpgateway | gateway_rs), mcp-servers, plugins, tools
+# 🦀 Rust Gateway Workspace (mcpgateway_rust)
+# -----------------------------------------------------------------------------
+
+rust-gateway-build: rust-ensure-deps  ## Build Rust gateway workspace (release)
+	@$(MAKE) -C mcpgateway_rust build
+
+rust-gateway-install: rust-ensure-deps  ## Build and install all PyO3 gateway modules
+	@$(MAKE) -C mcpgateway_rust install
+
+rust-gateway-test: rust-ensure-deps  ## Run all Rust gateway tests
+	@$(MAKE) -C mcpgateway_rust test
+
+rust-gateway-test-verbose: rust-ensure-deps  ## Run all Rust gateway tests (verbose)
+	@$(MAKE) -C mcpgateway_rust test-verbose
+
+rust-gateway-check: rust-ensure-deps  ## Run cargo check on gateway workspace
+	@$(MAKE) -C mcpgateway_rust check
+
+rust-gateway-fmt: rust-ensure-deps  ## Format Rust gateway code
+	@$(MAKE) -C mcpgateway_rust fmt
+
+rust-gateway-fmt-check: rust-ensure-deps  ## Check format for Rust gateway workspace
+	@$(MAKE) -C mcpgateway_rust fmt-check
+
+rust-gateway-clippy: rust-ensure-deps  ## Run clippy on gateway workspace
+	@$(MAKE) -C mcpgateway_rust clippy
+
+rust-gateway-clean: rust-ensure-deps  ## Clean Rust gateway build artifacts
+	@$(MAKE) -C mcpgateway_rust clean
+
+rust-gateway-verify: rust-ensure-deps  ## Run all gateway verification checks
+	@$(MAKE) -C mcpgateway_rust verify
+
+rust-gateway-info: rust-ensure-deps  ## Show Rust gateway workspace information
+	@$(MAKE) -C mcpgateway_rust info
+
+# -----------------------------------------------------------------------------
+# Per subfolder: crates/mcp-servers, crates/plugins, crates/tools
 # -----------------------------------------------------------------------------
 
 define rust_subfolder_build
@@ -8172,26 +8209,6 @@ endef
 define rust_subfolder_clippy
 	@[ -n "$(1)" ] && for d in $(1); do echo "  Clippy $$d..."; cargo clippy --manifest-path $$d/Cargo.toml -- -D warnings || exit 1; done || echo "  (no crates)"
 endef
-
-rust-gateway-build: rust-ensure-deps     ## Build crates in crates/mcpgateway (or gateway_rs)
-	@echo "🦀 Building gateway crates..."
-	$(call rust_subfolder_build,$(RUST_GATEWAY_DIRS))
-	@echo "✅ Gateway build done"
-
-rust-gateway-test: rust-ensure-deps     ## Test crates in crates/mcpgateway
-	@echo "🦀 Testing gateway crates..."
-	$(call rust_subfolder_test,$(RUST_GATEWAY_DIRS))
-	@echo "✅ Gateway tests done"
-
-rust-gateway-fmt-check: rust-ensure-deps ## Check format for crates/mcpgateway
-	@echo "🦀 Checking gateway format..."
-	$(call rust_subfolder_fmt_check,$(RUST_GATEWAY_DIRS))
-	@echo "✅ Gateway fmt check done"
-
-rust-gateway-clippy: rust-ensure-deps  ## Clippy for crates/mcpgateway
-	@echo "🦀 Clippy gateway crates..."
-	$(call rust_subfolder_clippy,$(RUST_GATEWAY_DIRS))
-	@echo "✅ Gateway clippy done"
 
 rust-mcp-build: rust-ensure-deps        ## Build crates in crates/mcp-servers
 	@echo "🦀 Building mcp-servers crates..."
