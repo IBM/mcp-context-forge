@@ -872,8 +872,9 @@ def test_ui_hide_sections_accepts_extended_sections():
     ]
 
 
-def test_ui_hide_sections_empty_default():
+def test_ui_hide_sections_empty_default(monkeypatch):
     """Default value should be empty list."""
+    monkeypatch.delenv("MCPGATEWAY_UI_HIDE_SECTIONS", raising=False)
     s = Settings(_env_file=None)
     assert s.mcpgateway_ui_hide_sections == []
 
@@ -896,8 +897,9 @@ def test_ui_hide_header_items_csv_input():
     assert s.mcpgateway_ui_hide_header_items == ["logout", "team_selector"]
 
 
-def test_ui_hide_header_items_empty_default():
+def test_ui_hide_header_items_empty_default(monkeypatch):
     """Default value should be empty list."""
+    monkeypatch.delenv("MCPGATEWAY_UI_HIDE_HEADER_ITEMS", raising=False)
     s = Settings(_env_file=None)
     assert s.mcpgateway_ui_hide_header_items == []
 
