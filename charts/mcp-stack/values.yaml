@@ -88,21 +88,21 @@ mcpContextForge:
       type: http
       path: /ready
       port: 4444
-      initialDelaySeconds: 15 # wait 15 s after container start
-      periodSeconds: 10       # check every 10 s
-      timeoutSeconds: 2       # fail if no response in 2 s
+      initialDelaySeconds: 30 # wait longer before first readiness check under high-load start
+      periodSeconds: 15       # reduce probe pressure during benchmark spikes
+      timeoutSeconds: 70      # tolerate slow responses during heavy load
       successThreshold: 1     # one success flips it back to healthy
-      failureThreshold: 3     # three failures mark pod un-ready
+      failureThreshold: 8     # require sustained readiness failures before removing pod
 
     liveness:
       type: http
       path: /health
       port: 4444
-      initialDelaySeconds: 10 # wait 10 s after container start
-      periodSeconds: 15
-      timeoutSeconds: 2
+      initialDelaySeconds: 120 # avoid restarts while app is recovering from heavy queue buildup
+      periodSeconds: 30
+      timeoutSeconds: 70
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 10
 
   # Kubernetes resource requests / limits
   resources:
@@ -1162,19 +1162,19 @@ postgres:
       type: exec
       command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
       initialDelaySeconds: 15
-      periodSeconds: 10
-      timeoutSeconds: 3
+      periodSeconds: 15
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 6
 
     liveness:
       type: exec
       command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
       initialDelaySeconds: 10
-      periodSeconds: 15
-      timeoutSeconds: 3
+      periodSeconds: 20
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 5
+      failureThreshold: 8
 
   # ─── PostgreSQL Upgrade Configuration ───
   upgrade:
@@ -1288,19 +1288,19 @@ redis:
       type: exec
       command: ["redis-cli", "PING"]
       initialDelaySeconds: 10
-      periodSeconds: 10
-      timeoutSeconds: 2
+      periodSeconds: 15
+      timeoutSeconds: 5
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 6
 
     liveness:
       type: exec
       command: ["redis-cli", "PING"]
       initialDelaySeconds: 5
-      periodSeconds: 15
-      timeoutSeconds: 2
+      periodSeconds: 20
+      timeoutSeconds: 5
       successThreshold: 1
-      failureThreshold: 5
+      failureThreshold: 8
 
   # ─── Persistence configuration ───
   persistence:
@@ -1498,20 +1498,20 @@ mcpFastTimeServer:
       path: /health
       port: 8080
       initialDelaySeconds: 3
-      periodSeconds: 10
-      timeoutSeconds: 2
+      periodSeconds: 15
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 6
 
     liveness:
       type: http
       path: /health
       port: 8080
       initialDelaySeconds: 3
-      periodSeconds: 15
-      timeoutSeconds: 2
+      periodSeconds: 20
+      timeoutSeconds: 10
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 8
 
   # Tiny Go process: ~10 MB runtime footprint
   resources:
