@@ -7111,6 +7111,31 @@ function resetEditSelections() {
     ].forEach((k) => {
         delete window.editServerSelections[k];
     });
+
+    // Remove stale "Select All" hidden inputs so they don't leak into the
+    // next edit session and override the persistent selection store on save.
+    const hiddenFields = [
+        {
+            container: "edit-server-tools",
+            names: ["selectAllTools", "allToolIds"],
+        },
+        {
+            container: "edit-server-resources",
+            names: ["selectAllResources", "allResourceIds"],
+        },
+        {
+            container: "edit-server-prompts",
+            names: ["selectAllPrompts", "allPromptIds"],
+        },
+    ];
+    hiddenFields.forEach(({ container, names }) => {
+        const el = document.getElementById(container);
+        if (!el) return;
+        names.forEach((n) => {
+            const input = el.querySelector(`input[name="${n}"]`);
+            if (input) input.remove();
+        });
+    });
 }
 
 function ensureEditStoreListeners() {

@@ -326,15 +326,13 @@ describe("serverSideToolSearch", () => {
             <input type="checkbox" name="associatedTools" value="t1">
             <input type="checkbox" name="associatedTools" value="t2">
         `;
-        win.fetch = vi
-            .fn()
-            .mockResolvedValue(
-                mockResponse({
-                    ok: true,
-                    contentType: "text/html",
-                    body: newHtml,
-                }),
-            );
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: newHtml,
+            }),
+        );
 
         await win.serverSideToolSearch("");
 
@@ -462,15 +460,13 @@ describe("serverSidePromptSearch", () => {
             <input type="checkbox" name="associatedPrompts" value="p1">
             <input type="checkbox" name="associatedPrompts" value="p2">
         `;
-        win.fetch = vi
-            .fn()
-            .mockResolvedValue(
-                mockResponse({
-                    ok: true,
-                    contentType: "text/html",
-                    body: newHtml,
-                }),
-            );
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: newHtml,
+            }),
+        );
 
         await win.serverSidePromptSearch("");
 
@@ -498,15 +494,13 @@ describe("serverSidePromptSearch", () => {
             <input type="checkbox" name="associatedPrompts" value="p2">
             <input type="checkbox" name="associatedTools"   value="t1">
         `;
-        win.fetch = vi
-            .fn()
-            .mockResolvedValue(
-                mockResponse({
-                    ok: true,
-                    contentType: "text/html",
-                    body: newHtml,
-                }),
-            );
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: newHtml,
+            }),
+        );
 
         await win.serverSidePromptSearch("");
 
@@ -571,15 +565,13 @@ describe("serverSideResourceSearch", () => {
             <input type="checkbox" name="associatedResources" value="r1">
             <input type="checkbox" name="associatedResources" value="r2">
         `;
-        win.fetch = vi
-            .fn()
-            .mockResolvedValue(
-                mockResponse({
-                    ok: true,
-                    contentType: "text/html",
-                    body: newHtml,
-                }),
-            );
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: newHtml,
+            }),
+        );
 
         await win.serverSideResourceSearch("");
 
@@ -873,6 +865,71 @@ describe("closeModal edit-server reset", () => {
         expect(win.getEditSelections("edit-server-resources").size).toBe(0);
         expect(win.getEditSelections("edit-server-prompts").size).toBe(0);
     });
+
+    test("closing server-edit-modal removes stale selectAll hidden inputs", () => {
+        const modal = doc.createElement("div");
+        modal.id = "server-edit-modal";
+        doc.body.appendChild(modal);
+
+        // Create edit containers with stale hidden inputs (simulates a previous Select All)
+        [
+            {
+                id: "edit-server-tools",
+                names: ["selectAllTools", "allToolIds"],
+            },
+            {
+                id: "edit-server-resources",
+                names: ["selectAllResources", "allResourceIds"],
+            },
+            {
+                id: "edit-server-prompts",
+                names: ["selectAllPrompts", "allPromptIds"],
+            },
+        ].forEach(({ id, names }) => {
+            const container = makeContainer(id);
+            names.forEach((n) => {
+                const hidden = doc.createElement("input");
+                hidden.type = "hidden";
+                hidden.name = n;
+                hidden.value = n.includes("All") ? "true" : '["id1","id2"]';
+                container.appendChild(hidden);
+            });
+        });
+
+        win.closeModal("server-edit-modal");
+
+        // All hidden inputs must be removed
+        expect(
+            doc
+                .getElementById("edit-server-tools")
+                .querySelector('input[name="selectAllTools"]'),
+        ).toBeNull();
+        expect(
+            doc
+                .getElementById("edit-server-tools")
+                .querySelector('input[name="allToolIds"]'),
+        ).toBeNull();
+        expect(
+            doc
+                .getElementById("edit-server-resources")
+                .querySelector('input[name="selectAllResources"]'),
+        ).toBeNull();
+        expect(
+            doc
+                .getElementById("edit-server-resources")
+                .querySelector('input[name="allResourceIds"]'),
+        ).toBeNull();
+        expect(
+            doc
+                .getElementById("edit-server-prompts")
+                .querySelector('input[name="selectAllPrompts"]'),
+        ).toBeNull();
+        expect(
+            doc
+                .getElementById("edit-server-prompts")
+                .querySelector('input[name="allPromptIds"]'),
+        ).toBeNull();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -1010,5 +1067,105 @@ describe("handleEditServerFormSubmit", () => {
 
         expect(capturedBody.getAll("associatedResources")).toContain("r1");
         expect(capturedBody.getAll("associatedPrompts")).toContain("p1");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditToolSearch — edit-mode search flush and restore
+// ---------------------------------------------------------------------------
+describe("serverSideEditToolSearch", () => {
+    function setupEditToolsContainer(checkboxes = []) {
+        const container = makeContainer("edit-server-tools");
+        checkboxes.forEach((c) =>
+            addCheckbox(container, { name: "associatedTools", ...c }),
+        );
+        return container;
+    }
+
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("flushes checked edit-mode checkboxes into the Map before search", async () => {
+        setupEditToolsContainer([
+            { value: "t1", checked: true },
+            { value: "t2", checked: false },
+        ]);
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideEditToolSearch("");
+
+        const toolSel = win.getEditSelections("edit-server-tools");
+        expect(toolSel.has("t1")).toBe(true);
+        expect(toolSel.has("t2")).toBe(false);
+    });
+
+    test("restores selections from store after clear-search reload", async () => {
+        const container = setupEditToolsContainer([
+            { value: "t1", checked: true },
+        ]);
+        container.setAttribute(
+            "data-server-tools",
+            JSON.stringify(["OriginalToolName"]),
+        );
+
+        const newHtml = `
+            <input type="checkbox" name="associatedTools" value="t1" data-tool-name="Tool One">
+            <input type="checkbox" name="associatedTools" value="t2" data-tool-name="Tool Two">
+        `;
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: newHtml,
+            }),
+        );
+
+        await win.serverSideEditToolSearch("");
+
+        const checked = Array.from(
+            doc
+                .getElementById("edit-server-tools")
+                .querySelectorAll('input[name="associatedTools"]:checked'),
+        ).map((cb) => cb.value);
+
+        expect(checked).toContain("t1");
+        expect(checked).not.toContain("t2");
+    });
+
+    test("restores selections from store after keyword search", async () => {
+        setupEditToolsContainer([{ value: "t1", checked: true }]);
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: {
+                    tools: [
+                        { id: "t1", name: "Tool One" },
+                        { id: "t3", name: "Tool Three" },
+                    ],
+                },
+            }),
+        );
+
+        await win.serverSideEditToolSearch("tool");
+
+        const checked = Array.from(
+            doc
+                .getElementById("edit-server-tools")
+                .querySelectorAll('input[name="associatedTools"]:checked'),
+        ).map((cb) => cb.value);
+
+        expect(checked).toContain("t1");
+        expect(checked).not.toContain("t3");
     });
 });
