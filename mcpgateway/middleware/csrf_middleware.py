@@ -102,13 +102,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         csrf_token = request.headers.get(settings.csrf_token_name)
         if not csrf_token:
             logger.warning(f"CSRF token missing for {request.method} {request.url.path}")
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "detail": "CSRF token missing",
-                    "code": "CSRF_TOKEN_MISSING"
-                }
-            )
+            return JSONResponse(status_code=403, content={"detail": "CSRF token missing", "code": "CSRF_TOKEN_MISSING"})
 
         # 6. Get user_id and session_id from authenticated session
         user_id = None
@@ -126,25 +120,13 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # If no user context, we can't validate the token
         if not user_id:
             logger.warning(f"CSRF validation failed: no user context for {request.method} {request.url.path}")
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "detail": "CSRF token invalid",
-                    "code": "CSRF_TOKEN_INVALID"
-                }
-            )
+            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid", "code": "CSRF_TOKEN_INVALID"})
 
         # 7. Validate CSRF token
         csrf_service = get_csrf_service()
         if not csrf_service.validate_csrf_token(csrf_token, user_id, session_id):
             logger.warning(f"CSRF token validation failed for user {user_id}")
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "detail": "CSRF token invalid",
-                    "code": "CSRF_TOKEN_INVALID"
-                }
-            )
+            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid", "code": "CSRF_TOKEN_INVALID"})
 
         # 8. Check Referer/Origin if configured
         if settings.csrf_check_referer:
@@ -166,16 +148,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
                 # Check if referer matches allowed origins
                 if referer_origin not in allowed_origins:
-                    logger.warning(
-                        f"CSRF referer check failed: {referer_origin} not in allowed origins for {request.method} {request.url.path}"
-                    )
-                    return JSONResponse(
-                        status_code=403,
-                        content={
-                            "detail": "CSRF token invalid",
-                            "code": "CSRF_TOKEN_INVALID"
-                        }
-                    )
+                    logger.warning(f"CSRF referer check failed: {referer_origin} not in allowed origins for {request.method} {request.url.path}")
+                    return JSONResponse(status_code=403, content={"detail": "CSRF token invalid", "code": "CSRF_TOKEN_INVALID"})
 
         # 9. All checks passed, continue with request
         return await call_next(request)

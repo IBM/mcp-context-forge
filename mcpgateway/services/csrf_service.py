@@ -81,7 +81,11 @@ import hashlib
 import hmac
 import logging
 import time
+from functools import lru_cache
 from typing import Any
+
+# First-Party
+from mcpgateway.config import settings as app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -295,13 +299,13 @@ def clear_csrf_cookie(response: Any, settings: Any) -> None:
 
 class CSRFService:
     """CSRF service wrapper for dependency injection.
-    
+
     Provides methods for CSRF token generation and validation.
     """
 
     def __init__(self, secret: str, expiry: int):
         """Initialize CSRF service.
-        
+
         Args:
             secret: Secret key for HMAC computation
             expiry: Token validity window in seconds
@@ -311,11 +315,11 @@ class CSRFService:
 
     def generate_csrf_token(self, user_id: str, session_id: str) -> str:
         """Generate a CSRF token.
-        
+
         Args:
             user_id: User identifier
             session_id: Session identifier
-            
+
         Returns:
             CSRF token string
         """
@@ -323,35 +327,23 @@ class CSRFService:
 
     def validate_csrf_token(self, token: str, user_id: str, session_id: str) -> bool:
         """Validate a CSRF token.
-        
+
         Args:
             token: CSRF token to validate
             user_id: User identifier
             session_id: Session identifier
-            
+
         Returns:
             True if valid, False otherwise
         """
         return validate_csrf_token(token, user_id, session_id, self.secret, self.expiry)
 
 
-# Global service instance
-_csrf_service: CSRFService = None
-
-
+@lru_cache(maxsize=1)
 def get_csrf_service() -> CSRFService:
     """Get the global CSRF service instance.
-    
+
     Returns:
         CSRFService instance
     """
-    global _csrf_service
-    if _csrf_service is None:
-        # First-Party
-        from mcpgateway.config import settings
-        
-        _csrf_service = CSRFService(
-            secret=settings.csrf_secret_key,
-            expiry=settings.csrf_token_expiry
-        )
-    return _csrf_service
+    return CSRFService(secret=app_settings.csrf_secret_key, expiry=app_settings.csrf_token_expiry)

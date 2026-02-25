@@ -248,8 +248,8 @@ class TestHttpAuthMiddlewareWithoutPlugins:
             # Request without authentication should fail (use POST for initialize)
             response = client.post("/protocol/initialize", json={})
 
-            # Should get 401 because no credentials provided
-            assert response.status_code == 401
+            # Should get 403 because no credentials provided (RBAC middleware returns 403)
+            assert response.status_code == 403
 
     def test_health_endpoint_accessible_without_auth(self, app):
         """Test that health endpoint is accessible without authentication."""
