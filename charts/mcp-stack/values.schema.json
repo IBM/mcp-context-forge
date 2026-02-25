@@ -426,7 +426,7 @@
             },
             "annotations": {
               "type": "object",
-              "description": "Ingress annotations",
+              "description": "Ingress annotations (merged on top of secure nginx defaults when TLS is enabled)",
               "additionalProperties": {
                 "type": "string"
               }
@@ -438,7 +438,7 @@
                 "enabled": {
                   "type": "boolean",
                   "description": "Enable TLS for ingress",
-                  "default": false
+                  "default": true
                 },
                 "secretName": {
                   "type": "string",
@@ -2192,7 +2192,7 @@
             },
             "annotations": {
               "type": "object",
-              "description": "Ingress annotations",
+              "description": "Ingress annotations (merged on top of secure nginx defaults when TLS is enabled)",
               "additionalProperties": { "type": "string" },
               "default": {}
             },
@@ -2203,7 +2203,7 @@
                 "enabled": {
                   "type": "boolean",
                   "description": "Enable TLS for ingress",
-                  "default": false
+                  "default": true
                 },
                 "secretName": {
                   "type": "string",

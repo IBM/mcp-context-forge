@@ -84,7 +84,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.ingress.path | string | `"/"` |  |
 | mcpContextForge.ingress.pathType | string | `"Prefix"` |  |
 | mcpContextForge.ingress.annotations | object | `{}` |  |
-| mcpContextForge.ingress.tls.enabled | bool | `false` |  |
+| mcpContextForge.ingress.tls.enabled | bool | `true` |  |
 | mcpContextForge.ingress.tls.secretName | string | `""` |  |
 | mcpContextForge.env.host | string | `"0.0.0.0"` |  |
 | mcpContextForge.env.postgres.port | int | `5432` |  |
@@ -1043,7 +1043,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpFastTimeServer.ingress.pathType | string | `"Prefix"` |  |
 | mcpFastTimeServer.ingress.servicePort | int | `80` |  |
 | mcpFastTimeServer.ingress.annotations | object | `{}` |  |
-| mcpFastTimeServer.ingress.tls.enabled | bool | `false` |  |
+| mcpFastTimeServer.ingress.tls.enabled | bool | `true` |  |
 | mcpFastTimeServer.ingress.tls.secretName | string | `""` |  |
 | mcpFastTimeServer.probes.readiness.type | string | `"http"` |  |
 | mcpFastTimeServer.probes.readiness.path | string | `"/health"` |  |

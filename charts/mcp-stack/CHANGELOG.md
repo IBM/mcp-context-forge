@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [1.0.0-BETA-2] - TBD
+## [1.0.0-RC2] - 2026-02-28
 
 ### Added
 
@@ -65,6 +65,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * Added `postgres.lifecycle.preStop.enabled` (default: `true`) to run a clean `pg_ctl ... stop` before termination
 * Added `postgres.persistence.useReadWriteOncePod` (default: `true`) to prefer strict single-pod mount semantics where supported
 * **Compatibility**: If your storage class does not support `ReadWriteOncePod`, set `postgres.persistence.useReadWriteOncePod=false` and keep `accessModes: [ReadWriteOnce]`
+
+#### **🔒 Ingress TLS and Redirect Hardening**
+* Enabled ingress TLS defaults for:
+  - `mcpContextForge.ingress.tls.enabled: true`
+  - `mcpFastTimeServer.ingress.tls.enabled: true`
+* Ingress templates now auto-generate TLS secret names when unset:
+  - Gateway: `<release>-ingress-tls`
+  - Fast-time: `<release>-fast-time-ingress-tls`
+* For nginx ingress classes with TLS enabled, chart now applies secure defaults unless overridden:
+  - `nginx.ingress.kubernetes.io/ssl-redirect: "true"`
+  - `nginx.ingress.kubernetes.io/force-ssl-redirect: "true"`
+  - `nginx.ingress.kubernetes.io/hsts: "true"`
+  - `nginx.ingress.kubernetes.io/hsts-max-age: "31536000"`
+  - `nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"`
 
 ## [0.9.1] - 2025-12-03
 

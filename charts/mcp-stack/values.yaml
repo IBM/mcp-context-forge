@@ -151,11 +151,11 @@ mcpContextForge:
     host: gateway.local         # CHANGE to your FQDN (e.g. api.example.com)
     path: /
     pathType: Prefix
-    annotations: {}             # Custom ingress annotations (optional)
+    annotations: {}             # Custom ingress annotations; merged on top of secure nginx TLS defaults when TLS is enabled
       # nginx.ingress.kubernetes.io/rewrite-target: /
       # cert-manager.io/cluster-issuer: letsencrypt-prod
     tls:
-      enabled: false            # Set to true to enable TLS
+      enabled: true             # TLS enabled by default for encrypted ingress traffic
       secretName: ""            # Name of the TLS secret (auto-generated if empty)
 
   ####################################################################
@@ -1546,7 +1546,7 @@ mcpFastTimeServer:
     servicePort: 80
     annotations: {}
     tls:
-      enabled: false
+      enabled: true
       secretName: ""
 
   # ─── Health & readiness probes ───
