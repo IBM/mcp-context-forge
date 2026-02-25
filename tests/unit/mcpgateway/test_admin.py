@@ -3097,10 +3097,10 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        # Mock settings
-        with patch("mcpgateway.admin.settings") as mock_settings:
-            mock_settings.app_root_path = "/custom/root"
-            mock_settings.gateway_tool_name_separator = "__"
+        # Mock settings with actual values instead of MagicMock
+        with patch.object(settings, "app_root_path", "/custom/root"), \
+             patch.object(settings, "gateway_tool_name_separator", "__"), \
+             patch.object(settings, "jwt_secret_key", "test-secret-key-with-minimum-32-bytes"):
 
             await admin_ui(
                 request=mock_request,

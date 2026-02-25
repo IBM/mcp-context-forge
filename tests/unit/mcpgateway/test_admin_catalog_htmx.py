@@ -12,8 +12,8 @@ Uses TestClient with proper auth mocking via module-level fixture.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 # First-Party
 from mcpgateway.schemas import CatalogServerRegisterResponse
@@ -23,12 +23,13 @@ from mcpgateway.schemas import CatalogServerRegisterResponse
 def client():
     """Create a TestClient with mocked authentication (module-scoped to avoid lifecycle issues)."""
     # Import here to avoid module-level import issues
-    from mcpgateway.main import app
+    from mcpgateway.admin import admin_router
     from mcpgateway.auth import get_current_user
     from mcpgateway.config import settings
+    from mcpgateway.db import EmailUser
+    from mcpgateway.main import app
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
     from mcpgateway.services.permission_service import PermissionService
-    from mcpgateway.db import EmailUser
 
     # Disable auth_required so AdminAuthMiddleware skips its check
     original_auth_required = settings.auth_required
@@ -75,6 +76,7 @@ def client():
 
     # Avoid SharedHttpClient shutdown errors when other tests monkeypatch the singleton
     from mcpgateway.services.http_client_service import SharedHttpClient
+
     shared_client = MagicMock()
     shared_client.close = AsyncMock()
     original_shared_instance = SharedHttpClient._instance
@@ -83,6 +85,10 @@ def client():
     shared_shutdown = patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new=AsyncMock())
     shared_get_instance.start()
     shared_shutdown.start()
+
+    register_route = "/admin/mcp-registry/{server_id}/register"
+    if not any(getattr(route, "path", None) == register_route for route in app.router.routes):
+        app.include_router(admin_router)
 
     with TestClient(app) as test_client:
         yield test_client
@@ -111,8 +117,11 @@ def test_register_catalog_server_htmx_success(client):
         oauth_required=False,
     )
 
-    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
-         patch("mcpgateway.admin.settings") as mock_settings:
+    with (
+        patch("mcpgateway.config.settings.csrf_enabled", False),
+        patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result),
+        patch("mcpgateway.admin.settings") as mock_settings,
+    ):
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
@@ -139,8 +148,11 @@ def test_register_catalog_server_htmx_oauth(client):
         oauth_required=True,
     )
 
-    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
-         patch("mcpgateway.admin.settings") as mock_settings:
+    with (
+        patch("mcpgateway.config.settings.csrf_enabled", False),
+        patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result),
+        patch("mcpgateway.admin.settings") as mock_settings,
+    ):
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
@@ -153,7 +165,6 @@ def test_register_catalog_server_htmx_oauth(client):
     assert "OAuth Config Required" in response.text
     assert "bg-yellow-600" in response.text
     assert "disabled" in response.text
-    # OAuth registrations trigger refresh - template shows yellow state from requires_oauth_config
     assert "HX-Trigger-After-Swap" in response.headers
     assert "catalogRegistrationSuccess" in response.headers["HX-Trigger-After-Swap"]
 
@@ -168,8 +179,11 @@ def test_register_catalog_server_htmx_error(client):
         oauth_required=False,
     )
 
-    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
-         patch("mcpgateway.admin.settings") as mock_settings:
+    with (
+        patch("mcpgateway.config.settings.csrf_enabled", False),
+        patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result),
+        patch("mcpgateway.admin.settings") as mock_settings,
+    ):
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
@@ -196,8 +210,11 @@ def test_register_catalog_server_json_response(client):
         oauth_required=False,
     )
 
-    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
-         patch("mcpgateway.admin.settings") as mock_settings:
+    with (
+        patch("mcpgateway.config.settings.csrf_enabled", False),
+        patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result),
+        patch("mcpgateway.admin.settings") as mock_settings,
+    ):
         mock_settings.mcpgateway_catalog_enabled = True
 
         response = client.post("/admin/mcp-registry/test-server/register")
@@ -219,8 +236,11 @@ def test_register_catalog_server_htmx_with_api_key(client):
         oauth_required=False,
     )
 
-    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
-         patch("mcpgateway.admin.settings") as mock_settings:
+    with (
+        patch("mcpgateway.config.settings.csrf_enabled", False),
+        patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result),
+        patch("mcpgateway.admin.settings") as mock_settings,
+    ):
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
@@ -246,8 +266,11 @@ def test_register_catalog_server_htmx_error_escaping(client):
         oauth_required=False,
     )
 
-    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
-         patch("mcpgateway.admin.settings") as mock_settings:
+    with (
+        patch("mcpgateway.config.settings.csrf_enabled", False),
+        patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result),
+        patch("mcpgateway.admin.settings") as mock_settings,
+    ):
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
@@ -272,8 +295,11 @@ def test_register_catalog_server_htmx_retry_button_attributes(client):
         oauth_required=False,
     )
 
-    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
-         patch("mcpgateway.admin.settings") as mock_settings:
+    with (
+        patch("mcpgateway.config.settings.csrf_enabled", False),
+        patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result),
+        patch("mcpgateway.admin.settings") as mock_settings,
+    ):
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = "/api"
 

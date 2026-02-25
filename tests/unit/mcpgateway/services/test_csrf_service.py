@@ -86,11 +86,11 @@ class TestValidateCSRFToken:
         """Test that token from previous window is still valid (boundary case)."""
         # Generate token with current time
         token = generate_csrf_token("user@example.com", "session123", "secret", 3600)
-        
+
         # Token should be valid in current window
         result = validate_csrf_token(token, "user@example.com", "session123", "secret", 3600)
         assert result is True
-        
+
         # Note: Testing actual previous window requires time manipulation
         # which is complex. The validation logic accepts previous window tokens.
 
@@ -182,7 +182,7 @@ class TestSetCSRFCookie:
 
         response.set_cookie.assert_called_once()
         call_kwargs = response.set_cookie.call_args[1]
-        
+
         assert call_kwargs["key"] == "csrf_token"
         assert call_kwargs["value"] == token
         assert call_kwargs["httponly"] is False  # Must be readable by JS
@@ -252,7 +252,7 @@ class TestClearCSRFCookie:
 
         response.set_cookie.assert_called_once()
         call_kwargs = response.set_cookie.call_args[1]
-        
+
         assert call_kwargs["key"] == "csrf_token"
         assert call_kwargs["value"] == ""
         assert call_kwargs["max_age"] == 0

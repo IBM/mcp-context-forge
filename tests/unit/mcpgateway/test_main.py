@@ -2665,10 +2665,47 @@ class TestMetricsEndpoints:
     @patch("mcpgateway.main.tool_service.aggregate_metrics")
     def test_get_metrics(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
-        mock_tool.return_value = {"total": 5}
-        mock_resource.return_value = {"total": 3}
-        mock_server.return_value = {"total": 2}
-        mock_prompt.return_value = {"total": 1}
+        # Return proper metric dictionaries that match AggregatedMetrics.to_dict() structure
+        mock_tool.return_value = {
+            "total_executions": 5,
+            "successful_executions": 4,
+            "failed_executions": 1,
+            "failure_rate": 0.2,
+            "min_response_time": 0.1,
+            "max_response_time": 1.0,
+            "avg_response_time": 0.5,
+            "last_execution_time": None,
+        }
+        mock_resource.return_value = {
+            "total_executions": 3,
+            "successful_executions": 3,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": 0.2,
+            "max_response_time": 0.8,
+            "avg_response_time": 0.4,
+            "last_execution_time": None,
+        }
+        mock_server.return_value = {
+            "total_executions": 2,
+            "successful_executions": 2,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": 0.3,
+            "max_response_time": 0.6,
+            "avg_response_time": 0.45,
+            "last_execution_time": None,
+        }
+        mock_prompt.return_value = {
+            "total_executions": 1,
+            "successful_executions": 1,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": 0.1,
+            "max_response_time": 0.1,
+            "avg_response_time": 0.1,
+            "last_execution_time": None,
+        }
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200

@@ -293,29 +293,27 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         # Generate CSRF token for session
         # Extract jti from JWT payload for session_id
         try:
+            # Third-Party
             import jwt
+
+            # First-Party
             from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
-            
+
             # Decode JWT to get jti (don't verify since we just created it)
             payload = jwt.decode(access_token, options={"verify_signature": False})
             session_id = payload.get("jti", "")
-            
+
             # Generate CSRF token
-            csrf_token = generate_csrf_token(
-                user_id=user.email,
-                session_id=session_id,
-                secret=settings.jwt_secret_key.get_secret_value(),
-                expiry=settings.csrf_token_expiry
-            )
-            
+            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.jwt_secret_key.get_secret_value(), expiry=settings.csrf_token_expiry)
+
             # Create response with CSRF cookie
             response = AuthenticationResponse(
                 access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
             )  # nosec B106 - OAuth2 token type, not a password
-            
+
             # Set CSRF cookie on response
             set_csrf_cookie(response, csrf_token, settings)
-            
+
             return response
         except Exception as e:
             logger.warning(f"Failed to set CSRF token for {user.email}: {e}")

@@ -142,48 +142,40 @@ async def get_csrf_token(request: Request, current_user: "EmailUser" = Depends(g
         >>> # Headers: Authorization: Bearer <token>
         >>> # Response: {"csrf_token": "abc123..."}
     """
-    from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
-    from mcpgateway.config import settings
+    # Third-Party
     from fastapi.responses import JSONResponse
     import jwt
-    
+
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
+
     try:
         # Extract JWT token from Authorization header
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authorization header"
-            )
-        
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
+
         token = auth_header[7:]  # Remove "Bearer " prefix
-        
+
         # Decode JWT to get jti for session_id (don't verify since get_current_user already did)
         payload = jwt.decode(token, options={"verify_signature": False})
         session_id = payload.get("jti", "")
-        
+
         # Generate fresh CSRF token
-        csrf_token = generate_csrf_token(
-            user_id=current_user.email,
-            session_id=session_id,
-            secret=settings.jwt_secret_key.get_secret_value(),
-            expiry=settings.csrf_token_expiry
-        )
-        
+        csrf_token = generate_csrf_token(user_id=current_user.email, session_id=session_id, secret=settings.jwt_secret_key.get_secret_value(), expiry=settings.csrf_token_expiry)
+
         # Create response with CSRF cookie
         response = JSONResponse(content={"csrf_token": csrf_token})
         set_csrf_cookie(response, csrf_token, settings)
-        
+
         return response
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error generating CSRF token for {current_user.email}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate CSRF token"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate CSRF token")
 
 
 @auth_router.post("/login", response_model=AuthenticationResponse)

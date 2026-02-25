@@ -26,22 +26,22 @@ if (!ADMIN_DEBUG_LOGGING_ENABLED) {
 function getCSRFToken() {
     // Primary: meta tag (server-rendered, always fresh)
     const meta = document.querySelector('meta[name="csrf-token"]');
-    if (meta && meta.getAttribute('content')) {
-        return meta.getAttribute('content');
+    if (meta && meta.getAttribute("content")) {
+        return meta.getAttribute("content");
     }
 
     // Fallback: cookie (edge cases where meta tag is unavailable)
     try {
-        const cookies = document.cookie.split(';');
-        for (let cookie of cookies) {
-            const [name, value] = cookie.trim().split('=');
-            if (name === 'csrf_token') return decodeURIComponent(value);
+        const cookies = document.cookie.split(";");
+        for (const cookie of cookies) {
+            const [name, value] = cookie.trim().split("=");
+            if (name === "csrf_token") return decodeURIComponent(value);
         }
     } catch (e) {
-        console.error('CSRF: failed to read cookie fallback', e);
+        console.error("CSRF: failed to read cookie fallback", e);
     }
 
-    console.error('CSRF: no token found — requests will fail');
+    console.error("CSRF: no token found — requests will fail");
     return null;
 }
 
@@ -50,19 +50,19 @@ function getCSRFToken() {
  * @returns {Promise<string>} New CSRF token
  */
 async function refreshCSRFToken() {
-    const response = await fetch('/auth/csrf-token', {
-        method: 'GET',
-        credentials: 'include'
+    const response = await fetch("/auth/csrf-token", {
+        method: "GET",
+        credentials: "include",
     });
     if (!response.ok) {
-        throw new Error('CSRF token refresh failed: ' + response.status);
+        throw new Error("CSRF token refresh failed: " + response.status);
     }
     const data = await response.json();
 
     // Update meta tag with refreshed token so subsequent calls stay fresh
     const meta = document.querySelector('meta[name="csrf-token"]');
     if (meta && data.csrf_token) {
-        meta.setAttribute('content', data.csrf_token);
+        meta.setAttribute("content", data.csrf_token);
     }
 
     return data.csrf_token;
@@ -76,8 +76,8 @@ async function refreshCSRFToken() {
     const _originalFetch = window.fetch;
 
     window.fetch = async function (url, options = {}) {
-        const safeMethods = ['GET', 'HEAD', 'OPTIONS', 'TRACE'];
-        const method = (options.method || 'GET').toUpperCase();
+        const safeMethods = ["GET", "HEAD", "OPTIONS", "TRACE"];
+        const method = (options.method || "GET").toUpperCase();
 
         if (safeMethods.includes(method)) {
             return _originalFetch(url, options);
@@ -85,12 +85,18 @@ async function refreshCSRFToken() {
 
         // Skip if caller already set X-CSRF-Token manually
         const existingHeaders = options.headers || {};
-        if (existingHeaders['X-CSRF-Token'] || existingHeaders['x-csrf-token']) {
+        if (
+            existingHeaders["X-CSRF-Token"] ||
+            existingHeaders["x-csrf-token"]
+        ) {
             return _originalFetch(url, options);
         }
 
-        options.headers = { ...existingHeaders, 'X-CSRF-Token': getCSRFToken() };
-        options.credentials = 'include';
+        options.headers = {
+            ...existingHeaders,
+            "X-CSRF-Token": getCSRFToken(),
+        };
+        options.credentials = "include";
 
         const response = await _originalFetch(url, options);
 
@@ -98,10 +104,13 @@ async function refreshCSRFToken() {
         if (response.status === 401 || response.status === 403) {
             try {
                 const newToken = await refreshCSRFToken();
-                options.headers['X-CSRF-Token'] = newToken;
+                options.headers["X-CSRF-Token"] = newToken;
                 return _originalFetch(url, options); // retry ONCE only — never loop
             } catch (e) {
-                console.error('CSRF: token refresh failed, returning original response', e);
+                console.error(
+                    "CSRF: token refresh failed, returning original response",
+                    e,
+                );
                 return response;
             }
         }
@@ -115,24 +124,26 @@ async function refreshCSRFToken() {
  * @param {HTMLFormElement} form - Form element to inject token into
  */
 function injectCSRFIntoForm(form) {
-    const safeMethods = ['GET', 'HEAD'];
-    const method = (form.method || 'GET').toUpperCase();
+    const safeMethods = ["GET", "HEAD"];
+    const method = (form.method || "GET").toUpperCase();
 
     if (safeMethods.includes(method)) return;
 
     // Avoid double injection
-    if (form.querySelector('input[name="csrf_token"][data-csrf-injected]')) return;
+    if (form.querySelector('input[name="csrf_token"][data-csrf-injected]')) {
+        return;
+    }
 
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'csrf_token';
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "csrf_token";
     input.value = getCSRFToken();
-    input.setAttribute('data-csrf-injected', 'true');
+    input.setAttribute("data-csrf-injected", "true");
     form.appendChild(input);
 
     // Refresh token value just before form submits
     // Handles long-lived pages where token may have rotated
-    form.addEventListener('submit', function () {
+    form.addEventListener("submit", function () {
         input.value = getCSRFToken();
     });
 }
@@ -141,26 +152,26 @@ function injectCSRFIntoForm(form) {
  * Inject CSRF tokens into all forms on the page
  */
 function injectCSRFIntoAllForms() {
-    document.querySelectorAll('form').forEach(injectCSRFIntoForm);
+    document.querySelectorAll("form").forEach(injectCSRFIntoForm);
 }
 
 // Handle forms present on page load
-document.addEventListener('DOMContentLoaded', injectCSRFIntoAllForms);
+document.addEventListener("DOMContentLoaded", injectCSRFIntoAllForms);
 
 // Handle dynamically added forms (modals, AJAX-rendered content, etc.)
 const _csrfObserver = new MutationObserver(function (mutations) {
     mutations.forEach(function (mutation) {
         mutation.addedNodes.forEach(function (node) {
             if (node.nodeType !== 1) return;
-            if (node.tagName === 'FORM') injectCSRFIntoForm(node);
+            if (node.tagName === "FORM") injectCSRFIntoForm(node);
             if (node.querySelectorAll) {
-                node.querySelectorAll('form').forEach(injectCSRFIntoForm);
+                node.querySelectorAll("form").forEach(injectCSRFIntoForm);
             }
         });
     });
 });
 
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener("DOMContentLoaded", function () {
     _csrfObserver.observe(document.body, { childList: true, subtree: true });
 });
 
