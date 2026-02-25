@@ -13,7 +13,7 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 
 ## Project Overview
 
-ContextForge is a production-grade AI gateway, registry, and proxy that sits in front of any MCP, A2A, or REST/gRPC APIs, exposing a unified control plane with centralized governance, discovery, and observability. It federates tools, agents, models, and APIs (plus model/provider proxying), optimizes agent and tool calling, and supports plugins, auth/RBAC, rate-limiting, virtual servers, multi-transport protocols, and an optional Admin UI.
+ContextForge is an open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. It federates tools, agents, and APIs, optimizes agent and tool calling, and supports plugins, auth/RBAC, rate-limiting, virtual servers, multi-transport protocols, and an optional Admin UI.
 
 ## Project Structure
 

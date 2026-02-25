@@ -41,6 +41,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: fast-test-server
           image: "{{ .Values.testing.fastTestServer.image.repository }}:{{ .Values.testing.fastTestServer.image.tag }}"
@@ -110,6 +111,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: a2a-echo-agent
           image: "{{ .Values.testing.a2aEchoAgent.image.repository }}:{{ .Values.testing.a2aEchoAgent.image.tag }}"
@@ -194,6 +196,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       initContainers:
         - name: generate-jwt
           image: "{{ .Values.testing.registration.image.repository }}:{{ .Values.testing.registration.image.tag }}"
@@ -312,6 +315,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       initContainers:
         - name: generate-jwt
           image: "{{ .Values.testing.registration.image.repository }}:{{ .Values.testing.registration.image.tag }}"

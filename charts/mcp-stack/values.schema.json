@@ -55,7 +55,103 @@
         "automountServiceAccountToken": {
           "type": "boolean",
           "description": "Mount the ServiceAccount token in pods",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "networkPolicies": {
+      "type": "object",
+      "description": "Ingress-focused NetworkPolicy controls for in-cluster services",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable NetworkPolicy resources rendered by the chart",
           "default": true
+        },
+        "postgres": {
+          "type": "object",
+          "description": "PostgreSQL NetworkPolicy controls",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowPgBouncer": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowPgAdmin": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowMigrationJob": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowUpgradeJobs": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowMonitoringExporter": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "redis": {
+          "type": "object",
+          "description": "Redis NetworkPolicy controls",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowRedisCommander": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowMonitoringExporter": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "pgbouncer": {
+          "type": "object",
+          "description": "PgBouncer NetworkPolicy controls",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowPgAdmin": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowMonitoringExporter": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "minio": {
+          "type": "object",
+          "description": "MinIO NetworkPolicy controls",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowUpgradeJobs": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -330,7 +426,7 @@
             },
             "annotations": {
               "type": "object",
-              "description": "Ingress annotations",
+              "description": "Ingress annotations (merged on top of secure nginx defaults when TLS is enabled)",
               "additionalProperties": {
                 "type": "string"
               }
@@ -342,7 +438,7 @@
                 "enabled": {
                   "type": "boolean",
                   "description": "Enable TLS for ingress",
-                  "default": false
+                  "default": true
                 },
                 "secretName": {
                   "type": "string",
@@ -1304,7 +1400,12 @@
             "storageClassName": {
               "type": "string",
               "description": "Storage class name",
-              "default": "manual"
+              "default": ""
+            },
+            "useReadWriteOncePod": {
+              "type": "boolean",
+              "description": "Prefer strict single-pod PVC mount semantics using ReadWriteOncePod when supported",
+              "default": true
             },
             "accessModes": {
               "type": "array",
@@ -1313,7 +1414,7 @@
                 "type": "string",
                 "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
               },
-              "default": ["ReadWriteMany"]
+              "default": ["ReadWriteOnce"]
             },
             "size": {
               "type": "string",
@@ -1368,6 +1469,31 @@
         "resources": {
           "$ref": "#/$defs/resources",
           "description": "Resource limits and requests"
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "description": "Grace period for PostgreSQL pod termination in seconds",
+          "minimum": 0,
+          "default": 120
+        },
+        "lifecycle": {
+          "type": "object",
+          "description": "Container lifecycle hooks for PostgreSQL",
+          "properties": {
+            "preStop": {
+              "type": "object",
+              "description": "PreStop hook configuration",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Run pg_ctl stop before termination",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         },
         "probes": {
           "type": "object",
@@ -1643,6 +1769,33 @@
           },
           "additionalProperties": false
         },
+        "auth": {
+          "type": "object",
+          "description": "Redis authentication configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable Redis password authentication",
+              "default": true
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Existing Secret name for Redis password",
+              "default": ""
+            },
+            "passwordKey": {
+              "type": "string",
+              "description": "Secret key holding the Redis password",
+              "default": "REDIS_PASSWORD"
+            },
+            "password": {
+              "type": "string",
+              "description": "Redis password used when existingSecret is not set",
+              "default": "change-me-redis"
+            }
+          },
+          "additionalProperties": false
+        },
         "resources": {
           "$ref": "#/$defs/resources",
           "description": "Resource limits and requests"
@@ -1718,7 +1871,7 @@
         "enabled": {
           "type": "boolean",
           "description": "Enable PgAdmin",
-          "default": true
+          "default": false
         },
         "image": {
           "type": "object",
@@ -1820,7 +1973,7 @@
         "enabled": {
           "type": "boolean",
           "description": "Enable Redis Commander",
-          "default": true
+          "default": false
         },
         "image": {
           "type": "object",
@@ -2039,7 +2192,7 @@
             },
             "annotations": {
               "type": "object",
-              "description": "Ingress annotations",
+              "description": "Ingress annotations (merged on top of secure nginx defaults when TLS is enabled)",
               "additionalProperties": { "type": "string" },
               "default": {}
             },
@@ -2050,7 +2203,7 @@
                 "enabled": {
                   "type": "boolean",
                   "description": "Enable TLS for ingress",
-                  "default": false
+                  "default": true
                 },
                 "secretName": {
                   "type": "string",
