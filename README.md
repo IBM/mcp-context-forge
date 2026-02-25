@@ -2,7 +2,7 @@
 
 > Gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
 
-![](docs/docs/images/contextforge-logo_horizontal_black.png)
+![ContextForge Banner](docs/docs/images/contextforge-logo_horizontal_black.png)
 
 <!-- === CI / Security / Build Badges === -->
 [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
