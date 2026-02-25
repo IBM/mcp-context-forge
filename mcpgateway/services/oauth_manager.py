@@ -559,6 +559,8 @@ class OAuthManager:
 
         if not app_user_email:
             logger.error("User context (app_user_email) missing from OAuth state; refusing to bind tokens from ambient request context (CWE-287).")
+            if self.token_storage:
+                raise OAuthError("User context required for OAuth token storage")
 
         # Exchange code for tokens with PKCE code_verifier
         token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
@@ -568,8 +570,6 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
-            if not app_user_email:
-                raise OAuthError("User context required for OAuth token storage")
 
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
