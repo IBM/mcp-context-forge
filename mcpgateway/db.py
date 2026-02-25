@@ -5898,12 +5898,12 @@ class LLMProviderType:
                 "description": "Anthropic Claude models",
             },
             cls.OLLAMA: {
-                "api_base": "http://localhost:11434/v1",
+                "api_base": "http://localhost:11434",
                 "default_model": "llama3.2",
                 "supports_model_list": True,
-                "models_endpoint": "/models",
+                "models_endpoint": "/api/tags",
                 "requires_api_key": False,
-                "description": "Local Ollama server (OpenAI-compatible)",
+                "description": "Local Ollama server",
             },
             cls.OPENAI_COMPATIBLE: {
                 "api_base": "http://localhost:8080/v1",
