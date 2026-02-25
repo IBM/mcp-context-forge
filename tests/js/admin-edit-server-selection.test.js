@@ -180,9 +180,9 @@ describe("ensureAddStoreListeners", () => {
         cb.checked = true;
         cb.dispatchEvent(new win.Event("change", { bubbles: true }));
 
-        expect(
-            win.getEditSelections("associatedTools").has("tool-1"),
-        ).toBe(true);
+        expect(win.getEditSelections("associatedTools").has("tool-1")).toBe(
+            true,
+        );
     });
 
     test("unchecking a tool checkbox removes its value from the Map", () => {
@@ -197,9 +197,9 @@ describe("ensureAddStoreListeners", () => {
         });
         cb.dispatchEvent(new win.Event("change", { bubbles: true }));
 
-        expect(
-            win.getEditSelections("associatedTools").has("tool-1"),
-        ).toBe(false);
+        expect(win.getEditSelections("associatedTools").has("tool-1")).toBe(
+            false,
+        );
     });
 
     test("tracks resources and prompts checkboxes independently", () => {
@@ -213,23 +213,23 @@ describe("ensureAddStoreListeners", () => {
         resCb.checked = true;
         resCb.dispatchEvent(new win.Event("change", { bubbles: true }));
 
-        const promptCb = addCheckbox(
-            doc.getElementById("associatedPrompts"),
-            { name: "associatedPrompts", value: "prompt-1" },
-        );
+        const promptCb = addCheckbox(doc.getElementById("associatedPrompts"), {
+            name: "associatedPrompts",
+            value: "prompt-1",
+        });
         promptCb.checked = true;
         promptCb.dispatchEvent(new win.Event("change", { bubbles: true }));
 
-        expect(
-            win.getEditSelections("associatedResources").has("res-1"),
-        ).toBe(true);
-        expect(
-            win.getEditSelections("associatedPrompts").has("prompt-1"),
-        ).toBe(true);
+        expect(win.getEditSelections("associatedResources").has("res-1")).toBe(
+            true,
+        );
+        expect(win.getEditSelections("associatedPrompts").has("prompt-1")).toBe(
+            true,
+        );
         // Cross-container isolation
-        expect(
-            win.getEditSelections("associatedTools").has("res-1"),
-        ).toBe(false);
+        expect(win.getEditSelections("associatedTools").has("res-1")).toBe(
+            false,
+        );
     });
 
     test("is idempotent — calling twice does not double-count", () => {
@@ -329,16 +329,18 @@ describe("serverSideToolSearch", () => {
         win.fetch = vi
             .fn()
             .mockResolvedValue(
-                mockResponse({ ok: true, contentType: "text/html", body: newHtml }),
+                mockResponse({
+                    ok: true,
+                    contentType: "text/html",
+                    body: newHtml,
+                }),
             );
 
         await win.serverSideToolSearch("");
 
         const container = doc.getElementById("associatedTools");
         const checked = Array.from(
-            container.querySelectorAll(
-                'input[name="associatedTools"]:checked',
-            ),
+            container.querySelectorAll('input[name="associatedTools"]:checked'),
         ).map((cb) => cb.value);
 
         expect(checked).toContain("t1");
@@ -365,9 +367,7 @@ describe("serverSideToolSearch", () => {
 
         const container = doc.getElementById("associatedTools");
         const checked = Array.from(
-            container.querySelectorAll(
-                'input[name="associatedTools"]:checked',
-            ),
+            container.querySelectorAll('input[name="associatedTools"]:checked'),
         ).map((cb) => cb.value);
 
         expect(checked).toContain("t1");
@@ -411,9 +411,7 @@ describe("serverSideToolSearch", () => {
         await win.serverSideToolSearch("tool");
 
         const checked = Array.from(
-            container.querySelectorAll(
-                'input[name="associatedTools"]:checked',
-            ),
+            container.querySelectorAll('input[name="associatedTools"]:checked'),
         ).map((cb) => cb.value);
 
         expect(checked).toContain("t1");
@@ -467,7 +465,11 @@ describe("serverSidePromptSearch", () => {
         win.fetch = vi
             .fn()
             .mockResolvedValue(
-                mockResponse({ ok: true, contentType: "text/html", body: newHtml }),
+                mockResponse({
+                    ok: true,
+                    contentType: "text/html",
+                    body: newHtml,
+                }),
             );
 
         await win.serverSidePromptSearch("");
@@ -499,7 +501,11 @@ describe("serverSidePromptSearch", () => {
         win.fetch = vi
             .fn()
             .mockResolvedValue(
-                mockResponse({ ok: true, contentType: "text/html", body: newHtml }),
+                mockResponse({
+                    ok: true,
+                    contentType: "text/html",
+                    body: newHtml,
+                }),
             );
 
         await win.serverSidePromptSearch("");
@@ -568,7 +574,11 @@ describe("serverSideResourceSearch", () => {
         win.fetch = vi
             .fn()
             .mockResolvedValue(
-                mockResponse({ ok: true, contentType: "text/html", body: newHtml }),
+                mockResponse({
+                    ok: true,
+                    contentType: "text/html",
+                    body: newHtml,
+                }),
             );
 
         await win.serverSideResourceSearch("");
@@ -661,7 +671,11 @@ describe("handleServerFormSubmit", () => {
 
         // Only t3 is currently visible and checked
         const toolsDiv = makeContainer("associatedTools");
-        addCheckbox(toolsDiv, { name: "associatedTools", value: "t3", checked: true });
+        addCheckbox(toolsDiv, {
+            name: "associatedTools",
+            value: "t3",
+            checked: true,
+        });
         makeContainer("associatedResources");
         makeContainer("associatedPrompts");
 
@@ -690,7 +704,11 @@ describe("handleServerFormSubmit", () => {
 
         const form = setupForm();
         const toolsDiv = makeContainer("associatedTools");
-        addCheckbox(toolsDiv, { name: "associatedTools", value: "t1", checked: true });
+        addCheckbox(toolsDiv, {
+            name: "associatedTools",
+            value: "t1",
+            checked: true,
+        });
         makeContainer("associatedResources");
         makeContainer("associatedPrompts");
 
@@ -734,6 +752,261 @@ describe("handleServerFormSubmit", () => {
         });
 
         await win.handleServerFormSubmit(fakeSubmitEvent(form));
+
+        expect(capturedBody.getAll("associatedResources")).toContain("r1");
+        expect(capturedBody.getAll("associatedPrompts")).toContain("p1");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// ensureEditStoreListeners
+// ---------------------------------------------------------------------------
+describe("ensureEditStoreListeners", () => {
+    function setupEditContainers() {
+        [
+            "edit-server-tools",
+            "edit-server-resources",
+            "edit-server-prompts",
+        ].forEach(makeContainer);
+    }
+
+    test("checking an edit-server-tools checkbox adds its value to the Map", () => {
+        setupEditContainers();
+        win.ensureEditStoreListeners();
+
+        const cb = addCheckbox(doc.getElementById("edit-server-tools"), {
+            name: "associatedTools",
+            value: "tool-edit-1",
+        });
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change", { bubbles: true }));
+
+        expect(
+            win.getEditSelections("edit-server-tools").has("tool-edit-1"),
+        ).toBe(true);
+    });
+
+    test("unchecking an edit-server-tools checkbox removes its value from the Map", () => {
+        setupEditContainers();
+        win.ensureEditStoreListeners();
+        win.getEditSelections("edit-server-tools").add("tool-edit-1");
+
+        const cb = addCheckbox(doc.getElementById("edit-server-tools"), {
+            name: "associatedTools",
+            value: "tool-edit-1",
+            checked: false,
+        });
+        cb.dispatchEvent(new win.Event("change", { bubbles: true }));
+
+        expect(
+            win.getEditSelections("edit-server-tools").has("tool-edit-1"),
+        ).toBe(false);
+    });
+
+    test("tracks edit-server resources and prompts independently", () => {
+        setupEditContainers();
+        win.ensureEditStoreListeners();
+
+        const resCb = addCheckbox(doc.getElementById("edit-server-resources"), {
+            name: "associatedResources",
+            value: "res-e1",
+        });
+        resCb.checked = true;
+        resCb.dispatchEvent(new win.Event("change", { bubbles: true }));
+
+        const promptCb = addCheckbox(
+            doc.getElementById("edit-server-prompts"),
+            { name: "associatedPrompts", value: "prompt-e1" },
+        );
+        promptCb.checked = true;
+        promptCb.dispatchEvent(new win.Event("change", { bubbles: true }));
+
+        expect(
+            win.getEditSelections("edit-server-resources").has("res-e1"),
+        ).toBe(true);
+        expect(
+            win.getEditSelections("edit-server-prompts").has("prompt-e1"),
+        ).toBe(true);
+        // Cross-container isolation
+        expect(win.getEditSelections("edit-server-tools").has("res-e1")).toBe(
+            false,
+        );
+    });
+
+    test("is idempotent — calling twice does not double-count", () => {
+        setupEditContainers();
+        win.ensureEditStoreListeners();
+        win.ensureEditStoreListeners();
+
+        const cb = addCheckbox(doc.getElementById("edit-server-tools"), {
+            name: "associatedTools",
+            value: "tool-x",
+        });
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change", { bubbles: true }));
+
+        const sel = win.getEditSelections("edit-server-tools");
+        expect(sel.has("tool-x")).toBe(true);
+        expect(sel.size).toBe(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// closeModal resets edit selections
+// ---------------------------------------------------------------------------
+describe("closeModal edit-server reset", () => {
+    test("closing server-edit-modal calls resetEditSelections", () => {
+        // Create the modal element
+        const modal = doc.createElement("div");
+        modal.id = "server-edit-modal";
+        modal.classList.remove("hidden"); // modal is visible
+        doc.body.appendChild(modal);
+
+        // Seed the store
+        win.getEditSelections("edit-server-tools").add("t1");
+        win.getEditSelections("edit-server-resources").add("r1");
+        win.getEditSelections("edit-server-prompts").add("p1");
+
+        win.closeModal("server-edit-modal");
+
+        expect(win.getEditSelections("edit-server-tools").size).toBe(0);
+        expect(win.getEditSelections("edit-server-resources").size).toBe(0);
+        expect(win.getEditSelections("edit-server-prompts").size).toBe(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleEditServerFormSubmit — store contents override FormData
+// ---------------------------------------------------------------------------
+describe("handleEditServerFormSubmit", () => {
+    function setupEditForm() {
+        const form = doc.createElement("form");
+        form.id = "edit-server-form";
+        form.action = "/admin/servers/1";
+
+        const nameInput = doc.createElement("input");
+        nameInput.type = "text";
+        nameInput.name = "name";
+        nameInput.value = "my-server";
+        form.appendChild(nameInput);
+
+        const vis = doc.createElement("input");
+        vis.name = "visibility";
+        vis.value = "public";
+        form.appendChild(vis);
+
+        doc.body.appendChild(form);
+        return form;
+    }
+
+    function fakeSubmitEvent(form) {
+        return { target: form, preventDefault: vi.fn() };
+    }
+
+    beforeEach(() => {
+        win.validateInputName = () => ({ valid: true });
+        win.isInactiveChecked = () => false;
+        win.safeParseJsonResponse = async () => ({ success: true });
+        win.showSuccessMessage = vi.fn();
+        win.showErrorMessage = vi.fn();
+        win.reloadAllResourceSections = vi.fn();
+        win.safeGetElement = (id) => doc.getElementById(id);
+    });
+
+    test("includes off-screen tool IDs from the edit store", async () => {
+        // Pre-seed store (simulates tools on earlier pages)
+        win.getEditSelections("edit-server-tools").add("t1");
+        win.getEditSelections("edit-server-tools").add("t2");
+
+        const form = setupEditForm();
+
+        // Only t3 is visible and checked in the DOM
+        const toolsDiv = makeContainer("edit-server-tools");
+        addCheckbox(toolsDiv, {
+            name: "associatedTools",
+            value: "t3",
+            checked: true,
+        });
+        makeContainer("edit-server-resources");
+        makeContainer("edit-server-prompts");
+
+        let capturedBody = null;
+        win.fetch = vi.fn().mockImplementation((_url, opts) => {
+            capturedBody = opts.body;
+            return Promise.resolve(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { success: true },
+                }),
+            );
+        });
+
+        await win.handleEditServerFormSubmit(fakeSubmitEvent(form));
+
+        const submitted = capturedBody.getAll("associatedTools");
+        expect(submitted).toContain("t1");
+        expect(submitted).toContain("t2");
+        expect(submitted).toContain("t3");
+    });
+
+    test("unchecked visible items are removed from the store on submit", async () => {
+        // t1 was in the store (selected on page 1), but user unchecked it on current page
+        win.getEditSelections("edit-server-tools").add("t1");
+        win.getEditSelections("edit-server-tools").add("t2");
+
+        const form = setupEditForm();
+
+        const toolsDiv = makeContainer("edit-server-tools");
+        addCheckbox(toolsDiv, {
+            name: "associatedTools",
+            value: "t1",
+            checked: false,
+        }); // unchecked
+        makeContainer("edit-server-resources");
+        makeContainer("edit-server-prompts");
+
+        let capturedBody = null;
+        win.fetch = vi.fn().mockImplementation((_url, opts) => {
+            capturedBody = opts.body;
+            return Promise.resolve(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { success: true },
+                }),
+            );
+        });
+
+        await win.handleEditServerFormSubmit(fakeSubmitEvent(form));
+
+        const submitted = capturedBody.getAll("associatedTools");
+        expect(submitted).not.toContain("t1");
+        expect(submitted).toContain("t2");
+    });
+
+    test("includes edit-server resources and prompts from the store", async () => {
+        win.getEditSelections("edit-server-resources").add("r1");
+        win.getEditSelections("edit-server-prompts").add("p1");
+
+        const form = setupEditForm();
+        makeContainer("edit-server-tools");
+        makeContainer("edit-server-resources");
+        makeContainer("edit-server-prompts");
+
+        let capturedBody = null;
+        win.fetch = vi.fn().mockImplementation((_url, opts) => {
+            capturedBody = opts.body;
+            return Promise.resolve(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { success: true },
+                }),
+            );
+        });
+
+        await win.handleEditServerFormSubmit(fakeSubmitEvent(form));
 
         expect(capturedBody.getAll("associatedResources")).toContain("r1");
         expect(capturedBody.getAll("associatedPrompts")).toContain("p1");
