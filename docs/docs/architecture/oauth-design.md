@@ -112,7 +112,7 @@ The gateway configuration form maps user inputs to the OAuth configuration struc
 ## Security and Operational Notes
 
 -   **Encryption**: Tokens are encrypted at rest using a configured encryption secret.
--   **State Security**: State is HMAC-signed, single-use, and has a short expiration (300 seconds).
+-   **State Security**: State is an opaque random token (`secrets.token_urlsafe`), stored server-side with associated metadata, single-use, and has a short expiration (300 seconds).
 -   **Scoping**: Tokens are scoped per gateway and app user (email) to prevent cross-user reuse.
 -   **Resource Indicator**: The gateway derives a resource value from the gateway URL if not explicitly configured.
 -   **Transport**: HTTPS is recommended in production.
