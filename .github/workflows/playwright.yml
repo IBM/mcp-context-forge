@@ -3,19 +3,31 @@ name: Playwright CI Smoke
 on:
   push:
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "tests/playwright/**"
+      - "pyproject.toml"
+      - ".github/workflows/playwright.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "tests/playwright/**"
+      - "pyproject.toml"
+      - ".github/workflows/playwright.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: playwright-ci-smoke-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   playwright-ci-smoke:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: playwright-ci-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -40,13 +52,13 @@ jobs:
       - name: 🐍 Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: ⚡ Set up uv
         uses: astral-sh/setup-uv@v6
         with:
           version: "0.9.2"
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: 📦 Install gateway dependencies
         run: |

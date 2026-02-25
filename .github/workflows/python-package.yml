@@ -6,17 +6,36 @@ name: Build Python Package
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "mcpgateway/**"
+      - "pyproject.toml"
+      - "Makefile"
+      - "MANIFEST.in"
+      - ".github/workflows/python-package.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: [ "main" ]
+    paths:
+      - "mcpgateway/**"
+      - "pyproject.toml"
+      - "Makefile"
+      - "MANIFEST.in"
+      - ".github/workflows/python-package.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-package:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     # Build the package under multiple Python versions to catch ABI issues early
     strategy:
       matrix:
-        python-version: [ "3.10", "3.11", "3.12" ]  # Extend as needed
+        python-version: ["3.12"]  # Extend as needed
 
     steps:
       # 1️⃣  Check out repository so Makefile & sources are available

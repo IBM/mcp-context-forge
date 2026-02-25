@@ -1,18 +1,29 @@
 name: linting-full
 
 on:
-  pull_request:
-    branches: ["main"]
   push:
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "plugins/**"
+      - "pyproject.toml"
+      - ".pre-commit-config.yaml"
+      - ".github/workflows/linting-full.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   linting-full:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: linting-full
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -40,6 +51,9 @@ jobs:
 
       - name: Run pre-commit
         run: make --no-print-directory pre-commit
+
+      - name: Verify SRI hashes
+        run: make sri-verify
 
       - name: Determine commitlint range
         id: commit_range

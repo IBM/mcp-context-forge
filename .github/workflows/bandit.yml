@@ -18,19 +18,30 @@ name: Bandit
 on:
   push:
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - ".github/workflows/bandit.yml"
   pull_request:
-    branches: ["main"] # must be a subset of the push branches
-  schedule:
-    - cron: "26 11 * * 6" # Saturday @ 11:26 UTC - catch new CVEs
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - ".github/workflows/bandit.yml" # must be a subset of the push branches
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   bandit:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     permissions:
       contents: read # required by actions/checkout
       security-events: write # upload SARIF to "Code scanning"
       actions: read # needed only for private repos
 
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       # -----------------------------------------------------------

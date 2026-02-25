@@ -7,6 +7,7 @@ on:
       - "tools_rust/**"
       - ".github/workflows/rust-tools.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: [main, develop, rust-tools-ci]
     paths:
       - "tools_rust/**"
@@ -16,10 +17,16 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-checks:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Rust Checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -64,8 +71,10 @@ jobs:
         run: make build-release
 
   security-audit:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -81,8 +90,10 @@ jobs:
         run: make licenses
 
   coverage:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Code Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4

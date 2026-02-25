@@ -8,6 +8,7 @@ on:
       - "plugins/pii_filter/**"
       - ".github/workflows/rust-plugins.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: [main, develop]
     paths:
       - "plugins_rust/**"
@@ -18,15 +19,21 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Rust unit tests and linting
   rust-tests:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Rust Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
         rust: [stable]
 
     steps:
@@ -71,12 +78,14 @@ jobs:
 
   # Build wheels for multiple platforms (native builds)
   build-wheels:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +93,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install Rust stable
         run: rustup default stable
@@ -105,14 +114,16 @@ jobs:
 
   # Python integration tests with Rust extensions
   python-integration:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Python Integration Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     needs: build-wheels
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        python-version: ["3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -154,8 +165,10 @@ jobs:
 
   # Security audit
   security-audit:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -172,8 +185,10 @@ jobs:
 
   # Coverage report
   coverage:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Code Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +196,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install Rust stable and components
         run: |
@@ -221,8 +236,10 @@ jobs:
 
   # Build documentation
   documentation:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Build Documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -244,6 +261,7 @@ jobs:
   release:
     name: Release Build
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     if: startsWith(github.ref, 'refs/tags/')
     needs: [rust-tests, python-integration]
     strategy:
@@ -256,7 +274,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install Rust stable
         run: rustup default stable

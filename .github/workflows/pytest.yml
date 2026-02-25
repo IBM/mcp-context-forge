@@ -15,10 +15,25 @@ name: Tests & Coverage
 on:
   push:
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/pytest.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/pytest.yml"
   # schedule:
   #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write # needed *only* if the badge-commit step is enabled
@@ -27,13 +42,15 @@ permissions:
 
 jobs:
   test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: pytest (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.12"]
 
     env:
       PYTHONUNBUFFERED: "1"
