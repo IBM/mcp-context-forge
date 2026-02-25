@@ -743,6 +743,41 @@ def test_password_team_token_and_grpc_validators(monkeypatch):
     assert len(GrpcServiceUpdate.validate_description("x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1))) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
 
+class TestToolDescriptionForbiddenPatterns:
+    """Tests for configurable forbidden pattern validation on tool descriptions."""
+
+    def test_default_patterns_block_forbidden_chars(self, monkeypatch):
+        """Default forbidden patterns reject known unsafe substrings."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "|", "> ", "< "])
+        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(f"description with {pat} inside")
+
+    def test_disabled_allows_any_description(self, monkeypatch):
+        """Disabling forbidden patterns allows descriptions with any content."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", False)
+        result = ToolCreate.validate_description("run; rm -rf / && $(evil)")
+        assert result is not None
+
+    def test_custom_patterns_override_defaults(self, monkeypatch):
+        """Custom pattern list replaces the default list entirely."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["EVIL"])
+        # Default patterns like ";" are no longer blocked
+        result = ToolCreate.validate_description("run; something")
+        assert ";" in result
+        # Custom pattern is blocked
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolCreate.validate_description("contains EVIL word")
+
+    def test_none_description_bypasses_check(self, monkeypatch):
+        """None descriptions are passed through without pattern checking."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";"])
+        assert ToolCreate.validate_description(None) is None
+
+
 class TestMaskOauthConfig:
     """Tests for the _mask_oauth_config() helper function."""
 
