@@ -19340,7 +19340,9 @@ function addAuthHeader(containerId, options = {}) {
     if (keyInput) {
         keyInput.value = options.key ?? "";
         // Attach event listener programmatically
-        keyInput.addEventListener("input", () => updateAuthHeadersJSON(containerId));
+        keyInput.addEventListener("input", () =>
+            updateAuthHeadersJSON(containerId),
+        );
     }
     if (valueInput) {
         if (options.isMasked) {
@@ -19355,7 +19357,9 @@ function addAuthHeader(containerId, options = {}) {
             }
         }
         // Attach event listener programmatically
-        valueInput.addEventListener("input", () => updateAuthHeadersJSON(containerId));
+        valueInput.addEventListener("input", () =>
+            updateAuthHeadersJSON(containerId),
+        );
     }
 
     updateAuthHeadersJSON(containerId);
