@@ -25,6 +25,7 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/docker-scan.yml'
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths:
       - 'Containerfile.lite'
@@ -35,6 +36,10 @@ on:
   schedule:
     - cron: "17 18 * * 2"  # Weekly scan (Tuesday 18:17 UTC) for new CVEs
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -49,8 +54,10 @@ jobs:
   # Lint Dockerfile
   # ---------------------------------------------------------------
   lint:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Lint Dockerfile
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -75,9 +82,11 @@ jobs:
   # Build and scan image
   # ---------------------------------------------------------------
   scan:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Security Scan
     needs: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
