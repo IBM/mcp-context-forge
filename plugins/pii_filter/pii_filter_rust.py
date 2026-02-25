@@ -38,7 +38,7 @@ try:
 
     try:
         # First-Party
-        from plugins_rust import PIIDetectorRust as _RustDetector
+        from pii_filter_rust import PIIDetectorRust as _RustDetector
 
         RUST_AVAILABLE = True
         logger.info("🦀 Rust PII filter module imported successfully")

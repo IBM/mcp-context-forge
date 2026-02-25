@@ -38,6 +38,15 @@ static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     )]
 });
 
+// BSN patterns (Dutch Burgerservicenummer)
+static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
+    vec![(
+        r"\b\d{9}\b",
+        "Dutch BSN (Burgerservicenummer)",
+        MaskingStrategy::Partial,
+    )]
+});
+
 // Credit card patterns
 static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
@@ -201,6 +210,7 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
 
     // Add patterns based on config
     add_patterns!(config.detect_ssn, PIIType::Ssn, &*SSN_PATTERNS);
+    add_patterns!(config.detect_bsn, PIIType::Bsn, &*BSN_PATTERNS);
     add_patterns!(
         config.detect_credit_card,
         PIIType::CreditCard,
