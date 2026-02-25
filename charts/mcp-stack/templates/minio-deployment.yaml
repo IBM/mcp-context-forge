@@ -22,8 +22,14 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: minio
+          securityContext:
+            allowPrivilegeEscalation: false
           image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
           imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
           command:
