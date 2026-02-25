@@ -50,6 +50,10 @@ on:
   push:
     branches: ["main"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # -----------------------------------------------------------------
 # Minimal permissions (Principle of Least Privilege)
 # -----------------------------------------------------------------
@@ -83,8 +87,10 @@ env:
 
 jobs:
   build-push-deploy:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: 🚀 Build, Cache, Push & Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: production
 
     steps:
