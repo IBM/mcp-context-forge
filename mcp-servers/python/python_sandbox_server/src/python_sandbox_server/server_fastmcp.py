@@ -626,7 +626,7 @@ class PythonSandbox:
                     # Try to use repr for better display (like IPython)
                     display_str = repr(result)
                     stdout_output = stdout_output + display_str
-                except:
+                except Exception:
                     stdout_output = stdout_output + str(result)
             else:
                 # Look for result variable in assignments

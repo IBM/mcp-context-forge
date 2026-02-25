@@ -225,7 +225,7 @@ class MigrationTestRunner:
                 try:
                     logs = self.container_manager.get_container_logs(container_id)
                     error_details += f"\n\nContainer logs:\n{logs}"
-                except:
+                except Exception:
                     pass
 
             result = MigrationResult(
@@ -511,7 +511,7 @@ class MigrationTestRunner:
                         if "%" in cpu_str:
                             try:
                                 metrics["cpu_percent"] = float(cpu_str.replace("%", "").strip())
-                            except:
+                            except Exception:
                                 pass
                         # Parse memory usage
                         if "/" in mem_str:
@@ -524,7 +524,7 @@ class MigrationTestRunner:
                                     metrics["memory_mb"] = float(mem_used.replace("MiB", "").strip())
                                 elif "MB" in mem_used:
                                     metrics["memory_mb"] = float(mem_used.replace("MB", "").strip())
-                            except:
+                            except Exception:
                                 pass
 
         except Exception as e:

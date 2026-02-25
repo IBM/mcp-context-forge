@@ -992,7 +992,7 @@ class TestSecurityValidation:
         start = time.time()
         try:
             ToolCreate(name="short", url=self.VALID_URL)
-        except:
+        except Exception:
             pass
         short_time = time.time() - start
 
@@ -1000,7 +1000,7 @@ class TestSecurityValidation:
         start = time.time()
         try:
             ToolCreate(name="a" * 50, url=self.VALID_URL)
-        except:
+        except Exception:
             pass
         long_time = time.time() - start
 
@@ -2085,14 +2085,14 @@ class TestSecurityBestPractices:
             start = time.time()
             try:
                 ToolCreate(name="valid_name", url="https://example.com")
-            except:
+            except Exception:
                 pass
             valid_times.append(time.perf_counter() - start)
 
             start = time.perf_counter()
             try:
                 ToolCreate(name="<script>alert('XSS')</script>", url="https://example.com")
-            except:
+            except Exception:
                 pass
             invalid_times.append(time.perf_counter() - start)
 
