@@ -4956,10 +4956,6 @@ async def admin_teams_partial_html(
             "query_params": query_params_dict,
         },
     )
-    # Prevent nginx caching for real-time team updates
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
     return response
 
 
@@ -5113,6 +5109,7 @@ async def admin_create_team(
         await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
 
         response = HTMLResponse(content="", status_code=201)
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
     except (ValidationError, CoreValidationError) as e:
@@ -5522,7 +5519,12 @@ async def admin_get_team_edit(
             </form>
         </div>
         """
-        return HTMLResponse(content=edit_form)
+        response = HTMLResponse(content=edit_form)
+        # Prevent nginx caching for real-time team member updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
@@ -5687,10 +5689,6 @@ async def admin_delete_team(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        # Prevent nginx caching for real-time updates
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
@@ -5897,11 +5895,6 @@ async def admin_add_team_members(
         </script>
         """
         response = HTMLResponse(content=success_html)
-
-        # Prevent nginx caching for real-time updates
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
 
         # Trigger refresh of teams list (but don't reopen modal)
         response.headers["HX-Trigger"] = orjson.dumps(
@@ -7503,7 +7496,9 @@ async def admin_delete_user(
         await auth_service.delete_user(decoded_email)
 
         # Return empty content to remove the user from the list
-        return HTMLResponse(content="", status_code=200)
+        response = HTMLResponse(content="", status_code=200)
+        response.headers["HX-Trigger"] = orjson.dumps({"adminUserAction": {"refreshUsersList": True, "delayMs": 1000}}).decode()
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
