@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [1.0.0-BETA-2] - TBD
+## [1.0.0-RC2] - 2026-02-28
 
 ### Added
 
@@ -43,6 +43,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **Rationale**: Prevents unbounded table growth under sustained load while preserving analytics in hourly rollups
 * **Opt-out**: Set `METRICS_DELETE_RAW_AFTER_ROLLUP=false` to preserve previous behavior
 * **External observability**: If using ELK, Datadog, or similar platforms, raw metrics are redundant - the new defaults are optimal
+
+#### **🩹 Upgrade Workaround for Legacy BETA-2 Releases**
+* **Scope**: Applies to upgrades starting from a release originally installed with chart/app `1.0.0-BETA-2`
+* **Symptom**: `helm upgrade` may fail with immutable selector error on MinIO Deployment (`spec.selector ... field is immutable`)
+* **Workaround**: Delete only the MinIO Deployment, then rerun upgrade
+  - `kubectl delete deployment -n <namespace> <release>-minio`
+  - `helm upgrade <release> charts/mcp-stack -n <namespace> ...`
+* **Data safety**: This workaround preserves existing PVCs and recreates the MinIO Deployment with current labels
+
+#### **📦 MinIO Default Disabled by Default**
+* `minio.enabled` default changed from `true` to `false`
+* **Rationale**: MinIO in this chart is used by PostgreSQL major-upgrade backup/restore flow and is not needed on the regular request path
+* **Migration**: Set `minio.enabled=true` when using `postgres.upgrade.enabled=true`
+* **Upgrade safety**: If your existing release still needs MinIO, pin `minio.enabled=true` in your values before upgrade to avoid MinIO resources being pruned
+* **Validation**: Chart now fails template rendering if `postgres.upgrade.enabled=true` while `minio.enabled=false`
+
+#### **🗄️ PostgreSQL Upgrade Safety Hardening**
+* Internal PostgreSQL Deployment now always uses `strategy.type=Recreate` to prevent overlapping old/new DB pods on the same PVC
+* Added `postgres.terminationGracePeriodSeconds` (default: `120`) for graceful shutdown window
+* Added `postgres.lifecycle.preStop.enabled` (default: `true`) to run a clean `pg_ctl ... stop` before termination
+* Added `postgres.persistence.useReadWriteOncePod` (default: `true`) to prefer strict single-pod mount semantics where supported
+* **Compatibility**: If your storage class does not support `ReadWriteOncePod`, set `postgres.persistence.useReadWriteOncePod=false` and keep `accessModes: [ReadWriteOnce]`
+
+#### **🔒 Ingress TLS and Redirect Hardening**
+* Enabled ingress TLS defaults for:
+  - `mcpContextForge.ingress.tls.enabled: true`
+  - `mcpFastTimeServer.ingress.tls.enabled: true`
+* Ingress templates now auto-generate TLS secret names when unset:
+  - Gateway: `<release>-ingress-tls`
+  - Fast-time: `<release>-fast-time-ingress-tls`
+* For nginx ingress classes with TLS enabled, chart now applies secure defaults unless overridden:
+  - `nginx.ingress.kubernetes.io/ssl-redirect: "true"`
+  - `nginx.ingress.kubernetes.io/force-ssl-redirect: "true"`
+  - `nginx.ingress.kubernetes.io/hsts: "true"`
+  - `nginx.ingress.kubernetes.io/hsts-max-age: "31536000"`
+  - `nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"`
 
 ## [0.9.1] - 2025-12-03
 

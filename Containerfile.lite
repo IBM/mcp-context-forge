@@ -236,7 +236,8 @@ LABEL maintainer="Mihai Criveti" \
 # - gdb for memray attach (only when ENABLE_PROFILING=true)
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
-RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
+RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
+    && microdnf install -y --nodocs --setopt=install_weak_deps=0 \
     python${PYTHON_VERSION} \
     ca-certificates \
     procps-ng \

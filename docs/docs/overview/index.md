@@ -8,11 +8,10 @@ This section introduces what ContextForge is, the gateway patterns it supports, 
 
 ## What is ContextForge?
 
-**ContextForge** is a production-grade AI gateway, registry, and proxy that sits in front of any MCP, A2A, or REST/gRPC APIs, exposing a unified control plane with centralized governance, discovery, and observability for all your AI needs. It optimizes agent and tool calling, supports plugins, and provides multiple gateway patterns:
+**ContextForge** is an open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. It optimizes agent and tool calling, supports plugins, and provides multiple integration patterns:
 
 - **Tools Gateway** — Federate MCP servers, REST APIs, and gRPC services into one composable tool catalog
 - **Agent Gateway** — Route to A2A agents, OpenAI-compatible agents, and Anthropic agents
-- **Model Gateway** — LLM proxy with OpenAI API spec, supporting watsonx, OpenAI, Anthropic, Ollama, vLLM, and more
 - **API Gateway** — Rate limiting, auth, retries, and reverse proxy for REST services
 - **Plugin Extensibility** — 40+ plugins for additional transports, protocols, and integrations
 - **Observability** — OpenTelemetry tracing with Phoenix, Jaeger, Zipkin, and other OTLP backends

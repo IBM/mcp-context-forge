@@ -11,13 +11,45 @@ Before proceeding with the upgrade, ensure:
 - You have sufficient disk space for backup operations
 - You can accept brief downtime during the upgrade process
 
+## Upgrade Safety Rules (Required)
+
+Before any PostgreSQL image/tag upgrade in Kubernetes:
+
+1. Take a backup you can restore from.
+2. Ensure Postgres does not run overlapping old/new pods on the same PVC.
+3. Ensure graceful shutdown to flush checkpoints/WAL before pod termination.
+4. Prefer strict single-pod mounts (`ReadWriteOncePod`) when supported by your storage class.
+
+Example pre-upgrade backup command:
+
+```bash
+kubectl exec -n mcp deploy/mcp-stack-postgres -- \
+  pg_dump -U admin -d postgresdb > pg-backup-$(date +%Y%m%d-%H%M%S).sql
+```
+
+The chart now applies these safety defaults for internal Postgres:
+
+- `Deployment` strategy is always `Recreate` (non-overlapping updates)
+- `terminationGracePeriodSeconds=120`
+- `lifecycle.preStop` hook runs `pg_ctl ... stop`
+- `postgres.persistence.useReadWriteOncePod=true` by default
+
+If your storage class does not support `ReadWriteOncePod`, set:
+
+```yaml
+postgres:
+  persistence:
+    useReadWriteOncePod: false
+    accessModes: [ReadWriteOnce]
+```
+
 ## Upgrade Process
 
 The upgrade process occurs in stages and requires two separate Helm operations:
 
 ### Stage 1: Enable MinIO for Backup Storage
 
-First, you need to ensure MinIO is deployed and running to store the database backup:
+`minio.enabled` is `false` by default. Enable MinIO first so backup/restore can run:
 
 ```bash
 # Update your my-values.yaml to enable MinIO
@@ -38,6 +70,9 @@ helm upgrade --install mcp-stack ./charts/mcp-stack \
   --set minio.enabled=true \
   --wait --timeout 30m
 ```
+
+!!! note
+    The chart fails at render time if `postgres.upgrade.enabled=true` while `minio.enabled=false`.
 
 ### Stage 2: Perform the PostgreSQL Upgrade with Backup
 
@@ -113,6 +148,18 @@ Ensure your storage class settings match existing PVCs:
 kubectl describe pvc -n mcp
 ```
 
+### Legacy `1.0.0-BETA-2` Upgrade Fails on MinIO Selector
+If your release was originally installed from chart/app `1.0.0-BETA-2`, you may see:
+```text
+Deployment.apps "<release>-minio" is invalid: spec.selector ... field is immutable
+```
+
+One-time workaround:
+```bash
+kubectl delete deployment -n mcp-private mcp-stack-minio
+helm upgrade mcp-stack ./charts/mcp-stack -n mcp-private -f my-values.yaml --wait --timeout 30m
+```
+
 ## Configuration Reference
 
 ### Upgrade Parameters
@@ -122,7 +169,10 @@ kubectl describe pvc -n mcp
 | `postgres.upgrade.enabled` | Enable the PostgreSQL upgrade process | `false` |
 | `postgres.upgrade.targetVersion` | Target PostgreSQL version (currently supports "18") | `"18"` |
 | `postgres.upgrade.backupCompleted` | Internal flag - set to false to trigger backup | `false` |
-| `minio.enabled` | Enable MinIO for backup storage | `true` (recommended for upgrades) |
+| `minio.enabled` | Enable MinIO for backup storage | `false` (set `true` for upgrades) |
+| `postgres.terminationGracePeriodSeconds` | Grace period before force-kill on pod shutdown | `120` |
+| `postgres.lifecycle.preStop.enabled` | Run clean shutdown hook before container termination | `true` |
+| `postgres.persistence.useReadWriteOncePod` | Prefer strict single-pod mount mode | `true` |
 
 ### Storage Configuration
 
@@ -142,6 +192,9 @@ postgres:
 - **Downtime**: Expect brief downtime during the upgrade as PostgreSQL restarts
 - **PVC Compatibility**: The PVC will be reused but the data will be migrated through the backup/restore process
 - **MinIO Required**: MinIO must be enabled and operational for the upgrade to work
+- **Validation Guard**: Chart rendering fails fast if upgrade mode is enabled without MinIO
+- **Single Writer Safety**: Chart forces Postgres `Recreate` strategy to avoid overlapping pod mounts on one PVC
+- **Graceful Stop**: Chart sets preStop + termination grace period to reduce checkpoint/WAL corruption risk
 
 ## Cleanup After Successful Upgrade
 

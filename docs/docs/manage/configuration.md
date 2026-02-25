@@ -717,6 +717,38 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
     ```
     The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
 
+#### Helm/Kubernetes registration examples
+
+When deployed with the Helm chart, the testing registration jobs create gateways pointing to
+in-cluster Service DNS names:
+
+- Fast-time: `http://<release>-mcp-fast-time-server:80/http`
+- Fast-test: `http://<release>-fast-test-server:8880/mcp`
+
+Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private
+destinations are rejected with `422` during `/gateways` creation.
+
+Recommended approach for cluster deployments is to keep private networks blocked globally and allow only
+known internal CIDRs:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust to your environment
+    SSRF_DNS_FAIL_CLOSED: "true"
+```
+
+For local benchmark profiles where broad private access is acceptable, use:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+```
+
 !!! note "Local Development Defaults"
     The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.

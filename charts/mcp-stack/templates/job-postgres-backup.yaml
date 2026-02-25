@@ -13,15 +13,24 @@ metadata:
     "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
 spec:
   template:
+    metadata:
+      labels:
+        {{- include "mcp-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-backup
     spec:
       restartPolicy: Never
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres-backup
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
           securityContext:
+            allowPrivilegeEscalation: false
             runAsUser: 0
           command:
             - /bin/bash

@@ -31,8 +31,18 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis-commander
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           image: "{{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}"
           imagePullPolicy: {{ .Values.redisCommander.image.pullPolicy }}
 
@@ -67,6 +77,13 @@ spec:
               {{- else }}
               value: "{{ .Values.redis.service.port }}"
               {{- end }}
+            {{- if and (not .Values.redis.external.enabled) .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+            {{- end }}
 
           # ─── Resource limits & requests ───
           {{- with .Values.redisCommander.resources }}

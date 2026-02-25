@@ -15,7 +15,12 @@ spec:
   {{- if .Values.postgres.persistence.storageClassName }}
   storageClassName: {{ .Values.postgres.persistence.storageClassName }}
   {{- end }}
+  {{- if .Values.postgres.persistence.useReadWriteOncePod }}
+  accessModes:
+    - ReadWriteOncePod
+  {{- else }}
   accessModes: {{- toYaml .Values.postgres.persistence.accessModes | nindent 4 }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.postgres.persistence.size }}

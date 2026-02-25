@@ -28,7 +28,11 @@
     {{- $redisAddr = printf "redis://%s:%v" .Values.redis.external.host .Values.redis.external.port -}}
   {{- end -}}
 {{- else -}}
-  {{- $redisAddr = printf "redis://%s-redis:%v" $fullName .Values.redis.service.port -}}
+  {{- if .Values.redis.auth.enabled -}}
+    {{- $redisAddr = printf "redis://:$(REDIS_PASSWORD)@%s-redis:%v" $fullName .Values.redis.service.port -}}
+  {{- else -}}
+    {{- $redisAddr = printf "redis://%s-redis:%v" $fullName .Values.redis.service.port -}}
+  {{- end -}}
 {{- end -}}
 
 {{- $pgbouncerHost := printf "%s-pgbouncer" $fullName -}}
@@ -71,6 +75,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: postgres-exporter
           image: "{{ .Values.monitoring.postgresExporter.image.repository }}:{{ .Values.monitoring.postgresExporter.image.tag }}"
@@ -159,6 +164,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: redis-exporter
           image: "{{ .Values.monitoring.redisExporter.image.repository }}:{{ .Values.monitoring.redisExporter.image.tag }}"
@@ -167,6 +173,13 @@ spec:
             - name: http
               containerPort: {{ .Values.monitoring.redisExporter.service.port }}
           env:
+            {{- if and (not .Values.redis.external.enabled) .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+            {{- end }}
             - name: REDIS_ADDR
               value: {{ $redisAddr | quote }}
           resources:
@@ -218,6 +231,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: pgbouncer-exporter
           image: "{{ .Values.monitoring.pgbouncerExporter.image.repository }}:{{ .Values.monitoring.pgbouncerExporter.image.tag }}"
@@ -287,6 +301,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: nginx-exporter
           image: "{{ .Values.monitoring.nginxExporter.image.repository }}:{{ .Values.monitoring.nginxExporter.image.tag }}"
@@ -345,6 +360,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: cadvisor
           image: "{{ .Values.monitoring.cadvisor.image.repository }}:{{ .Values.monitoring.cadvisor.image.tag }}"
@@ -429,6 +445,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: prometheus
           image: "{{ .Values.monitoring.prometheus.image.repository }}:{{ .Values.monitoring.prometheus.image.tag }}"
@@ -528,6 +545,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: loki
           image: "{{ .Values.monitoring.loki.image.repository }}:{{ .Values.monitoring.loki.image.tag }}"
@@ -624,6 +642,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: tempo
           image: "{{ .Values.monitoring.tempo.image.repository }}:{{ .Values.monitoring.tempo.image.tag }}"
@@ -732,6 +751,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: promtail
           image: "{{ .Values.monitoring.promtail.image.repository }}:{{ .Values.monitoring.promtail.image.tag }}"
@@ -778,6 +798,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: grafana
           image: "{{ .Values.monitoring.grafana.image.repository }}:{{ .Values.monitoring.grafana.image.tag }}"

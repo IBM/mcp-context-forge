@@ -1,0 +1,209 @@
+{{- if .Values.networkPolicies.enabled }}
+{{- $fullName := include "mcp-stack.fullname" . -}}
+
+{{- if and .Values.networkPolicies.postgres.enabled .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-postgres
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-mcpgateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    {{- if and .Values.pgbouncer.enabled .Values.networkPolicies.postgres.allowPgBouncer }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-pgbouncer
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    {{- end }}
+    {{- if and .Values.pgadmin.enabled .Values.networkPolicies.postgres.allowPgAdmin }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app: pgadmin
+              release: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    {{- end }}
+    {{- if and .Values.migration.enabled .Values.networkPolicies.postgres.allowMigrationJob }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: migration
+              app.kubernetes.io/name: {{ $fullName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    {{- end }}
+    {{- if and .Values.postgres.upgrade.enabled .Values.networkPolicies.postgres.allowUpgradeJobs }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres-backup
+              app.kubernetes.io/name: {{ $fullName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres-migration-check
+              app.kubernetes.io/name: {{ $fullName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    {{- end }}
+    {{- if and .Values.monitoring.enabled .Values.monitoring.postgresExporter.enabled .Values.networkPolicies.postgres.allowMonitoringExporter }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-postgres-exporter
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    {{- end }}
+{{- end }}
+
+{{- if and .Values.networkPolicies.redis.enabled .Values.redis.enabled (not .Values.redis.external.enabled) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-redis
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-mcpgateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+    {{- if and .Values.redisCommander.enabled .Values.networkPolicies.redis.allowRedisCommander }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app: redis-commander
+              release: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+    {{- end }}
+    {{- if and .Values.monitoring.enabled .Values.monitoring.redisExporter.enabled .Values.networkPolicies.redis.allowMonitoringExporter }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-redis-exporter
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+    {{- end }}
+{{- end }}
+
+{{- if and .Values.networkPolicies.pgbouncer.enabled .Values.pgbouncer.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-pgbouncer
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-pgbouncer
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-mcpgateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgbouncer.service.port }}
+    {{- if and .Values.pgadmin.enabled .Values.networkPolicies.pgbouncer.allowPgAdmin }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app: pgadmin
+              release: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgbouncer.service.port }}
+    {{- end }}
+    {{- if and .Values.monitoring.enabled .Values.monitoring.pgbouncerExporter.enabled .Values.networkPolicies.pgbouncer.allowMonitoringExporter }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-pgbouncer-exporter
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgbouncer.service.port }}
+    {{- end }}
+{{- end }}
+
+{{- if and .Values.networkPolicies.minio.enabled .Values.minio.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-minio
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: minio
+      app: {{ $fullName }}-minio
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ $fullName }}-postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.minio.service.apiPort }}
+    {{- if and .Values.postgres.upgrade.enabled .Values.networkPolicies.minio.allowUpgradeJobs }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres-backup
+              app.kubernetes.io/name: {{ $fullName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.minio.service.apiPort }}
+    {{- end }}
+{{- end }}
+
+{{- end }}
