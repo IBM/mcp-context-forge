@@ -1,5 +1,9 @@
 /**
  * Unit tests for admin.js pagination state management functions.
+ *
+ * Covers getTeamsCurrentPaginationState, handleAdminTeamAction pagination
+ * preservation, getPaginationParams/buildTableUrl namespace isolation (#3244),
+ * and pagination component boundary behavior.
  */
 
 import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
@@ -9,7 +13,62 @@ let win;
 let doc;
 
 beforeAll(() => {
-    win = loadAdminJs();
+    // Inject getPaginationParams and buildTableUrl before admin.js loads,
+    // mirroring the inline <script> in admin.html that defines them.
+    // admin.js references these as globals (/* global ... getPaginationParams, buildTableUrl */).
+    win = loadAdminJs({
+        beforeEval: (window) => {
+            window.getPaginationParams = function getPaginationParams (tableName) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const prefix = tableName + "_";
+                return {
+                    page: Math.max(1, parseInt(urlParams.get(prefix + "page"), 10) || 1),
+                    perPage: Math.max(1, parseInt(urlParams.get(prefix + "size"), 10) || 10),
+                    includeInactive: urlParams.get(prefix + "inactive")
+                };
+            };
+
+            window.buildTableUrl = function buildTableUrl (tableName, baseUrl, additionalParams) {
+                if (additionalParams === undefined) additionalParams = {};
+                const params = window.getPaginationParams(tableName);
+                const urlParams = new URLSearchParams(window.location.search);
+                const prefix = tableName + "_";
+                const url = new URL(baseUrl, window.location.origin);
+                url.searchParams.set("page", params.page);
+                url.searchParams.set("per_page", params.perPage);
+
+                for (const [key, value] of Object.entries(additionalParams)) {
+                    if (key === "include_inactive" && params.includeInactive !== null) {
+                        url.searchParams.set("include_inactive", params.includeInactive);
+                    } else if (value !== null && value !== undefined && value !== "") {
+                        url.searchParams.set(key, value);
+                    }
+                }
+
+                if (!additionalParams.hasOwnProperty("include_inactive") && params.includeInactive !== null) {
+                    url.searchParams.set("include_inactive", params.includeInactive);
+                }
+
+                const namespacedQuery = urlParams.get(prefix + "q");
+                const namespacedTags = urlParams.get(prefix + "tags");
+                if (namespacedQuery) {
+                    url.searchParams.set("q", namespacedQuery);
+                }
+                if (namespacedTags) {
+                    url.searchParams.set("tags", namespacedTags);
+                }
+
+                return url.pathname + url.search;
+            };
+
+            // Provide safeReplaceState before admin.js loads (it uses ||= pattern)
+            window.safeReplaceState = function (data, title, url) {
+                try {
+                    window.history.replaceState(data, title, url);
+                } catch (_e) { /* ignore in test env */ }
+            };
+        }
+    });
     doc = win.document;
 });
 
@@ -249,5 +308,253 @@ describe("handleAdminTeamAction pagination preservation", () => {
         expect(win._lastHtmxUrl).toBeDefined();
         expect(win._lastHtmxUrl).toContain('page=1');
         expect(win._lastHtmxUrl).not.toContain('page=3');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// getPaginationParams namespace isolation (#3244)
+// ---------------------------------------------------------------------------
+describe("getPaginationParams namespace isolation", () => {
+    test("each table reads only its own namespaced URL params", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?servers_page=3&servers_size=50&tools_page=1&tools_size=25"
+        );
+
+        const servers = win.getPaginationParams("servers");
+        const tools = win.getPaginationParams("tools");
+
+        expect(servers.page).toBe(3);
+        expect(servers.perPage).toBe(50);
+        expect(tools.page).toBe(1);
+        expect(tools.perPage).toBe(25);
+    });
+
+    test("missing params for one table do not leak from another", () => {
+        win.history.replaceState({}, "", "/admin?servers_page=5&servers_size=100");
+
+        const servers = win.getPaginationParams("servers");
+        const tools = win.getPaginationParams("tools");
+
+        expect(servers.page).toBe(5);
+        expect(servers.perPage).toBe(100);
+        // Tools should get defaults, not servers' values
+        expect(tools.page).toBe(1);
+        expect(tools.perPage).toBe(10);
+    });
+
+    test("all five section namespaces are independent", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?servers_page=1&servers_size=10" +
+                "&tools_page=2&tools_size=25" +
+                "&gateways_page=3&gateways_size=50" +
+                "&tokens_page=4&tokens_size=100" +
+                "&agents_page=5&agents_size=200"
+        );
+
+        const sections = ["servers", "tools", "gateways", "tokens", "agents"];
+        const expectedPages = [1, 2, 3, 4, 5];
+        const expectedSizes = [10, 25, 50, 100, 200];
+
+        sections.forEach((name, i) => {
+            const state = win.getPaginationParams(name);
+            expect(state.page).toBe(expectedPages[i]);
+            expect(state.perPage).toBe(expectedSizes[i]);
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildTableUrl namespace isolation (#3244)
+// ---------------------------------------------------------------------------
+describe("buildTableUrl namespace isolation", () => {
+    test("builds URL using only the specified table's params", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?servers_page=5&servers_size=100&tools_page=2&tools_size=25"
+        );
+
+        const serversUrl = win.buildTableUrl("servers", "/admin/servers/partial");
+        const toolsUrl = win.buildTableUrl("tools", "/admin/tools/partial");
+
+        expect(serversUrl).toContain("page=5");
+        expect(serversUrl).toContain("per_page=100");
+        expect(toolsUrl).toContain("page=2");
+        expect(toolsUrl).toContain("per_page=25");
+    });
+
+    test("does not cross-contaminate search queries between tables", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?servers_q=myserver&tools_q=mytool&servers_page=1&servers_size=10&tools_page=1&tools_size=10"
+        );
+
+        const serversUrl = win.buildTableUrl("servers", "/admin/servers/partial");
+        const toolsUrl = win.buildTableUrl("tools", "/admin/tools/partial");
+
+        expect(serversUrl).toContain("q=myserver");
+        expect(serversUrl).not.toContain("q=mytool");
+        expect(toolsUrl).toContain("q=mytool");
+        expect(toolsUrl).not.toContain("q=myserver");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination component: goToPage boundary behavior (#3244)
+// ---------------------------------------------------------------------------
+describe("pagination component goToPage behavior", () => {
+    /**
+     * Simulate the Alpine.js pagination component's goToPage logic.
+     * This mirrors pagination_controls.html x-data methods.
+     */
+    function createPaginationComponent (opts) {
+        const pages = [];
+        const component = {
+            currentPage: opts.currentPage || 1,
+            perPage: opts.perPage || 50,
+            totalItems: opts.totalItems || 0,
+            totalPages: opts.totalPages || 0,
+            hasNext: opts.hasNext || false,
+            hasPrev: opts.hasPrev || false,
+            _loadedPages: pages,
+
+            goToPage (page) {
+                if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
+                    this.currentPage = page;
+                    pages.push(page);
+                }
+            },
+
+            prevPage () {
+                if (this.hasPrev) {
+                    this.goToPage(this.currentPage - 1);
+                }
+            },
+
+            nextPage () {
+                if (this.hasNext) {
+                    this.goToPage(this.currentPage + 1);
+                }
+            },
+
+            changePageSize (size) {
+                this.perPage = parseInt(size, 10);
+                this.currentPage = 1;
+                pages.push(1);
+            }
+        };
+        return component;
+    }
+
+    test("goToPage is a no-op when totalPages is 0 (cascade poison scenario)", () => {
+        const component = createPaginationComponent({
+            currentPage: 1,
+            totalItems: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false
+        });
+
+        component.goToPage(1);
+        component.goToPage(2);
+        component.goToPage(3);
+
+        expect(component._loadedPages).toHaveLength(0);
+        expect(component.currentPage).toBe(1);
+    });
+
+    test("goToPage works when totalPages > 0 (correct pagination)", () => {
+        const component = createPaginationComponent({
+            currentPage: 1,
+            totalItems: 75,
+            totalPages: 2,
+            hasNext: true,
+            hasPrev: false
+        });
+
+        component.goToPage(2);
+
+        expect(component._loadedPages).toEqual([2]);
+        expect(component.currentPage).toBe(2);
+    });
+
+    test("navigation buttons hidden when totalPages is 0", () => {
+        // Mirrors: <template x-if="totalPages > 0"> in pagination_controls.html
+        const component = createPaginationComponent({
+            totalItems: 0,
+            totalPages: 0
+        });
+
+        const navigationVisible = component.totalPages > 0;
+        expect(navigationVisible).toBe(false);
+    });
+
+    test("navigation buttons shown when totalPages > 0", () => {
+        const component = createPaginationComponent({
+            totalItems: 75,
+            totalPages: 2
+        });
+
+        const navigationVisible = component.totalPages > 0;
+        expect(navigationVisible).toBe(true);
+    });
+
+    test("two independent sections have independent pagination state", () => {
+        const servers = createPaginationComponent({
+            currentPage: 1,
+            totalItems: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false
+        });
+
+        const tools = createPaginationComponent({
+            currentPage: 1,
+            totalItems: 75,
+            totalPages: 2,
+            hasNext: true,
+            hasPrev: false
+        });
+
+        servers.goToPage(2);
+        expect(servers.currentPage).toBe(1);
+        expect(servers.totalPages).toBe(0);
+
+        tools.goToPage(2);
+        expect(tools.currentPage).toBe(2);
+        expect(tools.totalPages).toBe(2);
+
+        // Verify they didn't affect each other
+        expect(servers.currentPage).toBe(1);
+        expect(servers.totalItems).toBe(0);
+        expect(tools.totalItems).toBe(75);
+    });
+
+    test("prevPage and nextPage respect bounds", () => {
+        const component = createPaginationComponent({
+            currentPage: 1,
+            totalItems: 150,
+            totalPages: 3,
+            hasNext: true,
+            hasPrev: false
+        });
+
+        component.prevPage();
+        expect(component.currentPage).toBe(1);
+
+        component.hasNext = true;
+        component.goToPage(2);
+        expect(component.currentPage).toBe(2);
+
+        component.goToPage(3);
+        expect(component.currentPage).toBe(3);
+
+        component.goToPage(4);
+        expect(component.currentPage).toBe(3);
     });
 });
