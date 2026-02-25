@@ -13,6 +13,7 @@
 
 <div
   data-base-url="{{ base_url }}"
+  data-extra-params="{{ query_params | default({}) | tojson | forceescape }}"
   x-data="{
   currentPage: {{ pagination.page }},
   perPage: {{ pagination.per_page }},
@@ -97,17 +98,20 @@
       url.searchParams.set('include_inactive', includeInactive.toString());
     }
 
-    {% if query_params %}
-    {% for key, value in query_params.items() %}
-    {% if key != 'include_inactive' and value is not none %}
-    url.searchParams.set({{ key | tojson | forceescape }}, {{ value | tojson | forceescape }});
-    {% endif %}
-    {% endfor %}
-    {% endif %}
+    // Preserve extra server-side query params (team_id, gateway_id, q, tags, etc.)
+    // Stored in a data attribute to avoid double-quote conflicts inside x-data.
+    const extraParams = JSON.parse(this.$el.dataset.extraParams || '{}');
+    Object.entries(extraParams).forEach(([k, v]) => {
+      if (k !== 'include_inactive' && v !== null && v !== undefined) {
+        url.searchParams.set(k, String(v));
+      }
+    });
 
+    // Also pick up team_id if the parent app injects it into the browser URL
+    // (e.g. when the gateway is embedded in an iframe).
     const currentUrlParams = new URLSearchParams(window.location.search);
     const teamIdFromUrl = currentUrlParams.get('team_id');
-    if (teamIdFromUrl) {
+    if (teamIdFromUrl && !extraParams.team_id) {
       url.searchParams.set('team_id', teamIdFromUrl);
     }
 

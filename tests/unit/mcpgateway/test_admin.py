@@ -15914,7 +15914,12 @@ class TestTemplateButtonGating:
         assert "/delete" not in html
 
     def test_servers_pagination_query_params_are_js_escaped(self, jinja_env):
-        """Malicious q/tags values must not break out of JS string context."""
+        """Malicious q/tags values must not break out of JS string context.
+
+        query_params are now stored in data-extra-params as JSON (via tojson)
+        and read at runtime via JSON.parse(), so dangerous values must be
+        tojson-encoded in that attribute rather than inlined in the x-data JS.
+        """
         # Standard
         import html as html_stdlib
 
@@ -15944,9 +15949,16 @@ class TestTemplateButtonGating:
         )
 
         decoded_html = html_stdlib.unescape(html)
+
+        # Raw unescaped values must never appear inline in JS
         assert "url.searchParams.set('q', 'x' );alert(1);//');" not in decoded_html
-        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in decoded_html
-        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in decoded_html
+        assert "</script><script>alert(2)</script>" not in decoded_html
+
+        # Values must be JSON-encoded in the data-extra-params attribute.
+        # tojson escapes ' → \u0027 and < > → \u003c \u003e.
+        assert "data-extra-params=" in decoded_html
+        assert r"\u0027" in decoded_html
+        assert r"\u003c" in decoded_html
 
     def test_admin_js_toggle_submit_injects_csrf_token(self):
         """Form submit helpers should inject CSRF token before programmatic submit()."""
