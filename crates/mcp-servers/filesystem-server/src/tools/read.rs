@@ -110,10 +110,7 @@ mod tests {
         let canon_path = fs::canonicalize(temp_dir.path()).await.unwrap();
         assert_eq!(
             err,
-            &format!(
-                "'{}' is not a regular file",
-                canon_path.display()
-            )
+            &format!("'{}' is not a regular file", canon_path.display())
         );
     }
     #[tokio::test]

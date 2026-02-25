@@ -97,15 +97,16 @@ recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
 
-# Rust plugins (optional - exclude build artifacts)
-recursive-include plugins_rust *.rs
-recursive-include plugins_rust *.toml
-recursive-include plugins_rust *.md
-recursive-include plugins_rust *.py
-recursive-include plugins_rust *.pyi
-recursive-include plugins_rust *.lock
-recursive-include plugins_rust Makefile
-prune plugins_rust/target
+# Rust plugins (crates/plugins - optional, exclude build artifacts)
+recursive-include crates/plugins *.rs
+recursive-include crates/plugins *.toml
+recursive-include crates/plugins *.md
+recursive-include crates/plugins *.py
+recursive-include crates/plugins *.pyi
+recursive-include crates/plugins *.lock
+recursive-include crates/plugins Makefile
+recursive-include crates/plugins pyproject.toml
+prune crates/plugins/*/target
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs

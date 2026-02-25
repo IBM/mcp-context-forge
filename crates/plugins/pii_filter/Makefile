@@ -106,7 +106,7 @@ stub-gen:
 
 build-target: stub-gen
 	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
-	@uv run maturin build --release --target $(TARGET)
+	@cd ../../.. && uv run maturin build --release --manifest-path crates/plugins/pii_filter/Cargo.toml --target $(TARGET)
 	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
 
@@ -129,16 +129,19 @@ bench:
 	@cargo bench
 
 bench-baseline:
-	@echo "$(GREEN)Running benchmarks...$(NC)"
-	@cargo bench
+	@echo "$(GREEN)Saving benchmark baseline...$(NC)"
+	@cargo bench -- --save-baseline main
 
 bench-compare:
-	@echo "$(GREEN)Running benchmarks...$(NC)"
-	@cargo bench
+	@echo "$(GREEN)Comparing against baseline...$(NC)"
+	@cargo bench -- --baseline main
 
 compare: install ## Run performance comparison (skip benchmarks)
 	@echo "$(GREEN)Running performance comparison...$(NC)"
 	@echo "$(YELLOW)Note: This plugin doesn't have a compare_performance.py script yet$(NC)"
+
+compare-bench: bench-compare
+	@echo "$(GREEN)Performance comparison complete$(NC)"
 
 # =============================================================================
 # 🧹 CLEANUP
@@ -200,6 +203,10 @@ verify:
 
 check-all: fmt-check clippy test
 	@echo "$(GREEN)✔ All checks passed$(NC)"
+
+test-integration:
+	@echo "$(GREEN)Running integration tests...$(NC)"
+	@cargo test --test '*' --release
 
 pre-commit: check-all
 	@echo "$(GREEN)✔ Ready to commit$(NC)"

@@ -32,3 +32,9 @@ criterion = { version = "0.8", features = ["html_reports"] }
 [[bench]]
 name = "pii_filter"
 harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true

@@ -17,6 +17,7 @@ try:
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
+    rust_secret_detection = None
     # Fail in CI if Rust plugins are required
     if os.environ.get("REQUIRE_RUST") == "1":
         raise ImportError("Rust plugin 'secrets_detection' is required in CI but not available")

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/mcpgateway/*",
+    "crates/gateway_rs/services/*",
     "crates/tools/*",
     "crates/mcp-servers/*",
     "crates/plugins/*",

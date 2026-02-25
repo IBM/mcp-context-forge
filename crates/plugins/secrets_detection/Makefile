@@ -48,6 +48,11 @@ build-target: stub-gen ## Build for specific target (use TARGET=...)
 	@uv run maturin build --release --target $(TARGET)
 	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
+build-target: ## Build for specific target (use TARGET=...)
+	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
+	@maturin build --release --target $(TARGET)
+	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
+
 
 install: stub-gen
 	@echo "$(GREEN)Installing $(PACKAGE_NAME) plugin...$(NC)"

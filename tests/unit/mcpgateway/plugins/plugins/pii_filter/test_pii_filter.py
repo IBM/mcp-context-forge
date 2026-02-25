@@ -273,7 +273,6 @@ class TestPIIDetectorParametric:
         for text, expected_type, description in test_cases:
             detections = detector.detect(text)
             detection_keys = normalize_detection_keys(detections)
-
             # At least one type should be detected
             assert len(detection_keys) > 0, f"{description}: No detection for: {text}"
 

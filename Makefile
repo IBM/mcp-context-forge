@@ -646,15 +646,18 @@ test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
 
+# Use -n 0 when REQUIRE_RUST=1 so Rust extension modules load in the main process (xdist workers may not see them).
+# When REQUIRE_RUST=1 use "uv run pytest" (no activate) so uv uses the project .venv where rust-install put the extensions.
+TEST_NPROC := $(if $(REQUIRE_RUST),0,auto)
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	@/bin/bash -c "$(if $(REQUIRE_RUST),,source $(VENV_DIR)/bin/activate && ) \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
+		uv run pytest -n $(TEST_NPROC) --maxfail=0 -v --durations=5 \
 			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
 			--ignore=tests/e2e/test_mcp_cli_protocol.py \
 			--ignore=tests/e2e/test_mcp_rbac_transport.py"
@@ -7842,45 +7845,66 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🦀 RUST
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# help:
-# help: Rust (auto-installs Rust + maturin if needed)
-# help: ========================================================================================================
-# help: rust-install                          - Install maturin crates into venv
+# =============================================================================
+# 🦀 RUST (workspace: crates/mcpgateway, crates/mcp-servers, crates/plugins, crates/tools)
+# =============================================================================
+# help: 🦀 RUST
+# help: -----------------------------------------------------------------------------
+# help: Workspace-wide (all crates):
 # help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are available
 # help: rust-build                            - Build Rust workspace (release)
-# help: rust-dev                              - Build and install maturin crates (development mode)
+# help: rust-build-check                      - Build workspace (debug) + verify maturin crates build
 # help: rust-test                             - Run Rust workspace tests
-# help: rust-test-integration                 - Run Rust integration tests
-# help: rust-test-all                         - Run all Rust and Python integration tests
-# help: rust-bench                            - Run Rust workspace benchmarks
-# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
-# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
-# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
-# help: rust-build-check                      - Build workspace (debug, no release)
 # help: rust-format                           - Format Rust code (cargo fmt)
 # help: rust-fmt-check                        - Check formatting (cargo fmt --check)
 # help: rust-lint                             - Lint Rust code (cargo clippy)
-# help: rust-verify                           - Verify maturin crate installation
-# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for maturin crates
-# help: rust-stub-gen                         - Generate Python type stubs for maturin crates (workspace)
+# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
+# help: rust-doc                              - Build Rust documentation
+# help: rust-audit                            - Run cargo audit (security)
+# help: rust-licenses                         - Run cargo-deny license check
+# help: rust-coverage                         - Run coverage (cargo-llvm-cov)
 # help: rust-clean                            - Clean Rust build artifacts
-# help: rust-licenses                         - Run cargo-deny license check (workspace)
 # help:
-# help: rust-install-deps                     - Install all Rust build dependencies
-# help: rust-install-targets                  - Install all Rust cross-compilation targets
-# help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
-# help: rust-build-all-linux                  - Build for all Linux architectures
-# help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
-# help: rust-cross                            - Install targets + build all Linux (convenience)
-# help: rust-cross-install-build              - Install targets + build all platforms (one command)
+# help: Maturin (Python bindings, crates/plugins):
+# help: rust-install                          - Install maturin crates into venv
+# help: rust-dev                              - Build and install maturin crates (development mode)
+# help: rust-stub-gen                         - Generate Python type stubs for maturin crates
+# help: rust-verify-stubs                     - Verify stub files and pyproject.toml
+# help: rust-verify                           - Verify maturin crate installation
+# help: rust-build-wheels                     - Build Python wheels for maturin crates
+# help: rust-release                         - Build release wheels
+# help: rust-release-publish                  - Publish wheels to PyPI (MATURIN_PYPI_TOKEN)
+# help: rust-python-test                     - Run Python tests for maturin crates
+# help: rust-test-all                         - Run Rust + Python tests for maturin crates
+# help: rust-bench-compare / rust-compare     - Compare Rust vs Python performance
+# help:
+# help: Per subfolder (gateway, mcp-servers, plugins, tools):
+# help: rust-gateway-build / test / fmt-check / clippy  - crates/mcpgateway
+# help: rust-mcp-build / test / fmt-check / clippy      - crates/mcp-servers
+# help: rust-plugins-build / test / fmt-check / clippy - crates/plugins
+# help: rust-tools-build / test / fmt-check / clippy   - crates/tools
+# help:
+# help: Cross-compilation:
+# help: rust-install-targets / rust-build-<TARGET> / rust-build-all-linux / rust-cross
+# help: container-build-rust / container-rust          - Build/run container with Rust (see Container)
+# help: -----------------------------------------------------------------------------
 
 .PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+.PHONY: rust-gateway-build rust-gateway-test rust-gateway-fmt-check rust-gateway-clippy
+.PHONY: rust-mcp-build rust-mcp-test rust-mcp-fmt-check rust-mcp-clippy
+.PHONY: rust-plugins-build rust-plugins-test rust-plugins-fmt-check rust-plugins-clippy
+.PHONY: rust-tools-build rust-tools-test rust-tools-fmt-check rust-tools-clippy
 
-# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml (plugins, tools, mcpgateway, etc.)
+# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
+
+# Per-subfolder crate directories (for build/test/fmt/clippy)
+RUST_GATEWAY_DIRS   := $(shell find crates/mcpgateway crates/gateway_rs -maxdepth 3 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+RUST_MCP_DIRS       := $(shell find crates/mcp-servers -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+RUST_PLUGINS_DIRS   := $(shell find crates/plugins -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+RUST_TOOLS_DIRS     := $(shell find crates/tools -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 
 rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \
@@ -8123,6 +8147,103 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+# -----------------------------------------------------------------------------
+# Per subfolder: crates/gateway (mcpgateway | gateway_rs), mcp-servers, plugins, tools
+# -----------------------------------------------------------------------------
+
+define rust_subfolder_build
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Building $$d..."; cargo build --release --manifest-path $$d/Cargo.toml || exit 1; done || echo "  (no crates)"
+endef
+define rust_subfolder_test
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Testing $$d..."; cargo test --manifest-path $$d/Cargo.toml || exit 1; done || echo "  (no crates)"
+endef
+define rust_subfolder_fmt_check
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Checking $$d..."; cargo fmt --manifest-path $$d/Cargo.toml -- --check || exit 1; done || echo "  (no crates)"
+endef
+define rust_subfolder_clippy
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Clippy $$d..."; cargo clippy --manifest-path $$d/Cargo.toml -- -D warnings || exit 1; done || echo "  (no crates)"
+endef
+
+rust-gateway-build: rust-ensure-deps     ## Build crates in crates/mcpgateway (or gateway_rs)
+	@echo "🦀 Building gateway crates..."
+	$(call rust_subfolder_build,$(RUST_GATEWAY_DIRS))
+	@echo "✅ Gateway build done"
+
+rust-gateway-test: rust-ensure-deps     ## Test crates in crates/mcpgateway
+	@echo "🦀 Testing gateway crates..."
+	$(call rust_subfolder_test,$(RUST_GATEWAY_DIRS))
+	@echo "✅ Gateway tests done"
+
+rust-gateway-fmt-check: rust-ensure-deps ## Check format for crates/mcpgateway
+	@echo "🦀 Checking gateway format..."
+	$(call rust_subfolder_fmt_check,$(RUST_GATEWAY_DIRS))
+	@echo "✅ Gateway fmt check done"
+
+rust-gateway-clippy: rust-ensure-deps  ## Clippy for crates/mcpgateway
+	@echo "🦀 Clippy gateway crates..."
+	$(call rust_subfolder_clippy,$(RUST_GATEWAY_DIRS))
+	@echo "✅ Gateway clippy done"
+
+rust-mcp-build: rust-ensure-deps        ## Build crates in crates/mcp-servers
+	@echo "🦀 Building mcp-servers crates..."
+	$(call rust_subfolder_build,$(RUST_MCP_DIRS))
+	@echo "✅ MCP build done"
+
+rust-mcp-test: rust-ensure-deps        ## Test crates in crates/mcp-servers
+	@echo "🦀 Testing mcp-servers crates..."
+	$(call rust_subfolder_test,$(RUST_MCP_DIRS))
+	@echo "✅ MCP tests done"
+
+rust-mcp-fmt-check: rust-ensure-deps   ## Check format for crates/mcp-servers
+	@echo "🦀 Checking mcp-servers format..."
+	$(call rust_subfolder_fmt_check,$(RUST_MCP_DIRS))
+	@echo "✅ MCP fmt check done"
+
+rust-mcp-clippy: rust-ensure-deps      ## Clippy for crates/mcp-servers
+	@echo "🦀 Clippy mcp-servers crates..."
+	$(call rust_subfolder_clippy,$(RUST_MCP_DIRS))
+	@echo "✅ MCP clippy done"
+
+rust-plugins-build: rust-ensure-deps   ## Build crates in crates/plugins
+	@echo "🦀 Building plugins crates..."
+	$(call rust_subfolder_build,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins build done"
+
+rust-plugins-test: rust-ensure-deps   ## Test crates in crates/plugins
+	@echo "🦀 Testing plugins crates..."
+	$(call rust_subfolder_test,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins tests done"
+
+rust-plugins-fmt-check: rust-ensure-deps ## Check format for crates/plugins
+	@echo "🦀 Checking plugins format..."
+	$(call rust_subfolder_fmt_check,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins fmt check done"
+
+rust-plugins-clippy: rust-ensure-deps  ## Clippy for crates/plugins
+	@echo "🦀 Clippy plugins crates..."
+	$(call rust_subfolder_clippy,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins clippy done"
+
+rust-tools-build: rust-ensure-deps    ## Build crates in crates/tools
+	@echo "🦀 Building tools crates..."
+	$(call rust_subfolder_build,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools build done"
+
+rust-tools-test: rust-ensure-deps     ## Test crates in crates/tools
+	@echo "🦀 Testing tools crates..."
+	$(call rust_subfolder_test,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools tests done"
+
+rust-tools-fmt-check: rust-ensure-deps ## Check format for crates/tools
+	@echo "🦀 Checking tools format..."
+	$(call rust_subfolder_fmt_check,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools fmt check done"
+
+rust-tools-clippy: rust-ensure-deps   ## Clippy for crates/tools
+	@echo "🦀 Clippy tools crates..."
+	$(call rust_subfolder_clippy,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools clippy done"
 
 # -----------------------------------------------------------------------------
 # Temporary CI toggle for Conventional Commit message linting

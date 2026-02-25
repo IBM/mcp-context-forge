@@ -45,7 +45,7 @@ crates/plugins/
 │              │                        │                 │
 │      ┌───────┴──────┐        ┌───────┴────────┐       │
 │      │ Rust Wrapper │        │ Python Fallback│       │
-│      │ (5-10x fast) │        │ (Pure Python)  │       │
+│      │ (5-100x fast)│        │ (Pure Python)  │       │
 │      └───────┬──────┘        └────────────────┘       │
 └──────────────┼────────────────────────────────────────┘
                │
@@ -76,8 +76,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Install all maturin crates (from repo root; discovers crates/plugins, crates/tools, crates/mcpgateway, etc.)
 make rust-install
 
-# Or build all plugins from project root
-make rust-dev 
+# Or develop and install all maturin crates
+make rust-dev
 ```
 
 ### Option 2: Use Python Fallback
@@ -171,7 +171,7 @@ The gateway logs which implementation is being used:
 
 ```
 # With Rust available
-INFO - ✓ PII Filter: Using Rust implementation (5-10x faster)
+INFO - ✓ Plugin: Using Rust implementation (5-100x faster)
 
 # Without Rust
 WARNING - Plugin: Using Python implementation
@@ -206,7 +206,7 @@ make rust-build-wheels
 # From project root (builds all plugins)
 make rust-dev              # Build and install (development mode)
 make rust-build            # Build release wheel
-make rust-test             # Run Rust unit tests
+make rust-plugins-test     # Run Rust plugin unit tests
 make rust-verify           # Verify installation
 
 # From individual plugin directory
