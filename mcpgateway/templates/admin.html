@@ -2486,10 +2486,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (servers|length if servers is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = servers|length if servers is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -3434,10 +3434,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (tools|length if tools is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = tools|length if tools is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -4975,10 +4975,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (gateways|length if gateways is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = gateways|length if gateways is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -6655,12 +6655,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else 0)) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = 0 %}
+            {% set total_pages = 0 %}
             {% set has_prev = page > 1 %}
-            {% set has_next = (page * per_page) < total_items %}
+            {% set has_next = false %}
 
             {% set pagination = {
               'page': page,
@@ -6801,10 +6801,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values first ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (a2a_agents|length if a2a_agents is defined else 0))) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = a2a_agents|length if a2a_agents is defined else 0 %}
+            {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
             {% set has_prev = page > 1 %}
             {% set has_next = (page * per_page) < total_items %}
 
