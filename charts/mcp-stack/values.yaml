@@ -1273,6 +1273,17 @@ redis:
     port: 6379
     db: 0
 
+  # ─── Authentication ───
+  auth:
+    enabled: true
+    # Use an existing secret for Redis password (optional)
+    existingSecret: ""
+    passwordKey: "REDIS_PASSWORD"
+    password: "change-me-redis"      # CHANGE ME in production!
+  # Transport recommendation:
+  # For production, prefer TLS (for example rediss:// via redis.external.url
+  # or a managed Redis endpoint with TLS enabled).
+
   # ─── Resource limits & requests ───
   resources:
     limits:
@@ -1286,7 +1297,15 @@ redis:
   probes:
     readiness:
       type: exec
-      command: ["redis-cli", "PING"]
+      command:
+        - sh
+        - -c
+        - |
+          if [ -n "${REDIS_PASSWORD:-}" ]; then
+            redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
+          else
+            redis-cli PING
+          fi
       initialDelaySeconds: 10
       periodSeconds: 15
       timeoutSeconds: 5
@@ -1295,7 +1314,15 @@ redis:
 
     liveness:
       type: exec
-      command: ["redis-cli", "PING"]
+      command:
+        - sh
+        - -c
+        - |
+          if [ -n "${REDIS_PASSWORD:-}" ]; then
+            redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
+          else
+            redis-cli PING
+          fi
       initialDelaySeconds: 5
       periodSeconds: 20
       timeoutSeconds: 5

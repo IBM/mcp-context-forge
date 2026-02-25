@@ -1673,6 +1673,33 @@
           },
           "additionalProperties": false
         },
+        "auth": {
+          "type": "object",
+          "description": "Redis authentication configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable Redis password authentication",
+              "default": true
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Existing Secret name for Redis password",
+              "default": ""
+            },
+            "passwordKey": {
+              "type": "string",
+              "description": "Secret key holding the Redis password",
+              "default": "REDIS_PASSWORD"
+            },
+            "password": {
+              "type": "string",
+              "description": "Redis password used when existingSecret is not set",
+              "default": "change-me-redis"
+            }
+          },
+          "additionalProperties": false
+        },
         "resources": {
           "$ref": "#/$defs/resources",
           "description": "Resource limits and requests"

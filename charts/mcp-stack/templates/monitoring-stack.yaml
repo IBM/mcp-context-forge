@@ -28,7 +28,11 @@
     {{- $redisAddr = printf "redis://%s:%v" .Values.redis.external.host .Values.redis.external.port -}}
   {{- end -}}
 {{- else -}}
-  {{- $redisAddr = printf "redis://%s-redis:%v" $fullName .Values.redis.service.port -}}
+  {{- if .Values.redis.auth.enabled -}}
+    {{- $redisAddr = printf "redis://:$(REDIS_PASSWORD)@%s-redis:%v" $fullName .Values.redis.service.port -}}
+  {{- else -}}
+    {{- $redisAddr = printf "redis://%s-redis:%v" $fullName .Values.redis.service.port -}}
+  {{- end -}}
 {{- end -}}
 
 {{- $pgbouncerHost := printf "%s-pgbouncer" $fullName -}}
@@ -169,6 +173,13 @@ spec:
             - name: http
               containerPort: {{ .Values.monitoring.redisExporter.service.port }}
           env:
+            {{- if and (not .Values.redis.external.enabled) .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+            {{- end }}
             - name: REDIS_ADDR
               value: {{ $redisAddr | quote }}
           resources:

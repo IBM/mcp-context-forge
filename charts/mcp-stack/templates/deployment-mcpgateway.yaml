@@ -122,6 +122,13 @@ spec:
               value: {{ .Values.mcpContextForge.env.redis.host | default (printf "%s-redis" (include "mcp-stack.fullname" .)) | quote }}
             - name: REDIS_PORT
               value: "{{ .Values.mcpContextForge.env.redis.port }}"
+            {{- if and .Values.redis.enabled .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+            {{- end }}
             {{- else }}
             - name: REDIS_HOST
               value: ""
@@ -164,8 +171,12 @@ spec:
               {{- else }}
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/{{ .Values.redis.external.db }}"
               {{- end }}
-              {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+            {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+              {{- if and .Values.redis.enabled .Values.redis.auth.enabled }}
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- else }}
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- end }}
               {{- else }}
               value: ""
               {{- end }}

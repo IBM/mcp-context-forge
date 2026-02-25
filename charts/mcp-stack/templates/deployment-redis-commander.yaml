@@ -68,6 +68,13 @@ spec:
               {{- else }}
               value: "{{ .Values.redis.service.port }}"
               {{- end }}
+            {{- if and (not .Values.redis.external.enabled) .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+            {{- end }}
 
           # ─── Resource limits & requests ───
           {{- with .Values.redisCommander.resources }}

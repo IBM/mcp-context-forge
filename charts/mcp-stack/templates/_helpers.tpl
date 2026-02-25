@@ -54,6 +54,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.redisSecretName
+     Returns the Secret name for Redis authentication.
+     If users set `redis.auth.existingSecret`, that name is used.
+     Otherwise a release-scoped name is returned.
+     -------------------------------------------------------------------- */}}
+{{- define "mcp-stack.redisSecretName" -}}
+{{- if .Values.redis.auth.existingSecret }}
+{{- .Values.redis.auth.existingSecret }}
+{{- else }}
+{{- printf "%s-redis-secret" (include "mcp-stack.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- /* --------------------------------------------------------------------
      Helper: mcp-stack.pgadminSecretName
      Returns the Secret name for PgAdmin credentials.
      -------------------------------------------------------------------- */}}
