@@ -294,13 +294,17 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["resource_pre_fetch"]
     tags: ["security", "url", "reputation"]
-    mode: "disabled"
+    mode: "enforce"
     priority: 60
     conditions: []
     config:
-      blocked_domains:
-        - malicious.example.com
-      blocked_patterns: []
+      whitelist_domains: ["example.com"] # Used in the rust version only
+      allowed_patterns: [] # Used in the rust version only
+      blocked_domains: ["malicious.example.com"]
+      blocked_patterns: [] # rust version accepts regex
+      use_heuristic_check: false # Used in the rust version only
+      entropy_threshold: 3.65 # Used in the rust version only
+      block_non_secure_http: true # Used in the rust version only
 
   # File type allowlist for resources
   - name: "FileTypeAllowlistPlugin"
