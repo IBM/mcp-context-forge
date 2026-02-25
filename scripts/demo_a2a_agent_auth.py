@@ -15,9 +15,11 @@ Based on sample code from:
 import argparse
 import ast
 import atexit
+import html
 import logging
 import operator
 import random
+import re
 import secrets
 import signal
 import socket
@@ -436,7 +438,11 @@ async def health():
 async def get_agent_card(request: Request, identity: str = Depends(verify_auth)):
     """A2A Discovery endpoint - returns agent capabilities."""
     scheme = request.url.scheme
-    host = request.headers.get("host", "localhost")
+    raw_host = request.headers.get("host", "localhost")
+    # Validate Host header to prevent XSS via header injection
+    if not re.match(r"^[a-zA-Z0-9._\-:\[\]]+$", raw_host):
+        raw_host = "localhost"
+    host = html.escape(raw_host)
     base_url = f"{scheme}://{host}"
 
     return {

@@ -10,6 +10,7 @@ Provides REST endpoints for querying traces, spans, events, and metrics.
 
 # Standard
 from datetime import datetime, timedelta
+import html
 from typing import List, Optional
 
 # Third-Party
@@ -460,13 +461,13 @@ async def get_stats(
     )
 
     return {
-        "time_window_hours": hours,
+        "time_window_hours": int(hours),
         "total_traces": total_traces,
         "success_count": success_count,
         "error_count": error_count,
         "error_rate": (error_count / total_traces * 100) if total_traces > 0 else 0,
         "avg_duration_ms": round(avg_duration, 2),
-        "slowest_endpoints": [{"name": row[0], "avg_duration_ms": round(row[1], 2), "count": row[2]} for row in slowest],
+        "slowest_endpoints": [{"name": html.escape(str(row[0])) if row[0] else row[0], "avg_duration_ms": round(row[1], 2), "count": row[2]} for row in slowest],
     }
 
 
