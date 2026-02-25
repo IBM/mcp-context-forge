@@ -28,6 +28,12 @@ tokio = { version = "1.49", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Error handling
+thiserror = "2.0"
+
+# Concurrent collections
+dashmap = "6.1"
+
 [package]
 name = "mcpgateway_rust"
 version.workspace = true

@@ -12,10 +12,15 @@ name = "a2a_service"
 crate-type = ["rlib"]
 
 [dependencies]
+futures = "0.3"
 pyo3.workspace = true
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+pythonize = "0.28"
 reqwest.workspace = true
-tokio.workspace = true
-serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+dashmap.workspace = true
 
 [dev-dependencies]
+wiremock = "0.6"
