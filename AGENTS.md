@@ -31,6 +31,7 @@ mcpgateway/                 # Core FastAPI application
 └── alembic/                # Database migrations
 
 tests/                      # Test suite (see tests/AGENTS.md)
+benchmarks/                 # Top-level benchmarks (make benchmark; see benchmarks/README.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
 plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 plugin_templates/           # Starter templates for building new plugins

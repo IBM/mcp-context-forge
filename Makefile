@@ -68,7 +68,8 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 EXTRA_DIRS_TO_CLEAN := reports test-results tests/playwright/reports \
 	tests/playwright/screenshots tests/playwright/videos \
 	tests/jmeter/results tests/async/profiles tests/async/reports \
-	tests/migration/reports tests/migration/logs .jmeter plugins_rust/target
+	tests/migration/reports tests/migration/logs .jmeter plugins_rust/target \
+	benchmarks/reports
 
 EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
 	playwright-report-*.html test-results-*.xml \
@@ -600,8 +601,14 @@ clean:
 # help: query-log-tail       - Tail the database query log file
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
+# help:
+# help: 🧪 BENCHMARKS (top-level: benchmarks/ and make benchmark)
+# help: benchmark           - Run all benchmarks (pytest, async, JSON script, Rust plugins)
+# help: benchmark-python    - Run Python benchmarks only (pytest + async + JSON serialization)
+# help: benchmark-rust      - Run Rust plugin benchmarks and Rust vs Python comparison
+# help: bench               - Run pytest benchmarks only; use BENCH=name or "make bench <name>" to filter
 
-.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time benchmark benchmark-ensure-rust benchmark-python benchmark-rust bench
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -725,6 +732,54 @@ htmlcov:
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
 	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
+
+# -----------------------------------------------------------------------------
+# 🧪 BENCHMARKS (top-level benchmarks/; run all with make benchmark)
+# -----------------------------------------------------------------------------
+BENCHMARKS_REPORTS_DIR := benchmarks/reports
+# Filter by name: make bench BENCH=<name> or make bench <name>
+ifeq ($(firstword $(MAKECMDGOALS)),bench)
+BENCH ?= $(word 2,$(MAKECMDGOALS))
+endif
+BENCH ?=
+# -k matches test names only; if BENCH looks like a file stem, run that file so "make bench a2a_service" works
+BENCH_PATH := $(shell find benchmarks -maxdepth 4 -name '*.py' -path '*$(BENCH)*' 2>/dev/null | head -1)
+BENCH_K := $(if $(BENCH),$(if $(BENCH_PATH),,-k $(BENCH)),)
+BENCH_V := $(if $(BENCH),-vv,-v)
+# Dummy target so "make bench <name>" does not fail (second goal is not a real target)
+ifneq ($(word 2,$(MAKECMDGOALS)),)
+$(word 2,$(MAKECMDGOALS)):
+	@true
+endif
+
+# No-op when mcpgateway_rust is not present (benchmarks branch from main)
+benchmark-ensure-rust:
+	@:
+
+bench: benchmark-ensure-rust
+	@echo "📊 Running pytest benchmarks$(if $(BENCH), matching '$(BENCH)',)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@DATABASE_URL='sqlite:///:memory:' TEST_DATABASE_URL='sqlite:///:memory:' ARGON2ID_TIME_COST=1 ARGON2ID_MEMORY_COST=1024 \
+		uv run --active --extra fuzz pytest $(if $(BENCH_PATH),$(BENCH_PATH),benchmarks/) $(BENCH_K) --benchmark-only $(BENCH_V)
+
+benchmark: benchmark-python
+	@echo "🦀 Running Rust plugin benchmarks..."
+	@$(MAKE) --no-print-directory benchmark-rust || true
+	@echo "✅ All benchmarks finished."
+
+benchmark-python: benchmark-ensure-rust
+	@echo "📊 Running all Python benchmarks..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "  → Pytest benchmarks (benchmarks/)..."
+	@DATABASE_URL='sqlite:///:memory:' TEST_DATABASE_URL='sqlite:///:memory:' ARGON2ID_TIME_COST=1 ARGON2ID_MEMORY_COST=1024 \
+		uv run --active --extra fuzz pytest benchmarks/ --benchmark-only -v
+	@echo "  → Async benchmarks..."
+	@$(MAKE) --no-print-directory async-benchmark
+	@echo "  → JSON serialization (orjson vs stdlib)..."
+	@uv run --active python scripts/benchmark_json_serialization.py
+	@echo "✅ Python benchmarks finished."
+
+benchmark-rust: rust-bench rust-bench-compare
 
 diff-cover:
 	@echo "📊  Running diff-cover against main branch..."
@@ -6692,8 +6747,9 @@ async-debug:
 
 async-benchmark:
 	@echo "⚡ Running async performance benchmarks..."
-	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/benchmarks.py \
-		--output $(REPORTS_DIR)/benchmark-results.json \
+	@mkdir -p $(BENCHMARKS_REPORTS_DIR)
+	@uv run --active python $(ASYNC_TEST_DIR)/benchmarks.py \
+		--output $(BENCHMARKS_REPORTS_DIR)/benchmark-results.json \
 		--iterations 1000
 
 profile-compare:
