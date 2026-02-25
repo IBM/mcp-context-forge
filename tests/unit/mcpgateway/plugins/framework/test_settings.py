@@ -25,10 +25,12 @@ class TestPluginsSettingsDefaults:
 
     @pytest.fixture(autouse=True)
     def _clean_plugins_env(self, monkeypatch):
-        """Remove PLUGINS_ env vars so tests verify true defaults."""
+        """Remove PLUGINS_ env vars and .env file so tests verify true defaults."""
         for key in list(os.environ):
             if key.startswith("PLUGINS_") or key in ("PLUGIN_CONFIG_FILE", "UNIX_SOCKET_PATH"):
                 monkeypatch.delenv(key, raising=False)
+        # Prevent values from .env file leaking into tests
+        monkeypatch.setattr(PluginsSettings, "model_config", {**PluginsSettings.model_config, "env_file": None})
 
     def test_default_enabled(self):
         s = PluginsSettings()
