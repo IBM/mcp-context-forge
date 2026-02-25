@@ -697,16 +697,18 @@ def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
     return get_user_team_roles(db, user_email)
 
 
-def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int) -> None:
+def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int, rendered_count: int) -> None:
     """Adjust pagination metadata to account for DB-to-Pydantic conversion failures.
 
     When items on the current page fail to convert, the "Showing X of Y" display
     would otherwise count items that aren't actually displayed. This adjusts
     total_items and recomputes derived fields (total_pages, has_next, has_prev).
+    Also sets page_items to the actual number of successfully rendered items.
 
     Args:
         pagination: The PaginationMeta object to adjust (modified in-place).
         failed_count: Number of items that failed conversion on the current page.
+        rendered_count: Number of items successfully converted and rendered on the current page.
     """
     if failed_count > 0:
         pagination.total_items = max(0, pagination.total_items - failed_count)
@@ -715,6 +717,8 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
         # so the page number must match the displayed data.
         pagination.has_next = pagination.page < pagination.total_pages
         pagination.has_prev = pagination.page > 1
+    # Always set page_items to reflect actual rendered count (even if failed_count == 0)
+    pagination.page_items = rendered_count
 
 
 def _get_span_entity_performance(
@@ -2386,7 +2390,7 @@ async def admin_servers_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(servers_pydantic))
     data = jsonable_encoder(servers_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -8032,7 +8036,7 @@ async def admin_tools_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(tools_pydantic))
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -8606,7 +8610,7 @@ async def admin_prompts_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(prompts_pydantic))
 
     data = jsonable_encoder(prompts_pydantic)
 
@@ -8811,7 +8815,7 @@ async def admin_gateways_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(gateways_pydantic))
     data = jsonable_encoder(gateways_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -9391,7 +9395,7 @@ async def admin_resources_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(resources_pydantic))
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -10273,7 +10277,7 @@ async def admin_a2a_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(a2a_agents_pydantic))
     data = jsonable_encoder(a2a_agents_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
