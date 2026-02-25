@@ -15,6 +15,7 @@ These tests verify the expected behavior and will fail until the issues are fixe
 
 # Standard
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
@@ -100,6 +101,7 @@ class TestIssue840UserInputForA2AAgentTest:
             metrics=[],
         )
 
+    @patch("mcpgateway_rust.services.a2a_service.invoke", new_callable=AsyncMock)
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
@@ -110,6 +112,7 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_get_client,
         mock_fresh_db,
         mock_metrics_buffer_fn,
+        mock_rust_invoke,
         a2a_service,
         mock_db,
         sample_a2a_agent,
@@ -122,7 +125,14 @@ class TestIssue840UserInputForA2AAgentTest:
         Issue #840 reports that the UI test button doesn't allow users to
         provide custom input - it sends a hardcoded message instead.
         """
-        # Mock HTTP client
+        # Mock Rust path (when mcpgateway_rust is used)
+        mock_rust_invoke.return_value = SimpleNamespace(
+            status_code=200,
+            body='{"response": "56"}',
+            parsed={"response": "56"},
+        )
+
+        # Mock HTTP client (Python path fallback)
         mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -160,15 +170,22 @@ class TestIssue840UserInputForA2AAgentTest:
         # Verify the result
         assert result["response"] == "56"
 
-        # CRITICAL: Verify that the user's custom query was sent to the agent
-        # This is the core of Issue #840 - the query should be user-provided
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
-
-        # The request body should contain the user's custom query
-        # In the current implementation, this works at the service level,
-        # but the UI doesn't provide a way to input the query
-        assert call_args is not None
+        # CRITICAL: Verify that the user's custom query was sent to the agent.
+        # This is the core of Issue #840 - the query should be user-provided.
+        # Same assertion for both Python path (HTTP client) and Rust path (rust_a2a.invoke).
+        assert mock_rust_invoke.called or mock_client.post.called, "Either Rust or Python path must be exercised"
+        if mock_rust_invoke.called:
+            call_args = mock_rust_invoke.call_args
+            request_data = call_args[0][1]  # second positional arg
+            params = request_data.get("parameters", request_data)
+            assert params.get("query") == "calc: 7*8" or request_data.get("query") == "calc: 7*8"
+        else:
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
+            # The request body should contain the user's custom query.
+            # In the current implementation, this works at the service level,
+            # but the UI doesn't provide a way to input the query.
+            assert call_args is not None
 
     async def test_admin_test_endpoint_should_accept_user_query(self):
         """Test that verifies the admin test endpoint signature.
@@ -216,6 +233,7 @@ class TestIssue840UserInputForA2AAgentTest:
         assert "query" in expected_request_body, "Request body should include user query"
         assert expected_test_params["query"] == expected_request_body["query"], "Test params should use user's query"
 
+    @patch("mcpgateway_rust.services.a2a_service.invoke", new_callable=AsyncMock)
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
@@ -226,6 +244,7 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_get_client,
         mock_fresh_db,
         mock_metrics_buffer_fn,
+        mock_rust_invoke,
         a2a_service,
         mock_db,
         sample_a2a_agent,
@@ -240,7 +259,14 @@ class TestIssue840UserInputForA2AAgentTest:
         This test verifies that invoke_agent correctly sends the query
         nested under the parameters object for custom agent types.
         """
-        # Mock HTTP client to capture the actual request body
+        # Mock Rust path (when mcpgateway_rust is used)
+        mock_rust_invoke.return_value = SimpleNamespace(
+            status_code=200,
+            body='{"response": "The weather in Dallas is sunny"}',
+            parsed={"response": "The weather in Dallas is sunny"},
+        )
+
+        # Mock HTTP client (Python path) to capture the actual request body
         mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -275,12 +301,15 @@ class TestIssue840UserInputForA2AAgentTest:
             "admin_test",
         )
 
-        # Verify the HTTP client was called
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
+        # Same Issue #840 check for both paths: request body must contain user query.
+        assert mock_rust_invoke.called or mock_client.post.called, "Either Rust or Python path must be exercised"
+        if mock_rust_invoke.called:
+            request_body = mock_rust_invoke.call_args[0][1]  # request_data
+        else:
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
+            request_body = call_args.kwargs.get("json") or call_args[1].get("json")
 
-        # Extract the JSON body that was sent to the agent
-        request_body = call_args.kwargs.get("json") or call_args[1].get("json")
         assert request_body is not None, "Request body should not be None"
 
         # Per A2A protocol for custom agents, verify the structure.
