@@ -33,7 +33,7 @@ By default, the chart uses strict SSRF settings:
 - `mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS="false"`
 - `mcpContextForge.config.SSRF_ALLOWED_NETWORKS="[]"`
 
-This is the recommended production baseline.  
+This is the recommended production baseline.
 When you enable testing registration jobs (`testing.fastTime.register.enabled` or
 `testing.fastTest.register.enabled`), those jobs create gateways that point to
 in-cluster service URLs:
