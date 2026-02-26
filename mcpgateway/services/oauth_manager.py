@@ -524,7 +524,7 @@ class OAuthManager:
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
-    async def complete_authorization_code_flow(self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any], request: Any = None) -> Dict[str, Any]:
+    async def complete_authorization_code_flow(self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
         Args:
@@ -532,7 +532,6 @@ class OAuthManager:
             code: Authorization code from callback
             state: State parameter for CSRF validation
             credentials: OAuth configuration
-            request: Optional incoming HTTP request for context
 
         Returns:
             Dict containing success status, user_id, and expiration info
@@ -632,7 +631,7 @@ class OAuthManager:
             Dict containing only ``gateway_id`` when format is recognized;
             otherwise ``None``.
         """
-        _SAFE_LEGACY_FIELDS = {"gateway_id"}
+        safe_legacy_fields = {"gateway_id"}
 
         try:
             state_raw = base64.urlsafe_b64decode(state.encode())
@@ -644,7 +643,7 @@ class OAuthManager:
             if isinstance(payload, dict):
                 # Only return gateway_id — unsigned payloads must not
                 # carry identity claims.
-                safe = {k: v for k, v in payload.items() if k in _SAFE_LEGACY_FIELDS}
+                safe = {k: v for k, v in payload.items() if k in safe_legacy_fields}
                 return safe if safe else None
         except Exception:
             # Fall back to legacy gateway_id_random format
