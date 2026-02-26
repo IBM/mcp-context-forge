@@ -88,6 +88,7 @@ class LLMGuardBase:
 
         self.lgconfig = LLMGuardConfig.model_validate(config)
         self.scanners = {"input": {"sanitizers": [], "filters": []}, "output": {"sanitizers": [], "filters": []}}
+        self.vault_ttl = None
         self.__init_scanners()
         self.policy = GuardrailPolicy()
 
@@ -250,7 +251,7 @@ class LLMGuardBase:
         logger.info("Vault creation time %s", vault.creation_time)
         return vault
 
-    def _retreive_vault(self, sanitizer_names: list = ["Anonymize"]) -> tuple[Vault | None, int | None, tuple | None]:
+    def _retreive_vault(self, sanitizer_names: list | None = None) -> tuple[Vault | None, int | None, tuple | None]:
         """This function is responsible for retrieving vault for given sanitizer names
 
         Args:
@@ -259,6 +260,8 @@ class LLMGuardBase:
         Returns:
             tuple[Vault, int, tuple]: A tuple containing the vault object, vault ID, and vault tuples.
         """
+        if sanitizer_names is None:
+            sanitizer_names = ["Anonymize"]
         vault_id = None
         vault_tuples = None
         length = len(self.scanners["input"]["sanitizers"])
@@ -275,11 +278,13 @@ class LLMGuardBase:
                     logger.error("Error retrieving scanner %s: %s", scanner_name, e)
         return self.scanners["input"]["sanitizers"][i]._vault, vault_id, vault_tuples
 
-    def _update_input_sanitizers(self, sanitizer_names: list = ["Anonymize"]) -> None:
+    def _update_input_sanitizers(self, sanitizer_names: list | None = None) -> None:
         """This function is responsible for updating vault for given sanitizer names in input
 
         Args:
             sanitizer_names: list of names for sanitizers"""
+        if sanitizer_names is None:
+            sanitizer_names = ["Anonymize"]
         length = len(self.scanners["input"]["sanitizers"])
         for i in range(length):
             scanner_name = type(self.scanners["input"]["sanitizers"][i]).__name__
@@ -292,13 +297,15 @@ class LLMGuardBase:
                 except Exception as e:
                     logger.error("Error updating scanner %s: %s", scanner_name, e)
 
-    def _update_output_sanitizers(self, config, sanitizer_names: list = ["Deanonymize"]) -> None:
+    def _update_output_sanitizers(self, config, sanitizer_names: list | None = None) -> None:
         """This function is responsible for updating vault for given sanitizer names in output
 
         Args:
             config: Configuration containing sanitizer settings.
             sanitizer_names: list of names for sanitizers
         """
+        if sanitizer_names is None:
+            sanitizer_names = ["Deanonymize"]
         length = len(self.scanners["output"]["sanitizers"])
         for i in range(length):
             scanner_name = type(self.scanners["output"]["sanitizers"][i]).__name__

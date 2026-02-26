@@ -58,7 +58,7 @@ jobs:
             cmd: 'vulture $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
           - id: pylint
             setup: "true"
-            cmd: "uv run pylint $TARGET --fail-on E --fail-under=10"
+            cmd: "uv run pylint $TARGET --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10"
           - id: interrogate
             setup: pip install interrogate
             cmd: "interrogate -vv $TARGET --fail-under 100"

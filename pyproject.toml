@@ -117,9 +117,8 @@ dev = [
     "pre-commit>=4.5.1",
     "prospector[with_everything]>=1.17.3",
     "pydocstyle>=6.3.0",
-    "pylint>=3.3.9",
+    "pylint>=3.3.9,<4",
     "pylint-pydantic>=0.3.5",
-    #"pyre-check>=0.9.25", # unused, conflicts with altk, superceded by pyrefly
     "pyrefly>=0.35.0",
     "pyright>=1.1.406",
     "pyroma>=5.0",
@@ -166,6 +165,7 @@ dev = [
     "grpcio>=1.76.0",
     "grpcio-reflection>=1.76.0",
     "grpcio-tools>=1.76.0",
+    "pipdeptree>=2.31.0",
 ]
 
 # ----------------------------------------------------------------
@@ -260,21 +260,6 @@ profiling = [
 # Plugin templating tools (optional)
 templating = [
     "cookiecutter>=2.6.0",
-]
-
-# Agent Lifecycle Toolkit(optional)
-altk = [
-    "agent-lifecycle-toolkit>=0.10.0",
-]
-
-# Agent Lifecycle Toolkit(optional)
-toolops = [
-    "agent-lifecycle-toolkit>=0.10.0",
-    "langchain-core>=1.2.15",
-    "langchain-mcp-adapters>=0.2.1",
-    "langchain-ollama>=1.0.1",
-    "langchain-openai>=1.1.10",
-    "langgraph>=1.0.9",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
