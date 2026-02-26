@@ -1509,3 +1509,147 @@ describe("View Public checkbox — search function integration", () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// ALLOW_PUBLIC_VISIBILITY — edit modal legacy-public coercion
+// ---------------------------------------------------------------------------
+describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false", () => {
+    let flagWin;
+    let flagDoc;
+
+    beforeAll(() => {
+        flagWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.ALLOW_PUBLIC_VISIBILITY = false;
+            },
+        });
+        flagDoc = flagWin.document;
+    });
+
+    afterAll(() => {
+        cleanupAdminJs();
+    });
+
+    beforeEach(() => {
+        flagDoc.body.textContent = "";
+        flagWin.ROOT_PATH = "";
+    });
+
+    function buildEditServerDOM(teamId = null) {
+        const form = flagDoc.createElement("form");
+        form.id = "edit-server-form";
+
+        // Visibility radios — public is disabled as Jinja would render it
+        ["public", "team", "private"].forEach((val) => {
+            const input = flagDoc.createElement("input");
+            input.type = "radio";
+            input.name = "visibility";
+            input.value = val;
+            input.id = `edit-visibility-${val}`;
+            if (val === "public") input.disabled = true;
+            form.appendChild(input);
+        });
+
+        flagDoc.body.appendChild(form);
+
+        // Server modal (openModal looks for this)
+        const modal = flagDoc.createElement("div");
+        modal.id = "server-modal";
+        modal.className = "hidden";
+        flagDoc.body.appendChild(modal);
+
+        // Set team_id in URL if provided
+        const url = new flagWin.URL(flagWin.location.href);
+        if (teamId) {
+            url.searchParams.set("team_id", teamId);
+        } else {
+            url.searchParams.delete("team_id");
+        }
+        flagWin.history.replaceState({}, "", url.toString());
+    }
+
+    function mockServerFetch(serverData) {
+        // fetchWithTimeout wraps fetch and adds signal/headers, so mock must
+        // accept extra options gracefully and return a proper Response-like.
+        const makeResponse = () => ({
+            ok: true,
+            status: 200,
+            headers: {
+                get: () => "application/json",
+            },
+            json: () => Promise.resolve(serverData),
+            text: () => Promise.resolve(JSON.stringify(serverData)),
+            clone: makeResponse,
+        });
+        flagWin.fetch = vi
+            .fn()
+            .mockImplementation(() => Promise.resolve(makeResponse()));
+    }
+
+    test("legacy public server coerces to team when teamId is set", async () => {
+        buildEditServerDOM("team-abc");
+        flagWin.console.error = vi.fn();
+        mockServerFetch({
+            id: "srv-1",
+            name: "OldPublicServer",
+            visibility: "public",
+            teamId: "team-abc",
+            url: "http://example.com",
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await flagWin.editServer("srv-1");
+        } catch {
+            // editServer may throw on missing DOM elements (modal etc.)
+        }
+
+        const teamRadio = flagDoc.getElementById("edit-visibility-team");
+        const publicRadio = flagDoc.getElementById("edit-visibility-public");
+        expect(teamRadio.checked).toBe(true);
+        expect(publicRadio.checked).toBe(false);
+    });
+
+    test("public server stays public when no teamId in URL (global scope)", async () => {
+        buildEditServerDOM(null);
+        mockServerFetch({
+            id: "srv-2",
+            name: "OldPublicServer",
+            visibility: "public",
+            teamId: null,
+            url: "http://example.com",
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        await flagWin.editServer("srv-2");
+
+        // No team_id in URL → no coercion, public radio remains selected.
+        const privateRadio = flagDoc.getElementById("edit-visibility-private");
+        const publicRadio = flagDoc.getElementById("edit-visibility-public");
+        expect(publicRadio.checked).toBe(true);
+        expect(privateRadio.checked).toBe(false);
+    });
+
+    test("team visibility still selects team radio when flag is false", async () => {
+        buildEditServerDOM("team-abc");
+        mockServerFetch({
+            id: "srv-3",
+            name: "TeamServer",
+            visibility: "team",
+            teamId: "team-abc",
+            url: "http://example.com",
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        await flagWin.editServer("srv-3");
+
+        const teamRadio = flagDoc.getElementById("edit-visibility-team");
+        expect(teamRadio.checked).toBe(true);
+    });
+});

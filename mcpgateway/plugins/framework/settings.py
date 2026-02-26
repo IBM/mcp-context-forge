@@ -148,7 +148,14 @@ class PluginsSettings(BaseSettings):
     )
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Delegate to shared validator."""
+        """Delegate to shared validator.
+
+        Args:
+            value: The raw field value from environment or input.
+
+        Returns:
+            The original value, or None if the value was an empty string.
+        """
         return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -216,7 +223,14 @@ class PluginsClientMtlsSettings(BaseSettings):
     @field_validator("client_mtls_verify", "client_mtls_check_hostname", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Delegate to shared validator."""
+        """Delegate to shared validator.
+
+        Args:
+            value: The raw field value from environment or input.
+
+        Returns:
+            The original value, or None if the value was an empty string.
+        """
         return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -238,7 +252,14 @@ class PluginsMcpServerSettings(BaseSettings):
     @field_validator("server_ssl_cert_reqs", "server_port", "server_ssl_enabled", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Delegate to shared validator."""
+        """Delegate to shared validator.
+
+        Args:
+            value: The raw field value from environment or input.
+
+        Returns:
+            The original value, or None if the value was an empty string.
+        """
         return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -256,7 +277,14 @@ class PluginsGrpcClientMtlsSettings(BaseSettings):
     @field_validator("grpc_client_mtls_verify", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Delegate to shared validator."""
+        """Delegate to shared validator.
+
+        Args:
+            value: The raw field value from environment or input.
+
+        Returns:
+            The original value, or None if the value was an empty string.
+        """
         return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -300,7 +328,14 @@ class PluginsGrpcServerSettings(BaseSettings):
     @field_validator("grpc_server_port", "grpc_server_ssl_enabled", mode="before")
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
-        """Delegate to shared validator."""
+        """Delegate to shared validator.
+
+        Args:
+            value: The raw field value from environment or input.
+
+        Returns:
+            The original value, or None if the value was an empty string.
+        """
         return _empty_string_to_none(value)
 
     model_config = SettingsConfigDict(env_prefix="PLUGINS_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
