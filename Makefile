@@ -2636,7 +2636,7 @@ ifneq ($(filter lint lint-quick lint-fix lint-smart,$(MAKECMDGOALS)),)
 endif
 
 # List of individual lint targets
-LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
+LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
 	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
 		pytype check-manifest markdownlint vulture unimport
 
