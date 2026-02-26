@@ -134,7 +134,7 @@ def test_resource_update_content_and_description():
 
     # Size validation is now done at service layer, not schema layer
     # Schema layer only validates encoding and dangerous patterns
-    
+
     # Test UTF-8 encoding validation
     with pytest.raises(ValueError):
         ResourceUpdate.validate_content(b"\xff\xfe\xfd")
