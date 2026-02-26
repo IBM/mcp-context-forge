@@ -706,6 +706,23 @@ async def test_chat_completion_request_error(service):
         await service.chat_completion(MagicMock(), request)
 
 
+@pytest.mark.asyncio
+async def test_chat_completion_ssrf_blocked(service):
+    """chat_completion rejects SSRF-risky provider URLs (lines 436-439)."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base="http://169.254.169.254")
+    model = _make_model()
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+
+    service._client = AsyncMock()
+
+    with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+        await service.chat_completion(MagicMock(), request)
+
+    service._client.post.assert_not_called()
+
+
 class DummyStreamResponse:
     """Reusable mock for streaming responses."""
 
@@ -897,6 +914,25 @@ async def test_chat_completion_stream_request_error(service):
         chunks.append(chunk)
 
     assert any("proxy_error" in c for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_stream_ssrf_blocked(service):
+    """chat_completion_stream rejects SSRF-risky provider URLs (lines 500-503)."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base="http://169.254.169.254")
+    model = _make_model(model_id="gpt-4")
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
+
+    service._client = MagicMock()
+
+    with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+        chunks = []
+        async for chunk in service.chat_completion_stream(MagicMock(), request):
+            chunks.append(chunk)
+
+    service._client.stream.assert_not_called()
 
 
 @pytest.mark.asyncio
