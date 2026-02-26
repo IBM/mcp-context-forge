@@ -14597,10 +14597,14 @@ async def admin_set_a2a_agent_state(
 
     user_email = get_user_email(user)
     error_message = None
-    form = await request.form()
+    is_inactive_checked = "false"
+    team_id = ""
     try:
+        form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
+        is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+        team_id = str(form.get("team_id", "") or "")
 
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
 
@@ -14615,8 +14619,7 @@ async def admin_set_a2a_agent_state(
         error_message = "Failed to set state of A2A agent. Please try again."
 
     root_path = request.scope.get("root_path", "")
-    team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14646,10 +14649,14 @@ async def admin_delete_a2a_agent(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
-    form = await request.form()
-    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     error_message = None
+    is_inactive_checked = "false"
+    team_id = ""
     try:
+        form = await request.form()
+        purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
+        is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+        team_id = str(form.get("team_id", "") or "")
         user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
@@ -14663,8 +14670,7 @@ async def admin_delete_a2a_agent(
         error_message = "Failed to delete A2A agent. Please try again."
 
     root_path = request.scope.get("root_path", "")
-    team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
