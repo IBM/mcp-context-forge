@@ -1275,6 +1275,26 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     return [t.id for t in user_teams]
 
 
+def _check_public_visibility_allowed(visibility: str, team_id: Optional[str] = None) -> None:
+    """Raise HTTP 422 if public visibility is disabled and the request is team-scoped.
+
+    Public visibility is only restricted when a team_id is present — on the
+    global admin view (no team) public entities are still permitted.
+
+    Args:
+        visibility: The visibility value from the incoming form or request body.
+        team_id: The team ID from the form or request body, if any.
+
+    Raises:
+        HTTPException: 422 when flag is false, team_id is set, and visibility is 'public'.
+    """
+    if not settings.allow_public_visibility and visibility == "public" and team_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Public visibility is disabled by platform configuration (ALLOW_PUBLIC_VISIBILITY=false).",
+        )
+
+
 def _is_explicit_token_team_scope(user: Any) -> bool:
     """Return whether the auth context carries explicit token team scope.
 
@@ -2438,6 +2458,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server creation operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> # Test function exists and has correct name
         >>> from mcpgateway.admin import admin_add_server
@@ -2456,9 +2479,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
+    visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
-        visibility = str(form.get("visibility", "private"))
 
         # Handle "Select All" for tools
         associated_tools_list = form.getlist("associatedTools")
@@ -2611,6 +2636,9 @@ async def admin_edit_server(
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server update operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_server)
         True
@@ -2625,6 +2653,7 @@ async def admin_edit_server(
     try:
         LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
         visibility = str(form.get("visibility", "private"))
+        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
         user_email = get_user_email(user)
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
@@ -2739,6 +2768,8 @@ async def admin_edit_server(
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except HTTPException:
+        raise
     except Exception as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -3518,6 +3549,7 @@ async def admin_ui(
             "is_admin": bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)),
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+            "allow_public_visibility": settings.allow_public_visibility,
             "selected_team_id": selected_team_id,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "ui_hidden_sections": ui_visibility_config["hidden_sections"],
@@ -10616,6 +10648,9 @@ async def admin_add_tool(
     Returns:
         JSONResponse: a JSON response with `{"message": ..., "success": ...}` and an appropriate HTTP status code.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_tool)
         True
@@ -10628,6 +10663,7 @@ async def admin_add_tool(
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
     if request_type is None:
         if integration_type == "REST":
@@ -10763,6 +10799,9 @@ async def admin_edit_tool(
             dashboard with a status code of 303 (See Other), or a JSON response with
             an error message if the update fails.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_tool)
         True
@@ -10775,6 +10814,7 @@ async def admin_edit_tool(
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
     user_email = get_user_email(user)
     # Determine personal team for default assignment
@@ -11018,6 +11058,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_gateway)
         True
@@ -11026,6 +11069,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
     form = await request.form()
+    visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     try:
         # Parse tags from comma-separated string
         tags_str = str(form.get("tags", ""))
@@ -11107,8 +11152,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
                 LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
-
-        visibility = str(form.get("visibility", "private"))
 
         # Handle passthrough_headers
         passthrough_headers = str(form.get("passthrough_headers"))
@@ -11278,6 +11321,9 @@ async def admin_edit_gateway(
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_gateway)
         True
@@ -11292,6 +11338,7 @@ async def admin_edit_gateway(
         tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         visibility = str(form.get("visibility", "private"))
+        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Parse auth_headers JSON if present
         auth_headers_json = str(form.get("auth_headers"))
@@ -11436,6 +11483,8 @@ async def admin_edit_gateway(
             content={"message": str(e), "success": False},
             status_code=403,
         )
+    except HTTPException:
+        raise
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
@@ -11602,6 +11651,9 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_resource)
         True
@@ -11615,6 +11667,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     visibility = str(form.get("visibility", "public"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
@@ -11717,6 +11770,9 @@ async def admin_edit_resource(
     Returns:
         JSONResponse: A JSON response indicating success or failure of the resource update operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_resource)
         True
@@ -11727,6 +11783,7 @@ async def admin_edit_resource(
     form = await request.form()
     LOGGER.info(f"Form data received for resource edit: {form}")
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -11935,6 +11992,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_prompt)
         True
@@ -11944,6 +12004,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     LOGGER.debug(f"User {get_user_email(user)} is adding a new prompt")
     form = await request.form()
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
@@ -12031,6 +12092,9 @@ async def admin_edit_prompt(
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server update operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_prompt)
         True
@@ -12041,6 +12105,7 @@ async def admin_edit_prompt(
     form = await request.form()
 
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
@@ -14188,6 +14253,8 @@ async def admin_add_a2a_agent(
     try:
         LOGGER.info(f"A2A agent creation form data: {dict(form)}")
 
+        _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=str(form.get("team_id", "")) or None)
+
         user_email = get_user_email(user)
         # Determine personal team for default assignment
         team_id = form.get("team_id", None)
@@ -14355,6 +14422,8 @@ async def admin_add_a2a_agent(
             content=ErrorFormatter.format_database_error(ex),
             status_code=409,
         )
+    except HTTPException:
+        raise
     except Exception as ex:
         LOGGER.error(f"Error creating A2A agent: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -14399,6 +14468,9 @@ async def admin_edit_a2a_agent(
     Returns:
         JSONResponse: A JSON response indicating success or failure.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_a2a_agent)
         True
@@ -14415,6 +14487,7 @@ async def admin_edit_a2a_agent(
 
         # Visibility
         visibility = str(form.get("visibility", "private"))
+        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Agent Type
         agent_type = str(form.get("agent_type", "generic"))
@@ -14573,6 +14646,8 @@ async def admin_edit_a2a_agent(
         return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
     except IntegrityError as ie:
         return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
+    except HTTPException:
+        raise
     except Exception as e:
         return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
 
@@ -14842,6 +14917,7 @@ async def admin_create_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
+        _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
@@ -14911,6 +14987,7 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
+        _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         user_email = get_user_email(user)
         result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)

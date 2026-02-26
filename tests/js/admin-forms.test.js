@@ -289,3 +289,109 @@ describe("cleanUpUrlParamsForTab", () => {
         expect(capturedUrl).not.toContain("resources_page");
     });
 });
+
+// ---------------------------------------------------------------------------
+// ALLOW_PUBLIC_VISIBILITY flag — updateDefaultVisibility() gating
+// ---------------------------------------------------------------------------
+describe("ALLOW_PUBLIC_VISIBILITY flag", () => {
+    let flagWin;
+    let flagDoc;
+
+    beforeAll(() => {
+        flagWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.ALLOW_PUBLIC_VISIBILITY = false;
+            },
+        });
+        flagDoc = flagWin.document;
+    });
+
+    afterAll(() => {
+        cleanupAdminJs();
+    });
+
+    // Render a minimal set of radios (always enabled — as admin.html now does)
+    // then let updateDefaultVisibility() manage the disabled state.
+    function buildVisibilityRadios(entityPrefix) {
+        ["public", "team", "private"].forEach((val) => {
+            const wrapper = flagDoc.createElement("div");
+            wrapper.className = "flex items-center";
+            const input = flagDoc.createElement("input");
+            input.type = "radio";
+            input.name = "visibility";
+            input.value = val;
+            input.id = `${entityPrefix}-visibility-${val}`;
+            const label = flagDoc.createElement("label");
+            label.htmlFor = input.id;
+            wrapper.appendChild(input);
+            wrapper.appendChild(label);
+            flagDoc.body.appendChild(wrapper);
+        });
+    }
+
+    function setTeamId(teamId) {
+        const url = new flagWin.URL(flagWin.location.href);
+        if (teamId) {
+            url.searchParams.set("team_id", teamId);
+        } else {
+            url.searchParams.delete("team_id");
+        }
+        flagWin.history.replaceState({}, "", url.toString());
+    }
+
+    beforeEach(() => {
+        flagDoc.body.textContent = "";
+    });
+
+    test("public radio is enabled when flag is false and no team_id in URL", () => {
+        buildVisibilityRadios("server");
+        setTeamId(null);
+        flagWin.updateDefaultVisibility();
+
+        expect(flagDoc.getElementById("server-visibility-public").disabled).toBe(false);
+    });
+
+    test("public radio is disabled when flag is false and team_id is in URL", () => {
+        buildVisibilityRadios("server");
+        setTeamId("team-abc");
+        flagWin.updateDefaultVisibility();
+
+        expect(flagDoc.getElementById("server-visibility-public").disabled).toBe(true);
+    });
+
+    test("disabled public radio gets opacity and line-through styling", () => {
+        buildVisibilityRadios("tool");
+        setTeamId("team-abc");
+        flagWin.updateDefaultVisibility();
+
+        const wrapper = flagDoc.getElementById("tool-visibility-public").closest(".flex.items-center");
+        expect(wrapper.classList.contains("opacity-40")).toBe(true);
+        expect(wrapper.classList.contains("cursor-not-allowed")).toBe(true);
+    });
+
+    test("public radio re-enabled when navigating from team scope to global scope", () => {
+        buildVisibilityRadios("server");
+        setTeamId("team-abc");
+        flagWin.updateDefaultVisibility();
+        expect(flagDoc.getElementById("server-visibility-public").disabled).toBe(true);
+
+        setTeamId(null);
+        flagWin.updateDefaultVisibility();
+        expect(flagDoc.getElementById("server-visibility-public").disabled).toBe(false);
+    });
+
+    test("form submission can include public when in global scope", () => {
+        buildVisibilityRadios("server");
+        setTeamId(null);
+        flagWin.updateDefaultVisibility();
+
+        const publicRadio = flagDoc.getElementById("server-visibility-public");
+        publicRadio.checked = true;
+
+        const checkedRadio = flagDoc.querySelector(
+            'input[name="visibility"]:checked:not(:disabled)',
+        );
+        expect(checkedRadio).not.toBeNull();
+        expect(checkedRadio.value).toBe("public");
+    });
+});

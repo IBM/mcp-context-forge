@@ -232,6 +232,31 @@ function updateDefaultVisibility() {
         const teamRadios = document.querySelectorAll(teamIdStr);
         const privateRadios = document.querySelectorAll(privateIdStr);
 
+        // Disable public radio when flag is false AND we're in a team-scoped view.
+        const publicBlocked =
+            window.ALLOW_PUBLIC_VISIBILITY === false && hasTeam;
+        publicRadios.forEach((radio) => {
+            radio.disabled = publicBlocked;
+            const wrapper = radio.closest(".flex.items-center");
+            if (wrapper) {
+                if (publicBlocked) {
+                    wrapper.classList.add("opacity-40", "cursor-not-allowed");
+                    wrapper.title =
+                        "Public visibility is disabled by platform configuration";
+                    const label = wrapper.querySelector("label");
+                    if (label) label.classList.add("line-through");
+                } else {
+                    wrapper.classList.remove(
+                        "opacity-40",
+                        "cursor-not-allowed",
+                    );
+                    wrapper.removeAttribute("title");
+                    const label = wrapper.querySelector("label");
+                    if (label) label.classList.remove("line-through");
+                }
+            }
+        });
+
         if (hasTeam) {
             // Default to Team
             teamRadios.forEach((radio) => {
@@ -253,7 +278,7 @@ function updateDefaultVisibility() {
                 radio.defaultChecked = false;
             });
         } else {
-            // Default to Public
+            // Default to Public (always enabled outside team scope)
             publicRadios.forEach((radio) => {
                 if (!radio.checked) {
                     radio.checked = true;
@@ -3352,12 +3377,19 @@ async function editTool(toolId) {
         const privateRadio = safeGetElement("edit-tool-visibility-private");
 
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team or private.
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -4031,12 +4063,19 @@ async function editA2AAgent(agentId) {
         }
 
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -4935,11 +4974,22 @@ async function editResource(resourceId) {
         }
 
         if (visibility) {
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -5423,11 +5473,22 @@ async function editPrompt(promptId) {
         }
 
         if (visibility) {
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -5837,12 +5898,19 @@ async function editGateway(gatewayId) {
         const privateRadio = safeGetElement("edit-gateway-visibility-private");
 
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -6641,12 +6709,22 @@ async function editServer(serverId) {
 
         // Prepopulate visibility radio buttons based on the server data
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }

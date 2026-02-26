@@ -17974,3 +17974,221 @@ class TestPaginationVariableCascade:
         assert values["TOOLS_TOTAL_PAGES"] == 1
         assert values["GATEWAYS_TOTAL_ITEMS"] == 150
         assert values["GATEWAYS_TOTAL_PAGES"] == 3
+
+
+# ── ALLOW_PUBLIC_VISIBILITY guard tests ──────────────────────────────────────
+
+
+class TestPublicVisibilityGuard:
+    """Verify all add/edit handlers reject visibility=public when flag is false."""
+
+    @pytest.fixture(autouse=True)
+    def allow_permission(self, monkeypatch):
+        """Allow RBAC permission checks to pass for decorator-wrapped handlers."""
+        mock_perm_service = MagicMock()
+        mock_perm_service.check_permission = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+        return mock_perm_service
+
+    @pytest.mark.asyncio
+    async def test_add_server_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "S", "url": "http://s", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_server(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_add_server_allows_public_when_flag_true(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", True)
+        form_data = FakeForm({"name": "S", "url": "http://s", "visibility": "public"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_server(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_add_server_allows_team_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "S", "url": "http://s", "visibility": "team"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_server(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_edit_server_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "S", "url": "http://s", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_edit_server("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_add_tool_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "T", "url": "http://t", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_tool(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_edit_tool_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "T", "url": "http://t", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_edit_tool("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_add_resource_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "R", "uri": "http://r", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_resource(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_edit_resource_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "R", "uri": "http://r", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_edit_resource("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_add_prompt_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "P", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_prompt(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_edit_prompt_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "P", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_edit_prompt("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_add_gateway_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "G", "url": "http://g", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_gateway(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_edit_gateway_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "G", "url": "http://g", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_edit_gateway("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_add_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_a2a_agent(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_edit_a2a_agent_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public", "team_id": "team-abc"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_edit_a2a_agent("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_create_grpc_service_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_grpc_enabled", True)
+        from mcpgateway.schemas import GrpcServiceCreate
+
+        service = GrpcServiceCreate(name="G", target="localhost:50051", visibility="public", team_id="team-abc")
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_create_grpc_service(service, mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert exc_info.value.status_code == 422
+
+    # --- Global scope (no team_id): public must NOT be blocked even when flag is false ---
+
+    @pytest.mark.asyncio
+    async def test_add_server_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "S", "url": "http://s", "visibility": "public"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_server(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_add_tool_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "T", "url": "http://t", "visibility": "public"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_add_resource_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "R", "uri": "http://r", "visibility": "public"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_add_prompt_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "P", "visibility": "public"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_prompt(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_add_gateway_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "G", "url": "http://g", "visibility": "public"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_add_a2a_agent_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        form_data = FakeForm({"name": "A", "endpoint_url": "http://a", "visibility": "public"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_create_grpc_service_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_grpc_enabled", True)
+        mock_mgr = MagicMock()
+        mock_mgr.register_service = AsyncMock(return_value={"id": "svc-new", "name": "G"})
+        monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mock_mgr)
+        from mcpgateway.schemas import GrpcServiceCreate
+
+        service = GrpcServiceCreate(name="G", target="localhost:50051", visibility="public")
+        # No team_id → guard should not fire even with flag=false
+        result = await admin_create_grpc_service(service, mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code == 201
