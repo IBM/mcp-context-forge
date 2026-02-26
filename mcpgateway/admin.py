@@ -440,7 +440,7 @@ def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str]
         params["include_inactive"] = "true"
     if team_id:
         try:
-            params["team_id"] = _normalize_team_id(team_id) or ""
+            params["team_id"] = _normalize_team_id(team_id)
         except ValueError:
             pass
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""
