@@ -1372,21 +1372,26 @@ function closeModal(modalId, clearId = null) {
             }
         }
 
-        // Clean up specific modal types
-        if (modalId === "gateway-test-modal") {
-            cleanupGatewayTestModal();
-        } else if (modalId === "tool-test-modal") {
-            cleanupToolTestModal();
-        } else if (modalId === "prompt-test-modal") {
-            cleanupPromptTestModal();
-        } else if (modalId === "resource-test-modal") {
-            cleanupResourceTestModal();
-        } else if (modalId === "a2a-test-modal") {
-            cleanupA2ATestModal();
-        } else if (modalId === "server-edit-modal") {
-            resetEditSelections();
+        // Type-specific cleanup — isolated so failures don't block modal close
+        try {
+            if (modalId === "gateway-test-modal") {
+                cleanupGatewayTestModal();
+            } else if (modalId === "tool-test-modal") {
+                cleanupToolTestModal();
+            } else if (modalId === "prompt-test-modal") {
+                cleanupPromptTestModal();
+            } else if (modalId === "resource-test-modal") {
+                cleanupResourceTestModal();
+            } else if (modalId === "a2a-test-modal") {
+                cleanupA2ATestModal();
+            } else if (modalId === "server-edit-modal") {
+                resetEditSelections();
+            }
+        } catch (cleanupError) {
+            console.error(`Error during ${modalId} cleanup:`, cleanupError);
         }
 
+        // Always executes — modal hides even if cleanup failed
         modal.classList.add("hidden");
         AppState.setModalInactive(modalId);
 
@@ -9432,6 +9437,10 @@ function initToolSelect(
                 }
                 allIdsInput.value = JSON.stringify(allToolIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allToolIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
@@ -9856,6 +9865,10 @@ function initResourceSelect(
                 }
                 allIdsInput.value = JSON.stringify(allIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
@@ -10265,6 +10278,10 @@ function initPromptSelect(
                     container.appendChild(allIdsInput);
                 }
                 allIdsInput.value = JSON.stringify(allIds);
+
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
 
                 update();
 
@@ -27989,16 +28006,14 @@ async function serverSideEditToolSearch(searchTerm) {
             serverToolsData = dataAttr;
         }
 
-        // Flush DOM state into the persistent store
+        // Flush DOM state into the persistent store (add-only — unchecks are
+        // handled by ensureEditStoreListeners() event delegation)
         const toolSel = getEditSelections("edit-server-tools");
         container
             .querySelectorAll('input[name="associatedTools"]')
             .forEach((cb) => {
-                const value = String(cb.value);
                 if (cb.checked) {
-                    toolSel.add(value);
-                } else {
-                    toolSel.delete(value);
+                    toolSel.add(String(cb.value));
                 }
             });
 
@@ -28320,15 +28335,13 @@ async function serverSideEditPromptsSearch(searchTerm) {
     );
 
     // Flush DOM state into persistent store BEFORE clearing the container
+    // (add-only — unchecks are handled by ensureEditStoreListeners() event delegation)
     const promptSel = getEditSelections("edit-server-prompts");
     container
         .querySelectorAll('input[name="associatedPrompts"]')
         .forEach((cb) => {
-            const value = String(cb.value);
             if (cb.checked) {
-                promptSel.add(value);
-            } else {
-                promptSel.delete(value);
+                promptSel.add(String(cb.value));
             }
         });
 
@@ -28637,15 +28650,13 @@ async function serverSideEditResourcesSearch(searchTerm) {
     );
 
     // Flush DOM state into persistent store BEFORE clearing the container
+    // (add-only — unchecks are handled by ensureEditStoreListeners() event delegation)
     const resSel = getEditSelections("edit-server-resources");
     container
         .querySelectorAll('input[name="associatedResources"]')
         .forEach((cb) => {
-            const value = String(cb.value);
             if (cb.checked) {
-                resSel.add(value);
-            } else {
-                resSel.delete(value);
+                resSel.add(String(cb.value));
             }
         });
 
