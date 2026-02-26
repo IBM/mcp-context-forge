@@ -196,7 +196,8 @@ And is readily available as open source, published a container image and as a Py
 
 | Asset | URL |
 |-------|-----|
-| Transparent PNG logo  | `https://ibm.github.io/mcp-context-forge/logo.png` |
+| White SVG logo  | `https://ibm.github.io/mcp-context-forge/contextforge-logo_vertical_white.svg` |
+| Black SVG logo  | `https://ibm.github.io/mcp-context-forge/contextforge-logo_vertical_black.svg` |
 | Hero demo GIF         | `https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif` |
 | Architecture overview | [SVG](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg) |
 
