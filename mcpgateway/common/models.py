@@ -363,13 +363,13 @@ class ClientCapabilities(BaseModel):
     """Capabilities that a client may support.
 
     Attributes:
-        roots (Optional[Dict[str, bool]]): Capabilities related to root management.
+        roots (Optional[Dict[str, Any]]): Capabilities related to root management.
         sampling (Optional[Dict[str, Any]]): Capabilities related to LLM sampling.
         elicitation (Optional[Dict[str, Any]]): Capabilities related to elicitation (MCP 2025-06-18).
         experimental (Optional[Dict[str, Dict[str, Any]]]): Experimental capabilities.
     """
 
-    roots: Optional[Dict[str, bool]] = None
+    roots: Optional[Dict[str, Any]] = None
     sampling: Optional[Dict[str, Any]] = None
     elicitation: Optional[Dict[str, Any]] = None
     experimental: Optional[Dict[str, Dict[str, Any]]] = None
