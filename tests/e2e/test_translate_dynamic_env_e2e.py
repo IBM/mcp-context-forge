@@ -831,8 +831,13 @@ sys.stdout.flush()
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         try:
-            # Brief wait to let process start and potentially exit on invalid args
-            await asyncio.sleep(0.5)
+            # Poll until process exits or timeout (fast when it exits quickly, robust on slow CI)
+            timeout = 5.0
+            interval = 0.05
+            elapsed = 0.0
+            while process.poll() is None and elapsed < timeout:
+                await asyncio.sleep(interval)
+                elapsed += interval
 
             # Check if process is still running
             return_code = process.poll()

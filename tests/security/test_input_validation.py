@@ -2190,7 +2190,7 @@ class TestSensitiveLoggingRegressions:
             source = file_path.read_text(encoding="utf-8")
             if "logger." not in source:
                 continue
-            tree = ast.parse(source)
+            tree = ast.parse(source, filename=str(file_path))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
