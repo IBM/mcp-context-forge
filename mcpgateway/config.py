@@ -236,6 +236,16 @@ class Settings(BaseSettings):
     # Protocol
     protocol_version: str = "2025-11-25"
 
+    # Migration behavior
+    # Controls how database migrations are executed at startup:
+    # - "async": start migrations in background (non-blocking)
+    # - "sync": run migrations synchronously (block until complete)
+    # - "skip": do not run migrations automatically
+    migration_mode: Literal["async", "sync", "skip"] = Field(default="async", description="How to run Alembic migrations at startup")
+
+    # Time (seconds) to wait for migration advisory lock before timing out
+    migration_timeout: int = Field(default=300, description="Seconds to wait for migration lock acquisition")
+
     # Authentication
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))

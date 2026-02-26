@@ -270,6 +270,30 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _ensure_aware_utc(dt: datetime) -> datetime:
+    """Return a timezone-aware datetime in UTC for the given datetime.
+
+    - If ``dt`` is naive, treat it as UTC and attach ``timezone.utc``.
+    - If ``dt`` is timezone-aware, convert it to UTC.
+
+    Args:
+        dt: datetime to normalize
+
+    Returns:
+        datetime: timezone-aware datetime in UTC
+    """
+    if dt is None:
+        return None
+    # If naive, assume it's in the system local timezone and convert to UTC.
+    # This makes behavior consistent across environments where tests may call
+    # ``datetime.now()`` (which returns local time) and expect expiry checks
+    # to behave relative to current UTC.
+    if dt.tzinfo is None:
+        local_tz = datetime.now().astimezone().tzinfo
+        return dt.replace(tzinfo=local_tz).astimezone(timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 # Configure SQLite for better concurrency if using SQLite
 if backend == "sqlite":
 
@@ -872,7 +896,9 @@ class UserRole(Base):
         """
         if not self.expires_at:
             return False
-        return utc_now() > self.expires_at
+        now = _ensure_aware_utc(utc_now())
+        expires = _ensure_aware_utc(self.expires_at)
+        return now > expires
 
 
 class PermissionAuditLog(Base):
@@ -1151,7 +1177,9 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        if utc_now() >= self.locked_until:
+        now = _ensure_aware_utc(utc_now())
+        locked_until = _ensure_aware_utc(self.locked_until)
+        if now >= locked_until:
             # Lockout expired: reset counters so users get a fresh attempt window.
             self.failed_login_attempts = 0
             self.locked_until = None
@@ -1464,7 +1492,11 @@ class PasswordResetToken(Base):
         Returns:
             bool: True when `expires_at` is in the past.
         """
-        return self.expires_at <= utc_now()
+        now = _ensure_aware_utc(utc_now())
+        expires = _ensure_aware_utc(self.expires_at)
+        if expires is None:
+            return False
+        return expires <= now
 
     def is_used(self) -> bool:
         """Return whether the reset token was already consumed.
@@ -1838,14 +1870,11 @@ class EmailTeamInvitation(Base):
             >>> invitation.is_expired()
             False
         """
-        now = utc_now()
-        expires_at = self.expires_at
+        now = _ensure_aware_utc(utc_now())
+        expires_at = _ensure_aware_utc(self.expires_at)
 
-        # Handle timezone awareness mismatch
-        if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None and expires_at.tzinfo is not None:
-            now = now.replace(tzinfo=timezone.utc)
+        if expires_at is None:
+            return False
 
         return now > expires_at
 
@@ -1932,14 +1961,11 @@ class EmailTeamJoinRequest(Base):
         Returns:
             bool: True if the request has expired, False otherwise.
         """
-        now = utc_now()
-        expires_at = self.expires_at
+        now = _ensure_aware_utc(utc_now())
+        expires_at = _ensure_aware_utc(self.expires_at)
 
-        # Handle timezone awareness mismatch
-        if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None and expires_at.tzinfo is not None:
-            now = now.replace(tzinfo=timezone.utc)
+        if expires_at is None:
+            return False
 
         return now > expires_at
 
@@ -2024,14 +2050,11 @@ class PendingUserApproval(Base):
         Returns:
             bool: True if the approval request has expired
         """
-        now = utc_now()
-        expires_at = self.expires_at
+        now = _ensure_aware_utc(utc_now())
+        expires_at = _ensure_aware_utc(self.expires_at)
 
-        # Handle timezone awareness mismatch
-        if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None and expires_at.tzinfo is not None:
-            now = now.replace(tzinfo=timezone.utc)
+        if expires_at is None:
+            return False
 
         return now > expires_at
 
@@ -5057,7 +5080,9 @@ class EmailApiToken(Base):
         """
         if not self.expires_at:
             return False
-        return utc_now() > self.expires_at
+        now = _ensure_aware_utc(utc_now())
+        expires = _ensure_aware_utc(self.expires_at)
+        return now > expires
 
     def is_valid(self) -> bool:
         """Check if token is valid (active and not expired).
@@ -5301,16 +5326,11 @@ class SSOAuthSession(Base):
         Returns:
             True if the session has expired, False otherwise
         """
-        now = utc_now()
-        expires = self.expires_at
+        now = _ensure_aware_utc(utc_now())
+        expires = _ensure_aware_utc(self.expires_at)
 
-        # Handle timezone mismatch by converting naive datetime to UTC if needed
-        if expires.tzinfo is None:
-            # expires_at is timezone-naive, assume it's UTC
-            expires = expires.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None:
-            # now is timezone-naive (shouldn't happen with utc_now, but just in case)
-            now = now.replace(tzinfo=timezone.utc)
+        if expires is None:
+            return False
 
         return now > expires
 

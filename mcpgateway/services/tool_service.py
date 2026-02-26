@@ -1907,16 +1907,11 @@ class ToolService:
         # - page-based pagination is used
         # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
-        filters_hash = None
-        # Only use the cache when using the real converter. In unit tests we often patch
-        # convert_tool_to_read() to exercise error handling, and a warm cache would bypass it.
-        try:
-            converter_is_default = self.convert_tool_to_read.__func__ is ToolService.convert_tool_to_read  # type: ignore[attr-defined]
-        except Exception:
-            converter_is_default = False
+        # Always compute filters_hash so later cache-write checks can reference it
+        # without triggering UnboundLocalError when the cache-read path was skipped.
+        filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
 
-        if cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
+        if cursor is None and user_email is None and token_teams is None and page is None:
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
                 # Reconstruct ToolRead objects from cached dicts
@@ -2038,6 +2033,9 @@ class ToolService:
 
         # Cache first page results - only for non-user-specific/non-scoped queries
         # Must match the same conditions as cache lookup to prevent cache poisoning
+        # Only cache when the converter was invoked with default requester context
+        # (no requesting user info) to avoid leaking user-specific data.
+        converter_is_default = requesting_user_email is None and requesting_user_is_admin is False and requesting_user_team_roles is None
         if filters_hash is not None and cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
             try:
                 cache_data = {"tools": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
