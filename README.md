@@ -736,6 +736,8 @@ For upgrade instructions, migration guides, and rollback procedures, see:
 
 Copy the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update the security-sensitive values below.
 
+**A2A:** If you set `MCPGATEWAY_A2A_ENABLED=true`, the Rust extension `gateway_rs` is required for agent invoke (no Python fallback). From source run `make rust-install`; PyPI wheels may include it.
+
 ### 🔐 Required: Change Before Use
 
 These variables have insecure defaults and **must be changed** before production deployment:

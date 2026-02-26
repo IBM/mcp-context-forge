@@ -3,10 +3,10 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "mcpgateway-rust"
+name = "mcpgateway-a2a-service"
 version = "1.0.0-BETA-2"
-description = "Rust-accelerated services for MCP Gateway"
-authors = [{ name = "MCP Gateway Contributors" }]
+description = "High-performance A2A agent invocation service (PyO3 extension for ContextForge)"
+authors = [{ name = "ContextForge Contributors" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 classifiers = [
@@ -17,5 +17,6 @@ classifiers = [
 ]
 
 [tool.maturin]
-module-name = "mcpgateway_rust"
+module-name = "gateway_rs.a2a_service"
+python-source = "python"
 features = ["pyo3/extension-module"]

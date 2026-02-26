@@ -5,10 +5,36 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Placeholder A2A service crate for ContextForge gateway_rs"
+description = "High-performance A2A agent invocation service with PyO3 bindings"
 
 [lib]
 name = "a2a_service"
-path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+bytes.workspace = true
+futures.workspace = true
+log.workspace = true
+pyo3.workspace = true
+pyo3-log.workspace = true
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+pythonize = "0.28"
+reqwest.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+# Niche to this service (circuit breaker + metrics maps; A2A auth query parsing)
+dashmap = "6.1"
+url = "2.5"
+# Auth decryption (match Python services_auth: AES-GCM, SHA256 key, base64url)
+aes-gcm = "0.10"
+base64 = "0.22"
+sha2 = "0.10"
+
+[dev-dependencies]
+criterion = { workspace = true }
+wiremock = "0.6"
+
+[[bench]]
+name = "invoke"
+harness = false

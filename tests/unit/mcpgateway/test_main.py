@@ -2902,17 +2902,65 @@ class TestA2AAgentEndpoints:
         assert response.status_code == 200
         mock_service.delete_agent.assert_called_once()
 
-    @patch("mcpgateway.main.a2a_service")
-    def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):
-        """Test invoking A2A agent."""
-        mock_service.invoke_agent = AsyncMock(return_value={"response": "Agent response", "status": "success"})
+    def test_invoke_a2a_agent(self, test_client, auth_headers, real_a2a_agent_in_db):
+        """Test invoking A2A agent: real stack (Rust queue + invoker, stub HTTP agent)."""
+        agent_name = real_a2a_agent_in_db
         response = test_client.post(
-            "/a2a/agent-1/invoke",
+            f"/a2a/{agent_name}/invoke",
             json={"parameters": {"query": "test"}, "interaction_type": "query"},
             headers=auth_headers,
         )
         assert response.status_code == 200
-        mock_service.invoke_agent.assert_called_once()
+        data = response.json()
+        assert data.get("ok") is True
+        assert data.get("status") == "success"
+        assert data.get("response") == "Test response"
+
+    def test_invoke_a2a_unified_single(self, test_client, auth_headers, real_a2a_agent_in_db):
+        """Test unified POST /a2a/invoke with single object: real stack, no mocks."""
+        agent_name = real_a2a_agent_in_db
+        response = test_client.post(
+            "/a2a/invoke",
+            json={"agent_name": agent_name, "parameters": {}, "interaction_type": "query"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("ok") is True
+        assert data.get("status") == "success"
+
+    def test_invoke_a2a_unified_list(self, test_client, auth_headers, real_a2a_agent_in_db):
+        """Test unified POST /a2a/invoke with invokes list (N>1): real stack, same agent twice."""
+        agent_name = real_a2a_agent_in_db
+        response = test_client.post(
+            "/a2a/invoke",
+            json={
+                "invokes": [
+                    {"agent_name": agent_name, "parameters": {}},
+                    {"agent_name": agent_name, "parameters": {}},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 2
+        assert data[0].get("ok") is True and data[1].get("ok") is True
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_returns_503_when_queue_full(self, mock_service, test_client, auth_headers):
+        """When the Rust queue is full, invoke_agent raises RuntimeError and the handler returns 503."""
+        mock_service.invoke_agent = AsyncMock(
+            side_effect=RuntimeError("A2A invoke queue full")
+        )
+        response = test_client.post(
+            "/a2a/invoke",
+            json={"agent_name": "agent-1", "parameters": {}, "interaction_type": "query"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 503
+        assert "queue full" in response.json().get("detail", "").lower()
 
 
 # ----------------------------------------------------- #

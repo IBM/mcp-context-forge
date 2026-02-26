@@ -183,6 +183,10 @@ A2A agents provide comprehensive metrics:
 - **Last Interaction**: Timestamp of most recent call
 - **Error Tracking**: Failed call details and error messages
 
+## Resilience
+
+Invoke requests use a **per-endpoint circuit breaker**: after a threshold of consecutive failures for an agent URL, the circuit opens and requests fail fast until a cooldown elapses. The circuit key is scoped by URL and tenant/team (`url::scope_id`), so one tenant's failures do not open the circuit for other tenants using the same agent.
+
 ## Virtual Server Integration
 
 Associate A2A agents with virtual servers to:
@@ -311,6 +315,15 @@ curl -X POST "http://localhost:8000/rpc" \
   }'
 ```
 
+## Invoke behavior and limits
+
+When you call the invoke API (or use an A2A agent as an MCP tool), the gateway enforces:
+
+- **Endpoint URL scheme**: Only **http** and **https** are allowed. The agent's `endpoint_url` is validated at invoke time; other schemes (e.g. `file:`) are rejected with a 502 error. This applies even if the agent was created or edited with a different scheme (e.g. via direct DB changes).
+- **Response body size**: Agent responses are limited to **10 MiB**. If the agent returns a larger body, the invoke fails with a 502 and an error message such as "Response body exceeds maximum allowed size".
+
+These limits protect against misuse and ensure predictable behavior. On 502, the response detail includes the underlying error when available (e.g. invalid URL scheme, body too large, or network/timeout errors).
+
 ## Troubleshooting
 
 ### Agent Not Responding
@@ -318,6 +331,11 @@ curl -X POST "http://localhost:8000/rpc" \
 2. Verify endpoint URL is correct and accessible
 3. Test authentication credentials
 4. Check agent logs for protocol format issues
+
+### 502 Bad Gateway on invoke
+1. Check the response detail message: it may indicate "Invoke URL scheme not allowed" (use only http/https for the agent's endpoint URL), "Response body exceeds maximum allowed size" (agent response over 10 MiB), or a network/timeout error.
+2. Ensure the agent's **endpoint_url** uses **http** or **https** only.
+3. If the agent returns very large payloads, consider streaming or reducing response size; the gateway caps responses at 10 MiB.
 
 ### Protocol Format Issues
 1. Verify agent expects JSONRPC format vs custom format

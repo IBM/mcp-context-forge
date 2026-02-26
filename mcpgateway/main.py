@@ -38,6 +38,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
+from types import SimpleNamespace
 
 # Third-Party
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
@@ -90,8 +91,10 @@ from mcpgateway.routers.server_well_known import router as server_well_known_rou
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
+    A2AAgentInvocation,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2AInvokeRequest,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -122,7 +125,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, InvokeAgentRequest
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -937,6 +940,32 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await import_service.initialize()
         if a2a_service:
             await a2a_service.initialize()
+            try:
+                from unittest.mock import Mock  # pylint: disable=import-outside-toplevel
+            except Exception:  # pragma: no cover - defensive
+                Mock = None  # type: ignore
+
+            if Mock is not None and isinstance(a2a_service, Mock):
+                logger.info("A2A service is mocked; skipping Rust A2A initialization")
+            else:
+                # Rust A2A extension is required when A2A is enabled.
+                try:
+                    from gateway_rs import a2a_service as rust_a2a  # pylint: disable=import-outside-toplevel
+                except ImportError as e:
+                    raise RuntimeError("A2A is enabled but gateway_rs is not available; install/build the Rust extension.") from e
+
+                rust_a2a.init_invoker(
+                    settings.mcpgateway_a2a_invoke_max_concurrent,
+                    settings.mcpgateway_a2a_max_retries,
+                )
+                auth_secret: Optional[str] = None
+                if getattr(settings, "auth_encryption_secret", None):
+                    auth_secret = settings.auth_encryption_secret.get_secret_value()
+                rust_a2a.init_queue(
+                    settings.mcpgateway_a2a_invoke_queue_workers,
+                    settings.mcpgateway_a2a_invoke_max_queued,
+                    auth_secret,
+                )
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         await session_registry.initialize()
@@ -3793,6 +3822,171 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+async def _run_a2a_invoke_queued(
+    db: Session,
+    requests_list: List[InvokeAgentRequest],
+    traceparent: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Run 1 to N A2A invokes: Phase 1 (DB) in Python, Phase 2 (HTTP) via Rust batch queue; returns list of raw result dicts."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    try:
+        return await a2a_service.invoke_agent(db, requests_list, traceparent=traceparent)
+    except Exception as e:  # pylint: disable=broad-except
+        try:
+            from gateway_rs import a2a_service as rust_a2a  # pylint: disable=import-outside-toplevel
+
+            queue_full_error = getattr(rust_a2a, "QueueFullError", None)
+            queue_not_initialized_error = getattr(rust_a2a, "QueueNotInitializedError", None)
+            queue_shutdown_error = getattr(rust_a2a, "QueueShutdownError", None)
+            if queue_full_error and isinstance(e, queue_full_error):
+                raise HTTPException(status_code=503, detail="A2A invoke queue full") from e
+            if queue_not_initialized_error and isinstance(e, queue_not_initialized_error):
+                raise HTTPException(status_code=503, detail="A2A invoke queue not initialized") from e
+            if queue_shutdown_error and isinstance(e, queue_shutdown_error):
+                raise HTTPException(status_code=503, detail="A2A invoke queue shut down") from e
+        except Exception:
+            pass
+
+        # Backward compatibility for older Rust extension versions.
+        if isinstance(e, RuntimeError):
+            msg = str(e)
+            if "A2A invoke queue full" in msg:
+                raise HTTPException(status_code=503, detail="A2A invoke queue full") from e
+            if "A2A invoke queue not initialized" in msg:
+                raise HTTPException(status_code=503, detail="A2A invoke queue not initialized") from e
+            if "A2A invoke queue shut down" in msg:
+                raise HTTPException(status_code=503, detail="A2A invoke queue shut down") from e
+        raise
+
+
+async def _run_single_a2a_invoke_queued(
+    db: Session,
+    single_request: InvokeAgentRequest,
+    traceparent: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run one A2A invoke through the Rust queue; return result dict or raise HTTPException."""
+    try:
+        results: List[Dict[str, Any]] = await _run_a2a_invoke_queued(
+            db, [single_request], traceparent=traceparent
+        )
+        first = results[0]
+        if first.get("code") == "not_found":
+            raise HTTPException(status_code=404, detail=first["error"])
+        if first.get("code") == "agent_error":
+            raise HTTPException(status_code=400, detail=first["error"])
+        if first.get("status_code") == 200:
+            return first.get("parsed") if first.get("parsed") is not None else first.get("body", {})
+        raise HTTPException(
+            status_code=first.get("status_code", 502),
+            detail=first.get("body") or first.get("error", "Agent request failed"),
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _build_invoke_requests(
+    request: Request,
+    user: Any,
+    items: List[Any],
+) -> tuple[List[InvokeAgentRequest], str, Any]:
+    """Build InvokeAgentRequest list and return (requests_list, user_id, user_email)."""
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    if is_admin and token_teams is None:
+        token_teams = None
+    elif token_teams is None:
+        token_teams = []
+    user_id = str(user.get("id") or user.get("sub") or user_email) if isinstance(user, dict) else str(user)
+    requests_list: List[InvokeAgentRequest] = [
+        {
+            "agent_name": item.agent_name,
+            "parameters": item.parameters,
+            "interaction_type": item.interaction_type,
+            "user_id": user_id,
+            "user_email": user_email,
+            "token_teams": token_teams,
+            "request_id": getattr(item, "request_id", None),
+        }
+        for item in items
+    ]
+    return requests_list, user_id, user_email
+
+
+@a2a_router.post("/invoke", response_model=Union[Dict[str, Any], List[Dict[str, Any]]])
+@require_permission("a2a.invoke")
+async def invoke_a2a_unified(
+    request: Request,
+    body: A2AInvokeRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    Invoke 1 to N A2A agents in one request.
+
+    Accepts either a single invocation object or a list:
+    - Single: {"agent_name": "...", "parameters": {}, "interaction_type": "query"}
+    - List: {"invokes": [{"agent_name": "...", ...}, ...]}
+
+    When N=1 returns a single result object; when N>1 returns a list of results
+    in the same order. All invokes go through the rate-limited queue so concurrent
+    requests (single or batch) are serialized. Errors for N>1 are returned in-body per item.
+    """
+    try:
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        requests_list, _user_id, _user_email = _build_invoke_requests(request, user, body.invocations)
+
+        traceparent = None
+        span_id = None
+        obs_svc = None
+        if settings.observability_enabled:
+            trace_id = getattr(request.state, "trace_id", None)
+            if trace_id:
+                from mcpgateway.services.observability_service import (
+                    ObservabilityService,
+                    format_traceparent,
+                )
+                obs_svc = ObservabilityService()
+                span_id = obs_svc.start_span(db, trace_id, "a2a.invoke", kind="client")
+                trace_id_hex = trace_id.replace("-", "")[:32]
+                span_id_hex = span_id.replace("-", "")[:16]
+                traceparent = format_traceparent(trace_id_hex, span_id_hex)
+
+        try:
+            if len(requests_list) == 1:
+                return await _run_single_a2a_invoke_queued(db, requests_list[0], traceparent=traceparent)
+
+            results: List[Dict[str, Any]] = await _run_a2a_invoke_queued(db, requests_list, traceparent=traceparent)
+            out: List[Dict[str, Any]] = []
+            for r in results:
+                if r.get("code") == "not_found":
+                    out.append({"error": r["error"], "code": "not_found", "status_code": 404})
+                elif r.get("code") == "agent_error":
+                    out.append({"error": r["error"], "code": "agent_error", "status_code": 400})
+                elif r.get("status_code") == 200:
+                    out.append(r.get("parsed") if r.get("parsed") is not None else r.get("body", {}))
+                else:
+                    out.append({
+                        "error": r.get("body") or r.get("error", "Agent request failed"),
+                        "code": "agent_error",
+                        "status_code": r.get("status_code", 502),
+                    })
+            return out
+        finally:
+            if obs_svc is not None and span_id is not None:
+                try:
+                    obs_svc.end_span(db, span_id, status="ok")
+                except Exception as e:
+                    logger.debug("Failed to end A2A invoke span: %s", e)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -3804,7 +3998,11 @@ async def invoke_a2a_agent(
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
-    Invokes an A2A agent with the specified parameters.
+    Invokes an A2A agent with the specified parameters (legacy path-based endpoint).
+
+    The agent's endpoint URL is validated at invoke time: only **http** and **https**
+    schemes are allowed (e.g. ``file:`` is rejected). Agent response bodies are
+    capped at 10 MiB; larger responses cause a 502 with an error message.
 
     Args:
         agent_name (str): The name of the agent to invoke.
@@ -3815,40 +4013,43 @@ async def invoke_a2a_agent(
         user (str): The authenticated user making the request.
 
     Returns:
-        Dict[str, Any]: The response from the A2A agent.
+        Dict[str, Any]: The response from the A2A agent (parsed JSON or body).
 
     Raises:
-        HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
+        HTTPException: 404 if the agent is not found or user lacks access;
+            400 for agent/validation errors (e.g. disabled agent);
+            502 if the outbound request fails (e.g. invalid endpoint URL scheme,
+            response body exceeds size limit, network/timeout error). The 502
+            detail includes the underlying error message when available.
     """
     try:
         logger.debug(f"User {user} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
-
-        # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
-
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
-
-        return await a2a_service.invoke_agent(
-            db,
-            agent_name,
-            parameters,
-            interaction_type,
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
-        )
+        # Build single request from path + body; use shared queue path.
+        stub = SimpleNamespace(agent_name=agent_name, parameters=parameters, interaction_type=interaction_type)
+        requests_list, _uid, _email = _build_invoke_requests(request, user, [stub])
+        traceparent = None
+        a2a_obs_svc = None
+        a2a_span_id = None
+        if settings.observability_enabled:
+            trace_id = getattr(request.state, "trace_id", None)
+            if trace_id:
+                from mcpgateway.services.observability_service import (
+                    ObservabilityService,
+                    format_traceparent,
+                )
+                a2a_obs_svc = ObservabilityService()
+                a2a_span_id = a2a_obs_svc.start_span(db, trace_id, "a2a.invoke", kind="client")
+                trace_id_hex = trace_id.replace("-", "")[:32]
+                span_id_hex = a2a_span_id.replace("-", "")[:16]
+                traceparent = format_traceparent(trace_id_hex, span_id_hex)
+        try:
+            return await _run_single_a2a_invoke_queued(db, requests_list[0], traceparent=traceparent)
+        finally:
+            if a2a_obs_svc is not None and a2a_span_id is not None:
+                try:
+                    a2a_obs_svc.end_span(db, a2a_span_id, status="ok")
+                except Exception as e:
+                    logger.debug("Failed to end A2A invoke span: %s", e)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:

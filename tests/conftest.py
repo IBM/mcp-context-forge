@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 # Third-Party
 from _pytest.monkeypatch import MonkeyPatch
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -264,6 +265,8 @@ def app_with_temp_db():
     mp.setattr(settings, "database_url", url, raising=False)
     # Disable auth for tests - allows dependency injection mocking to work
     mp.setattr(settings, "auth_required", False, raising=False)
+    # Use a 32+ byte JWT secret to avoid InsecureKeyLengthWarning when tests use auth_headers
+    mp.setattr(settings, "jwt_secret_key", SecretStr("unit-test-jwt-secret-key-with-minimum-32-bytes"), raising=False)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

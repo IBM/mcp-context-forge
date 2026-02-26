@@ -5260,11 +5260,13 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
     - Agent name or ID to invoke
     - Parameters for the agent interaction
     - Interaction type (query, execute, etc.)
+    - Optional request_id for idempotency (same ID in batch or in-flight → single HTTP call, shared result).
     """
 
     agent_name: str = Field(..., description="Name of the A2A agent to invoke")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters for agent interaction")
     interaction_type: str = Field(default="query", description="Type of interaction (query, execute, etc.)")
+    request_id: Optional[str] = Field(default=None, description="Optional idempotency key; same ID coalesced to one HTTP call")
 
     @field_validator("agent_name")
     @classmethod
@@ -5295,6 +5297,40 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         """
         SecurityValidator.validate_json_depth(v)
         return v
+
+
+class A2AInvokeBatchRequest(BaseModelWithConfigDict):
+    """Request body for POST /a2a/invoke/batch: list of invokes to run concurrently."""
+
+    invokes: List[A2AAgentInvocation] = Field(..., description="List of A2A agent invocations to run in one batch")
+
+
+class A2AInvokeRequest(BaseModelWithConfigDict):
+    """Unified request body for POST /a2a/invoke: accepts 1 to N invocations.
+
+    Accepts either:
+    - Single (no list): {"agent_name": "...", "parameters": {}, "interaction_type": "query"}
+    - List: {"invokes": [{"agent_name": "...", "parameters": {}, "interaction_type": "query"}, ...]}
+
+    Normalized to invocations (list of 1 to N) for the handler.
+    """
+
+    invocations: List[A2AAgentInvocation] = Field(
+        ..., description="Normalized list of 1 to N A2A agent invocations"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_single_or_batch(cls, data: Any) -> Any:
+        """Accept single invocation object or { invokes: [...] }; normalize to invocations list."""
+        if not isinstance(data, dict):
+            raise ValueError("Request body must be a JSON object")
+        if "invokes" in data and isinstance(data.get("invokes"), list):
+            raw_list = data["invokes"]
+            if not raw_list:
+                raise ValueError("At least one invoke is required")
+            return {"invocations": [A2AAgentInvocation.model_validate(item) for item in raw_list]}
+        return {"invocations": [A2AAgentInvocation.model_validate(data)]}
 
 
 # ---------------------------------------------------------------------------

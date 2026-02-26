@@ -31,6 +31,7 @@ mcpgateway/                 # Core FastAPI application
 └── alembic/                # Database migrations
 
 tests/                      # Test suite (see tests/AGENTS.md)
+benchmarks/                 # Top-level benchmarks (make benchmark; see benchmarks/README.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
 crates/plugins/              # Rust plugin implementations for performance-sensitive paths
 plugin_templates/           # Starter templates for building new plugins
@@ -50,6 +51,7 @@ cp .env.example .env && make install-dev check-env    # Complete setup
 make venv                          # Create virtual environment with uv
 make install-dev                   # Install with dev dependencies
 make check-env                     # Verify .env against .env.example
+# If MCPGATEWAY_A2A_ENABLED=true: make rust-install  # Required; A2A invoke has no Python fallback
 ```
 
 ### Development
@@ -145,7 +147,7 @@ AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
 # Features
 MCPGATEWAY_UI_ENABLED=false          # .env.example sets true
 MCPGATEWAY_ADMIN_API_ENABLED=false   # .env.example sets true
-MCPGATEWAY_A2A_ENABLED=true
+MCPGATEWAY_A2A_ENABLED=true          # When true, gateway_rs Rust extension is required (make rust-install)
 PLUGINS_ENABLED=false
 PLUGINS_CONFIG_FILE=plugins/config.yaml
 

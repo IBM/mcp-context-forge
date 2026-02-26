@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway.db import ResourceMetric, ToolMetric
 from mcpgateway.services.metrics_buffer_service import MetricsBufferService
 
 
@@ -479,6 +480,7 @@ async def test_flush_loop_error_sleeps_and_continues(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_flush_all_batches_metrics(monkeypatch):
+    """_flush_all calls to_thread(_flush_to_db) and updates _total_flushed / _flush_count on success."""
     service = MetricsBufferService(enabled=True)
 
     service.record_tool_metric("tool-1", start_time=time.monotonic() - 0.1, success=True)
@@ -489,14 +491,68 @@ async def test_flush_all_batches_metrics(monkeypatch):
     async def _fake_to_thread(func, *args, **kwargs):
         captured["func"] = func
         captured["args"] = args
+        return func(*args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(service, "_flush_to_db", lambda *a, **k: True)
 
     await service._flush_all()
 
     assert service._total_flushed == 2
     assert service._flush_count == 1
     assert captured["func"] == service._flush_to_db
+
+
+@pytest.mark.asyncio
+async def test_flush_all_writes_buffered_metrics_to_db(monkeypatch):
+    """_flush_all drains buffers, runs real _flush_to_db with fake DB, and updates counters.
+
+    Full path: record_* -> buffers -> _flush_all -> to_thread(_flush_to_db) -> bulk_insert_mappings.
+    Asserts the exact tool/resource payloads written (no mock on _flush_to_db).
+    """
+    service = MetricsBufferService(enabled=True)
+
+    service.record_tool_metric("tool-1", start_time=time.monotonic() - 0.1, success=True)
+    service.record_resource_metric("resource-1", start_time=time.monotonic() - 0.2, success=False)
+
+    bulk_calls = []
+
+    class DummyDB:
+        def bulk_insert_mappings(self, model, payload):
+            bulk_calls.append((model, list(payload)))
+
+        def commit(self):
+            pass
+
+    class DummySession:
+        def __enter__(self):
+            return DummyDB()
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    async def run_sync_in_place(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "mcpgateway.services.metrics_buffer_service.fresh_db_session",
+        lambda: DummySession(),
+    )
+    monkeypatch.setattr(asyncio, "to_thread", run_sync_in_place)
+
+    await service._flush_all()
+
+    assert service._total_flushed == 2
+    assert service._flush_count == 1
+    assert len(bulk_calls) == 2
+    tool_calls = [c for c in bulk_calls if c[0] is ToolMetric]
+    resource_calls = [c for c in bulk_calls if c[0] is ResourceMetric]
+    assert len(tool_calls) == 1 and len(tool_calls[0][1]) == 1
+    assert tool_calls[0][1][0]["tool_id"] == "tool-1"
+    assert tool_calls[0][1][0]["is_success"] is True
+    assert len(resource_calls) == 1 and len(resource_calls[0][1]) == 1
+    assert resource_calls[0][1][0]["resource_id"] == "resource-1"
+    assert resource_calls[0][1][0]["is_success"] is False
 
 
 def test_flush_to_db_writes_batches(monkeypatch):

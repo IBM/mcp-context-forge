@@ -616,6 +616,20 @@ class Settings(BaseSettings):
     mcpgateway_a2a_default_timeout: int = 30
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
+    mcpgateway_a2a_invoke_max_concurrent: int = Field(
+        default=30,
+        description="Max concurrent outbound HTTP requests within a single invoke batch (Rust invoker semaphore). "
+        "With queue_workers batches in flight, total outbound concurrency can be queue_workers * this value.",
+    )
+    mcpgateway_a2a_invoke_queue_workers: int = Field(
+        default=30,
+        description="Max concurrent A2A invoke batches in flight (queue worker semaphore). "
+        "Each batch runs Phase 1 in Python then Phase 2 HTTP in Rust. See docs/architecture/a2a-invoke-architecture.md.",
+    )
+    mcpgateway_a2a_invoke_max_queued: Optional[int] = Field(
+        default=None,
+        description="Optional max queue depth for A2A invoke; when exceeded try_submit returns 503 (default: unbounded, wait).",
+    )
 
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
@@ -1322,6 +1336,15 @@ class Settings(BaseSettings):
     metrics_buffer_enabled: bool = Field(default=True, description="Enable buffered metrics writes (reduces DB pressure under load)")
     metrics_buffer_flush_interval: int = Field(default=60, ge=5, le=300, description="Seconds between automatic metrics buffer flushes")
     metrics_buffer_max_size: int = Field(default=1000, ge=100, le=10000, description="Maximum buffered metrics before forced flush")
+    metrics_buffer_retry_max_batches: int = Field(
+        default=10, ge=1, le=100, description="Maximum failed flush batches to keep for retry (bounded queue)"
+    )
+    metrics_buffer_retry_initial_delay_sec: int = Field(
+        default=60, ge=5, le=3600, description="Initial delay in seconds before retrying a failed flush"
+    )
+    metrics_buffer_retry_max_delay_sec: int = Field(
+        default=300, ge=60, le=3600, description="Maximum delay in seconds between retries (exponential backoff cap)"
+    )
 
     # Metrics Cache Configuration (for caching aggregate metrics queries)
     metrics_cache_enabled: bool = Field(default=True, description="Enable in-memory caching for aggregate metrics queries")

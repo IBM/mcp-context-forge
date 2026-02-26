@@ -3822,16 +3822,15 @@ class TestA2AEndpoints:
             assert response.status_code == 200
             assert response.json()["status"] == "success"
 
-    def test_invoke_a2a_agent(self, test_client, auth_headers):
-        with patch("mcpgateway.main.a2a_service") as mock_service:
-            mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-            response = test_client.post(
-                "/a2a/agent-4/invoke",
-                json={"parameters": {"query": "hello"}, "interaction_type": "query"},
-                headers=auth_headers,
-            )
-            assert response.status_code == 200
-            assert response.json()["ok"] is True
+    def test_invoke_a2a_agent(self, test_client, auth_headers, real_a2a_agent_in_db):
+        # Real stack: Rust queue + invoker, stub HTTP agent (no mocks)
+        response = test_client.post(
+            f"/a2a/{real_a2a_agent_in_db}/invoke",
+            json={"parameters": {"query": "hello"}, "interaction_type": "query"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json().get("ok") is True
 
 
 class TestA2ABranchCoverage:
@@ -3977,12 +3976,14 @@ class TestA2ABranchCoverage:
         assert excinfo.value.status_code == 503
 
         svc = MagicMock()
-        svc.invoke_agent = AsyncMock(return_value={"ok": True})
+        svc.invoke_agent = AsyncMock(
+            return_value=[{"status_code": 200, "parsed": {"ok": True}}]
+        )
         monkeypatch.setattr(main_mod, "a2a_service", svc)
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
         result = await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
         assert result["ok"] is True
-        assert svc.invoke_agent.await_args.kwargs["token_teams"] == []
+        assert svc.invoke_agent.await_args[0][1][0]["token_teams"] == []
 
         svc.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
         with pytest.raises(HTTPException) as excinfo:
@@ -3996,10 +3997,12 @@ class TestA2ABranchCoverage:
 
         # Cover user_id=str(user) branch by bypassing RBAC wrapper.
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
-        svc.invoke_agent = AsyncMock(return_value={"ok": True})
+        svc.invoke_agent = AsyncMock(
+            return_value=[{"status_code": 200, "parsed": {"ok": True}}]
+        )
         result = await main_mod.invoke_a2a_agent.__wrapped__("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user="basic-user")
         assert result["ok"] is True
-        assert svc.invoke_agent.await_args.kwargs["user_id"] == "basic-user"
+        assert svc.invoke_agent.await_args[0][1][0]["user_id"] == "basic-user"
 
     @pytest.mark.asyncio
     async def test_list_and_get_a2a_agents_branches(self, monkeypatch):

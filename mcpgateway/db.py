@@ -5694,6 +5694,54 @@ def get_for_update(
     return db.execute(stmt).scalar_one_or_none()
 
 
+def get_for_update_many(
+    db: Session,
+    model: type,
+    entity_ids: List[Any],
+    *,
+    skip_locked: bool = False,
+    nowait: bool = False,
+    lock_timeout_ms: Optional[int] = None,
+) -> List[Any]:
+    """Get multiple entities with row locks in one query (batch FOR UPDATE).
+
+    Args:
+        db: SQLAlchemy Session.
+        model: ORM model class (must have primary key attribute `id`).
+        entity_ids: List of primary key values.
+        skip_locked: If True, skip locked rows (returns fewer results). Default False.
+        nowait: If True, fail immediately if any row is locked. Default False.
+        lock_timeout_ms: Optional lock timeout in milliseconds (PostgreSQL only).
+
+    Returns:
+        List of model instances in id order. On SQLite, FOR UPDATE is not applied.
+
+    Notes:
+        - On PostgreSQL: single SELECT ... WHERE id IN (...) ORDER BY id FOR UPDATE.
+        - On SQLite: single SELECT ... WHERE id IN (...), no FOR UPDATE.
+        - Empty entity_ids returns [].
+    """
+    if not entity_ids:
+        return []
+    dialect = ""
+    try:
+        dialect = db.bind.dialect.name
+    except Exception:
+        dialect = ""
+    pk_col = getattr(model, "id", None)
+    if pk_col is None:
+        return []
+    stmt = select(model).where(pk_col.in_(entity_ids)).order_by(pk_col)
+    if dialect != "postgresql":
+        rows = db.execute(stmt).scalars().all()
+        return list(rows)
+    if lock_timeout_ms is not None:
+        db.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'"))
+    stmt = stmt.with_for_update(skip_locked=skip_locked, nowait=nowait)
+    rows = db.execute(stmt).scalars().all()
+    return list(rows)
+
+
 # Using the existing get_db generator to create a context manager for fresh sessions
 fresh_db_session = contextmanager(get_db)  # type: ignore
 

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/mcpgateway/*",
+    "crates/gateway_rs/services/*",
     "crates/tools/*",
     "crates/mcp-servers/*",
     "crates/plugins/*",
@@ -32,6 +32,20 @@ tokio = { version = "1.49", features = ["full"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+
+# Logging (common for services; pyo3-log for PyO3 gateway bindings)
+log = "0.4"
+pyo3-log = "0.13"
+
+# Async utilities (likely used by many gateway/tools crates)
+bytes = "1"
+futures = "0.3"
+
+# Benchmarking (dev-dependencies of member crates)
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [profile.release]
 opt-level = 3
