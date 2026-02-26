@@ -9865,6 +9865,10 @@ function initResourceSelect(
                 }
                 allIdsInput.value = JSON.stringify(allIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
@@ -10274,6 +10278,10 @@ function initPromptSelect(
                     container.appendChild(allIdsInput);
                 }
                 allIdsInput.value = JSON.stringify(allIds);
+
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
 
                 update();
 

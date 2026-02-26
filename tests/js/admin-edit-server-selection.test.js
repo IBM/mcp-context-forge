@@ -1903,8 +1903,11 @@ describe("initToolSelect Select All populates in-memory store (#3257)", () => {
         const newSelectBtn = doc.getElementById("selectAllEditToolsBtn");
         newSelectBtn.click();
 
-        // Wait for the async click handler (fetch + DOM update) to complete
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Wait for the async click handler (fetch + DOM update) to settle
+        for (let i = 0; i < 20; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (win.getEditSelections("edit-server-tools").size >= 3) break;
+        }
 
         const editSel = win.getEditSelections("edit-server-tools");
         expect(editSel.has("tool-a")).toBe(true);
