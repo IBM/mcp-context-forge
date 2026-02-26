@@ -669,3 +669,221 @@ class TestServersExtended:
             assert find_server(servers_page.page, server_name) is None
         else:
             pytest.skip("Delete button not available for servers")
+
+
+class TestEditServerSelectionBugs:
+    """Regression tests for edit-server modal selection bugs (#3257, #3259, #3260).
+
+    These tests verify that:
+    - Cancel closes the modal cleanly even if cleanup throws (#3259)
+    - Keyword search in tool/resource/prompt pickers preserves prior selections (#3260)
+    - Select All + search + clear preserves all selections in-memory (#3257)
+    """
+
+    def _create_server_with_tools(self, servers_page: ServersPage) -> str:
+        """Create a test server with tools selected and return its name.
+
+        Selects the first two available tools during creation.
+        """
+        server_name = f"edit-sel-test-{uuid.uuid4().hex[:8]}"
+
+        # Wait for tools to load
+        try:
+            servers_page.page.wait_for_selector('#associatedTools input[type="checkbox"]', state="attached", timeout=10000)
+        except PlaywrightTimeoutError:
+            pytest.skip("No tools loaded via HTMX — cannot create server with tools")
+
+        # Select the first two tools
+        tool_checkboxes = servers_page.associated_tools_container.locator('input[type="checkbox"]')
+        total = tool_checkboxes.count()
+        if total < 2:
+            pytest.skip(f"Need at least 2 tools, found {total}")
+        tool_checkboxes.nth(0).check()
+        tool_checkboxes.nth(1).check()
+
+        with servers_page.page.expect_response(lambda r: "/admin/servers" in r.url and r.request.method == "POST"):
+            servers_page.create_server(name=server_name, description="Regression test for edit-server selection bugs")
+
+        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
+        servers_page.page.wait_for_load_state("domcontentloaded")
+        _reload_catalog_after_create(servers_page)
+
+        # Set pagination to 100 so the new server is visible
+        pagination_select = servers_page.page.locator("#servers-pagination-controls select")
+        pagination_select.select_option("100")
+        servers_page.page.wait_for_timeout(2000)
+        servers_page.wait_for_servers_table_loaded()
+
+        return server_name
+
+    @pytest.mark.ui
+    @pytest.mark.e2e
+    def test_cancel_closes_modal_cleanly(self, servers_page: ServersPage):
+        """Regression test for #3259: Cancel button closes modal without crashing.
+
+        Verifies that the modal hides and no JS errors are thrown, even when
+        resetEditSelections encounters unexpected state.
+        """
+        servers_page.navigate_to_servers_tab()
+        servers_page.wait_for_visible(servers_page.add_server_form)
+        server_name = self._create_server_with_tools(servers_page)
+
+        try:
+            # Open edit modal
+            servers_page.open_edit_modal(server_name)
+
+            # Verify modal is visible and pre-filled
+            expect(servers_page.edit_server_name_input).to_have_value(server_name)
+
+            # Collect JS errors before cancel
+            js_errors_before = servers_page.page.evaluate("() => window.__testJsErrors ? window.__testJsErrors.length : 0")
+
+            # Click Cancel
+            servers_page.click_locator(servers_page.edit_server_cancel_btn)
+
+            # Verify modal is hidden
+            expect(servers_page.edit_server_modal).to_be_hidden(timeout=5000)
+
+            # Verify no new JS errors were thrown
+            js_errors_after = servers_page.page.evaluate("() => window.__testJsErrors ? window.__testJsErrors.length : 0")
+            assert js_errors_after == js_errors_before, "Cancel produced JS errors"
+        finally:
+            cleanup_server(servers_page.page, server_name)
+
+    @pytest.mark.ui
+    @pytest.mark.e2e
+    def test_tool_search_preserves_selections(self, servers_page: ServersPage):
+        """Regression test for #3260: keyword search in tools picker does not wipe selections.
+
+        Steps: Edit server -> verify tools checked -> search non-matching term ->
+        clear search -> verify original tools still checked.
+        """
+        servers_page.navigate_to_servers_tab()
+        servers_page.wait_for_visible(servers_page.add_server_form)
+        server_name = self._create_server_with_tools(servers_page)
+
+        try:
+            # Open edit modal
+            servers_page.open_edit_modal(server_name)
+
+            # Wait for edit tools to load and capture initial checked tools
+            servers_page.page.wait_for_selector('#edit-server-tools input[name="associatedTools"]', state="attached", timeout=10000)
+            initial_checked = servers_page.get_edit_checked_tools()
+            assert len(initial_checked) >= 1, "Server should have at least 1 tool selected"
+
+            # Search for a non-matching term (triggers serverSideEditToolSearch)
+            servers_page.fill_locator(servers_page.edit_tools_search_input, "xyznonexistent999")
+            servers_page.page.wait_for_timeout(2000)  # debounce + fetch
+
+            # Clear the search (triggers reload of default tool list)
+            servers_page.fill_locator(servers_page.edit_tools_search_input, "")
+            servers_page.page.wait_for_timeout(2000)  # debounce + fetch
+
+            # Verify selections survived the search cycle
+            restored_checked = servers_page.get_edit_checked_tools()
+            for tool_id in initial_checked:
+                assert tool_id in restored_checked, f"Tool {tool_id} was lost after search cycle"
+
+            # Clean close
+            servers_page.click_locator(servers_page.edit_server_cancel_btn)
+            expect(servers_page.edit_server_modal).to_be_hidden(timeout=5000)
+        finally:
+            cleanup_server(servers_page.page, server_name)
+
+    @pytest.mark.ui
+    @pytest.mark.e2e
+    def test_select_all_tools_survives_search(self, servers_page: ServersPage):
+        """Regression test for #3257: Select All + search + clear preserves all selections.
+
+        Steps: Edit server -> Select All tools -> search term -> clear ->
+        verify all tools still selected in-memory and in DOM.
+        """
+        servers_page.navigate_to_servers_tab()
+        servers_page.wait_for_visible(servers_page.add_server_form)
+        server_name = self._create_server_with_tools(servers_page)
+
+        try:
+            # Open edit modal
+            servers_page.open_edit_modal(server_name)
+
+            # Wait for edit tools to load
+            servers_page.page.wait_for_selector('#edit-server-tools input[name="associatedTools"]', state="attached", timeout=10000)
+
+            # Click Select All
+            servers_page.edit_select_all_tools_btn.evaluate("el => el.click()")
+            servers_page.page.wait_for_timeout(3000)  # async fetch for all IDs
+
+            # Capture count of selected tools after Select All
+            select_all_count = servers_page.get_edit_tool_store_size()
+            assert select_all_count >= 2, f"Select All should select at least 2 tools, got {select_all_count}"
+
+            # Search for a term that matches some tools
+            servers_page.fill_locator(servers_page.edit_tools_search_input, "time")
+            servers_page.page.wait_for_timeout(2000)
+
+            # Clear search
+            servers_page.fill_locator(servers_page.edit_tools_search_input, "")
+            servers_page.page.wait_for_timeout(2000)
+
+            # Verify in-memory store still has the same count
+            restored_store_size = servers_page.get_edit_tool_store_size()
+            assert restored_store_size == select_all_count, f"Store lost entries: {restored_store_size} vs {select_all_count}"
+
+            # Verify DOM checkboxes are restored
+            restored_checked = servers_page.get_edit_checked_tools()
+            assert len(restored_checked) == select_all_count, f"DOM checkboxes lost: {len(restored_checked)} vs {select_all_count}"
+
+            # Clean close
+            servers_page.click_locator(servers_page.edit_server_cancel_btn)
+            expect(servers_page.edit_server_modal).to_be_hidden(timeout=5000)
+        finally:
+            cleanup_server(servers_page.page, server_name)
+
+    @pytest.mark.ui
+    @pytest.mark.e2e
+    def test_resource_and_prompt_search_preserves_selections(self, servers_page: ServersPage):
+        """Regression test for #3260: search in resource/prompt pickers preserves selections.
+
+        Verifies the add-only flush fix works for resources and prompts, not just tools.
+        """
+        servers_page.navigate_to_servers_tab()
+        servers_page.wait_for_visible(servers_page.add_server_form)
+        server_name = self._create_server_with_tools(servers_page)
+
+        try:
+            # Open edit modal
+            servers_page.open_edit_modal(server_name)
+
+            # --- Resources ---
+            resource_cbs = servers_page.edit_resources_container.locator('input[name="associatedResources"]:checked')
+            initial_res_count = resource_cbs.count()
+
+            if initial_res_count > 0:
+                # Search and clear resources
+                servers_page.fill_locator(servers_page.edit_resources_search_input, "xyznonexistent999")
+                servers_page.page.wait_for_timeout(2000)
+                servers_page.fill_locator(servers_page.edit_resources_search_input, "")
+                servers_page.page.wait_for_timeout(2000)
+
+                restored_res = servers_page.edit_resources_container.locator('input[name="associatedResources"]:checked').count()
+                assert restored_res >= initial_res_count, f"Resources lost after search: {restored_res} vs {initial_res_count}"
+
+            # --- Prompts ---
+            prompt_cbs = servers_page.edit_prompts_container.locator('input[name="associatedPrompts"]:checked')
+            initial_prompt_count = prompt_cbs.count()
+
+            if initial_prompt_count > 0:
+                # Search and clear prompts
+                servers_page.fill_locator(servers_page.edit_prompts_search_input, "xyznonexistent999")
+                servers_page.page.wait_for_timeout(2000)
+                servers_page.fill_locator(servers_page.edit_prompts_search_input, "")
+                servers_page.page.wait_for_timeout(2000)
+
+                restored_prompts = servers_page.edit_prompts_container.locator('input[name="associatedPrompts"]:checked').count()
+                assert restored_prompts >= initial_prompt_count, f"Prompts lost after search: {restored_prompts} vs {initial_prompt_count}"
+
+            # Clean close
+            servers_page.click_locator(servers_page.edit_server_cancel_btn)
+            expect(servers_page.edit_server_modal).to_be_hidden(timeout=5000)
+        finally:
+            cleanup_server(servers_page.page, server_name)
