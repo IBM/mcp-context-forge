@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/mcpgateway/*",
+    "crates/tools/*",
+    "crates/mcp-servers/*",
+    "crates/plugins/*",
+]
+
+[workspace.package]
+version = "1.0.0-BETA-2"
+edition = "2024"
+authors = ["ContextForge Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
+
+[workspace.dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
+
+# HTTP client (native-tls to avoid CDLA-Permissive-2.0 from rustls-platform-verifier)
+reqwest = { version = "0.13", default-features = false, features = [
+    "native-tls",
+    "json",
+    "stream",
+    "http2",
+] }
+
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
+debug = true

@@ -21,14 +21,15 @@ MCP Gateway supports high-performance Rust implementations of plugins through Py
 ### Independent Plugin Structure
 
 ```
-plugins_rust/
+crates/plugins/
 ├── [plugin_name]/        # Each plugin is fully independent
 │   ├── Cargo.toml        # Rust dependencies
 │   ├── pyproject.toml    # Python packaging
-│   ├── Makefile          # Build commands
+│   ├── Makefile          # Build commands (optional)
 │   └── src/              # Rust source code
 └── [another_plugin]/     # Another independent plugin
 ```
+(Rust plugins live under the repo workspace; build from repo root with `make rust-install`.)
 
 ### Hybrid Python + Rust Design
 
@@ -51,7 +52,7 @@ plugins_rust/
                │ PyO3 Bindings
                ▼
 ┌──────────────────────────────────────┐
-│ Rust Implementation (plugins_rust/) │
+│ Rust Implementation (crates/plugins/) │
 │                                      │
 │  ┌────────────────────────────────┐  │
 │  │ Plugin Engine                  │  │
@@ -72,9 +73,8 @@ plugins_rust/
 # Install Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Build specific plugin
-cd plugins_rust/[plugin_name]
-make install
+# Install all maturin crates (from repo root; discovers crates/plugins, crates/tools, crates/mcpgateway, etc.)
+make rust-install
 
 # Or build all plugins from project root
 make rust-dev 
@@ -189,17 +189,15 @@ WARNING - 💡 Build Rust plugins for better performance
 ### Build Steps
 
 ```bash
-# Navigate to a specific Rust plugin directory
-cd plugins_rust/pii_filter
+# From project root: install maturin crates into venv
+make rust-install
 
-# Build in development mode (with debug symbols)
-maturin develop
-
-# Build in release mode (optimized)
+# Or navigate to a specific Rust plugin and build
+cd crates/plugins/pii_filter
 maturin develop --release
 
-# Build wheel package
-maturin build --release
+# Build wheel package (from repo root)
+make rust-build-wheels
 ```
 
 ### Using Make
@@ -212,11 +210,11 @@ make rust-test             # Run Rust unit tests
 make rust-verify           # Verify installation
 
 # From individual plugin directory
-cd plugins_rust/pii_filter
-make develop               # Build and install
-make test                  # Run tests
-make bench                 # Run benchmarks
-make bench-compare         # Compare Rust vs Python performance
+cd crates/plugins/pii_filter
+maturin develop --release   # Build and install
+cargo test                  # Run tests
+cargo bench                 # Run benchmarks
+# From repo root: make rust-compare for Rust vs Python comparison
 ```
 
 ## Performance Benchmarking
@@ -225,8 +223,8 @@ make bench-compare         # Compare Rust vs Python performance
 
 ```bash
 # Run Rust benchmarks (Criterion) for a specific plugin
-cd plugins_rust/pii_filter
-make bench
+cd crates/plugins/pii_filter
+cargo bench
 
 # Run Python vs Rust comparison
 make bench-compare
@@ -272,9 +270,9 @@ Average Speedup: 7.8x
 ### Running Tests
 
 ```bash
-# Rust unit tests (from a specific plugin directory)
-cd plugins_rust/pii_filter
-cargo test
+# Rust unit tests (from repo root or plugin directory)
+make rust-test
+# Or: cd crates/plugins/pii_filter && cargo test
 
 # Python integration tests
 pytest tests/unit/mcpgateway/plugins/test_pii_filter.py
@@ -304,11 +302,10 @@ The Rust plugin system includes comprehensive testing:
 **Solutions**:
 ```bash
 # 1. Check if Rust extension is installed
-python -c "from pii_filter import PIIDetectorRust; print('OK')"
+python -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('OK')"
 
-# 2. Build from source
-cd plugins_rust/pii_filter
-maturin develop --release
+# 2. Build from source (from repo root)
+make rust-install
 ```
 
 ### Import Errors
@@ -320,9 +317,8 @@ maturin develop --release
 # 1. Verify installation
 pip list | grep mcpgateway-pii-filter
 
-# 2. Rebuild
-cd plugins_rust/pii_filter
-maturin develop --release
+# 2. Rebuild (from repo root)
+make rust-install
 
 # 3. Check Python version (requires 3.11+)
 python --version
@@ -357,8 +353,8 @@ assert plugin.implementation == "rust", "Not using Rust!"
 
 1. **Create Plugin Directory**:
 ```bash
-mkdir plugins_rust/my_plugin
-cd plugins_rust/my_plugin
+mkdir crates/plugins/my_plugin
+cd crates/plugins/my_plugin
 ```
 
 2. **Initialize Rust Project**:
@@ -445,14 +441,15 @@ class MyPlugin(Plugin):
 The repository includes automated CI/CD for Rust plugins:
 
 ```yaml
-# .github/workflows/rust-plugins.yml
+# .github/workflows/rust.yml
 - Multi-platform builds (Linux, macOS, Windows)
-- Rust linting (clippy, rustfmt)
-- Comprehensive testing (unit, integration, differential)
-- Performance benchmarking
-- Security audits (cargo-audit)
-- Code coverage tracking
-- Automatic wheel publishing to PyPI
+- Rust build, fmt, clippy, test (workspace)
+- Wheel builds for all maturin crates under crates/
+- Security audit (cargo audit)
+- License check (cargo-deny)
+- Coverage (cargo-llvm-cov)
+- Documentation build
+- Release and PyPI publish on tags
 ```
 
 ### Local CI Checks
@@ -479,7 +476,7 @@ make rust-coverage         # Code coverage report
 ### Configuration for Best Performance
 
 ```toml
-# plugins_rust/Cargo.toml
+# Cargo.toml (workspace root) or crates/plugins/<name>/Cargo.toml
 [profile.release]
 opt-level = 3              # Maximum optimization
 lto = "fat"                # Full link-time optimization
@@ -499,9 +496,9 @@ strip = true               # Strip symbols for smaller binary
 ### Audit and Compliance
 
 ```bash
-# Run security audit (from a specific plugin directory)
-cd plugins_rust/pii_filter
-cargo audit
+# Run security audit (from repo root)
+make rust-audit
+# Or: cd crates/plugins/pii_filter && cargo audit
 ```
 
 ## Future Rust Plugins
@@ -522,9 +519,7 @@ Planned Rust implementations:
 - [Maturin Guide](https://www.maturin.rs)
 
 ### Project Files
-- `plugins_rust/README.md` - Detailed Rust plugin documentation
-- `plugins_rust/IMPLEMENTATION_STATUS.md` - Implementation status and results
-- `plugins_rust/BUILD_AND_TEST_RESULTS.md` - Build and test report
+- `crates/plugins/README.md` - Rust plugin documentation and structure
 
 ### Community
 - GitHub Issues: https://github.com/IBM/mcp-context-forge/issues

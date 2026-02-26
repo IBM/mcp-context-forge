@@ -68,7 +68,7 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 EXTRA_DIRS_TO_CLEAN := reports test-results tests/playwright/reports \
 	tests/playwright/screenshots tests/playwright/videos \
 	tests/jmeter/results tests/async/profiles tests/async/reports \
-	tests/migration/reports tests/migration/logs .jmeter plugins_rust/target
+	tests/migration/reports tests/migration/logs .jmeter target
 
 EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
 	playwright-report-*.html test-results-*.xml \
@@ -178,8 +178,8 @@ install-db: venv
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-dev || echo "⚠️  Rust not available (optional)"; \
 	else \
 		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
 	fi
@@ -1501,7 +1501,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
-# help: bench-compare          - Run performance comparisons for Rust plugins
+# help: bench-compare          - Run performance comparisons for Rust (maturin crates)
 # help:
 # help: Environment variables:
 # help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
@@ -1551,8 +1551,8 @@ benchmark-status:                          ## Show status of benchmark services
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
 
-bench-compare:                             ## Run performance comparisons for Rust plugins
-	@$(MAKE) -C plugins_rust bench-compare
+bench-compare:                             ## Run performance comparisons for Rust (maturin crates)
+	@$(MAKE) rust-bench-compare
 
 # =============================================================================
 # 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
@@ -4368,12 +4368,12 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
+dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
 	@uv build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
 		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
@@ -4389,7 +4389,7 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@uv build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
 		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
@@ -4485,8 +4485,8 @@ endef
 # help: container-build      - Build image using detected runtime
 # help: container-build-multi - Build multiplatform image (amd64/arm64/s390x,ppc64le) locally
 # help: container-inspect-manifest - Inspect multiplatform manifest in registry
-# help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
-# help: container-build-rust-lite - Build lite image WITH Rust plugins
+# help: container-build-rust - Build image WITH Rust (ENABLE_RUST_BUILD=1)
+# help: container-build-rust-lite - Build lite image WITH Rust
 # help: container-rust       - Build with Rust and run container (all-in-one)
 # help: container-run        - Run container using detected runtime
 # help: container-run-host   - Run container using detected runtime with host networking
@@ -4542,10 +4542,10 @@ container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
 	@RUST_ARG=""; PROFILING_ARG=""; \
 	if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building container WITH Rust plugins..."; \
+		echo "🦀 Building container WITH Rust..."; \
 		RUST_ARG="--build-arg ENABLE_RUST=true"; \
 	else \
-		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
+		echo "⏭️  Building container WITHOUT Rust (set ENABLE_RUST_BUILD=1 to enable)"; \
 		RUST_ARG="--build-arg ENABLE_RUST=false"; \
 	fi; \
 	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
@@ -4565,15 +4565,15 @@ container-build:
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
 
 container-build-rust:
-	@echo "🦀 Building container WITH Rust plugins..."
+	@echo "🦀 Building container WITH Rust..."
 	$(MAKE) container-build ENABLE_RUST_BUILD=1
 
 container-build-rust-lite:
-	@echo "🦀 Building lite container WITH Rust plugins..."
+	@echo "🦀 Building lite container WITH Rust..."
 	$(MAKE) container-build ENABLE_RUST_BUILD=1 CONTAINER_FILE=Containerfile.lite
 
 container-rust: container-build-rust
-	@echo "🦀 Building and running container with Rust plugins..."
+	@echo "🦀 Building and running container with Rust..."
 	$(MAKE) container-run
 
 .PHONY: container-run
@@ -7841,25 +7841,31 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🦀 RUST PLUGIN FRAMEWORK (OPTIONAL)
+# 🦀 RUST
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # help:
-# help: Rust Plugin Framework (Optional - auto-installs Rust + maturin if needed)
+# help: Rust (auto-installs Rust + maturin if needed)
 # help: ========================================================================================================
-# help: rust-install                          - Install all Rust plugins into venv
-# help: rust-ensure-deps                      - Ensure Rust toolchain, maturin, and all plugins are installed
-# help: rust-build                            - Build Rust plugins in release mode (native)
-# help: rust-dev                              - Build and install Rust plugins in development mode
-# help: rust-test                             - Run Rust plugin tests
+# help: rust-install                          - Install maturin crates into venv
+# help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are available
+# help: rust-build                            - Build Rust workspace (release)
+# help: rust-dev                              - Build and install maturin crates (development mode)
+# help: rust-test                             - Run Rust workspace tests
 # help: rust-test-integration                 - Run Rust integration tests
 # help: rust-test-all                         - Run all Rust and Python integration tests
-# help: rust-bench                            - Run Rust plugin benchmarks
+# help: rust-bench                            - Run Rust workspace benchmarks
 # help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
 # help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
-# help: rust-check                            - Run all Rust checks (format, lint, test)
-# help: rust-verify                           - Verify Rust plugin installation
-# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for all Rust plugins
+# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
+# help: rust-build-check                      - Build workspace (debug, no release)
+# help: rust-format                           - Format Rust code (cargo fmt)
+# help: rust-fmt-check                        - Check formatting (cargo fmt --check)
+# help: rust-lint                             - Lint Rust code (cargo clippy)
+# help: rust-verify                           - Verify maturin crate installation
+# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for maturin crates
+# help: rust-stub-gen                         - Generate Python type stubs for maturin crates (workspace)
 # help: rust-clean                            - Clean Rust build artifacts
+# help: rust-licenses                         - Run cargo-deny license check (workspace)
 # help:
 # help: rust-install-deps                     - Install all Rust build dependencies
 # help: rust-install-targets                  - Install all Rust cross-compilation targets
@@ -7869,11 +7875,14 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-cross                            - Install targets + build all Linux (convenience)
 # help: rust-cross-install-build              - Install targets + build all platforms (one command)
 
-.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 
-rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
+# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml (plugins, tools, mcpgateway, etc.)
+RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
+
+rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \
 		echo "🦀 Rust not found. Installing Rust toolchain..."; \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
@@ -7899,55 +7908,180 @@ rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and a
 		fi; \
 	fi
 
-rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
-	@$(MAKE) -C plugins_rust install
+rust-install: rust-ensure-deps rust-stub-gen  ## Install maturin crates into venv
+	@echo "🦀 Installing maturin crates into venv (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Installing $$crate..."; \
+		uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All maturin crates installed"
 
-rust-build: rust-ensure-deps            ## Build Rust plugins (release)
-	@$(MAKE) -C plugins_rust build
+rust-build: rust-ensure-deps            ## Build Rust workspace (release)
+	@echo "🦀 Building Rust workspace (release)..."
+	@cargo build --workspace --release
+	@echo "✅ Rust workspace built"
 
-rust-dev: rust-ensure-deps              ## Build and install Rust plugins (development mode)
-	@$(MAKE) -C plugins_rust install
+rust-build-check: rust-ensure-deps                   ## Build Rust workspace + verify all maturin crates build (debug, for CI)
+	@echo "🦀 Building Rust workspace..."
+	@cargo build --workspace
+	@echo "🦀 Verifying all maturin crates build..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building maturin crate: $$crate"; \
+		uv run maturin build --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ Rust workspace and all maturin crates build OK"
 
-rust-test: rust-ensure-deps             ## Run Rust plugin tests
-	@$(MAKE) -C plugins_rust test
+rust-dev: rust-install                 ## Build and install maturin crates (development mode)
 
-rust-test-integration: rust-ensure-deps ## Run Rust integration tests
-	@$(MAKE) -C plugins_rust test-integration
+rust-test: rust-ensure-deps             ## Run Rust workspace tests
+	@echo "🦀 Running Rust workspace tests..."
+	@cargo test --workspace
+	@echo "✅ Rust tests passed"
+
+rust-format: rust-ensure-deps           ## Format Rust code (cargo fmt)
+	@echo "🦀 Formatting Rust code..."
+	@cargo fmt --all
+	@echo "✅ Rust code formatted"
+
+rust-fmt-check: rust-ensure-deps        ## Check formatting (cargo fmt --check)
+	@echo "🦀 Checking Rust code format..."
+	@cargo fmt --all -- --check
+	@echo "✅ Rust format check passed"
+
+rust-lint: rust-ensure-deps            ## Lint Rust code (cargo clippy)
+	@echo "🦀 Linting Rust workspace..."
+	@cargo clippy --workspace --all-targets -- -D warnings
+	@echo "✅ Rust lint passed"
+
+rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
+	@echo "✅ Rust check passed"
+
+rust-python-test: rust-install          ## Run Python tests for maturin crates (installs first)
+	@echo "🦀 Running Python tests for maturin crates..."
+	@k=$$(for crate in $(RUST_MATURIN_CRATES); do basename $$crate; done | tr '\n' ' ' | sed 's/ / or /g'); \
+	uv run pytest tests -k "$$k" -v 2>/dev/null || uv run pytest tests -v
+	@echo "✅ Maturin crate Python tests passed"
 
 rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
 
 rust-bench: rust-ensure-deps            ## Run Rust benchmarks
-	@$(MAKE) -C plugins_rust bench
+	@echo "🦀 Running Rust workspace benchmarks..."
+	@cargo bench --workspace
+	@echo "✅ Rust benchmarks done"
 
 rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
-	@$(MAKE) -C plugins_rust bench-compare
+	@echo "🦀 Running performance comparisons..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/compare_performance.py ]; then \
+			echo "  Comparing $$crate..."; \
+			uv run python3 $$crate/compare_performance.py || exit 1; \
+		fi; \
+	done
+	@echo "✅ Rust bench-compare done"
 
-rust-check: rust-ensure-deps            ## Run all Rust checks (format, lint, test)
-	@$(MAKE) -C plugins_rust check
+rust-compare: rust-install              ## Run compare_performance.py only (skip Rust benchmarks)
+	@echo "🦀 Running compare_performance.py for crates that have it..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/compare_performance.py ]; then \
+			echo "  Comparing $$crate..."; \
+			uv run python3 $$crate/compare_performance.py || exit 1; \
+		fi; \
+	done
+	@echo "✅ Rust compare done"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
-	@$(MAKE) -C plugins_rust doc
+	@echo "🦀 Building Rust documentation..."
+	@cargo doc --workspace --no-deps --document-private-items
+	@echo "✅ Rust doc built"
 
-rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust build-wheels
+rust-build-wheels: rust-ensure-deps rust-stub-gen  ## Build Python wheels for maturin crates
+	@echo "🦀 Building wheels for maturin crates (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building wheel: $$crate"; \
+		uv run maturin build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All wheels built"
 
-rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
-	@$(MAKE) -C plugins_rust audit
+rust-audit: rust-ensure-deps            ## Run security audit on Rust workspace
+	@echo "🦀 Running cargo audit..."
+	@cargo audit
+	@echo "✅ Rust audit done"
 
-rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
-	@$(MAKE) -C plugins_rust coverage
+rust-licenses: rust-ensure-deps         ## Run cargo-deny license check (workspace)
+	@echo "🦀 Running cargo-deny license check (workspace)..."
+	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install cargo-deny; }
+	@cargo deny check licenses
+	@echo "✅ Rust license check done"
 
-rust-release: rust-ensure-deps          ## Build release wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust release
+rust-coverage: rust-ensure-deps         ## Run coverage for Rust workspace
+	@echo "🦀 Running coverage (workspace)..."
+	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Install cargo-llvm-cov: cargo install cargo-llvm-cov"; exit 1; }
+	@mkdir -p coverage
+	@cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml
+	@echo "✅ Coverage written to coverage/cobertura.xml"
+
+rust-release: rust-build-wheels        ## Build release wheels for maturin crates
 
 rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
-	@$(MAKE) -C plugins_rust release-publish
+	@echo "🦀 Publishing maturin crate wheels to PyPI..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Publishing: $$crate"; \
+		uv run maturin publish --manifest-path $$crate/Cargo.toml --username __token__ --password "$${MATURIN_PYPI_TOKEN}" || exit 1; \
+	done
+	@echo "✅ Publish done (set MATURIN_PYPI_TOKEN)"
 
-rust-clean: rust-ensure-deps            ## Clean Rust build artifacts
-	@$(MAKE) -C plugins_rust clean
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall maturin crates from Python environment
+	@echo "🦀 Uninstalling maturin crates from venv..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(grep '^name = ' $$crate/pyproject.toml 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
+		[ -n "$$pkg" ] && uv pip uninstall -y "$$pkg" 2>/dev/null || true; \
+	done
+	@echo "✅ Maturin crates uninstalled"
 
-rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
-	@$(MAKE) -C plugins_rust verify
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall maturin crates
+	@$(MAKE) --no-print-directory rust-uninstall-plugins
+	@echo "🦀 Cleaning Rust build artifacts..."
+	@cargo clean
+	@rm -rf target
+	@echo "✅ Rust clean done"
+
+rust-verify: rust-ensure-deps           ## Verify maturin crate installation
+	@echo "🦀 Verifying maturin crate installations..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(sed -n '/^\[lib\]/,/^\[/p' $$crate/Cargo.toml 2>/dev/null | grep '^name = ' | head -1 | sed 's/.*"\([^"]*\)".*/\1/'); \
+		[ -z "$$pkg" ] && { echo "  ❌ $$crate: no [lib] name in Cargo.toml"; exit 1; }; \
+		uv run python -c "import $$pkg; print('  ✅ $$pkg')" || { echo "  ❌ $$pkg not installed"; exit 1; }; \
+	done
+	@echo "✅ All maturin crates verified"
+
+rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for maturin crates
+	@echo "🦀 Verifying stub files and pyproject.toml..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ ! -f $$crate/pyproject.toml ]; then echo "❌ $$crate: pyproject.toml missing"; exit 1; fi; \
+		pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
+		if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
+		if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
+		echo "  ✅ $$crate"; \
+	done
+	@echo "✅ All stubs verified"
+
+rust-clean-stubs: rust-ensure-deps      ## Remove generated stub files from maturin crates
+	@echo "🦀 Removing generated stub files..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		find $$crate/python -name "__init__.pyi" -type f -delete 2>/dev/null || true; \
+	done
+	@echo "✅ Rust clean-stubs done"
+
+rust-stub-gen: rust-ensure-deps         ## Generate Python type stubs for maturin crates that have stub_gen
+	@echo "🦀 Generating Python type stubs..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/src/bin/stub_gen.rs ]; then \
+			pkg=$$(grep '^name = ' $$crate/Cargo.toml 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
+			echo "  Stub-gen: $$pkg"; \
+			cargo run -p $$pkg --bin "$${pkg}_stub_gen" || exit 1; \
+		fi; \
+	done
+	@echo "✅ All stub files generated"
 
 rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
 	@echo "✅ Rust build dependencies installed"
@@ -7966,17 +8100,22 @@ rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation ta
 rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
 	@echo "🎯 Ensuring Rust target $* is installed..."
 	@rustup target add $*
-	@$(MAKE) -C plugins_rust build-target-$*
+	@echo "🦀 Building maturin crates for target $*..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building $$crate for $*..."; \
+		uv run maturin build --release --manifest-path $$crate/Cargo.toml --target $* || exit 1; \
+	done
+	@echo "✅ Built for $*"
 
 rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
 	@echo "✅ Built for all Linux architectures"
 
 rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
 	@echo "🦀 Building for macOS..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@$(MAKE) -C plugins_rust build-target-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
+	@$(MAKE) --no-print-directory rust-build-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
+	@$(MAKE) --no-print-directory rust-build-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
 	@echo "🦀 Building for Windows..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
+	@$(MAKE) --no-print-directory rust-build-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
 	@echo "✅ Built for all platforms"
 
 rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)

@@ -26,22 +26,22 @@ ENV PATH="/root/.cargo/bin:$PATH"
 
 WORKDIR /build
 
-# Copy only Rust plugin files (only if ENABLE_RUST=true)
-COPY plugins_rust/ /build/plugins_rust/
+# Copy workspace and crates (only if ENABLE_RUST=true)
+COPY Cargo.toml Cargo.lock /build/
+COPY crates/ /build/crates/
 
-# Build each Rust plugin independently using Python 3.12 from manylinux image
-# Each plugin has its own Cargo.toml and is built separately
+# Build each maturin crate (any dir under crates/ with Cargo.toml + pyproject.toml)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         mkdir -p /build/rust-wheels && \
         /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        for plugin_dir in /build/plugins_rust/*/; do \
-            if [ -f "$plugin_dir/Cargo.toml" ]; then \
-                plugin_name=$(basename "$plugin_dir"); \
-                echo "🦀 Building Rust plugin: $plugin_name"; \
-                (cd "$plugin_dir" && /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --out /build/rust-wheels) || exit 1; \
-            fi; \
+        for plugin_dir in $$(find /build/crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done); do \
+            [ -z "$$plugin_dir" ] && continue; \
+            plugin_name=$$(basename "$$plugin_dir"); \
+            echo "🦀 Building Rust crate: $$plugin_name"; \
+            /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 \
+                --manifest-path "$$plugin_dir/Cargo.toml" --out /build/rust-wheels; \
         done && \
-        echo "✅ Rust plugins built successfully"; \
+        echo "✅ Rust crates built successfully"; \
     else \
         echo "⏭️  Skipping Rust plugin build"; \
     fi
