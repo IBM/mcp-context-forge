@@ -3167,7 +3167,7 @@ class GatewayRead(BaseModelWithConfigDict):
     - enabled status
     - reachable status
     - Last seen timestamp
-    - Authentication type: basic, bearer, headers, oauth
+    - Authentication type: basic, bearer, authheaders, oauth
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
 
@@ -3175,8 +3175,8 @@ class GatewayRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     """
 
     id: Optional[str] = Field(None, description="Unique ID of the gateway")
@@ -4934,7 +4934,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Authentication type: basic, bearer, headers, oauth, query_param
+    - Authentication type: basic, bearer, authheaders, oauth, query_param
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
     - Query parameter authentication (key name and masked value)
@@ -4943,8 +4943,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     - Query param key: for query_param auth
     - Query param value (masked): for query_param auth
     """

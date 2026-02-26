@@ -178,7 +178,7 @@ class TestGatewayServiceExtended:
 
         # Create an encoded auth string (simulates what the DB stores after gateway create)
         # First-Party
-        from mcpgateway.utils.services_auth import decode_auth, encode_auth
+        from mcpgateway.utils.services_auth import encode_auth
 
         original_headers = {"X-Api-Key": "secret123", "Authorization": "Bearer tok"}
         encoded = encode_auth(original_headers)
