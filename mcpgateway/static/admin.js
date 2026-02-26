@@ -16768,7 +16768,9 @@ async function handleEditResFormSubmit(e) {
 }
 
 function isUiResourceUri(uri) {
-    return typeof uri === "string" && uri.trim().toLowerCase().startsWith("ui://");
+    return (
+        typeof uri === "string" && uri.trim().toLowerCase().startsWith("ui://")
+    );
 }
 
 function bindMcpAppMimeHelper(uriInputId, mimeInputId, helperId) {
@@ -16786,7 +16788,9 @@ function bindMcpAppMimeHelper(uriInputId, mimeInputId, helperId) {
     mimeField.dataset.mcpAppMimeHelperBound = "true";
 
     const updateHelperVisibility = () => {
-        const shouldShow = document.activeElement === mimeField && isUiResourceUri(uriField.value);
+        const shouldShow =
+            document.activeElement === mimeField &&
+            isUiResourceUri(uriField.value);
         helperText.classList.toggle("hidden", !shouldShow);
     };
 
