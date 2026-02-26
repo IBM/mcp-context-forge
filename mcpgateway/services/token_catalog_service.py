@@ -453,13 +453,14 @@ class TokenCatalogService:
             if not membership:
                 raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
-        # Check for duplicate active token name for this user+team
+        # Check for duplicate active token name for this user (global, independent of team_id,
+        # matching DB constraint uq_email_api_tokens_user_name which enforces user_email+name)
         existing_token = self.db.execute(
-            select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True)))
+            select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.is_active.is_(True)))
         ).scalar_one_or_none()
 
         if existing_token:
-            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in team {team_id}. Please choose a different name.")
+            raise ValueError(f"Token with name '{name}' already exists for user {user_email}. Token names must be unique per user across all teams. Please choose a different name.")
 
         # CALCULATE EXPIRATION DATE
         expires_at = None

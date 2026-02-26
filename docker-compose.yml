@@ -847,7 +847,7 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
+      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (4x IDLE_TRANSACTION_TIMEOUT; DB_POOL_RECYCLE=60 is half this, ensuring proactive recycle before PgBouncer closes them)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
