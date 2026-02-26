@@ -3383,7 +3383,7 @@ class TestPluginExceptionHandlers:
         assert content["error"]["code"] == -32602
 
     def test_plugin_violation_invalid_http_status_code_above_range(self):
-        """Test that invalid HTTP status code above 599 defaults to None and uses mapping."""
+        """Test that invalid HTTP status code above 511 defaults to None and uses mapping."""
         # Standard
         import asyncio
 
@@ -3396,7 +3396,7 @@ class TestPluginExceptionHandlers:
             reason="Invalid status",
             description="Status code above valid range",
             code="RATE_LIMIT",  # Has mapping to 429
-            http_status_code=600,  # Invalid: above 599
+            http_status_code=512  # Invalid: above 511
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
@@ -3421,7 +3421,7 @@ class TestPluginExceptionHandlers:
             reason="Invalid status",
             description="Status code invalid, no mapping",
             code="UNKNOWN_CODE",  # Not in mapping
-            http_status_code=1000,  # Invalid: way above 599
+            http_status_code=1000,  # Invalid: way above 511
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
@@ -3433,7 +3433,7 @@ class TestPluginExceptionHandlers:
         assert content["error"]["code"] == -32602
 
     def test_plugin_violation_valid_http_status_code_edge_cases(self):
-        """Test that valid edge case HTTP status codes (400, 599) are accepted."""
+        """Test that valid edge case HTTP status codes (400, 511) are accepted."""
         # Standard
         import asyncio
 
@@ -3453,16 +3453,16 @@ class TestPluginExceptionHandlers:
         result_400 = asyncio.run(plugin_violation_exception_handler(None, exc_400))
         assert result_400.status_code == 400
 
-        # Test upper boundary (599)
-        violation_599 = PluginViolation(
+        # Test upper boundary (511)
+        violation_511 = PluginViolation(
             reason="Network error",
-            description="Valid status 599",
+            description="Valid status 511",
             code="ERROR",
-            http_status_code=599,  # Valid: exactly 599
+            http_status_code=511,  # Valid: exactly 511
         )
-        exc_599 = PluginViolationError(message="Status 599", violation=violation_599)
-        result_599 = asyncio.run(plugin_violation_exception_handler(None, exc_599))
-        assert result_599.status_code == 599
+        exc_511 = PluginViolationError(message="Status 511", violation=violation_511)
+        result_511 = asyncio.run(plugin_violation_exception_handler(None, exc_511))
+        assert result_511.status_code == 511
 
     def test_plugin_exception_handler_with_full_error(self):
         """Test plugin_exception_handler with complete error details."""

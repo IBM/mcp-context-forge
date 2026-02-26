@@ -207,7 +207,7 @@ def _select_most_restrictive(
         "limited": True,
         "remaining": remaining,
         "reset_in": retry_after,
-        "dimensions": [m for _, _, _, m in allowed_dims],
+        "dimensions": {"allowed": [m for _, _, _, m in allowed_dims]},
     }
     return True, limit, remaining, reset_ts, aggregated_meta
 

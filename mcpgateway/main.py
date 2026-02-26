@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import html
+import re
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
@@ -87,7 +88,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode
+from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -1408,6 +1409,51 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
     return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
+def _validate_http_headers(headers: dict[str, str]) -> Optional[dict[str, str]]:
+    """Validate headers according to RFC 9110.
+
+    Args:
+        headers: dict of headers
+
+    Returns:
+        Optional[dict[str, str]]: dictionary of valid headers
+
+    Rules enforced:
+      - Header name must match RFC 9110 'token'.
+      - No whitespace before colon (enforced by dictionary usage).
+      - Header value must not contain CTL characters (0x00–0x1F, 0x7F).
+    """
+
+    # RFC 9110 'token' definition:
+    # token = 1*tchar
+    # tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*"
+    #         / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
+    #         / DIGIT / ALPHA
+    header_key = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+    validated: dict[str, str] = {}
+    for key, value in headers.items():
+        # Validate header name (RFC 9110)
+        if not re.match(header_key, key):
+            logger.warning(f"Invalid header name: {key}")
+            continue
+        # Validate header value (no CRLF)
+        if "\r" in value or "\n" in value:
+            logger.warning(f"Header value contains CRLF: {key}")
+            continue
+        # RFC 9110: Reject CTLs (0x00–0x1F, 0x7F). Allow SP (0x20) and HTAB (0x09).
+        # Further structure (quoted-string, lists, parameters) is left to higher-level parsers.
+        valid = True
+        for ch in value:
+            code = ord(ch)
+            if (0 <= code <= 31 or code == 127) and code not in (9, 32):
+                valid = False
+                break
+        if not valid:
+            continue
+        validated[key] = value
+    return validated if validated else None
+
+
 @app.exception_handler(PluginViolationError)
 async def plugin_violation_exception_handler(_request: Request, exc: PluginViolationError):
     """Handle plugins violations globally.
@@ -1469,7 +1515,7 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
 
         # Use HTTP status code from violation if present (e.g., 429 for rate limiting)
         http_status = exc.violation.http_status_code if exc.violation.http_status_code else None
-        if http_status and not 400 <= http_status <= 599:
+        if http_status and not VALID_HTTP_STATUS_CODES.get(http_status):
             logger.warning(f"Invalid HTTP status code {http_status} from violation, defaulting to 200")
             http_status = None
         if not http_status:
@@ -1487,7 +1533,9 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
 
     response = ORJSONResponse(status_code=http_status, content={"error": json_rpc_error.model_dump()})
     if headers:
-        response.headers.update(headers)
+        validatated_headers = _validate_http_headers(headers)
+        if validatated_headers:
+            response.headers.update(validatated_headers)
     return response
 
 
