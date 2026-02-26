@@ -10494,10 +10494,12 @@ function initGatewaySelect(
             try {
                 // Fetch all gateway IDs from the server.
                 // Respect View Public checkbox: omit team_id when checked.
+                // Use the correct checkbox for the active modal context.
                 const selectedTeamId = getCurrentTeamId();
-                const vpCb =
-                    document.getElementById("add-server-view-public") ||
-                    document.getElementById("edit-server-view-public");
+                const vpCbId = selectId.includes("Edit")
+                    ? "edit-server-view-public"
+                    : "add-server-view-public";
+                const vpCb = document.getElementById(vpCbId);
                 const params = new URLSearchParams();
                 if (selectedTeamId && (!vpCb || !vpCb.checked)) {
                     params.set("team_id", selectedTeamId);

@@ -429,3 +429,111 @@ describe("toggleViewPublic — gateway_id preservation", () => {
         expect(url).toContain("gateway_id=gw-1");
     });
 });
+
+// ---------------------------------------------------------------------------
+// initGatewaySelect — edit-modal Select All reads correct View Public checkbox
+// ---------------------------------------------------------------------------
+
+describe("initGatewaySelect — edit-modal Select All checkbox lookup", () => {
+    function makeGatewayEditDom() {
+        const container = doc.createElement("div");
+        container.id = "associatedEditGateways";
+        doc.body.appendChild(container);
+
+        const pills = doc.createElement("div");
+        pills.id = "selectedEditGatewayPills";
+        doc.body.appendChild(pills);
+
+        const warn = doc.createElement("div");
+        warn.id = "selectedEditGatewayWarning";
+        doc.body.appendChild(warn);
+
+        const selectBtn = doc.createElement("button");
+        selectBtn.id = "selectAllEditGatewayBtn";
+        doc.body.appendChild(selectBtn);
+
+        const clearBtn = doc.createElement("button");
+        clearBtn.id = "clearAllEditGatewayBtn";
+        doc.body.appendChild(clearBtn);
+    }
+
+    test("edit-modal Select All omits team_id when edit View Public is checked (not add)", async () => {
+        // Both checkboxes exist in DOM (as on a team-scoped page)
+        const addCb = makeCheckbox("add-server-view-public");
+        addCb.checked = false; // add-modal unchecked
+        const editCb = makeCheckbox("edit-server-view-public");
+        editCb.checked = true; // edit-modal checked
+
+        makeGatewayEditDom();
+
+        // Stubs
+        win.getCurrentTeamId = () => "team-abc";
+        win.ROOT_PATH = "";
+        let fetchedUrl = null;
+        win.fetch = vi.fn().mockImplementation((url) => {
+            fetchedUrl = url;
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ gateway_ids: [] }),
+            });
+        });
+
+        // Init with edit selectId
+        win.initGatewaySelect(
+            "associatedEditGateways",
+            "selectedEditGatewayPills",
+            "selectedEditGatewayWarning",
+            12,
+            "selectAllEditGatewayBtn",
+            "clearAllEditGatewayBtn",
+            "searchEditGateways",
+        );
+
+        // Click the replaced Select All button
+        const btn = doc.getElementById("selectAllEditGatewayBtn");
+        btn.click();
+        // Let the async handler run
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // Should NOT contain team_id because edit checkbox is checked
+        expect(fetchedUrl).not.toBeNull();
+        expect(fetchedUrl).not.toContain("team_id");
+    });
+
+    test("edit-modal Select All includes team_id when edit View Public is unchecked", async () => {
+        const addCb = makeCheckbox("add-server-view-public");
+        addCb.checked = true; // add-modal checked (should be ignored)
+        const editCb = makeCheckbox("edit-server-view-public");
+        editCb.checked = false; // edit-modal unchecked
+
+        makeGatewayEditDom();
+
+        win.getCurrentTeamId = () => "team-abc";
+        win.ROOT_PATH = "";
+        let fetchedUrl = null;
+        win.fetch = vi.fn().mockImplementation((url) => {
+            fetchedUrl = url;
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ gateway_ids: [] }),
+            });
+        });
+
+        win.initGatewaySelect(
+            "associatedEditGateways",
+            "selectedEditGatewayPills",
+            "selectedEditGatewayWarning",
+            12,
+            "selectAllEditGatewayBtn",
+            "clearAllEditGatewayBtn",
+            "searchEditGateways",
+        );
+
+        const btn = doc.getElementById("selectAllEditGatewayBtn");
+        btn.click();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(fetchedUrl).not.toBeNull();
+        expect(fetchedUrl).toContain("team_id=team-abc");
+    });
+});
