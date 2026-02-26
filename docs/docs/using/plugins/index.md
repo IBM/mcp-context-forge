@@ -37,7 +37,7 @@ If deploying the gateway as a container, set these environment variables in your
     prefix. `PLUGINS_ENABLED`, `PLUGINS_CONFIG_FILE`, and `PLUGINS_CLI_*` are shared — the same env var
     is read by both the gateway and the plugin framework. The plugin framework also has its own HTTP client
     and SSL settings (e.g., `PLUGINS_HTTPX_CONNECT_TIMEOUT`, `PLUGINS_SKIP_SSL_VERIFY`) that are independent
-    of the gateway's. See [Configuration Reference](../../manage/configuration.md#plugins-configuration)
+    of the gateway's. See [Plugin Configuration Reference](../../manage/configuration-plugins.md)
     for the full list.
 
 ## Architecture

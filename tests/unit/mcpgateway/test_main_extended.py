@@ -4805,9 +4805,7 @@ class TestMessageEndpointElicitation:
     async def test_message_endpoint_elicitation_response(self, monkeypatch):
         request = MagicMock(spec=Request)
         request.query_params = {"session_id": "session-1"}
-        request.body = AsyncMock(
-            return_value=json.dumps({"id": "req-1", "result": {"action": "accept", "content": {"foo": "bar"}}}).encode()
-        )
+        request.body = AsyncMock(return_value=json.dumps({"id": "req-1", "result": {"action": "accept", "content": {"foo": "bar"}}}).encode())
 
         # Allow permission checks to pass for direct invocation
         from mcpgateway.services.permission_service import PermissionService
@@ -6218,6 +6216,36 @@ class TestRemainingCoverageGaps:
             overrides={"mcpgateway_reverse_proxy_enabled": True},
             force_import_error={"mcpgateway.routers.reverse_proxy"},
         )
+
+    async def test_module_level_skips_plugin_settings_validation_when_plugins_disabled(self, monkeypatch):
+        mod = _import_fresh_main_module(
+            monkeypatch,
+            env={
+                "PLUGINS_ENABLED": "false",
+                "PLUGINS_SERVER_PORT": "abc",
+            },
+        )
+        await asyncio.sleep(0)
+        assert mod.plugin_manager is None
+
+    async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
+        import mcpgateway.plugins.framework.settings as plugin_settings_mod
+
+        monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
+        monkeypatch.setattr(
+            plugin_settings_mod,
+            "get_enabled_settings",
+            lambda **_kwargs: SimpleNamespace(enabled=True),
+        )
+        monkeypatch.setattr(
+            plugin_settings_mod,
+            "get_startup_settings",
+            lambda **_kwargs: SimpleNamespace(config_file="plugins/config.yaml", plugin_timeout=30),
+        )
+
+        mod = _import_fresh_main_module(monkeypatch)
+        await asyncio.sleep(0)
+        assert mod.plugin_manager is not None
 
 
 class TestHardeningHelperCoverage:

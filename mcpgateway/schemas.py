@@ -39,7 +39,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -399,7 +399,7 @@ class ToolCreate(BaseModel):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
@@ -944,7 +944,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
@@ -2613,7 +2613,7 @@ class GatewayCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description")
     @classmethod
@@ -2936,7 +2936,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description", mode="before")
     @classmethod
@@ -3859,7 +3859,7 @@ class ServerCreate(BaseModel):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -4038,7 +4038,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -4345,7 +4345,7 @@ class A2AAgentCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod
@@ -4682,7 +4682,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod

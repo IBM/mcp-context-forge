@@ -52,6 +52,7 @@ spec:
                 - ALL
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
           imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+          {{- $pluginsConfigFile := default "plugins/config.yaml" .Values.mcpContextForge.config.PLUGINS_CONFIG_FILE }}
 
           # Gateway's internal port
           ports:
@@ -195,6 +196,12 @@ spec:
             {{- if .Values.mcpContextForge.extraEnv }}
             {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
             {{- end }}
+            {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+            # Keep runtime lookup path in sync with plugin config mount path.
+            # This intentionally comes after extraEnv so it cannot drift.
+            - name: PLUGINS_CONFIG_FILE
+              value: {{ $pluginsConfigFile | quote }}
+            {{- end }}
 
           ################################################################
           # BULK ENV-VARS - pulled from ConfigMap + Secret
@@ -256,7 +263,7 @@ spec:
           {{- if .Values.mcpContextForge.pluginConfig.enabled }}
           volumeMounts:
             - name: plugin-config-volume
-              mountPath: /app/{{ coalesce .Values.mcpContextForge.config.PLUGINS_CONFIG_FILE .Values.mcpContextForge.config.PLUGIN_CONFIG_FILE "plugins/config.yaml" }}
+              mountPath: /app/{{ $pluginsConfigFile }}
               subPath: config.yaml
           {{- end }}
 {{- if .Values.mcpContextForge.pluginConfig.enabled }}

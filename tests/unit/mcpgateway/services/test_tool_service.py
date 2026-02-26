@@ -216,17 +216,25 @@ class TestToolServiceHelpersExtended:
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag should override settings."""
+        import mcpgateway.plugins.framework as pf_mod  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.settings import settings as plugin_settings  # pylint: disable=import-outside-toplevel
+
+        # Reset singleton so get_plugin_manager() re-evaluates settings
+        monkeypatch.setattr(pf_mod, "_plugin_manager", None)
         monkeypatch.setenv("PLUGINS_ENABLED", "yes")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+        plugin_settings.cache_clear()
+
+        with patch("mcpgateway.plugins.framework.PluginManager") as mock_pm:
             service = ToolService()
         assert service._plugin_manager is not None
         mock_pm.assert_called_once()
 
+        # Reset singleton again for the disabled case
+        monkeypatch.setattr(pf_mod, "_plugin_manager", None)
         monkeypatch.setenv("PLUGINS_ENABLED", "no")
-        from mcpgateway.plugins.framework.settings import settings as plugin_settings  # pylint: disable=import-outside-toplevel
-
         plugin_settings.cache_clear()
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+
+        with patch("mcpgateway.plugins.framework.PluginManager") as mock_pm:
             service = ToolService()
         assert service._plugin_manager is None
         mock_pm.assert_not_called()

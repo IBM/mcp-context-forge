@@ -808,19 +808,6 @@ toml = [
 ]
 
 [[package]]
-name = "coverage-badge"
-version = "1.1.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "coverage" },
-    { name = "setuptools" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/be/8f/e92b0a010c76b0da82709838b3f3ae9aec638d0c44dbfb1186a5751f5d2e/coverage_badge-1.1.2.tar.gz", hash = "sha256:fe7ed58a3b72dad85a553b64a99e963dea3847dcd0b8ddd2b38a00333618642c", size = 6335, upload-time = "2024-08-02T23:34:08.58Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/90/3d/5642a1a06191b2e1e0f87a2e824e6d3eb7c32c589a68ed4d1dcbd3324d63/coverage_badge-1.1.2-py2.py3-none-any.whl", hash = "sha256:d8413ce51c91043a1692b943616b450868cbeeb0ea6a0c54a32f8318c9c96ff7", size = 6493, upload-time = "2024-08-02T23:34:07.063Z" },
-]
-
-[[package]]
 name = "cryptography"
 version = "46.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -2838,7 +2825,6 @@ dev = [
     { name = "code2flow" },
     { name = "cookiecutter" },
     { name = "coverage" },
-    { name = "coverage-badge" },
     { name = "darglint" },
     { name = "diff-cover" },
     { name = "dlint" },
@@ -2890,6 +2876,7 @@ dev = [
     { name = "rich" },
     { name = "ruff" },
     { name = "settings-doc" },
+    { name = "setuptools" },
     { name = "snakeviz" },
     { name = "tomlcheck" },
     { name = "tomlkit" },
@@ -2990,7 +2977,6 @@ dev = [
     { name = "code2flow", specifier = ">=2.5.1" },
     { name = "cookiecutter", specifier = ">=2.6.0" },
     { name = "coverage", specifier = ">=7.10.7" },
-    { name = "coverage-badge", specifier = ">=1.1.2" },
     { name = "darglint", specifier = ">=1.8.1" },
     { name = "diff-cover", specifier = ">=9.0.0" },
     { name = "dlint", specifier = ">=0.16.0" },
@@ -3042,6 +3028,7 @@ dev = [
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", specifier = ">=0.13.3" },
     { name = "settings-doc", specifier = ">=4.3.2" },
+    { name = "setuptools", specifier = ">=82.0.0" },
     { name = "snakeviz", specifier = ">=2.2.2" },
     { name = "tomlcheck", specifier = ">=0.2.3" },
     { name = "tomlkit", specifier = ">=0.13.3" },

@@ -19,7 +19,8 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 
 | Page | Description |
 |------|-------------|
-| [Configuration](configuration.md) | **Complete configuration reference** - databases, environment variables, and deployment settings |
+| [Configuration](configuration.md) | **Core gateway configuration reference** - databases, environment variables, and deployment settings |
+| [Plugin Configuration](configuration-plugins.md) | **Plugin-framework configuration reference** - `PLUGINS_*` settings, runtime transports, TLS, and aliases |
 | [Password Management](password-management.md) | Password reset, account unlock, API recovery, and emergency lockout procedures |
 | [Scaling Guide](scale.md) | 📈 **Production Scaling** - Horizontal/vertical scaling, Kubernetes HPA, connection pooling, and performance tuning |
 | [Performance Tuning](tuning.md) | Optimize Gunicorn workers, database connections, and container resources |
@@ -45,7 +46,7 @@ Most operational settings (logging level, database pool size, auth mode) are con
     - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
     - Connection string: `DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp`
-    - See [Configuration Reference](configuration.md) for complete setup instructions
+    - See [Configuration Reference](configuration.md) and [Plugin Configuration](configuration-plugins.md) for complete setup instructions
 
 Update the file and restart the container or process to apply changes.
 

@@ -176,10 +176,16 @@ except RuntimeError:
 else:
     loop.create_task(bootstrap_db())
 
-# Initialize plugin manager as a singleton (honor env overrides for tests)
+# Initialize plugin manager as a singleton.
 _PLUGINS_ENABLED = settings.plugins.enabled
-_CONFIG_FILE = settings.plugins.config_file
-plugin_manager: PluginManager | None = PluginManager(_CONFIG_FILE) if _PLUGINS_ENABLED else None
+if _PLUGINS_ENABLED:
+    _plugin_settings = settings.plugins
+    # First-Party
+    from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
+
+    plugin_manager: PluginManager | None = PluginManager(_plugin_settings.config_file, timeout=_plugin_settings.plugin_timeout, hook_policies=HOOK_PAYLOAD_POLICIES)
+else:
+    plugin_manager = None  # pylint: disable=invalid-name
 
 
 # First-Party

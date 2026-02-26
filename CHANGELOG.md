@@ -287,6 +287,12 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 
 ---
 
+## [Unreleased]
+
+### Removed
+
+* `PLUGIN_CONFIG_FILE` (legacy plugin config path key). Use `PLUGINS_CONFIG_FILE` instead.
+
 ## [1.0.0-RC1] - 2026-02-17 - Security Hardening, Enterprise Controls & Quality
 
 ### Overview

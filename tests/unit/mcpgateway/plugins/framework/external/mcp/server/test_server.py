@@ -54,42 +54,34 @@ class TestExternalPluginServerInit:
         assert server._config is not None
         assert server._plugin_manager is not None
 
-    def test_init_with_env_var(self):
+    def test_init_with_env_var(self, monkeypatch):
         """Test initialization using PLUGINS_CONFIG_PATH environment variable."""
-        os.environ["PLUGINS_CONFIG_PATH"] = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
-        try:
+        monkeypatch.setenv("PLUGINS_CONFIG_PATH", "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+        server = ExternalPluginServer()
+        assert server._config_path == "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+        assert server._config is not None
+
+    def test_init_with_env_var_ignores_unrelated_invalid_plugin_fields(self, monkeypatch):
+        """Initialization should not fail on unrelated invalid plugin env variables."""
+        monkeypatch.setenv("PLUGINS_CONFIG_PATH", "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
+        server = ExternalPluginServer()
+        assert server._config_path == "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+        assert server._config is not None
+
+    def test_init_with_default_path(self, monkeypatch):
+        """Test initialization falls back to resources/plugins/config.yaml for standalone servers."""
+        monkeypatch.delenv("PLUGINS_CONFIG_PATH", raising=False)
+        with patch("mcpgateway.plugins.framework.loader.config.ConfigLoader.load_config") as mock_load:
+            mock_load.return_value = Mock(plugins=[], server_settings=None)
             server = ExternalPluginServer()
-            assert server._config_path == "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
-            assert server._config is not None
-        finally:
-            if "PLUGINS_CONFIG_PATH" in os.environ:
-                del os.environ["PLUGINS_CONFIG_PATH"]
+            assert server._config_path == os.path.join(".", "resources", "plugins", "config.yaml")
 
-    def test_init_with_default_path(self):
-        """Test initialization with default config path."""
-        # Temporarily remove env var if it exists
-        env_backup = os.environ.pop("PLUGINS_CONFIG_PATH", None)
-        try:
-            with patch("os.path.join", return_value="./resources/plugins/config.yaml"):
-                with patch("mcpgateway.plugins.framework.loader.config.ConfigLoader.load_config") as mock_load:
-                    mock_load.return_value = Mock(plugins=[], server_settings=None)
-                    server = ExternalPluginServer()
-                    assert "./resources/plugins/config.yaml" in server._config_path
-        finally:
-            if env_backup:
-                os.environ["PLUGINS_CONFIG_PATH"] = env_backup
-
-    def test_init_with_invalid_config(self):
-        """Test initialization with invalid config path uses defaults or raises error."""
-        # ConfigLoader may handle missing files by returning empty config
-        # This test verifies the server can be instantiated (or raises if validation fails)
-        try:
-            server = ExternalPluginServer(config_path="./nonexistent/path/config.yaml")
-            # If it succeeds, just verify server was created
-            assert server is not None
-        except Exception:
-            # If it raises, that's also acceptable behavior
-            pass
+    def test_init_with_nonexistent_config_returns_empty(self):
+        """ConfigLoader returns an empty config for a nonexistent path."""
+        server = ExternalPluginServer(config_path="./nonexistent/path/config.yaml")
+        assert server._config is not None
+        assert server._config.plugins == []
 
 
 class TestGetPluginConfigs:

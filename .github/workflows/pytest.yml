@@ -157,28 +157,7 @@ jobs:
     #     path: htmlcov/
 
     # -----------------------------------------------------------
-    # 5️⃣  Generate + commit badge (main branch, highest Python)
-    #       --- intentionally commented-out ---
-    # -----------------------------------------------------------
-    # - name: 📊  Create coverage badge
-    #   if: matrix.python == '3.11' && github.ref == 'refs/heads/main'
-    #   id: make_badge
-    #   uses: tj-actions/coverage-badge@v2
-    #   with:
-    #     coverage-file: coverage.xml          # input
-    #     output: .github/badges/coverage.svg  # output file
-    #   env:
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #
-    # - name: 🚀  Commit badge
-    #   if: steps.make_badge.outputs.badge-updated == 'true'
-    #   uses: stefanzweifel/git-auto-commit-action@v5
-    #   with:
-    #     commit_message: "docs(badge): update coverage badge"
-    #     file_pattern: ".github/badges/coverage.svg"
-
-    # -----------------------------------------------------------
-    # 6️⃣  Publish coverage table to the job summary
+    # 5️⃣  Publish coverage table to the job summary
     # -----------------------------------------------------------
 
 #     - name: 📝  Coverage summary
