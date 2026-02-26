@@ -323,8 +323,9 @@ class TestRedisEventStore:
         result = await short_ttl_store.replay_events_after(event_id, callback)
         assert result == stream_id
 
-        # Wait for TTL to expire
-        await asyncio.sleep(2)
+        # Advance the fake redis clock past the TTL instead of sleeping
+        original_now = fake_redis_client._now
+        fake_redis_client._now = lambda: original_now() + 2
 
         # Verify stream keys expired in Redis
         redis = fake_redis_client
