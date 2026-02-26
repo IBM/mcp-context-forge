@@ -1032,6 +1032,14 @@ def _admin_cookie_path(request: Request) -> str:
         Admin cookie path scoped under the deployed app root.
     """
     root_path = request.scope.get("root_path", "") or ""
+    if not root_path:
+        # Some embedded/proxy deployments do not populate scope root_path
+        # consistently for admin requests; fall back to configured app root.
+        root_path = settings.app_root_path or ""
+    root_path = str(root_path).strip()
+    if root_path and not root_path.startswith("/"):
+        root_path = f"/{root_path}"
+    root_path = root_path.rstrip("/")
     return f"{root_path}/admin" if root_path else "/admin"
 
 
