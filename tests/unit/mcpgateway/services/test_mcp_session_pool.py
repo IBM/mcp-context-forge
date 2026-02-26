@@ -8,11 +8,15 @@ SPDX-License-Identifier: Apache-2.0
 # Standard
 import asyncio
 import hashlib
+import logging
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch, Mock
 
 # Third-Party
+import httpx
 import pytest
+from mcp.types import CallToolRequest, CallToolResult
 
 # First-Party
 from mcpgateway.services.mcp_session_pool import (
@@ -1437,3 +1441,98 @@ class TestContextManager:
             assert pool._pools[pool_key].qsize() == 1
 
         await pool.close_all()
+
+
+
+
+
+class TestExecuteForwardedRequest:
+    """Tests for _execute_forwarded_request method."""
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_success(self):
+        """Test successful execution of forwarded request."""
+        pool = MCPSessionPool()
+        request = {
+            "method": "tools/list",
+            "params": {},
+            "headers": {"authorization": "Bearer token"},
+            "req_id": 123,
+            "mcp_session_id": "session_id",
+        }
+
+        mock_response = Mock()
+        mock_response.json.return_value = {"jsonrpc": "2.0", "result": {"tools": []}, "id": 123}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        # Mock __aenter__ to return the mock_client instance
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            with patch("mcpgateway.config.settings.internal_rpc_url", "http://internal-host/rpc"):
+                result = await pool._execute_forwarded_request(request)
+
+        assert result == {"result": {"tools": []}}
+
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        assert call_args[0][0] == "http://internal-host/rpc"
+        assert call_args[1]["json"] == {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 123}
+        assert call_args[1]["headers"]["x-forwarded-internally"] == "true"
+        assert call_args[1]["headers"]["authorization"] == "Bearer token"
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_error_response(self):
+        """Test execution returning JSON-RPC error."""
+        pool = MCPSessionPool()
+        request = {"method": "tools/list"}
+
+        mock_response = Mock()
+        mock_response.json.return_value = {"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": 1}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            result = await pool._execute_forwarded_request(request)
+
+        assert result == {"error": {"code": -32601, "message": "Method not found"}}
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_timeout(self):
+        """Test timeout during execution."""
+        pool = MCPSessionPool()
+        request = {"method": "tools/list"}
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.TimeoutException("Timeout")
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            result = await pool._execute_forwarded_request(request)
+
+        assert result["error"]["code"] == -32603
+        assert "Internal request timeout" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_exception(self):
+        """Test generic exception during execution."""
+        pool = MCPSessionPool()
+        request = {"method": "tools/list"}
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = Exception("Network error")
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+            result = await pool._execute_forwarded_request(request)
+
+        assert result["error"]["code"] == -32603
+        assert "Network error" in result["error"]["message"]
