@@ -1307,6 +1307,7 @@ async def _has_permission(
         user_email=get_user_email(user),
         permission=permission,
         team_id=team_id,
+        token_teams=user.get("token_teams"),
         ip_address=user.get("ip_address"),
         user_agent=user.get("user_agent"),
         allow_admin_bypass=allow_admin_bypass,

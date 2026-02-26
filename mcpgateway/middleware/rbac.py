@@ -637,6 +637,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=user_context.get("token_teams"),
                     ip_address=user_context.get("ip_address"),
                     user_agent=user_context.get("user_agent"),
                     allow_admin_bypass=allow_admin_bypass,
@@ -651,6 +652,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
+                        token_teams=user_context.get("token_teams"),
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
@@ -848,6 +850,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
+                        token_teams=user_context.get("token_teams"),
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
@@ -867,6 +870,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                             permission=permission,
                             resource_type=resource_type,
                             team_id=team_id,
+                            token_teams=user_context.get("token_teams"),
                             ip_address=user_context.get("ip_address"),
                             user_agent=user_context.get("user_agent"),
                             allow_admin_bypass=allow_admin_bypass,
@@ -929,6 +933,7 @@ class PermissionChecker:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 team_id=team_id,
+                token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
             )
@@ -941,6 +946,7 @@ class PermissionChecker:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 team_id=team_id,
+                token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
             )
@@ -980,6 +986,7 @@ class PermissionChecker:
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=self.user_context.get("token_teams"),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):
@@ -994,6 +1001,7 @@ class PermissionChecker:
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=self.user_context.get("token_teams"),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):
