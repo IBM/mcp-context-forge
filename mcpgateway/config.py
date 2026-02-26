@@ -385,11 +385,11 @@ class Settings(BaseSettings):
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
         default=False,
-        description=("Enable query parameter authentication for gateway peers. " "WARNING: API keys may appear in proxy logs. See CWE-598."),
+        description=("Enable query parameter authentication for gateway peers. WARNING: API keys may appear in proxy logs. See CWE-598."),
     )
     insecure_queryparam_auth_allowed_hosts: List[str] = Field(
         default_factory=list,
-        description=("Allowlist of hosts permitted to use query parameter auth. " "Empty list allows any host when feature is enabled. " "Format: ['mcp.tavily.com', 'api.example.com']"),
+        description=("Allowlist of hosts permitted to use query parameter auth. Empty list allows any host when feature is enabled. Format: ['mcp.tavily.com', 'api.example.com']"),
     )
 
     # ===================================
@@ -414,7 +414,7 @@ class Settings(BaseSettings):
             "fe80::/10",  # IPv6 link-local
         ],
         description=(
-            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. " "Default blocks cloud metadata endpoints. Add private ranges for stricter security."
+            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. Default blocks cloud metadata endpoints. Add private ranges for stricter security."
         ),
     )
 
@@ -428,27 +428,25 @@ class Settings(BaseSettings):
 
     ssrf_allow_localhost: bool = Field(
         default=False,
-        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Default false for safer production behavior."),
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). Default false for safer production behavior."),
     )
 
     ssrf_allow_private_networks: bool = Field(
         default=False,
         description=(
-            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). " "When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
+            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
         ),
     )
 
     ssrf_allowed_networks: List[str] = Field(
         default_factory=list,
-        description=("Optional CIDR allowlist for internal/private destinations. " "Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
+        description=("Optional CIDR allowlist for internal/private destinations. Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
     )
 
     ssrf_dns_fail_closed: bool = Field(
         default=True,
         description=(
-            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
-            "are rejected. When false, unresolvable hostnames are allowed through "
-            "(hostname blocklist still applies)."
+            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved are rejected. When false, unresolvable hostnames are allowed through (hostname blocklist still applies)."
         ),
     )
 
@@ -501,6 +499,10 @@ class Settings(BaseSettings):
     public_registration_enabled: bool = Field(
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
+    )
+    allow_public_visibility: bool = Field(
+        default=True,
+        description="When false, creating or updating any entity with public visibility is blocked.",
     )
     protect_all_admins: bool = Field(
         default=True,
@@ -1029,7 +1031,7 @@ class Settings(BaseSettings):
         default=200,
         ge=10,
         le=1000,
-        description="Maximum total concurrent HTTP connections (global, not per-host). " "Increase for high-traffic deployments with many outbound calls.",
+        description="Maximum total concurrent HTTP connections (global, not per-host). Increase for high-traffic deployments with many outbound calls.",
     )
     httpx_max_keepalive_connections: int = Field(
         default=100,
@@ -1075,7 +1077,7 @@ class Settings(BaseSettings):
         default=30.0,
         ge=1.0,
         le=120.0,
-        description="Read timeout for admin UI operations (model fetching, health checks). " "Shorter than httpx_read_timeout to fail fast on admin pages.",
+        description="Read timeout for admin UI operations (model fetching, health checks). Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
     @field_validator("allowed_origins", mode="before")

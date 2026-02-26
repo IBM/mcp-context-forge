@@ -309,6 +309,7 @@ mcpContextForge:
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
     MCPGATEWAY_UI_AIRGAPPED: "false"  # serve vendored CSS/JS files locally (air-gapped mode)
     MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
+    ALLOW_PUBLIC_VISIBILITY: "true"   # set false to block public visibility on all entities
     MCPGATEWAY_BULK_IMPORT_ENABLED: "true" # toggle bulk import endpoint
     MCPGATEWAY_BULK_IMPORT_MAX_TOOLS: "200" # maximum tools per bulk import
     MCPGATEWAY_BULK_IMPORT_RATE_LIMIT: "10" # requests per minute for bulk import
