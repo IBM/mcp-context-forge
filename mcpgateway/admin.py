@@ -2458,6 +2458,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server creation operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> # Test function exists and has correct name
         >>> from mcpgateway.admin import admin_add_server
@@ -2633,6 +2636,9 @@ async def admin_edit_server(
 
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server update operation.
+
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
         >>> callable(admin_edit_server)
@@ -10643,6 +10649,9 @@ async def admin_add_tool(
     Returns:
         JSONResponse: a JSON response with `{"message": ..., "success": ...}` and an appropriate HTTP status code.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_tool)
         True
@@ -10792,6 +10801,9 @@ async def admin_edit_tool(
         Response: A redirect response to the tools section of the admin
             dashboard with a status code of 303 (See Other), or a JSON response with
             an error message if the update fails.
+
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
         >>> callable(admin_edit_tool)
@@ -11050,6 +11062,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
     Returns:
         A redirect response to the admin dashboard.
+
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
         >>> callable(admin_add_gateway)
@@ -11313,6 +11328,9 @@ async def admin_edit_gateway(
 
     Returns:
         A redirect response to the admin dashboard.
+
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
         >>> callable(admin_edit_gateway)
@@ -11641,6 +11659,9 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_resource)
         True
@@ -11758,6 +11779,9 @@ async def admin_edit_resource(
 
     Returns:
         JSONResponse: A JSON response indicating success or failure of the resource update operation.
+
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
         >>> callable(admin_edit_resource)
@@ -11980,6 +12004,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_prompt)
         True
@@ -12078,6 +12105,9 @@ async def admin_edit_prompt(
 
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server update operation.
+
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
         >>> callable(admin_edit_prompt)
@@ -14453,6 +14483,9 @@ async def admin_edit_a2a_agent(
 
     Returns:
         JSONResponse: A JSON response indicating success or failure.
+
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
         >>> callable(admin_edit_a2a_agent)
