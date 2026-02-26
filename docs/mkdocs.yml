@@ -4,7 +4,7 @@ INHERIT: ./base.yml
 # Project Information
 site_name: "ContextForge AI Gateway"
 site_url: "https://pages.github.com/ibm/mcp-context-forge/"
-site_description: "ContextForge AI Gateway — a unified control plane for MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability"
+site_description: "ContextForge AI Gateway Documentation"
 site_author: "Mihai Criveti"
 
 # Repository Information
@@ -68,9 +68,9 @@ plugins:
     cover: true
     back_cover: false
     #
-    cover_title: ContextForge AI Gateway
-    cover_subtitle: A unified control plane for MCP, A2A, and REST/gRPC APIs
-    cover_logo: "theme/logo.png"
+    cover_title: ContextForge
+    cover_subtitle: AI Gateway Documentation
+    cover_logo: "theme/contextforge-icon_white.svg"
     #custom_template_path: TEMPLATES PATH
     #
     toc_title: Contents
