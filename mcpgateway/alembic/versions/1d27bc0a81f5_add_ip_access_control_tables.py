@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Add ip_rules and ip_blocks tables for IP-based access control.
 
-Revision ID: z9j0k1l2m3n4
+Revision ID: 1d27bc0a81f5
 Revises: b2d9c6e4f1a7
-Create Date: 2026-02-24 12:00:00.000000
+Create Date: 2026-02-26 13:33:43.653087
 """
 
 # Standard
@@ -14,7 +14,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "z9j0k1l2m3n4"
+revision: str = "1d27bc0a81f5"
 down_revision: Union[str, Sequence[str], None] = "b2d9c6e4f1a7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
