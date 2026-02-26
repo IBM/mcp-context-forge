@@ -1169,3 +1169,343 @@ describe("serverSideEditToolSearch", () => {
         expect(checked).not.toContain("t3");
     });
 });
+
+// ---------------------------------------------------------------------------
+// toggleViewPublic — listener accumulation regression (#3278)
+// ---------------------------------------------------------------------------
+describe("toggleViewPublic — listener accumulation regression", () => {
+    test("calling toggleViewPublic multiple times does not multiply HTMX calls per toggle", () => {
+        const cb = doc.createElement("input");
+        cb.type = "checkbox";
+        cb.id = "edit-server-view-public";
+        doc.body.appendChild(cb);
+
+        const container = doc.createElement("div");
+        container.id = "edit-server-tools";
+        container.setAttribute(
+            "hx-get",
+            "/admin/tools/partial?page=1&render=selector&team_id=team-xyz",
+        );
+        doc.body.appendChild(container);
+
+        const originalHtmx = win.htmx;
+        win.htmx = { process: vi.fn(), trigger: vi.fn() };
+
+        // Simulate opening the edit modal 3 times (each call previously added a listener)
+        win.toggleViewPublic(
+            "edit-server-view-public",
+            ["edit-server-tools"],
+            "team-xyz",
+        );
+        win.toggleViewPublic(
+            "edit-server-view-public",
+            ["edit-server-tools"],
+            "team-xyz",
+        );
+        win.toggleViewPublic(
+            "edit-server-view-public",
+            ["edit-server-tools"],
+            "team-xyz",
+        );
+
+        // Toggle the checkbox once — should trigger exactly one HTMX call, not three
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change"));
+
+        expect(win.htmx.process).toHaveBeenCalledTimes(1);
+        expect(win.htmx.trigger).toHaveBeenCalledTimes(1);
+
+        win.htmx = originalHtmx;
+    });
+});
+
+// ---------------------------------------------------------------------------
+// View Public checkbox — search function integration (#3278)
+// ---------------------------------------------------------------------------
+describe("View Public checkbox — search function integration", () => {
+    function makeViewPublicCheckbox(id, checked = false) {
+        const cb = doc.createElement("input");
+        cb.type = "checkbox";
+        cb.id = id;
+        cb.checked = checked;
+        doc.body.appendChild(cb);
+        return cb;
+    }
+
+    // --- serverSideToolSearch (Add Server) ---
+
+    describe("serverSideToolSearch respects View Public state", () => {
+        beforeEach(() => {
+            win.initToolSelect = vi.fn();
+            win.updateToolMapping = vi.fn();
+        });
+
+        test("keyword search includes team_id when View Public is unchecked", async () => {
+            makeContainer("associatedTools");
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { tools: [] },
+                }),
+            );
+
+            // No checkbox in DOM — should include team_id (default)
+            await win.serverSideToolSearch("myTool");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).toContain("team_id=team-abc");
+        });
+
+        test("keyword search omits team_id when View Public is checked", async () => {
+            makeContainer("associatedTools");
+            makeViewPublicCheckbox("add-server-view-public", true);
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { tools: [] },
+                }),
+            );
+
+            await win.serverSideToolSearch("myTool");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).not.toContain("team_id");
+        });
+    });
+
+    // --- serverSidePromptSearch (Add Server) ---
+
+    describe("serverSidePromptSearch respects View Public state", () => {
+        beforeEach(() => {
+            win.initPromptSelect = vi.fn();
+            win.updatePromptMapping = vi.fn();
+        });
+
+        test("keyword search includes team_id when View Public is unchecked", async () => {
+            makeContainer("associatedPrompts");
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { prompts: [] },
+                }),
+            );
+
+            await win.serverSidePromptSearch("myPrompt");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).toContain("team_id=team-abc");
+        });
+
+        test("keyword search omits team_id when View Public is checked", async () => {
+            makeContainer("associatedPrompts");
+            makeViewPublicCheckbox("add-server-view-public", true);
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { prompts: [] },
+                }),
+            );
+
+            await win.serverSidePromptSearch("myPrompt");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).not.toContain("team_id");
+        });
+    });
+
+    // --- serverSideResourceSearch (Add Server) ---
+
+    describe("serverSideResourceSearch respects View Public state", () => {
+        beforeEach(() => {
+            win.initResourceSelect = vi.fn();
+            win.updateResourceMapping = vi.fn();
+        });
+
+        test("keyword search includes team_id when View Public is unchecked", async () => {
+            makeContainer("associatedResources");
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { resources: [] },
+                }),
+            );
+
+            await win.serverSideResourceSearch("myRes");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).toContain("team_id=team-abc");
+        });
+
+        test("keyword search omits team_id when View Public is checked", async () => {
+            makeContainer("associatedResources");
+            makeViewPublicCheckbox("add-server-view-public", true);
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { resources: [] },
+                }),
+            );
+
+            await win.serverSideResourceSearch("myRes");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).not.toContain("team_id");
+        });
+    });
+
+    // --- serverSideEditToolSearch (Edit Server) ---
+
+    describe("serverSideEditToolSearch respects View Public state", () => {
+        beforeEach(() => {
+            win.initToolSelect = vi.fn();
+            win.updateToolMapping = vi.fn();
+        });
+
+        test("keyword search includes team_id when View Public is unchecked", async () => {
+            makeContainer("edit-server-tools");
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { tools: [] },
+                }),
+            );
+
+            await win.serverSideEditToolSearch("myTool");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).toContain("team_id=team-abc");
+        });
+
+        test("keyword search omits team_id when View Public is checked", async () => {
+            makeContainer("edit-server-tools");
+            makeViewPublicCheckbox("edit-server-view-public", true);
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { tools: [] },
+                }),
+            );
+
+            await win.serverSideEditToolSearch("myTool");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).not.toContain("team_id");
+        });
+    });
+
+    // --- serverSideEditPromptsSearch (Edit Server) ---
+
+    describe("serverSideEditPromptsSearch respects View Public state", () => {
+        beforeEach(() => {
+            win.initPromptSelect = vi.fn();
+            win.updatePromptMapping = vi.fn();
+        });
+
+        test("keyword search includes team_id when View Public is unchecked", async () => {
+            makeContainer("edit-server-prompts");
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { prompts: [] },
+                }),
+            );
+
+            await win.serverSideEditPromptsSearch("myPrompt");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).toContain("team_id=team-abc");
+        });
+
+        test("keyword search omits team_id when View Public is checked", async () => {
+            makeContainer("edit-server-prompts");
+            makeViewPublicCheckbox("edit-server-view-public", true);
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { prompts: [] },
+                }),
+            );
+
+            await win.serverSideEditPromptsSearch("myPrompt");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).not.toContain("team_id");
+        });
+    });
+
+    // --- serverSideEditResourcesSearch (Edit Server) ---
+
+    describe("serverSideEditResourcesSearch respects View Public state", () => {
+        beforeEach(() => {
+            win.initResourceSelect = vi.fn();
+            win.updateResourceMapping = vi.fn();
+        });
+
+        test("keyword search includes team_id when View Public is unchecked", async () => {
+            makeContainer("edit-server-resources");
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { resources: [] },
+                }),
+            );
+
+            await win.serverSideEditResourcesSearch("myRes");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).toContain("team_id=team-abc");
+        });
+
+        test("keyword search omits team_id when View Public is checked", async () => {
+            makeContainer("edit-server-resources");
+            makeViewPublicCheckbox("edit-server-view-public", true);
+            win.getCurrentTeamId = () => "team-abc";
+
+            win.fetch = vi.fn().mockResolvedValue(
+                mockResponse({
+                    ok: true,
+                    contentType: "application/json",
+                    body: { resources: [] },
+                }),
+            );
+
+            await win.serverSideEditResourcesSearch("myRes");
+
+            const fetchUrl = win.fetch.mock.calls[0][0];
+            expect(fetchUrl).not.toContain("team_id");
+        });
+    });
+});

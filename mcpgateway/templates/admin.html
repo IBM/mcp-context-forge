@@ -3238,6 +3238,27 @@
               </div>
             </div>
 
+            {% if selected_team_id %}
+            <!-- View Public toggle for team-scoped server creation -->
+            <div class="mt-4" id="add-server-view-public-container">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="add-server-view-public"
+                  class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                />
+                <label
+                  for="add-server-view-public"
+                  class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                >
+              </div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+              </p>
+            </div>
+            {% endif %}
+
             <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
             <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
               <div class="flex items-center mb-4">
@@ -11142,6 +11163,26 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       </div>
                     </div>
                   </div>
+                  {% if selected_team_id %}
+                  <!-- View Public toggle for team-scoped server editing -->
+                  <div class="mt-4" id="edit-server-view-public-container">
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="edit-server-view-public"
+                        class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      />
+                      <label
+                        for="edit-server-view-public"
+                        class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                      >
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+                    </p>
+                  </div>
+                  {% endif %}
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                     <div
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
@@ -11225,7 +11266,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-tools"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
