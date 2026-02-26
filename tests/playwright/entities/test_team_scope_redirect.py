@@ -33,11 +33,13 @@ TEST_TEAM_HEX = "12345678123456781234567812345678"
 def _create_tool_via_api(api_request_context: APIRequestContext, suffix: str) -> dict:
     """Create a tool via REST API and return its JSON."""
     payload = {
-        "name": f"team-redirect-tool-{suffix}",
-        "url": "https://api.example.com/test",
-        "description": "Temporary tool for team redirect test",
-        "integration_type": "REST",
-        "request_type": "GET",
+        "tool": {
+            "name": f"team-redirect-tool-{suffix}",
+            "url": "https://api.example.com/test",
+            "description": "Temporary tool for team redirect test",
+            "integration_type": "REST",
+            "request_type": "GET",
+        }
     }
     resp = api_request_context.post("/tools", data=payload)
     assert resp.ok, f"Tool creation failed: {resp.status} {resp.text()[:200]}"
@@ -47,8 +49,10 @@ def _create_tool_via_api(api_request_context: APIRequestContext, suffix: str) ->
 def _create_server_via_api(api_request_context: APIRequestContext, suffix: str) -> dict:
     """Create a virtual server via REST API and return its JSON."""
     payload = {
-        "name": f"team-redirect-server-{suffix}",
-        "description": "Temporary server for team redirect test",
+        "server": {
+            "name": f"team-redirect-server-{suffix}",
+            "description": "Temporary server for team redirect test",
+        }
     }
     resp = api_request_context.post("/servers", data=payload)
     assert resp.ok, f"Server creation failed: {resp.status} {resp.text()[:200]}"
@@ -187,14 +191,16 @@ class TestTeamScopeRedirect:
         """handleToggleSubmit reads team_id from the URL and injects it into the form."""
         page = tools_page.page
 
-        # Navigate to admin with team_id in the URL.
-        page.goto(f"/admin/?team_id={TEST_TEAM_HEX}#tools")
-        page.wait_for_load_state("domcontentloaded")
-
-        # Use evaluate to simulate what handleToggleSubmit does:
-        # create a form, call the team_id-injection logic, check the hidden field.
+        # Use pushState to set team_id in the URL without triggering navigation.
+        # This avoids the admin login redirect stripping query params.
         injected = page.evaluate(
-            """() => {
+            """(teamHex) => {
+                // Set team_id into the current URL via pushState
+                const url = new URL(window.location.href);
+                url.searchParams.set('team_id', teamHex);
+                window.history.pushState({}, '', url.toString());
+
+                // Simulate what handleToggleSubmit does
                 const form = document.createElement('form');
                 document.body.appendChild(form);
 
@@ -211,6 +217,7 @@ class TestTeamScopeRedirect:
                 const value = hiddenInput ? hiddenInput.value : null;
                 form.remove();
                 return value;
-            }"""
+            }""",
+            TEST_TEAM_HEX,
         )
         assert injected == TEST_TEAM_HEX, f"Expected JS to inject {TEST_TEAM_HEX}, got {injected}"
