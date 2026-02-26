@@ -2880,6 +2880,7 @@ class Tool(Base):
     custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Passthrough REST fields
     base_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -3262,6 +3263,7 @@ class Resource(Base):
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     uri_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
@@ -3679,6 +3681,7 @@ class Prompt(Base):
     custom_name: Mapped[str] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)

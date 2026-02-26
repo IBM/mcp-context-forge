@@ -2602,3 +2602,70 @@ def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     team = Target("Team Name")
     db.set_email_team_slug(None, None, team)
     assert team.slug == "team-name"
+
+
+def test_db_tool_title_property(test_db):
+    import mcpgateway.db as db
+    db_session = test_db
+
+    tool = db.Tool(
+        id="tool-1",
+        name="test-tool",
+        original_name="test-tool",
+        custom_name="Test Tool",
+        custom_name_slug="test-tool",
+        title="My Custom Title",
+        gateway_id="gw-1",
+        request_type="GET",
+        integration_type="REST",
+        visibility="public",
+        input_schema={"type": "object", "properties": {}}
+    )
+    db_session.add(tool)
+    db_session.flush()
+
+    assert tool.title == "My Custom Title"
+
+
+def test_db_resource_title_property(test_db):
+    import mcpgateway.db as db
+    db_session = test_db
+
+    resource = db.Resource(
+        id="resource-1",
+        uri="https://example.com",
+        name="test-resource",
+        title="Resource Title",
+        team_id="team-1",
+        owner_email="user@test.com",
+        visibility="public",
+        version=1
+    )
+    db_session.add(resource)
+    db_session.flush()
+
+    assert resource.title == "Resource Title"
+
+
+def test_db_prompt_title_property(test_db):
+    import mcpgateway.db as db
+    db_session = test_db
+
+    prompt = db.Prompt(
+        id="prompt-1",
+        name="test-prompt",
+        original_name="test-prompt",
+        custom_name="test-prompt",
+        custom_name_slug="test-prompt",
+        title="Prompt Title",
+        template="Hello {{name}}",
+        team_id="team-1",
+        owner_email="user@test.com",
+        visibility="public",
+        version=1,
+        argument_schema={"type": "object", "properties": {"name": {"type": "string"}}}
+    )
+    db_session.add(prompt)
+    db_session.flush()
+
+    assert prompt.title == "Prompt Title"
