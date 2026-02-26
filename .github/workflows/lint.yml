@@ -1,12 +1,10 @@
 # ===============================================================
-# 🔍  Lint & Static Analysis - Code Quality Gate
+# Lint & Static Analysis - Code Quality Gate
 # ===============================================================
 #
-#   - runs each linter in its own matrix job for visibility
-#   - mirrors the actual CLI commands used locally (no `make`)
-#   - ensures fast-failure isolation: one failure doesn't hide others
-#   - each job installs the project in dev-editable mode
-#   - logs are grouped and plain-text for readability
+#   - Lints both mcpgateway/ and plugins/ in a unified workflow
+#   - Python linters run per-target; repo-wide checks run once
+#   - Each job installs the project in dev-editable mode
 # ---------------------------------------------------------------
 
 name: Lint & Static Analysis
@@ -14,21 +12,101 @@ name: Lint & Static Analysis
 on:
   push:
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "plugins/**"
+      - "pyproject.toml"
+      - ".github/workflows/lint.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "plugins/**"
+      - "pyproject.toml"
+      - ".github/workflows/lint.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  lint:
+  # ---------------------------------------------------------------
+  # Python linters - run on both mcpgateway/ and plugins/
+  # ---------------------------------------------------------------
+  python-lint:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [mcpgateway, plugins]
+        tool:
+          - id: flake8
+            setup: pip install flake8
+            cmd: "flake8 $TARGET"
+          - id: ruff
+            setup: pip install ruff
+            cmd: "ruff check $TARGET"
+          - id: unimport
+            setup: pip install unimport
+            cmd: "unimport $TARGET"
+          - id: vulture
+            setup: pip install vulture
+            cmd: 'vulture $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
+          - id: pylint
+            setup: "true"
+            cmd: "uv run pylint $TARGET --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10"
+          - id: interrogate
+            setup: pip install interrogate
+            cmd: "interrogate -vv $TARGET --fail-under 100"
+          - id: radon
+            setup: pip install radon
+            cmd: "radon cc $TARGET --min C --show-complexity && radon mi $TARGET --min B"
+
+    name: "${{ matrix.tool.id }} (${{ matrix.target }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install project (editable mode)
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Install tool
+        run: ${{ matrix.tool.setup }}
+
+      - name: Run linter
+        env:
+          TARGET: ${{ matrix.target }}
+        run: ${{ matrix.tool.cmd }}
+
+  # ---------------------------------------------------------------
+  # Repo-wide syntax/format checkers (run once, not per-target)
+  # ---------------------------------------------------------------
+  syntax-check:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     strategy:
       fail-fast: false
       matrix:
         include:
-          # -------------------------------------------------------
-          # 🧼 Syntax & Format Checkers
-          # -------------------------------------------------------
           - id: yamllint
             setup: pip install yamllint
             cmd: yamllint -c .yamllint .
@@ -50,112 +128,24 @@ jobs:
                 -print0 |
                 xargs -0 -I{} tomlcheck "{}"
 
-          # -------------------------------------------------------
-          # 🐍 Python Linters & Type Checkers
-          # -------------------------------------------------------
-          - id: flake8
-            setup: pip install flake8
-            cmd: flake8 mcpgateway
-
-          - id: ruff
-            setup: pip install ruff
-            cmd: |
-              ruff check mcpgateway
-
-          - id: unimport
-            setup: pip install unimport
-            cmd: |
-              unimport mcpgateway
-
-          - id: vulture
-            setup: pip install vulture
-            cmd: |
-              vulture mcpgateway --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
-
-          - id: pylint
-            setup: true
-            cmd: uv run pylint mcpgateway --fail-on E --fail-under=10
-
-          - id: interrogate
-            setup: pip install interrogate
-            cmd: interrogate -vv mcpgateway --fail-under 100
-
-          # Advanced Python Analysis
-          - id: radon
-            setup: pip install radon
-            cmd: |
-              radon cc mcpgateway --min C --show-complexity
-              radon mi mcpgateway --min B
-
-          # - id: mypy
-          #   setup: pip install mypy
-          #   cmd: mypy mcpgateway
-
-          # - id: pycodestyle
-          #   setup: pip install pycodestyle
-          #   cmd: pycodestyle mcpgateway --max-line-length=200
-
-          # - id: pydocstyle
-          #   setup: pip install pydocstyle
-          #   cmd: pydocstyle mcpgateway
-
-          # - id: pyright
-          #   setup: npm install -g pyright
-          #   cmd: pyright mcpgateway tests
-
-          # -------------------------------------------------------
-          # 🔒 Security & Packaging Checks
-          # -------------------------------------------------------
-          # - id: bandit
-          #   setup: pip install bandit
-          #   cmd: bandit -r mcpgateway
-
-          # - id: check-manifest
-          #   setup: pip install check-manifest
-          #   cmd: check-manifest
-
     name: ${{ matrix.id }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-      # -----------------------------------------------------------
-      # 0️⃣  Checkout
-      # -----------------------------------------------------------
-      - name: ⬇️  Checkout source
+      - name: Checkout source
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      # -----------------------------------------------------------
-      # 1️⃣  Python Setup
-      # -----------------------------------------------------------
-      - name: 🐍  Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
-      # -----------------------------------------------------------
-      #   Install uv
-      # -----------------------------------------------------------
-      - name: ⚡Set up uv
-        uses: astral-sh/setup-uv@v6
 
-      # -----------------------------------------------------------
-      # 2️⃣  Install Project + Dev Dependencies
-      # -----------------------------------------------------------
-      - name: 📦  Install project (editable mode)
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install -e .[dev]
-
-      # -----------------------------------------------------------
-      # 3️⃣  Install Tool-Specific Requirements
-      # -----------------------------------------------------------
-      - name: 🔧  Install tool - ${{ matrix.id }}
+      - name: Install tool
         run: ${{ matrix.setup }}
 
-      # -----------------------------------------------------------
-      # 4️⃣  Run Linter / Validator
-      # -----------------------------------------------------------
-      - name: 🔍  Run ${{ matrix.id }}
+      - name: Run check
         run: ${{ matrix.cmd }}

@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/models/agents.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Fred Araujo
 
 Pydantic models for agent plugins.
 This module implements the pydantic models associated with
@@ -14,12 +14,13 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from pydantic import Field
+from pydantic import Field, field_validator
 
 # First-Party
-from mcpgateway.common.models import Message
 from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
 from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
+from mcpgateway.plugins.framework.protocols import MessageLike  # noqa: F401  # pylint: disable=unused-import
+from mcpgateway.plugins.framework.utils import coerce_messages
 
 
 class AgentHookType(str, Enum):
@@ -49,7 +50,7 @@ class AgentPreInvokePayload(PluginPayload):
 
     Attributes:
         agent_id: The agent identifier (can be modified for routing).
-        messages: Conversation messages (can be filtered/transformed).
+        messages: Conversation messages (accepts any MessageLike-satisfying objects).
         tools: Optional list of tools available to agent.
         headers: Optional HTTP headers.
         model: Optional model override.
@@ -64,27 +65,28 @@ class AgentPreInvokePayload(PluginPayload):
         []
         >>> payload.tools is None
         True
-        >>> from mcpgateway.common.models import Message, Role, TextContent
-        >>> msg = Message(role=Role.USER, content=TextContent(type="text", text="Hello"))
-        >>> payload = AgentPreInvokePayload(
-        ...     agent_id="agent-456",
-        ...     messages=[msg],
-        ...     tools=["search", "calculator"],
-        ...     model="claude-3-5-sonnet-20241022"
-        ... )
-        >>> payload.tools
-        ['search', 'calculator']
-        >>> payload.model
-        'claude-3-5-sonnet-20241022'
     """
 
     agent_id: str
-    messages: List[Message]
+    messages: List[Any]  # Elements satisfy MessageLike protocol (role, content attributes)
     tools: Optional[List[str]] = None
     headers: Optional[HttpHeaderPayload] = None
     model: Optional[str] = None
     system_prompt: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _coerce_messages(cls, v: Any) -> Any:
+        """Convert nested dicts in messages list to objects with attribute access.
+
+        Args:
+            v: The raw messages value to coerce.
+
+        Returns:
+            The coerced messages list.
+        """
+        return coerce_messages(v)
 
 
 class AgentPostInvokePayload(PluginPayload):
@@ -92,7 +94,7 @@ class AgentPostInvokePayload(PluginPayload):
 
     Attributes:
         agent_id: The agent identifier.
-        messages: Response messages from agent (can be filtered/transformed).
+        messages: Response messages from agent (accepts any MessageLike-satisfying objects).
         tool_calls: Optional tool invocations made by agent.
 
     Examples:
@@ -103,20 +105,24 @@ class AgentPostInvokePayload(PluginPayload):
         []
         >>> payload.tool_calls is None
         True
-        >>> from mcpgateway.common.models import Message, Role, TextContent
-        >>> msg = Message(role=Role.ASSISTANT, content=TextContent(type="text", text="Response"))
-        >>> payload = AgentPostInvokePayload(
-        ...     agent_id="agent-456",
-        ...     messages=[msg],
-        ...     tool_calls=[{"name": "search", "arguments": {"query": "test"}}]
-        ... )
-        >>> payload.tool_calls
-        [{'name': 'search', 'arguments': {'query': 'test'}}]
     """
 
     agent_id: str
-    messages: List[Message]
+    messages: List[Any]  # Elements satisfy MessageLike protocol (role, content attributes)
     tool_calls: Optional[List[Dict[str, Any]]] = None
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _coerce_messages(cls, v: Any) -> Any:
+        """Convert nested dicts in messages list to objects with attribute access.
+
+        Args:
+            v: The raw messages value to coerce.
+
+        Returns:
+            The coerced messages list.
+        """
+        return coerce_messages(v)
 
 
 AgentPreInvokeResult = PluginResult[AgentPreInvokePayload]

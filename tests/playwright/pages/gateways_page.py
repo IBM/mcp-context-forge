@@ -175,6 +175,33 @@ class GatewaysPage(BasePage):
         return self.page.locator("#auth-headers-fields-gw")
 
     @property
+    def add_header_btn(self) -> Locator:
+        """Add Header button inside the custom headers section."""
+        return self.auth_headers_fields.get_by_role("button", name="Add Header")
+
+    @property
+    def auth_headers_json_input(self) -> Locator:
+        """Hidden JSON input that stores the serialised header list."""
+        return self.page.locator("#auth-headers-json-gw")
+
+    def add_auth_header(self, key: str, value: str) -> None:
+        """Click Add Header, type key and value into the new row.
+
+        Args:
+            key: Header name (e.g. ``X-API-Key``).
+            value: Header value.
+        """
+        self.add_header_btn.click()
+        # The last header row just appended
+        last_row = self.page.locator("#auth-headers-container-gw > div").last
+        last_row.locator(".auth-header-key").fill(key)
+        last_row.locator(".auth-header-value").fill(value)
+
+    def get_auth_headers_json(self) -> str:
+        """Return the current value of the hidden auth-headers JSON input."""
+        return self.auth_headers_json_input.input_value()
+
+    @property
     def auth_query_param_fields(self) -> Locator:
         """Query parameter auth fields container."""
         return self.page.locator("#auth-query_param-fields-gw")

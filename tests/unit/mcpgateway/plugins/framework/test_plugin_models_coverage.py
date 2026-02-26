@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 # Third-Party
 import pytest
+from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.plugins.framework.constants import EXTERNAL_PLUGIN_TYPE
@@ -16,6 +17,7 @@ from mcpgateway.plugins.framework.models import (
     GRPCServerConfig,
     GRPCServerTLSConfig,
     MCPClientConfig,
+    MCPClientTLSConfig,
     MCPServerConfig,
     MCPServerTLSConfig,
     PluginConfig,
@@ -23,7 +25,6 @@ from mcpgateway.plugins.framework.models import (
     UnixSocketServerConfig,
 )
 from mcpgateway.common.models import TransportType
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -158,7 +159,7 @@ class TestGRPCServerConfigFromEnv:
 
     def test_from_env_invalid_port(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_GRPC_SERVER_PORT", "not_a_number")
-        with pytest.raises((ValueError, Exception)):
+        with pytest.raises((ValueError, ValidationError), match="valid integer"):
             GRPCServerConfig.from_env()
 
     def test_from_env_empty(self, monkeypatch):
@@ -271,7 +272,7 @@ class TestMCPServerConfigFromEnv:
 
     def test_from_env_invalid_port(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_SERVER_PORT", "not_a_number")
-        with pytest.raises((ValueError, Exception)):
+        with pytest.raises((ValueError, ValidationError), match="valid integer"):
             MCPServerConfig.from_env()
 
     def test_from_env_with_uds(self, monkeypatch, tmp_path):
@@ -346,7 +347,7 @@ class TestMCPServerTLSConfigFromEnv:
 
     def test_invalid_cert_reqs(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_SERVER_SSL_CERT_REQS", "invalid")
-        with pytest.raises((ValueError, Exception)):
+        with pytest.raises((ValueError, ValidationError), match="valid integer"):
             MCPServerTLSConfig.from_env()
 
 
@@ -407,6 +408,13 @@ class TestMCPClientConfigMoreBranches:
 
     def test_validate_uds_parent_stat_oserror_is_ignored(self, tmp_path):
         uds_path = tmp_path / "client.sock"
+        # Pre-cache plugin settings so the global Path.stat mock does not
+        # interfere with pydantic-settings .env file discovery inside the
+        # URL validator's deferred settings import.
+        from mcpgateway.plugins.framework.settings import get_settings, get_ssrf_settings  # pylint: disable=import-outside-toplevel
+
+        get_settings()
+        get_ssrf_settings()
         with patch.object(Path, "is_dir", return_value=True), patch.object(Path, "stat", side_effect=OSError("boom")):
             config = MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds=str(uds_path))
         assert config.uds is not None
@@ -484,3 +492,55 @@ class TestPluginConfigBranches:
         grpc = GRPCClientConfig(target="localhost:50051")
         with pytest.raises(ValueError, match="only have one transport configured"):
             PluginConfig(name="external", kind=EXTERNAL_PLUGIN_TYPE, mcp=mcp, grpc=grpc)
+
+
+# ===========================================================================
+# Settings isolation: from_env() must not fail on unrelated malformed env vars
+# ===========================================================================
+
+
+class TestFromEnvSettingsIsolation:
+    """Verify from_env() methods use lightweight settings and ignore unrelated env vars."""
+
+    def test_mcp_server_from_env_ignores_malformed_grpc_port(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_GRPC_SERVER_PORT", "not_a_number")
+        monkeypatch.setenv("PLUGINS_SERVER_HOST", "localhost")
+        config = MCPServerConfig.from_env()
+        assert config is not None
+        assert config.host == "localhost"
+
+    def test_grpc_server_from_env_ignores_malformed_mcp_port(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "not_a_number")
+        monkeypatch.setenv("PLUGINS_GRPC_SERVER_HOST", "0.0.0.0")
+        config = GRPCServerConfig.from_env()
+        assert config is not None
+        assert config.host == "0.0.0.0"
+
+    def test_unix_socket_from_env_ignores_malformed_server_port(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "not_a_number")
+        monkeypatch.setenv("PLUGINS_UNIX_SOCKET_PATH", "/tmp/test.sock")
+        config = UnixSocketServerConfig.from_env()
+        assert config is not None
+        assert config.path == "/tmp/test.sock"
+
+    def test_transport_property_ignores_malformed_server_port(self, monkeypatch):
+        from mcpgateway.plugins.framework.settings import settings
+
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "not_a_number")
+        monkeypatch.setenv("PLUGINS_TRANSPORT", "stdio")
+        settings.cache_clear()
+        try:
+            assert settings.transport == "stdio"
+        finally:
+            settings.cache_clear()
+
+    def test_mcp_client_tls_from_env_ignores_malformed_server_port(self, monkeypatch, tmp_path):
+        cert = tmp_path / "client-cert.pem"
+        cert.write_text("data", encoding="utf-8")
+
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "not_a_number")
+        monkeypatch.setenv("PLUGINS_CLIENT_MTLS_CERTFILE", str(cert))
+
+        config = MCPClientTLSConfig.from_env()
+        assert config is not None
+        assert config.certfile == str(cert)

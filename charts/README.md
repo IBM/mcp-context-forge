@@ -242,6 +242,8 @@ curl http://localhost:8080/health
 ## Customising `values.yaml`
 
 Below is a minimal example. Copy the default file and adjust for your environment.
+Treat chart values as examples, not production-ready defaults.
+It is expected that users will change these values before deployment.
 
 ```yaml
 mcpContextForge:

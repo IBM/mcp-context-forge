@@ -167,6 +167,46 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
     A missing `teams` key always results in public-only access, even for admins.
     An empty `teams: []` also results in public-only access, even for admins.
 
+### `is_admin`, `teams`, and `token_use` (Mental Model)
+
+These three values are related, but they control different things:
+
+| Field | Purpose | Where It Is Enforced |
+|-------|---------|----------------------|
+| `is_admin` | User/admin identity flag | RBAC permission checks (`PermissionService`) |
+| `teams` | Visibility/data scope (`None`, `[]`, or team list) | Token scoping and service query filtering |
+| `token_use` | Token interpretation mode (`session` vs `api`) | Auth pipeline (`get_current_user`) |
+
+Key points:
+
+1. `is_admin` does **not** automatically mean "see everything".
+2. Visibility comes from normalized `token_teams`:
+   - `None` = admin bypass scope
+   - `[]` = public-only scope
+   - `["t1", ...]` = team-scoped visibility
+3. `token_use` decides where teams come from:
+   - `session`: teams are resolved from DB/cache on each request
+   - `api`/legacy: teams come from JWT claim via `normalize_token_teams()`
+
+### End-to-End Authorization Pipeline
+
+1. **Authenticate token and resolve user**
+   - Verify JWT/API token.
+   - Resolve `token_use`.
+2. **Normalize/resolve teams**
+   - `token_use=session` → resolve from DB (`_resolve_teams_from_db()`).
+   - `token_use!=session` → normalize JWT `teams` (`normalize_token_teams()`).
+3. **Layer 1: Token scoping**
+   - Filter accessible resources by `token_teams`.
+   - Public-only tokens cannot access team/private resources.
+4. **Layer 2: RBAC permission check**
+   - Validate action permission (`tools.read`, `admin.system_config`, etc.).
+   - Public-only guard: `admin.*` permissions are denied when `token_teams=[]`.
+
+!!! info "Why Public-Only Admin Tokens Can Still Be Useful"
+    A token can represent an admin identity (`is_admin=true`) while still being visibility-restricted (`teams=[]`).
+    This allows controlled automation tokens with reduced blast radius.
+
 ### Return Value Semantics
 
 | Return Value | Meaning | Query Behavior |
@@ -315,15 +355,18 @@ Generated when users log in via the Admin UI:
 ```json
 {
   "sub": "admin@example.com",
-  "is_admin": true,
-  "teams": null,
+  "user": {
+    "email": "admin@example.com",
+    "is_admin": true
+  },
+  "token_use": "session",
   "iss": "mcpgateway",
   "aud": "mcpgateway-api",
   "exp": 1234567890
 }
 ```
 
-**Behavior**: Admin session tokens should set `teams: null` (explicit null) combined with `is_admin: true` to enable admin bypass (unrestricted access to all resources).
+**Behavior**: Session tokens resolve teams server-side per request. For admin users, resolved teams become `None` (admin bypass). For non-admin users, resolved teams become their DB membership list (or `[]` if none).
 
 ### API Tokens (Programmatic Access)
 
@@ -366,25 +409,23 @@ For CI/CD, monitoring, or public API access:
 ### Using the CLI Tool
 
 ```bash
-# Unrestricted admin token (no teams key)
+# Unrestricted admin-bypass API token (explicit teams=null + is_admin=true)
 python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com \
+  --data '{"sub":"admin@example.com","is_admin":true,"teams":null,"token_use":"api"}' \
   --exp 60 \
   --secret $JWT_SECRET_KEY
 
 # Team-scoped token
 python3 -m mcpgateway.utils.create_jwt_token \
-  --username user@example.com \
+  --data '{"sub":"user@example.com","is_admin":false,"teams":["team-uuid-1"],"token_use":"api"}' \
   --exp 60 \
-  --secret $JWT_SECRET_KEY \
-  --teams '["team-uuid-1"]'
+  --secret $JWT_SECRET_KEY
 
 # Public-only scoped token (for automation)
 python3 -m mcpgateway.utils.create_jwt_token \
-  --username ci@example.com \
+  --data '{"sub":"ci@example.com","is_admin":false,"teams":[],"token_use":"api"}' \
   --exp 60 \
-  --secret $JWT_SECRET_KEY \
-  --teams '[]'
+  --secret $JWT_SECRET_KEY
 ```
 
 ### Using the Admin UI

@@ -4,7 +4,6 @@
 # Standard
 import asyncio
 from contextlib import AsyncExitStack
-from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -24,10 +23,8 @@ from mcpgateway.plugins.framework.models import (
     MCPClientTLSConfig,
     PluginConfig,
     PluginContext,
-    PluginErrorModel,
     PluginResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -211,9 +208,11 @@ class TestConnectHTTP:
         list_tools_result.tools = []
         mock_session.list_tools = AsyncMock(return_value=list_tools_result)
 
-        with patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", side_effect=mock_streamable), \
-             patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session), \
-             patch("mcpgateway.plugins.framework.external.mcp.client.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", side_effect=mock_streamable),
+            patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session),
+            patch("mcpgateway.plugins.framework.external.mcp.client.asyncio.sleep", new_callable=AsyncMock),
+        ):
             plugin._exit_stack = AsyncExitStack()
             await plugin._ExternalPlugin__connect_to_http_server("http://localhost:9999/mcp")
 
@@ -231,8 +230,10 @@ class TestConnectHTTP:
         def mock_streamable(*args, **kwargs):
             return MockCtx()
 
-        with patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", side_effect=mock_streamable), \
-             patch("mcpgateway.plugins.framework.external.mcp.client.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", side_effect=mock_streamable),
+            patch("mcpgateway.plugins.framework.external.mcp.client.asyncio.sleep", new_callable=AsyncMock),
+        ):
             plugin._exit_stack = AsyncExitStack()
             with pytest.raises(PluginError, match="connection failed after 3 attempts"):
                 await plugin._ExternalPlugin__connect_to_http_server("http://localhost:9999/mcp")
@@ -442,9 +443,11 @@ class TestConnectHTTPUDS:
                 pass
 
         # Mock the connection to fail immediately so we can check the warning
-        with patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", return_value=FailCtx()), \
-             patch("mcpgateway.plugins.framework.external.mcp.client.asyncio.sleep", new_callable=AsyncMock), \
-             pytest.raises(PluginError):
+        with (
+            patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", return_value=FailCtx()),
+            patch("mcpgateway.plugins.framework.external.mcp.client.asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(PluginError),
+        ):
             plugin._exit_stack = AsyncExitStack()
             await plugin._ExternalPlugin__connect_to_http_server("http://localhost:9999/mcp")
 
@@ -513,9 +516,7 @@ class TestInitialize:
             mcp=config.mcp,
         )
 
-        with patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new=AsyncMock()), patch.object(
-            plugin, "_ExternalPlugin__get_plugin_config", new=AsyncMock(return_value=remote_config)
-        ):
+        with patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new=AsyncMock()), patch.object(plugin, "_ExternalPlugin__get_plugin_config", new=AsyncMock(return_value=remote_config)):
             await plugin.initialize()
 
         assert plugin.config.description == "remote description"
@@ -527,9 +528,11 @@ class TestInitialize:
         config = _make_http_config()
         plugin = _make_plugin(config)
 
-        with patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new=AsyncMock()), patch.object(
-            plugin, "_ExternalPlugin__get_plugin_config", new=AsyncMock(return_value=None)
-        ), patch.object(plugin, "shutdown", new=AsyncMock(side_effect=RuntimeError("shutdown fail"))):
+        with (
+            patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new=AsyncMock()),
+            patch.object(plugin, "_ExternalPlugin__get_plugin_config", new=AsyncMock(return_value=None)),
+            patch.object(plugin, "shutdown", new=AsyncMock(side_effect=RuntimeError("shutdown fail"))),
+        ):
             with pytest.raises(PluginError, match="Unable to retrieve configuration"):
                 await plugin.initialize()
 
@@ -538,9 +541,11 @@ class TestInitialize:
         config = _make_http_config()
         plugin = _make_plugin(config)
 
-        with patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new=AsyncMock()), patch.object(
-            plugin, "_ExternalPlugin__get_plugin_config", new=AsyncMock(side_effect=ValueError("boom"))
-        ), patch.object(plugin, "shutdown", new=AsyncMock(side_effect=RuntimeError("shutdown fail"))):
+        with (
+            patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new=AsyncMock()),
+            patch.object(plugin, "_ExternalPlugin__get_plugin_config", new=AsyncMock(side_effect=ValueError("boom"))),
+            patch.object(plugin, "shutdown", new=AsyncMock(side_effect=RuntimeError("shutdown fail"))),
+        ):
             with pytest.raises(PluginError):
                 await plugin.initialize()
 
@@ -573,17 +578,23 @@ class TestHTTPClientFactory:
         list_tools_result.tools = []
         mock_session.list_tools = AsyncMock(return_value=list_tools_result)
 
-        with patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", return_value=OkCtx()), patch(
-            "mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session
-        ), patch("mcpgateway.plugins.framework.external.mcp.client.create_ssl_context", return_value="sslctx"), patch(
-            "mcpgateway.plugins.framework.external.mcp.client.httpx.AsyncClient"
-        ) as mock_httpx, patch(
-            "mcpgateway.plugins.framework.external.mcp.client.settings"
-        ) as mock_settings:
-            # Keep limits deterministic
-            mock_settings.httpx_max_connections = 10
-            mock_settings.httpx_max_keepalive_connections = 5
-            mock_settings.httpx_keepalive_expiry = 30
+        mock_http_settings = MagicMock()
+        mock_http_settings.httpx_max_connections = 10
+        mock_http_settings.httpx_max_keepalive_connections = 5
+        mock_http_settings.httpx_keepalive_expiry = 30
+        mock_http_settings.httpx_connect_timeout = 5.0
+        mock_http_settings.httpx_read_timeout = 120.0
+        mock_http_settings.httpx_write_timeout = 30.0
+        mock_http_settings.httpx_pool_timeout = 10.0
+        mock_http_settings.skip_ssl_verify = False
+
+        with (
+            patch("mcpgateway.plugins.framework.external.mcp.client.streamablehttp_client", return_value=OkCtx()),
+            patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session),
+            patch("mcpgateway.plugins.framework.external.mcp.client.create_ssl_context", return_value="sslctx"),
+            patch("mcpgateway.plugins.framework.external.mcp.client.httpx.AsyncClient") as mock_httpx,
+            patch("mcpgateway.plugins.framework.external.mcp.client.get_http_client_settings", return_value=mock_http_settings),
+        ):
             plugin._exit_stack = AsyncExitStack()
             await plugin._ExternalPlugin__connect_to_http_server("http://localhost:9999/mcp")
 
@@ -783,9 +794,11 @@ class TestRunStdioSessionBranches:
 
         flip_task = asyncio.create_task(flip_exit_stack())
         try:
-            with patch.object(plugin, "_ExternalPlugin__resolve_stdio_command", return_value=("python", ["-c", "pass"])), patch(
-                "mcpgateway.plugins.framework.external.mcp.client.stdio_client", return_value=OkCtx()
-            ), patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session):
+            with (
+                patch.object(plugin, "_ExternalPlugin__resolve_stdio_command", return_value=("python", ["-c", "pass"])),
+                patch("mcpgateway.plugins.framework.external.mcp.client.stdio_client", return_value=OkCtx()),
+                patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session),
+            ):
                 await plugin._ExternalPlugin__run_stdio_session(None, ["python"], None, None)
         finally:
             await flip_task
@@ -810,9 +823,11 @@ class TestRunStdioSessionBranches:
             async def __aexit__(self, *args):
                 return False
 
-        with patch.object(plugin, "_ExternalPlugin__resolve_stdio_command", return_value=("python", ["-c", "pass"])), patch(
-            "mcpgateway.plugins.framework.external.mcp.client.stdio_client", return_value=OkCtx()
-        ), patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session):
+        with (
+            patch.object(plugin, "_ExternalPlugin__resolve_stdio_command", return_value=("python", ["-c", "pass"])),
+            patch("mcpgateway.plugins.framework.external.mcp.client.stdio_client", return_value=OkCtx()),
+            patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session),
+        ):
             await plugin._ExternalPlugin__run_stdio_session(None, ["python"], None, None)
 
         assert plugin._stdio_error is None

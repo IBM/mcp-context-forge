@@ -15,10 +15,25 @@ name: Tests & Coverage
 on:
   push:
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/pytest.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/pytest.yml"
   # schedule:
   #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write # needed *only* if the badge-commit step is enabled
@@ -27,13 +42,15 @@ permissions:
 
 jobs:
   test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: pytest (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.12"]
 
     env:
       PYTHONUNBUFFERED: "1"
@@ -71,8 +88,10 @@ jobs:
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
-          uv run pytest \
+          uv run pytest -n auto \
+            --durations=5 \
             --ignore=tests/fuzz \
+            --ignore=tests/e2e/test_entra_id_integration.py \
             --cov=mcpgateway \
             --cov-report=xml \
             --cov-report=html \
@@ -96,7 +115,8 @@ jobs:
       - name: 📊  Doctest coverage with threshold
         run: |
           # Run doctests with coverage measurement
-          uv run pytest --doctest-modules mcpgateway/ \
+          uv run pytest -n auto \
+            --doctest-modules mcpgateway/ \
             --cov=mcpgateway \
             --cov-report=term \
             --cov-report=json:doctest-coverage.json \
@@ -137,28 +157,7 @@ jobs:
     #     path: htmlcov/
 
     # -----------------------------------------------------------
-    # 5️⃣  Generate + commit badge (main branch, highest Python)
-    #       --- intentionally commented-out ---
-    # -----------------------------------------------------------
-    # - name: 📊  Create coverage badge
-    #   if: matrix.python == '3.11' && github.ref == 'refs/heads/main'
-    #   id: make_badge
-    #   uses: tj-actions/coverage-badge@v2
-    #   with:
-    #     coverage-file: coverage.xml          # input
-    #     output: .github/badges/coverage.svg  # output file
-    #   env:
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #
-    # - name: 🚀  Commit badge
-    #   if: steps.make_badge.outputs.badge-updated == 'true'
-    #   uses: stefanzweifel/git-auto-commit-action@v5
-    #   with:
-    #     commit_message: "docs(badge): update coverage badge"
-    #     file_pattern: ".github/badges/coverage.svg"
-
-    # -----------------------------------------------------------
-    # 6️⃣  Publish coverage table to the job summary
+    # 5️⃣  Publish coverage table to the job summary
     # -----------------------------------------------------------
 
 #     - name: 📝  Coverage summary

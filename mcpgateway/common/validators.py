@@ -1728,3 +1728,19 @@ class SecurityValidator:
         if isinstance(data, list):
             return [cls.sanitize_json_response(item) for item in data]
         return data
+
+
+def validate_core_url(value: str, field_name: str = "URL") -> str:
+    """Core ContextForge URL validation entry point.
+
+    This wrapper provides an explicit core-only entry point so the core
+    processing path does not depend on plugin-framework validators.
+
+    Args:
+        value: The URL string to validate.
+        field_name: Descriptive name for error messages.
+
+    Returns:
+        The validated URL string.
+    """
+    return SecurityValidator.validate_url(value, field_name)

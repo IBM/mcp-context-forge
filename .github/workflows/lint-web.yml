@@ -14,14 +14,28 @@ name: Web Lint & Static Analysis
 on:
   push:
     branches: ["main"]
+    paths:
+      - "mcpgateway/static/**"
+      - "mcpgateway/templates/**"
+      - ".github/workflows/lint-web.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
+    paths:
+      - "mcpgateway/static/**"
+      - "mcpgateway/templates/**"
+      - ".github/workflows/lint-web.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   lint-web:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +97,7 @@ jobs:
 
     name: ${{ matrix.id }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       # -----------------------------------------------------------
@@ -111,8 +126,10 @@ jobs:
   # 🐍 Python-based JS Security Scanner (separate job)
   # -------------------------------------------------------
   nodejsscan:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: nodejsscan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       # -----------------------------------------------------------

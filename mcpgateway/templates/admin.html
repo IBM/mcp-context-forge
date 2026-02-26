@@ -2486,10 +2486,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (servers|length if servers is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = servers|length if servers is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -3192,6 +3192,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -3207,6 +3208,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -3237,6 +3239,27 @@
                 </div>
               </div>
             </div>
+
+            {% if selected_team_id %}
+            <!-- View Public toggle for team-scoped server creation -->
+            <div class="mt-4" id="add-server-view-public-container">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="add-server-view-public"
+                  class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                />
+                <label
+                  for="add-server-view-public"
+                  class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                >
+              </div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+              </p>
+            </div>
+            {% endif %}
 
             <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
             <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -3434,10 +3457,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (tools|length if tools is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = tools|length if tools is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -4061,6 +4084,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4076,6 +4100,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4546,6 +4571,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4561,6 +4587,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4813,6 +4840,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4828,6 +4856,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4975,10 +5004,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (gateways|length if gateways is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = gateways|length if gateways is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -5407,6 +5436,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   Visibility
                 </label>
                 <div class="mt-1 flex space-x-6">
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -5422,6 +5452,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       >🌍Public</label
                     >
                   </div>
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -6655,12 +6686,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else 0)) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = 0 %}
+            {% set total_pages = 0 %}
             {% set has_prev = page > 1 %}
-            {% set has_next = (page * per_page) < total_items %}
+            {% set has_next = false %}
 
             {% set pagination = {
               'page': page,
@@ -6801,10 +6832,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values first ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (a2a_agents|length if a2a_agents is defined else 0))) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = a2a_agents|length if a2a_agents is defined else 0 %}
+            {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
             {% set has_prev = page > 1 %}
             {% set has_next = (page * per_page) < total_items %}
 
@@ -7549,6 +7580,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >Visibility</label
                 >
                 <div class="flex gap-x-6 mt-2">
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -7564,6 +7596,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       >🌍 Public</label
                     >
                   </div>
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -7806,10 +7839,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">Visibility</label>
                 <div class="flex items-center space-x-4">
+
                   <div class="flex items-center">
                     <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-public" checked />
                     <label for="grpc-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Public</label>
                   </div>
+
                   <div class="flex items-center">
                     <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-team" />
                     <label for="grpc-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Team</label>
@@ -8934,6 +8969,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     >
                     <div class="flex gap-x-6 mt-2">
                       <!-- Add gap-x-6 for more space between radio options -->
+
                       <div class="flex items-center">
                         <input
                           type="radio"
@@ -8948,6 +8984,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >🌍Public</label
                         >
                       </div>
+
                       <div class="flex items-center">
                         <input
                           type="radio"
@@ -9248,6 +9285,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         >Visibility</label
                       >
                       <div class="flex gap-x-6 mt-2">
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9262,6 +9300,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9471,6 +9510,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         >Visibility</label
                       >
                       <div class="flex gap-x-6 mt-2">
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9485,6 +9525,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9923,6 +9964,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       >
                       <div class="flex gap-x-6 mt-2">
                         <!-- Add gap-x-6 for more space between radio options -->
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9937,6 +9979,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -10325,7 +10368,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             <p class="mt-1 text-sm text-blue-600 font-medium">
                               💡 Use:
                               <code class="bg-blue-100 px-1 rounded"
-                                >http://localhost:4444/oauth/callback</code
+                                >{{ request.base_url }}oauth/callback</code
                               >
                             </p>
                           </div>
@@ -10870,6 +10913,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
                         <div class="flex gap-x-6 mt-2">
+
                           <label class="flex items-center">
                             <input
                               type="radio"
@@ -10881,6 +10925,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             />
                             <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</span>
                           </label>
+
                           <label class="flex items-center">
                             <input
                               type="radio"
@@ -11097,6 +11142,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       >
                       <div class="flex gap-x-6 mt-2">
                         <!-- Add gap-x-6 for more space between radio options -->
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -11111,6 +11157,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -11142,6 +11189,26 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       </div>
                     </div>
                   </div>
+                  {% if selected_team_id %}
+                  <!-- View Public toggle for team-scoped server editing -->
+                  <div class="mt-4" id="edit-server-view-public-container">
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="edit-server-view-public"
+                        class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      />
+                      <label
+                        for="edit-server-view-public"
+                        class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                      >
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+                    </p>
+                  </div>
+                  {% endif %}
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                     <div
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
@@ -11225,7 +11292,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-tools"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
@@ -11960,6 +12027,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
+      window.ALLOW_PUBLIC_VISIBILITY = {{ allow_public_visibility | tojson }};
       window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
       window.MAX_NAME_LENGTH = {{ max_name_length | tojson }};
       window.USER_TEAMS = {{ user_teams | default([]) | tojson }};

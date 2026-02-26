@@ -2,6 +2,7 @@ name: Alembic Upgrade Validation
 
 on:
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths:
       - "mcpgateway/alembic/**"
@@ -20,12 +21,17 @@ on:
         required: false
         default: "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   actions: read
 
 jobs:
   upgrade-validation:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: SQLite + PostgreSQL Fresh/Upgrade
     runs-on: ubuntu-latest
     timeout-minutes: 50

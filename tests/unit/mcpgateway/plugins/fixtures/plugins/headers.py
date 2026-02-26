@@ -3,12 +3,11 @@
 """Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/headers.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Fred Araujo
 
 Headers plugin.
 """
 
-import copy
 import logging
 
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
@@ -73,9 +72,7 @@ class HeadersMetaDataPlugin(Plugin):
         assert tool_meta.original_name == "test_tool"
         assert tool_meta.url.host == "example.com"
         assert tool_meta.integration_type == "REST" or tool_meta.integration_type == "MCP"
-        modified_payload = copy.deepcopy(payload)
-        if not modified_payload.headers:
-            modified_payload.headers = HttpHeaderPayload({})
+        headers = payload.headers.model_dump() if payload.headers else {}
         if tool_meta.integration_type == "REST":
             assert payload.headers
             assert "Content-Type" in payload.headers
@@ -87,8 +84,9 @@ class HeadersMetaDataPlugin(Plugin):
             assert gateway_meta.transport == "sse"
             assert gateway_meta.url.host == "example.com"
 
-        modified_payload.headers["User-Agent"] = "Mozilla/5.0"
-        modified_payload.headers["Connection"] = "keep-alive"
+        headers["User-Agent"] = "Mozilla/5.0"
+        headers["Connection"] = "keep-alive"
+        modified_payload = payload.model_copy(update={"headers": HttpHeaderPayload(headers)})
 
         return ToolPreInvokeResult(continue_processing=True, modified_payload=modified_payload)
 
@@ -175,15 +173,13 @@ class HeadersPlugin(Plugin):
         Returns:
             The result of the plugin's analysis, including whether the tool can proceed.
         """
-        modified_payload = copy.deepcopy(payload)
-        if not modified_payload.headers:
-            modified_payload.headers = HttpHeaderPayload({})
-        else:
-            assert payload.headers
+        headers = payload.headers.model_dump() if payload.headers else {}
+        if payload.headers:
             assert "Content-Type" in payload.headers
             assert payload.headers["Content-Type"] == "application/json"
-        modified_payload.headers["User-Agent"] = "Mozilla/5.0"
-        modified_payload.headers["Connection"] = "keep-alive"
+        headers["User-Agent"] = "Mozilla/5.0"
+        headers["Connection"] = "keep-alive"
+        modified_payload = payload.model_copy(update={"headers": HttpHeaderPayload(headers)})
         return ToolPreInvokeResult(continue_processing=True, modified_payload=modified_payload)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:

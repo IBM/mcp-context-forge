@@ -227,12 +227,16 @@ Tokens can be scoped to specific teams using the `teams` JWT claim:
 
 | Token Configuration | Admin User | Non-Admin User |
 |---------------------|------------|----------------|
-| No `teams` key | Unrestricted | Public-only |
-| `teams: null` | Unrestricted | Public-only |
+| No `teams` key | Public-only | Public-only |
+| `teams: null` | Admin bypass (unrestricted) | Public-only |
 | `teams: []` | Public-only | Public-only |
 | `teams: ["team-id"]` | Team + Public | Team + Public |
 
 **Security Default**: Non-admin tokens without explicit team scope default to public-only access (principle of least privilege).
+
+!!! note "Session Tokens vs API Tokens"
+    For `token_use: "session"` (Admin UI login), teams are resolved server-side from DB/cache on each request.
+    For `token_use: "api"` or legacy tokens, teams are interpreted from the JWT `teams` claim using `normalize_token_teams()`.
 
 #### Server-Scoped Tokens
 

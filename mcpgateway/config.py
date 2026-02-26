@@ -55,7 +55,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TYPE_CHECKING, TypedDict
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 from urllib.parse import urlparse
 
 # Third-Party
@@ -64,10 +64,6 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
 from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-
-if TYPE_CHECKING:
-    # First-Party
-    from mcpgateway.plugins.framework.settings import PluginsSettings
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -505,6 +501,10 @@ class Settings(BaseSettings):
     public_registration_enabled: bool = Field(
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
+    )
+    allow_public_visibility: bool = Field(
+        default=True,
+        description="When false, creating or updating any entity with public visibility is blocked in team scope.",
     )
     protect_all_admins: bool = Field(
         default=True,
@@ -2432,16 +2432,20 @@ class LazySettingsWrapper:
     """Lazily initialize settings singleton on getattr"""
 
     @property
-    def plugins(self) -> "PluginsSettings":
+    def plugins(self) -> Any:
         """Access plugin framework settings via ``settings.plugins``.
 
+        Returns a ``LazySettingsWrapper`` from the plugin framework that
+        provides lightweight ``@property`` accessors for startup-critical
+        fields and a ``__getattr__`` fallback to the full ``PluginsSettings``.
+
         Returns:
-            PluginsSettings: The plugin framework settings instance.
+            The plugin framework settings wrapper.
         """
         # First-Party
-        from mcpgateway.plugins.framework.settings import get_settings as _get_plugin_settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
 
-        return _get_plugin_settings()
+        return _plugin_settings
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it

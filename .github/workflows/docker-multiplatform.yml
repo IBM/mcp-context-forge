@@ -30,6 +30,7 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/docker-multiplatform.yml'
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths:
       - 'Containerfile.lite'
@@ -37,9 +38,11 @@ on:
       - 'plugins/**'
       - 'pyproject.toml'
       - '.github/workflows/docker-multiplatform.yml'
-  schedule:
-    - cron: "17 18 * * 2"  # Weekly rebuild (Tuesday 18:17 UTC) for CVE patches
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -56,6 +59,7 @@ jobs:
   # Build each platform in parallel
   # ---------------------------------------------------------------
   build:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Build ${{ matrix.suffix }}
     strategy:
       fail-fast: false
@@ -86,6 +90,7 @@ jobs:
             tag_only: true    # Only build on tagged releases (QEMU is slow)
 
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
 
     # Skip non-amd64 builds on PRs for faster CI feedback
     # Skip tag_only builds (ppc64le) on non-tag pushes
@@ -170,6 +175,7 @@ jobs:
     name: Create Manifest
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: github.event_name != 'pull_request'
 
     steps:
@@ -227,6 +233,7 @@ jobs:
     name: Sign Images
     needs: manifest
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: github.event_name != 'pull_request'
 
     steps:

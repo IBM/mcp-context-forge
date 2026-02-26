@@ -65,6 +65,17 @@ def _get_free_port() -> int:
         return sock.getsockname()[1]
 
 
+@pytest.fixture(autouse=True)
+def _disable_ssrf_for_local_tests(monkeypatch):
+    """Disable SSRF IP blocking so tests can use 127.0.0.1 for real local servers."""
+    monkeypatch.setenv("PLUGINS_SSRF_PROTECTION_ENABLED", "false")
+    from mcpgateway.plugins.framework.settings import settings  # pylint: disable=import-outside-toplevel
+
+    settings.cache_clear()
+    yield
+    settings.cache_clear()
+
+
 @pytest.fixture
 def server_proc():
     current_env = os.environ.copy()
@@ -74,6 +85,7 @@ def server_proc():
     current_env["PLUGINS_TRANSPORT"] = "http"
     current_env["PLUGINS_SERVER_HOST"] = "127.0.0.1"
     current_env["PLUGINS_SERVER_PORT"] = str(port)
+    current_env["PLUGINS_SSRF_PROTECTION_ENABLED"] = "false"
     # Start the server as a subprocess
     try:
         with subprocess.Popen([sys.executable, "mcpgateway/plugins/framework/external/mcp/server/runtime.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=current_env) as server_proc:
@@ -212,8 +224,18 @@ def server_proc_uds():
             env=current_env,
         ) as server_proc:
             _wait_for_socket(uds_path, proc=server_proc)
-            # Give the server a moment to fully initialize after socket creation
-            time.sleep(5)
+            # Verify the server is actually accepting connections on the UDS
+            _start = time.time()
+            while time.time() - _start < 10:
+                try:
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as _s:
+                        _s.settimeout(0.5)
+                        _s.connect(uds_path)
+                        break
+                except (ConnectionRefusedError, OSError):
+                    time.sleep(0.1)
+            else:
+                raise RuntimeError(f"Server never accepted connections on {uds_path}")
             yield server_proc, uds_path
             server_proc.terminate()
             server_proc.wait(timeout=3)
