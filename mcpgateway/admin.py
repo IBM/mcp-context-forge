@@ -420,6 +420,34 @@ def _validated_team_id_param(team_id: Optional[str] = Query(None, description="F
         raise HTTPException(status_code=400, detail="Invalid team ID") from exc
 
 
+def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
+    """Build an admin redirect URL preserving query parameters.
+
+    Args:
+        root_path: The root path prefix for the application.
+        fragment: The URL fragment/hash (e.g. "tools", "catalog").
+        error: Optional error message to include as a query parameter.
+        include_inactive: Whether the include_inactive flag was set.
+        team_id: Optional team ID to preserve in the redirect.
+
+    Returns:
+        A fully constructed redirect URL string.
+    """
+    params: dict[str, str] = {}
+    if error:
+        params["error"] = error
+    if include_inactive:
+        params["include_inactive"] = "true"
+    if team_id:
+        try:
+            params["team_id"] = _normalize_team_id(team_id)
+        except ValueError:
+            pass
+    query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""
+    sep = "/?" if query else ""
+    return f"{root_path}/admin{sep}{query}#{fragment}"
+
+
 def get_client_ip(request: Request) -> str:
     """Extract client IP address from request.
 
@@ -2758,17 +2786,9 @@ async def admin_set_server_state(
         error_message = "Error setting server status. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/servers/{server_id}/delete")
@@ -2812,17 +2832,9 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         error_message = "Failed to delete server. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/resources", response_model=PaginatedResponse)
@@ -3032,17 +3044,9 @@ async def admin_set_gateway_state(
         error_message = "Failed to set gateway state. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
@@ -10892,17 +10896,9 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         error_message = "Failed to delete tool. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/tools/{tool_id}/state")
@@ -10956,17 +10952,9 @@ async def admin_set_tool_state(
         error_message = "Failed to set tool state. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
@@ -11496,17 +11484,9 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/resources/test/{resource_uri:path}")
@@ -11835,17 +11815,9 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
         LOGGER.error(f"Error deleting resource: {e}")
         error_message = "Failed to delete resource. Please try again."
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/resources/{resource_id}/state")
@@ -11896,17 +11868,9 @@ async def admin_set_resource_state(
         error_message = "Failed to set resource state. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/prompts/{prompt_id}")
@@ -12168,17 +12132,9 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
         LOGGER.error(f"Error deleting prompt: {e}")
         error_message = "Failed to delete prompt. Please try again."
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/prompts/{prompt_id}/state")
@@ -12229,17 +12185,9 @@ async def admin_set_prompt_state(
         error_message = "Failed to set prompt state. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/roots/export")
@@ -12392,13 +12340,9 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         error_message = "Failed to add root. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        return RedirectResponse(f"{root_path}/admin{error_param}#roots", status_code=303)
-
-    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "roots", error=error_message, team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/roots/{uri:path}/update")
@@ -12446,10 +12390,9 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
         root_path = request.scope.get("root_path", "")
         is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
-
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+        team_id = str(form.get("team_id", "") or "")
+        redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+        return RedirectResponse(redirect_url, status_code=303)
 
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -12489,9 +12432,9 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
     form = await request.form()
     root_path = request.scope.get("root_path", "")
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 # Metrics
@@ -14654,10 +14597,14 @@ async def admin_set_a2a_agent_state(
 
     user_email = get_user_email(user)
     error_message = None
+    is_inactive_checked = "false"
+    team_id = ""
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
+        is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+        team_id = str(form.get("team_id", "") or "")
 
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
 
@@ -14666,21 +14613,14 @@ async def admin_set_a2a_agent_state(
         error_message = str(e)
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent state change failed - not found: {e}")
-        root_path = request.scope.get("root_path", "")
         error_message = "A2A agent not found."
     except Exception as e:
         LOGGER.error(f"Error setting A2A agent state: {e}")
-        root_path = request.scope.get("root_path", "")
         error_message = "Failed to set state of A2A agent. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
-
-    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
@@ -14709,10 +14649,14 @@ async def admin_delete_a2a_agent(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
-    form = await request.form()
-    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     error_message = None
+    is_inactive_checked = "false"
+    team_id = ""
     try:
+        form = await request.form()
+        purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
+        is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+        team_id = str(form.get("team_id", "") or "")
         user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
@@ -14726,13 +14670,8 @@ async def admin_delete_a2a_agent(
         error_message = "Failed to delete A2A agent. Please try again."
 
     root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
-
-    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/test")

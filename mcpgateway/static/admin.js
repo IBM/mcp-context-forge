@@ -11005,6 +11005,17 @@ function handleToggleSubmit(event, type) {
     hiddenField.value = isInactiveCheckedBool;
 
     form.appendChild(hiddenField);
+
+    // Inject team_id from URL so backend preserves team scope in redirect
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    if (teamId && !form.querySelector('input[name="team_id"]')) {
+        const teamField = document.createElement("input");
+        teamField.type = "hidden";
+        teamField.name = "team_id";
+        teamField.value = teamId;
+        form.appendChild(teamField);
+    }
+
     injectCsrfTokenIntoForm(form);
     form.submit();
 }
@@ -11041,17 +11052,6 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
         purgeField.name = "purge_metrics";
         purgeField.value = "true";
         form.appendChild(purgeField);
-    }
-
-    // Inject team_id from URL for RBAC team context derivation (defense-in-depth)
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    if (teamId) {
-        const form = event.target;
-        const teamField = document.createElement("input");
-        teamField.type = "hidden";
-        teamField.name = "team_id";
-        teamField.value = teamId;
-        form.appendChild(teamField);
     }
 
     const toggleType = inactiveType || type;
