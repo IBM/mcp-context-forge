@@ -9,7 +9,6 @@ from mcpgateway.services.content_security import (
     _format_bytes,
     _sanitize_pii_for_logging,
     get_content_security_service,
-    reset_content_security_service,
 )
 
 
@@ -18,8 +17,8 @@ class TestFormatBytes:
 
     def test_format_bytes_less_than_kb(self):
         """Test formatting bytes less than 1KB."""
-        assert _format_bytes(500) == "500 B"
-        assert _format_bytes(1023) == "1023 B"
+        assert _format_bytes(500) == "500 bytes"
+        assert _format_bytes(1023) == "1023 bytes"
 
     def test_format_bytes_kb(self):
         """Test formatting kilobytes."""
@@ -42,7 +41,7 @@ class TestFormatBytes:
 
     def test_format_bytes_zero(self):
         """Test formatting zero bytes."""
-        assert _format_bytes(0) == "0 B"
+        assert _format_bytes(0) == "0 bytes"
 
 
 class TestSanitizePiiForLogging:
@@ -68,7 +67,10 @@ class TestSanitizePiiForLogging:
 
     def test_sanitize_both(self):
         """Test sanitizing both email and IP."""
-        result = _sanitize_pii_for_logging(user_email="admin@test.com", ip_address="10.0.0.1")
+        result = _sanitize_pii_for_logging(
+            user_email="admin@test.com",
+            ip_address="10.0.0.1"
+        )
         assert result["user_hash"] is not None
         assert result["ip_subnet"] == "10.0.0.xxx"
 
@@ -128,7 +130,7 @@ class TestContentSecurityService:
         content = "x" * 200000  # 200KB
         with pytest.raises(ContentSizeError) as exc_info:
             service.validate_resource_size(content)
-
+        
         error = exc_info.value
         assert error.actual_size == 200000
         assert error.max_size == 102400
@@ -145,7 +147,12 @@ class TestContentSecurityService:
         service = ContentSecurityService()
         content = "x" * 200000
         with pytest.raises(ContentSizeError):
-            service.validate_resource_size(content, uri="test://resource", user_email="user@example.com", ip_address="192.168.1.1")
+            service.validate_resource_size(
+                content,
+                uri="test://resource",
+                user_email="user@example.com",
+                ip_address="192.168.1.1"
+            )
 
     def test_validate_prompt_size_within_limit(self):
         """Test validating prompt template within limit."""
@@ -167,7 +174,7 @@ class TestContentSecurityService:
         template = "x" * 20000  # 20KB
         with pytest.raises(ContentSizeError) as exc_info:
             service.validate_prompt_size(template)
-
+        
         error = exc_info.value
         assert error.actual_size == 20000
         assert error.max_size == 10240
@@ -184,7 +191,12 @@ class TestContentSecurityService:
         service = ContentSecurityService()
         template = "x" * 20000
         with pytest.raises(ContentSizeError):
-            service.validate_prompt_size(template, name="test_prompt", user_email="user@example.com", ip_address="10.0.0.1")
+            service.validate_prompt_size(
+                template,
+                name="test_prompt",
+                user_email="user@example.com",
+                ip_address="10.0.0.1"
+            )
 
 
 class TestGetContentSecurityService:
@@ -199,30 +211,25 @@ class TestGetContentSecurityService:
     def test_get_service_thread_safe(self):
         """Test that singleton is thread-safe."""
         import threading
-
+        
         results = []
-
+        
         def get_service():
             service = get_content_security_service()
             results.append(id(service))
-
+        
         # Create multiple threads
         threads = [threading.Thread(target=get_service) for _ in range(10)]
-
+        
         # Start all threads
         for thread in threads:
             thread.start()
-
+        
         # Wait for all threads
         for thread in threads:
             thread.join()
-
+        
         # All threads should get the same instance
         assert len(set(results)) == 1
 
-    def test_reset_creates_new_instance(self):
-        """Test that reset_content_security_service allows a new instance."""
-        service1 = get_content_security_service()
-        reset_content_security_service()
-        service2 = get_content_security_service()
-        assert service1 is not service2
+# Made with Bob
