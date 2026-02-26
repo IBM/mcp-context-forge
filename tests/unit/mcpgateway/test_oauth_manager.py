@@ -508,8 +508,8 @@ class TestOAuthManager:
 
             token_response = {"access_token": "access123", "refresh_token": "refresh123", "expires_in": 3600}
 
-            # Store the state with code_verifier (PKCE) to make it valid
-            await manager._store_authorization_state(gateway_id, state, code_verifier="test_code_verifier_123")
+            # Store the state with code_verifier (PKCE) and app_user_email to make it valid
+            await manager._store_authorization_state(gateway_id, state, code_verifier="test_code_verifier_123", app_user_email="test@example.com")
 
             with patch.object(manager, "_exchange_code_for_tokens") as mock_exchange:
                 mock_exchange.return_value = token_response
