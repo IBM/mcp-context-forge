@@ -19299,7 +19299,6 @@ function addAuthHeader(containerId, options = {}) {
                 type="text"
                 placeholder="Header Key (e.g., X-API-Key)"
                 class="auth-header-key block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
-                oninput="updateAuthHeadersJSON('${containerId}')"
             />
         </div>
         <div class="flex-1">
@@ -19310,7 +19309,6 @@ function addAuthHeader(containerId, options = {}) {
                     placeholder="Header Value"
                     data-sensitive-label="header value"
                     class="auth-header-value block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
-                    oninput="updateAuthHeadersJSON('${containerId}')"
                 />
                 <button
                     type="button"
@@ -19341,6 +19339,10 @@ function addAuthHeader(containerId, options = {}) {
     const valueInput = headerRow.querySelector(".auth-header-value");
     if (keyInput) {
         keyInput.value = options.key ?? "";
+        // Attach event listener programmatically
+        keyInput.addEventListener("input", () =>
+            updateAuthHeadersJSON(containerId),
+        );
     }
     if (valueInput) {
         if (options.isMasked) {
@@ -19354,6 +19356,10 @@ function addAuthHeader(containerId, options = {}) {
                 delete valueInput.dataset.realValue;
             }
         }
+        // Attach event listener programmatically
+        valueInput.addEventListener("input", () =>
+            updateAuthHeadersJSON(containerId),
+        );
     }
 
     updateAuthHeadersJSON(containerId);

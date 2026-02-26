@@ -2,7 +2,7 @@
 """Schema auth validation tests to improve coverage."""
 
 # Third-Party
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 import pytest
 
 # First-Party
@@ -158,6 +158,72 @@ def test_a2a_agent_create_query_param_host_allowlist(monkeypatch):
 def test_a2a_agent_update_query_param_missing_value():
     with pytest.raises(ValueError):
         A2AAgentUpdate(auth_type="query_param", auth_query_param_key="api_key")
+
+
+# =========================================================================
+# auth_type error message consistency tests (PR #3246)
+# Verify error messages reference "authheaders" (not "headers").
+# =========================================================================
+
+
+def test_gateway_create_invalid_auth_type_message():
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(name="gw", url="https://example.com", auth_type="bogus")
+    assert "authheaders" in str(exc_info.value)
+
+
+def test_gateway_create_authheaders_empty_headers_message():
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(name="gw", url="https://example.com", auth_type="authheaders", auth_headers=[{"key": "", "value": "v"}])
+    assert "authheaders" in str(exc_info.value).lower()
+
+
+def test_gateway_create_authheaders_missing_legacy_fields_message():
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(name="gw", url="https://example.com", auth_type="authheaders")
+    assert "authheaders" in str(exc_info.value).lower()
+
+
+def test_gateway_update_invalid_auth_type_message():
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayUpdate(auth_type="bogus")
+    assert "authheaders" in str(exc_info.value)
+
+
+def test_gateway_update_authheaders_empty_headers_message():
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayUpdate(auth_type="authheaders", auth_headers=[{"key": "", "value": "v"}])
+    assert "authheaders" in str(exc_info.value).lower()
+
+
+def test_gateway_update_authheaders_missing_legacy_fields_message():
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayUpdate(auth_type="authheaders")
+    assert "authheaders" in str(exc_info.value).lower()
+
+
+def test_a2a_agent_create_invalid_auth_type_message():
+    with pytest.raises(ValidationError) as exc_info:
+        A2AAgentCreate(name="agent", endpoint_url="https://example.com", auth_type="bogus")
+    assert "authheaders" in str(exc_info.value)
+
+
+def test_a2a_agent_create_authheaders_missing_legacy_fields_message():
+    with pytest.raises(ValidationError) as exc_info:
+        A2AAgentCreate(name="agent", endpoint_url="https://example.com", auth_type="authheaders")
+    assert "authheaders" in str(exc_info.value).lower()
+
+
+def test_a2a_agent_update_invalid_auth_type_message():
+    with pytest.raises(ValidationError) as exc_info:
+        A2AAgentUpdate(auth_type="bogus")
+    assert "authheaders" in str(exc_info.value)
+
+
+def test_a2a_agent_update_authheaders_missing_legacy_fields_message():
+    with pytest.raises(ValidationError) as exc_info:
+        A2AAgentUpdate(auth_type="authheaders")
+    assert "authheaders" in str(exc_info.value).lower()
 
 
 # =========================================================================

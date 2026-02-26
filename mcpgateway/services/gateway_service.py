@@ -3564,7 +3564,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             url: Gateway URL to connect to
             authentication: Optional authentication headers for the connection
             transport: Transport protocol - "SSE" or "StreamableHTTP"
-            auth_type: Authentication type - "basic", "bearer", "headers", "oauth", "query_param" or None
+            auth_type: Authentication type - "basic", "bearer", "authheaders", "oauth", "query_param" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
             ca_certificate: CA certificate for SSL verification
             pre_auth_headers: Pre-authenticated headers to skip OAuth token fetch (for reuse)
@@ -3651,7 +3651,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             tools = []
             resources = []
             prompts = []
-            if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
+            if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)

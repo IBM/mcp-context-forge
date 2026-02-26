@@ -167,6 +167,61 @@ class TestGatewayServiceExtended:
             assert "Failed to initialize gateway" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_initialize_gateway_decodes_authheaders_string(self):
+        """Test _initialize_gateway decodes encoded auth string for authheaders type.
+
+        Regression test for PR #3246: the decode guard must match 'authheaders'
+        so that activation and tool-refresh paths (which pass the raw DB value)
+        correctly decode the encrypted auth string before connecting.
+        """
+        service = GatewayService()
+
+        # Create an encoded auth string (simulates what the DB stores after gateway create)
+        # First-Party
+        from mcpgateway.utils.services_auth import encode_auth
+
+        original_headers = {"X-Api-Key": "secret123", "Authorization": "Bearer tok"}
+        encoded = encode_auth(original_headers)
+        assert isinstance(encoded, str), "encode_auth must return a string"
+
+        with (
+            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
+            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+        ):
+            mock_streams = (MagicMock(), MagicMock())
+            mock_sse_context = AsyncMock()
+            mock_sse_context.__aenter__.return_value = mock_streams
+            mock_sse_context.__aexit__.return_value = None
+            mock_sse_client.return_value = mock_sse_context
+
+            mock_session_instance = AsyncMock()
+            mock_session_context = AsyncMock()
+            mock_session_context.__aenter__.return_value = mock_session_instance
+            mock_session_context.__aexit__.return_value = None
+            mock_session.return_value = mock_session_context
+
+            mock_init_response = MagicMock()
+            mock_init_response.capabilities.model_dump.return_value = {}
+            mock_session_instance.initialize.return_value = mock_init_response
+
+            mock_tools_response = MagicMock()
+            mock_tools_response.tools = []
+            mock_session_instance.list_tools.return_value = mock_tools_response
+
+            await service._initialize_gateway(
+                "http://test.example.com",
+                encoded,
+                "SSE",
+                auth_type="authheaders",
+            )
+
+            # Verify sse_client received a decoded dict (not the raw string)
+            call_kwargs = mock_sse_client.call_args
+            headers_passed = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers")
+            assert isinstance(headers_passed, dict), f"Expected dict headers, got {type(headers_passed).__name__}: {headers_passed!r}"
+            assert headers_passed == original_headers
+
+    @pytest.mark.asyncio
     async def test_publish_event(self):
         """Test _publish_event method via EventService."""
         service = GatewayService()
@@ -179,7 +234,6 @@ class TestGatewayServiceExtended:
 
         # Verify EventService.publish_event was called with the event
         service._event_service.publish_event.assert_called_once_with(event)
-
 
     @pytest.mark.asyncio
     async def test_notify_gateway_added(self):
@@ -1419,9 +1473,7 @@ class TestGatewayServiceExtended:
                 patch.object(service, "_update_or_create_resources", return_value=[]),
                 patch.object(service, "_update_or_create_prompts", return_value=[]),
             ):
-                await service.fetch_tools_after_oauth(
-                    mock_db, gateway.id, "user@example.com"
-                )
+                await service.fetch_tools_after_oauth(mock_db, gateway.id, "user@example.com")
 
         assert existing_prompt in gateway.prompts
         assert len(gateway.prompts) == 1
