@@ -675,7 +675,7 @@ Respond with JSON format:
         texts = []
 
         if hasattr(payload, "args") and payload.args:
-            for key, value in payload.args.items():
+            for _key, value in payload.args.items():
                 if isinstance(value, str) and len(value.strip()) > 0:
                     texts.append(value)
                 elif isinstance(value, dict):

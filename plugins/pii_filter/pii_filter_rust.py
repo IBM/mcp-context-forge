@@ -82,7 +82,7 @@ class RustPIIDetector:
         from .pii_filter import PIIFilterConfig  # pylint: disable=import-outside-toplevel
 
         if not RUST_AVAILABLE:
-            raise ImportError("Rust implementation not available. " "Install with: pip install mcpgateway[rust]")
+            raise ImportError("Rust implementation not available. Install with: pip install mcpgateway[rust]")
 
         # Validate config type
         if not isinstance(config, PIIFilterConfig):

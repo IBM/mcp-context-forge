@@ -64,8 +64,8 @@ def _strip_tags(text: str) -> str:
     text = _BLOCK_ELEMENTS_RE.sub("\n", text)
     # Headings -> Markdown
     for i, heading_re in enumerate(_HEADING_RE, start=1):
-        heading_level = 7 - i  # Convert index to heading level (6 down to 1)
-        text = heading_re.sub(lambda m: "#" * heading_level + f" {m.group(1)}\n", text)
+        level = 7 - i  # Convert index to heading level (6 down to 1)
+        text = heading_re.sub(lambda m, lv=level: "#" * lv + f" {m.group(1)}\n", text)
     # Code/pre blocks -> fenced code
     # Allow optional whitespace between pre/code tags
     text = _PRE_CODE_RE.sub(

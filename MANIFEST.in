@@ -47,7 +47,7 @@ include .dockerignore
 include .flake8
 include .htmlhintrc
 include .pycodestyle
-include .pylintrc
+include .pylintrc*
 include .whitesource
 include .coveragerc
 # include .gitignore            # purely optional but many projects ship it

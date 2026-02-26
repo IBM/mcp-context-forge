@@ -1,0 +1,246 @@
+# Pylint configuration for the plugins/ directory.
+#
+# Usage:  uv run pylint --rcfile=.pylintrc.plugins plugins
+#
+# This file mirrors .pylintrc but adds disable rules for patterns that are
+# inherent to the plugin framework and its test suite:
+#
+#   - Plugin hooks receive a `context` argument they may not use.
+#   - Tests routinely access protected members and redefine pytest fixtures.
+#   - Plugin-local packages cause import-order noise.
+#   - Lazy / conditional imports are used for optional Rust accelerators.
+
+[MAIN]
+analyse-fallback-blocks=no
+clear-cache-post-run=no
+extension-pkg-allow-list=orjson
+fail-on=
+fail-under=10
+ignore=CVS
+ignore-paths=
+ignore-patterns=^\.#
+ignored-modules=
+jobs=1
+limit-inference-results=100
+load-plugins=pylint_pydantic
+persistent=yes
+py-version=3.11
+recursive=no
+source-roots=
+suggestion-mode=yes
+unsafe-load-any-extension=no
+
+[BASIC]
+argument-naming-style=snake_case
+attr-naming-style=snake_case
+bad-names=foo,
+          bar,
+          baz,
+          toto,
+          tutu,
+          tata
+bad-names-rgxs=
+class-attribute-naming-style=any
+class-const-naming-style=UPPER_CASE
+class-naming-style=PascalCase
+const-naming-style=UPPER_CASE
+docstring-min-length=-1
+function-naming-style=snake_case
+good-names=e,
+           ex,
+           bind,
+           workers,
+           loglevel,
+           timeout,
+           Run,
+           _
+good-names-rgxs=
+include-naming-hint=no
+inlinevar-naming-style=any
+method-naming-style=snake_case
+module-naming-style=snake_case
+name-group=
+no-docstring-rgx=^_
+property-classes=abc.abstractproperty
+variable-naming-style=snake_case
+
+[CLASSES]
+check-protected-access-in-special-methods=no
+defining-attr-methods=__init__,
+                      __new__,
+                      setUp,
+                      asyncSetUp,
+                      __post_init__
+exclude-protected=_asdict,_fields,_replace,_source,_make,os._exit
+valid-classmethod-first-arg=cls
+valid-metaclass-classmethod-first-arg=mcs
+
+[DESIGN]
+exclude-too-few-public-methods=
+ignored-parents=
+max-args=12
+max-positional-arguments = 16
+max-attributes=30
+max-bool-expr=6
+max-branches=12
+max-locals=15
+max-parents=7
+max-public-methods=20
+max-returns=16
+max-statements=50
+min-public-methods=2
+
+[EXCEPTIONS]
+overgeneral-exceptions=builtins.BaseException,builtins.Exception
+
+[FORMAT]
+expected-line-ending-format=
+ignore-long-lines=^\s*(# )?<?https?://\S+>?$
+indent-after-paren=4
+indent-string='    '
+max-line-length=200
+max-module-lines=1000
+single-line-class-stmt=no
+single-line-if-stmt=no
+
+[IMPORTS]
+allow-any-import-level=
+allow-reexport-from-package=no
+allow-wildcard-with-all=no
+deprecated-modules=
+ext-import-graph=
+import-graph=
+int-import-graph=
+known-standard-library=
+known-third-party=enchant,alembic
+preferred-modules=
+
+[LOGGING]
+logging-format-style=old
+logging-modules=logging
+
+[MESSAGES CONTROL]
+confidence=HIGH,
+           CONTROL_FLOW,
+           INFERENCE,
+           INFERENCE_FAILURE,
+           UNDEFINED
+
+# Includes everything from the global .pylintrc disable list, plus
+# plugin-specific patterns documented at the top of this file.
+disable=raw-checker-failed,
+        bad-inline-option,
+        locally-disabled,
+        file-ignored,
+        suppressed-message,
+        useless-suppression,
+        deprecated-pragma,
+        use-symbolic-message-instead,
+        too-many-locals,
+        too-many-arguments,
+        import-error,
+        logging-fstring-interpolation,
+        broad-exception-caught,
+        broad-exception-raised,
+        raise-missing-from,
+        too-few-public-methods,
+        line-too-long,
+        too-many-lines,
+        too-many-branches,
+        too-many-statements,
+        too-many-public-methods,
+        unsubscriptable-object,
+        # ── plugin framework patterns ──
+        unused-argument,
+        import-outside-toplevel,
+        wrong-import-order,
+        invalid-name,
+        attribute-defined-outside-init,
+        # ── test patterns ──
+        redefined-outer-name,
+        protected-access,
+        # ── style / suggestion noise ──
+        no-else-return,
+        too-many-return-statements,
+        inconsistent-return-statements,
+        implicit-str-concat,
+        comparison-with-itself,
+        cell-var-from-loop,
+        redefined-builtin,
+        unused-variable,
+        unnecessary-pass,
+        dangerous-default-value,
+        fixme,
+        consider-using-f-string,
+        consider-merging-isinstance,
+        consider-using-set-comprehension,
+        consider-iterating-dictionary,
+        simplifiable-if-expression,
+        chained-comparison
+
+enable=c-extension-no-member
+
+[METHOD_ARGS]
+timeout-methods=requests.api.delete,requests.api.get,requests.api.head,requests.api.options,requests.api.patch,requests.api.post,requests.api.put,requests.api.request
+
+[MISCELLANEOUS]
+notes=FIXME,
+      XXX,
+      TODO
+notes-rgx=
+
+[REFACTORING]
+max-nested-blocks=18
+never-returning-functions=sys.exit,argparse.parse_error
+
+[REPORTS]
+evaluation=max(0, 0 if fatal else 10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10))
+msg-template=
+reports=no
+score=yes
+
+[SIMILARITIES]
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+ignore-signatures=yes
+min-similarity-lines=16
+
+[SPELLING]
+max-spelling-suggestions=4
+spelling-dict=
+spelling-ignore-comment-directives=fmt: on,fmt: off,noqa:,noqa,nosec,isort:skip,mypy:
+spelling-ignore-words=
+spelling-private-dict-file=
+spelling-store-unknown-words=no
+
+[STRING]
+check-quote-consistency=no
+check-str-concat-over-line-jumps=no
+
+[TYPECHECK]
+contextmanager-decorators=contextlib.contextmanager
+generated-members=sqlalchemy.func.*
+ignore-none=yes
+ignore-on-opaque-inference=yes
+ignored-checks-for-mixins=no-member,
+                          not-async-context-manager,
+                          not-context-manager,
+                          attribute-defined-outside-init
+ignored-classes=optparse.Values,thread._local,_thread._local,argparse.Namespace
+missing-member-hint=yes
+missing-member-hint-distance=1
+missing-member-max-choices=1
+mixin-class-rgx=.*[Mm]ixin
+signature-mutators=
+
+[VARIABLES]
+additional-builtins=
+allow-global-unused-variables=yes
+allowed-redefined-builtins=
+callbacks=cb_,
+          _cb
+dummy-variables-rgx=_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignored_|^unused_
+ignored-argument-names=_.*|^ignored_|^unused_
+init-import=no
+redefining-builtins-modules=six.moves,past.builtins,future.builtins,builtins,io
