@@ -89,6 +89,7 @@ mcp_app: Server[Any] = Server("mcp-streamable-http")
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+_shared_session_registry: Optional[Any] = None
 
 # ------------------------------ Event store ------------------------------
 
@@ -466,6 +467,12 @@ def _should_enforce_streamable_rbac(user_context: Optional[dict[str, Any]]) -> b
 
     Direct unit tests may call MCP handlers without middleware context; those
     invocations should preserve historical behavior and avoid forced RBAC checks.
+
+    Args:
+        user_context: Request user context propagated by Streamable HTTP auth middleware.
+
+    Returns:
+        bool: ``True`` when permission checks should be enforced for this request.
     """
     return isinstance(user_context, dict) and "is_authenticated" in user_context
 
@@ -477,7 +484,17 @@ async def _check_streamable_permission(
     allow_admin_bypass: bool = True,
     check_any_team: bool = False,
 ) -> bool:
-    """Evaluate RBAC permission for a Streamable HTTP request context."""
+    """Evaluate RBAC permission for a Streamable HTTP request context.
+
+    Args:
+        user_context: Authenticated user context from Streamable HTTP middleware.
+        permission: Permission name to evaluate (for example ``tools.execute``).
+        allow_admin_bypass: Whether unrestricted admin tokens can bypass team checks.
+        check_any_team: Whether any matching team grants permission.
+
+    Returns:
+        bool: ``True`` when the caller is authorized for ``permission``.
+    """
     user_email = user_context.get("email")
     if not user_email:
         return False
@@ -497,23 +514,35 @@ async def _check_streamable_permission(
         return False
 
 
-def _get_shared_session_registry() -> Any:
-    """Resolve the process-wide session registry lazily.
+def set_shared_session_registry(session_registry: Any) -> None:
+    """Set the process-wide session registry used by Streamable HTTP helpers.
 
-    Imported lazily to avoid module import cycles at startup.
+    Args:
+        session_registry: Registry instance created by application bootstrap.
     """
-    try:
-        # First-Party
-        from mcpgateway import main as gateway_main  # pylint: disable=import-outside-toplevel
+    global _shared_session_registry  # pylint: disable=global-statement
+    _shared_session_registry = session_registry
 
-        return getattr(gateway_main, "session_registry", None)
-    except Exception as exc:
-        logger.debug(f"Unable to resolve shared session registry: {exc}")
-        return None
+
+def _get_shared_session_registry() -> Optional[Any]:
+    """Return the process-wide session registry reference.
+
+    Returns:
+        Optional[Any]: Session registry instance, or ``None`` when unavailable.
+    """
+    return _shared_session_registry
 
 
 async def _claim_streamable_session_owner(session_id: str, owner_email: str) -> Optional[str]:
-    """Claim or resolve the logical owner for a Streamable HTTP session."""
+    """Claim or resolve the logical owner for a Streamable HTTP session.
+
+    Args:
+        session_id: Logical MCP session identifier to claim.
+        owner_email: Caller email that should own the session.
+
+    Returns:
+        Optional[str]: Effective owner email after claim, or ``None`` if unavailable.
+    """
     if not session_id or not owner_email:
         return None
 
@@ -535,6 +564,11 @@ async def _validate_streamable_session_access(
     rpc_method: Optional[str] = None,
 ) -> tuple[bool, int, str]:
     """Authorize access to a stateful Streamable HTTP session identifier.
+
+    Args:
+        mcp_session_id: Session identifier from request headers.
+        user_context: Authenticated user context for the current request.
+        rpc_method: JSON-RPC method name when available.
 
     Returns:
         Tuple ``(allowed, deny_status_code, deny_message)``.
@@ -766,10 +800,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
         types.CallToolResult: MCP SDK CallToolResult with content and optional structuredContent.
 
     Raises:
+        PermissionError: If the caller lacks ``tools.execute`` permission.
         Exception: Re-raised after logging to allow MCP SDK to convert to JSON-RPC error response.
-
-    Raises:
-        Exception: Re-raises exceptions encountered during tool invocation after logging.
 
     Examples:
         >>> # Test call_tool function signature
@@ -1692,6 +1724,9 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
     Returns:
         types.EmptyResult: An empty result indicating success.
 
+    Raises:
+        PermissionError: If the caller lacks ``admin.system_config`` permission.
+
     Examples:
         >>> import inspect
         >>> sig = inspect.signature(set_logging_level)
@@ -2318,10 +2353,7 @@ class SessionManagerWrapper:
                     if requester_email:
                         effective_owner = await _claim_streamable_session_owner(captured_session_id, requester_email)
                         if effective_owner and effective_owner != requester_email and not bool(user_context.get("is_admin", False)):
-                            logger.warning(
-                                f"Session owner mismatch for {captured_session_id[:8]}... "
-                                f"(requester={requester_email}, owner={effective_owner})"
-                            )
+                            logger.warning(f"Session owner mismatch for {captured_session_id[:8]}... " f"(requester={requester_email}, owner={effective_owner})")
                 elif mcp_session_id != "not-provided":
                     # Existing client-provided IDs may only refresh affinity when they
                     # are already bound to the caller's principal.

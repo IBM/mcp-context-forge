@@ -140,7 +140,7 @@ from mcpgateway.services.server_service import ServerError, ServerLockConflictEr
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
+from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, set_shared_session_registry, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -215,6 +215,7 @@ session_registry = SessionRegistry(
     session_ttl=settings.session_ttl,
     message_ttl=settings.message_ttl,
 )
+set_shared_session_registry(session_registry)
 
 
 # Helper function for authentication compatibility
