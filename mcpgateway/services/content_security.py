@@ -11,13 +11,83 @@ This module implements (Content Size Limits) from issue #538.
 """
 
 # Standard
+import hashlib
 import logging
+import threading
 from typing import Optional, Union
 
 # First-Party
 from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_pii_for_logging(user_email: Optional[str] = None, ip_address: Optional[str] = None) -> dict:
+    """Sanitize PII data for secure logging.
+
+    Args:
+        user_email: User email to sanitize (returns first 8 chars of SHA256 hash)
+        ip_address: IP address to sanitize (masks last octet)
+
+    Returns:
+        Dictionary with sanitized values suitable for logging
+
+    Examples:
+        >>> result = _sanitize_pii_for_logging("user@example.com", "192.168.1.100")
+        >>> 'user_hash' in result and 'ip_subnet' in result
+        True
+        >>> result = _sanitize_pii_for_logging(None, None)
+        >>> result
+        {'user_hash': None, 'ip_subnet': None}
+    """
+    user_hash = None
+    if user_email:
+        user_hash = hashlib.sha256(user_email.encode()).hexdigest()[:8]
+
+    ip_subnet = None
+    if ip_address:
+        # Mask last octet for IPv4, or last segment for IPv6
+        if ":" in ip_address:  # IPv6
+            parts = ip_address.split(":")
+            ip_subnet = ":".join(parts[:-1]) + ":xxxx"
+        else:  # IPv4
+            ip_subnet = ip_address.rsplit(".", 1)[0] + ".xxx"
+
+    return {"user_hash": user_hash, "ip_subnet": ip_subnet}
+
+
+def _format_bytes(bytes_val: int) -> str:
+    """Format bytes as human-readable size.
+
+    Args:
+        bytes_val: Size in bytes
+
+    Returns:
+        Human-readable size string (e.g., "195.3 KB")
+
+    Examples:
+        >>> _format_bytes(1024)
+        '1.0 KB'
+        >>> _format_bytes(1536)
+        '1.5 KB'
+        >>> _format_bytes(1048576)
+        '1.0 MB'
+        >>> _format_bytes(500)
+        '500 B'
+    """
+    if bytes_val < 1024:
+        return f"{bytes_val} B"
+
+    size_kb = bytes_val / 1024.0
+    if size_kb < 1024:
+        return f"{size_kb:.1f} KB"
+
+    size_mb = size_kb / 1024.0
+    if size_mb < 1024:
+        return f"{size_mb:.1f} MB"
+
+    size_gb = size_mb / 1024.0
+    return f"{size_gb:.1f} GB"
 
 
 class ContentSizeError(Exception):
@@ -34,7 +104,12 @@ class ContentSizeError(Exception):
         self.content_type = content_type
         self.actual_size = actual_size
         self.max_size = max_size
-        super().__init__(f"{content_type} size ({actual_size} bytes) exceeds maximum allowed size ({max_size} bytes)")
+
+        # Format sizes for human readability
+        actual_formatted = _format_bytes(actual_size)
+        max_formatted = _format_bytes(max_size)
+
+        super().__init__(f"{content_type} size ({actual_formatted}) exceeds " f"maximum allowed size ({max_formatted})")
 
 
 class ContentSecurityService:
@@ -87,8 +162,11 @@ class ContentSecurityService:
         actual_size = len(content_bytes)
 
         if actual_size > self.max_resource_size:
-            # Log security violation
-            logger.warning(f"Resource size limit exceeded: " f"size={actual_size}, limit={self.max_resource_size}, " f"uri={uri}, user={user_email}, ip={ip_address}")
+            # Log security violation with sanitized PII
+            sanitized = _sanitize_pii_for_logging(user_email, ip_address)
+            logger.warning(
+                "Resource size limit exceeded", extra={"actual_size": actual_size, "max_size": self.max_resource_size, "content_type": "resource", "uri_provided": uri is not None, **sanitized}
+            )
             raise ContentSizeError("Resource content", actual_size, self.max_resource_size)
 
         logger.debug(f"Resource size validation passed: {actual_size} bytes")
@@ -118,19 +196,24 @@ class ContentSecurityService:
         actual_size = len(template_bytes)
 
         if actual_size > self.max_prompt_size:
-            # Log security violation
-            logger.warning(f"Prompt size limit exceeded: " f"size={actual_size}, limit={self.max_prompt_size}, " f"name={name}, user={user_email}, ip={ip_address}")
+            # Log security violation with sanitized PII
+            sanitized = _sanitize_pii_for_logging(user_email, ip_address)
+            logger.warning("Prompt size limit exceeded", extra={"actual_size": actual_size, "max_size": self.max_prompt_size, "content_type": "prompt", "name_provided": name is not None, **sanitized})
             raise ContentSizeError("Prompt template", actual_size, self.max_prompt_size)
 
         logger.debug(f"Prompt size validation passed: {actual_size} bytes")
 
 
-# Singleton instance
+# Singleton instance with thread-safe initialization
 _content_security_service: Optional[ContentSecurityService] = None
+_content_security_service_lock = threading.Lock()
 
 
 def get_content_security_service() -> ContentSecurityService:
     """Get or create the singleton ContentSecurityService instance.
+
+    Thread-safe singleton implementation using double-checked locking pattern
+    to prevent race conditions (CWE-362).
 
     Returns:
         ContentSecurityService: The singleton instance
@@ -142,6 +225,13 @@ def get_content_security_service() -> ContentSecurityService:
         True
     """
     global _content_security_service  # pylint: disable=global-statement
+
+    # First check (without lock for performance)
     if _content_security_service is None:
-        _content_security_service = ContentSecurityService()
+        # Acquire lock for thread-safe initialization
+        with _content_security_service_lock:
+            # Second check (with lock to prevent race condition)
+            if _content_security_service is None:
+                _content_security_service = ContentSecurityService()
+
     return _content_security_service
