@@ -99,3 +99,29 @@ class TestAdminUI:
         admin_page.page.set_viewport_size({"width": 1920, "height": 1080})
         admin_page.navigate()
         expect(admin_page.servers_tab).to_be_visible()
+
+    def test_sidebar_visible_after_mobile_collapse_and_resize(self, admin_page: AdminPage):
+        """Test sidebar reappears when resizing from mobile back to desktop (#2947)."""
+        sidebar = admin_page.page.locator("#sidebar")
+
+        # Start at desktop size — sidebar should be visible
+        admin_page.page.set_viewport_size({"width": 1280, "height": 800})
+        admin_page.navigate()
+        expect(sidebar).to_be_visible()
+
+        # Shrink to mobile — sidebar hidden, hamburger menu appears
+        admin_page.page.set_viewport_size({"width": 375, "height": 667})
+        admin_page.page.wait_for_timeout(300)
+        hamburger = admin_page.page.locator("button.lg\\:hidden >> svg")
+        expect(hamburger).to_be_visible()
+
+        # Open sidebar via hamburger, then close via backdrop click
+        hamburger.click()
+        expect(sidebar).to_be_visible()
+        admin_page.page.locator(".fixed.inset-0").click()
+        admin_page.page.wait_for_timeout(400)
+
+        # Resize back to desktop — sidebar must reappear without page reload
+        admin_page.page.set_viewport_size({"width": 1280, "height": 800})
+        admin_page.page.wait_for_timeout(300)
+        expect(sidebar).to_be_visible()
