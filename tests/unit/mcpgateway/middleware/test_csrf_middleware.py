@@ -435,10 +435,10 @@ async def test_session_id_from_header():
     request.url.path = "/api/data"
     request.headers = {
         "X-CSRF-Token": "valid_token",
-        "X-Session-ID": "header_session_123"
     }
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "header_session_123"
     request.cookies = {}
 
     mock_csrf_service = MagicMock()
@@ -454,10 +454,8 @@ async def test_session_id_from_header():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
-    # Verify session_id from header was used
-    mock_csrf_service.validate_csrf_token.assert_called_once_with(
-        "valid_token", "user@example.com", "header_session_123"
-    )
+    # Verify session_id from JWT context was used
+    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "user@example.com", "header_session_123")
 
 
 @pytest.mark.asyncio

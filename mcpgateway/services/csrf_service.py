@@ -77,11 +77,11 @@ clear_csrf_cookie(response, settings)
 """
 
 # Standard
+from functools import lru_cache
 import hashlib
 import hmac
 import logging
 import time
-from functools import lru_cache
 from typing import Any
 
 # First-Party
@@ -251,8 +251,9 @@ def set_csrf_cookie(response: Any, token: str, settings: Any) -> None:
         >>> call_kwargs['path']
         '/'
     """
+    cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
     response.set_cookie(
-        key="csrf_token",
+        key=cookie_name,
         value=token,
         httponly=False,  # Must be readable by JavaScript
         secure=settings.csrf_cookie_secure,
@@ -286,8 +287,9 @@ def clear_csrf_cookie(response: Any, settings: Any) -> None:
         >>> call_kwargs['secure']
         True
     """
+    cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
     response.set_cookie(
-        key="csrf_token",
+        key=cookie_name,
         value="",
         httponly=False,
         secure=settings.csrf_cookie_secure,

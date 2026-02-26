@@ -33,7 +33,6 @@ import math
 import os
 from pathlib import Path
 import re
-import secrets
 import tempfile
 import time
 from typing import Any
@@ -123,7 +122,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
-from mcpgateway.services.csrf_service import clear_csrf_cookie, generate_csrf_token
+from mcpgateway.services.csrf_service import clear_csrf_cookie, generate_csrf_token, set_csrf_cookie
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -1018,201 +1017,9 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
-ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
-ADMIN_CSRF_FORM_FIELD = "csrf_token"
-
-
-def _resolve_root_path(request: Request) -> str:
-    """Resolve the application root path from the request scope with fallback.
-
-    Some embedded/proxy deployments do not populate ``scope["root_path"]``
-    consistently.  This helper checks the ASGI scope first and falls back
-    to ``settings.app_root_path`` when the scope value is empty.
-
-    Args:
-        request: Incoming request used to read ASGI ``root_path``.
-
-    Returns:
-        Normalized root path (leading ``/``, no trailing ``/``), or empty
-        string when no root path is configured.
-    """
-    root_path = request.scope.get("root_path", "") or ""
-    if not root_path or not str(root_path).strip():
-        root_path = settings.app_root_path or ""
-    root_path = str(root_path).strip()
-    if root_path:
-        root_path = "/" + root_path.lstrip("/")
-    return root_path.rstrip("/")
-
-
-def _admin_cookie_path(request: Request) -> str:
-    """Build admin cookie path honoring ASGI root_path.
-
-    Args:
-        request: Incoming request used to read ASGI ``root_path``.
-
-    Returns:
-        Admin cookie path scoped under the deployed app root.
-    """
-    root_path = _resolve_root_path(request)
-    return f"{root_path}/admin" if root_path else "/admin"
-
-
-def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
-    """Normalize origin components for exact same-origin comparisons.
-
-    Args:
-        scheme: URL scheme (for example ``http`` or ``https``).
-        netloc: URL authority component (host and optional port).
-
-    Returns:
-        Tuple of normalized scheme, hostname, and resolved port.
-    """
-    parsed = urllib.parse.urlparse(f"{scheme}://{netloc}")
-    normalized_scheme = (parsed.scheme or scheme or "http").lower()
-    normalized_host = (parsed.hostname or "").lower()
-    normalized_port = parsed.port
-    if normalized_port is None:
-        normalized_port = 443 if normalized_scheme == "https" else 80
-    return normalized_scheme, normalized_host, normalized_port
-
-
-def _request_origin_matches(request: Request) -> bool:
-    """Return ``True`` when Origin/Referer matches this request origin.
-
-    Args:
-        request: Incoming request carrying Origin/Referer and host headers.
-
-    Returns:
-        ``True`` when candidate origin exactly matches request origin; otherwise ``False``.
-
-    Note:
-        When the service is deployed behind a reverse proxy, this check relies on
-        ``X-Forwarded-Proto`` / ``X-Forwarded-Host`` values emitted by that proxy.
-        The deployment boundary must sanitize and overwrite forwarded headers.
-    """
-    origin = request.headers.get("origin")
-    referer = request.headers.get("referer")
-
-    candidate_origin = origin
-    if not candidate_origin and referer:
-        try:
-            parsed_referer = urllib.parse.urlparse(referer)
-            if parsed_referer.scheme and parsed_referer.netloc:
-                candidate_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"
-        except Exception:  # nosec B110 - invalid Referer should fail closed below
-            candidate_origin = None
-
-    if not candidate_origin:
-        return False
-
-    parsed_candidate = urllib.parse.urlparse(candidate_origin)
-    if not parsed_candidate.scheme or not parsed_candidate.netloc:
-        return False
-
-    forwarded_proto = request.headers.get("x-forwarded-proto")
-    forwarded_host = request.headers.get("x-forwarded-host")
-    request_scheme = (forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme) or "http"
-    request_netloc = (forwarded_host.split(",")[0].strip() if forwarded_host else request.headers.get("host")) or request.url.netloc
-
-    candidate_parts = _normalize_origin_parts(parsed_candidate.scheme, parsed_candidate.netloc)
-    request_parts = _normalize_origin_parts(request_scheme, request_netloc)
-    return candidate_parts == request_parts
-
-
-def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
-    """Set or refresh admin CSRF cookie and return token value.
-
-    Args:
-        request: Incoming request used for existing token and path scoping.
-        response: Outgoing response where the cookie will be written.
-
-    Returns:
-        CSRF token value stored in the response cookie.
-    """
-    existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
-    csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
-
-    use_secure = (settings.environment == "production") or settings.secure_cookies
-    max_age = max(300, int(getattr(settings, "token_expiry", 60)) * 60)
-    response.set_cookie(
-        key=ADMIN_CSRF_COOKIE_NAME,
-        value=csrf_token,
-        max_age=max_age,
-        path=_admin_cookie_path(request),
-        httponly=False,
-        secure=use_secure,
-        samesite="strict",
-    )
-    return csrf_token
-
-
-def _clear_admin_csrf_cookie(request: Request, response: Response) -> None:
-    """Clear admin CSRF cookie.
-
-    Args:
-        request: Incoming request used to compute cookie path.
-        response: Outgoing response where cookie deletion is applied.
-    """
-    use_secure = (settings.environment == "production") or settings.secure_cookies
-    response.delete_cookie(
-        key=ADMIN_CSRF_COOKIE_NAME,
-        path=_admin_cookie_path(request),
-        secure=use_secure,
-        httponly=False,
-        samesite="strict",
-    )
-
-
-async def enforce_admin_csrf(request: Request) -> None:
-    """Enforce CSRF protections for cookie-authenticated admin mutations.
-
-    Args:
-        request: Incoming admin request to validate.
-
-    Returns:
-        ``None`` when validation passes.
-
-    Raises:
-        HTTPException: If origin validation fails or CSRF token validation fails.
-    """
-    if request.method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}:
-        return
-
-    jwt_cookie = request.cookies.get("jwt_token")
-    if not jwt_cookie:
-        # CSRF is relevant only for browser cookie auth. Token-auth API calls
-        # without session cookies are not subject to browser CSRF.
-        return
-
-    if not _request_origin_matches(request):
-        raise HTTPException(status_code=403, detail="CSRF origin validation failed")
-
-    csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
-    if not isinstance(csrf_cookie, str) or not csrf_cookie:
-        raise HTTPException(status_code=403, detail="CSRF token cookie missing")
-
-    submitted_token = request.headers.get(ADMIN_CSRF_HEADER_NAME)
-    if not submitted_token:
-        content_type = (request.headers.get("content-type") or "").lower()
-        if "application/x-www-form-urlencoded" in content_type:
-            try:
-                form = await request.form()
-                form_token = form.get(ADMIN_CSRF_FORM_FIELD)
-                if isinstance(form_token, str):
-                    submitted_token = form_token
-            except Exception:
-                submitted_token = None
-
-    if not isinstance(submitted_token, str) or not submitted_token or not secrets.compare_digest(submitted_token, csrf_cookie):
-        raise HTTPException(status_code=403, detail="CSRF token validation failed")
-
-
 admin_router = APIRouter(
     prefix="/admin",
     tags=["Admin UI"],
-    dependencies=[Depends(enforce_admin_csrf)],
 )
 
 ####################
@@ -3536,11 +3343,19 @@ async def admin_ui(
 
     # Determine the admin user email for CSRF token generation
     admin_email = get_user_email(user)
+    session_id = getattr(request.state, "jti", None)
 
-    # Generate CSRF token for the admin UI
-    csrf_token = generate_csrf_token(
-        user_id=admin_email, session_id=str(uuid.uuid4()), secret=settings.jwt_secret_key, expiry=settings.csrf_token_expiry if hasattr(settings, "csrf_token_expiry") else 3600
-    )
+    # Generate CSRF token for the admin UI (JWT-bound)
+    csrf_key = ""
+    if session_id:
+        csrf_key = generate_csrf_token(
+            user_id=admin_email,
+            session_id=session_id,
+            secret=settings.csrf_secret_key,
+            expiry=settings.csrf_token_expiry if hasattr(settings, "csrf_token_expiry") else 3600,
+        )
+    else:
+        LOGGER.warning("CSRF token not generated for admin UI: missing session identifier")
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -3588,9 +3403,14 @@ async def admin_ui(
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
             # CSRF token for frontend
-            "csrf_token": csrf_token,
+            "csrf_token": csrf_key,
+            "csrf_header_name": settings.csrf_token_name,
+            "csrf_cookie_name": settings.csrf_cookie_name,
         },
     )
+
+    if csrf_key:
+        set_csrf_cookie(response, csrf_key, settings)
 
     # Set JWT token cookie for HTMX requests if email auth is enabled
     if getattr(settings, "email_auth_enabled", False):
@@ -3685,7 +3505,6 @@ async def admin_ui(
                 samesite=samesite,
             )
 
-    _set_admin_csrf_cookie(request, response)
     return response
 
 
@@ -3752,7 +3571,6 @@ async def admin_login_page(request: Request) -> Response:
             "sri_hashes": load_sri_hashes(),
         },
     )
-    _set_admin_csrf_cookie(request, response)
     return response
 
 
@@ -3889,7 +3707,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                         status_code=303,
                     )
 
-                _set_admin_csrf_cookie(request, response)
                 return response
 
             # Create JWT token with proper audience and issuer claims
@@ -3908,7 +3725,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     status_code=303,
                 )
 
-            _set_admin_csrf_cookie(request, response)
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
 
@@ -3951,7 +3767,6 @@ async def admin_forgot_password_page(request: Request) -> Response:
             "sri_hashes": load_sri_hashes(),
         },
     )
-    _set_admin_csrf_cookie(request, response)
     return response
 
 
@@ -4030,7 +3845,6 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
             "sri_hashes": load_sri_hashes(),
         },
     )
-    _set_admin_csrf_cookie(request, response)
     return response
 
 
@@ -4257,7 +4071,6 @@ async def _admin_logout(request: Request) -> Response:
         httponly=True,
         samesite=settings.cookie_samesite,
     )
-    _clear_admin_csrf_cookie(request, response)
     return response
 
 
@@ -4344,7 +4157,6 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "sri_hashes": load_sri_hashes(),
         },
     )
-    _set_admin_csrf_cookie(request, response)
     return response
 
 

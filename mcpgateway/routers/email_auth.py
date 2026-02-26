@@ -304,7 +304,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             session_id = payload.get("jti", "")
 
             # Generate CSRF token
-            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.jwt_secret_key.get_secret_value(), expiry=settings.csrf_token_expiry)
+            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
 
             # Create response with CSRF cookie
             response = AuthenticationResponse(

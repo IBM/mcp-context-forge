@@ -85,13 +85,19 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if not settings.csrf_enabled:
             return await call_next(request)
 
+        # 1b. Skip if auth is disabled (dev mode)
+        if not getattr(settings, "auth_required", True):
+            return await call_next(request)
+
         # 2. Skip safe methods (GET, HEAD, OPTIONS, TRACE)
         if request.method in SAFE_METHODS:
             return await call_next(request)
 
-        # 3. Skip exempt paths
-        if request.url.path in settings.csrf_exempt_paths:
-            return await call_next(request)
+        # 3. Skip exempt paths (exact or prefix match)
+        request_path = request.url.path
+        for exempt_path in settings.csrf_exempt_paths:
+            if request_path == exempt_path or request_path.startswith(exempt_path.rstrip("/") + "/"):
+                return await call_next(request)
 
         # 4. Skip Bearer token requests (not vulnerable to CSRF)
         auth_header = request.headers.get("authorization", "")
@@ -114,11 +120,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             # EmailUser uses 'email' as primary key
             user_id = user.email if hasattr(user, "email") else str(user.id) if hasattr(user, "id") else None
 
-        # Try to get session_id from cookies or headers
-        session_id = request.cookies.get("session_id") or request.headers.get("X-Session-ID")
+        # Bind CSRF tokens to the verified JWT session (jti) when available
+        session_id = getattr(request.state, "jti", None)
 
-        # If no user context, we can't validate the token
-        if not user_id:
+        # If no user context or session binding, we can't validate the token
+        if not user_id or not session_id:
             logger.warning(f"CSRF validation failed: no user context for {request.method} {request.url.path}")
             return JSONResponse(status_code=403, content={"detail": "CSRF token invalid", "code": "CSRF_TOKEN_INVALID"})
 

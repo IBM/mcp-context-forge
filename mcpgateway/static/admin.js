@@ -32,10 +32,15 @@ function getCSRFToken() {
 
     // Fallback: cookie (edge cases where meta tag is unavailable)
     try {
+        const cookieMeta = document.querySelector('meta[name="csrf-cookie"]');
+        const cookieName =
+            cookieMeta && cookieMeta.getAttribute("content")
+                ? cookieMeta.getAttribute("content")
+                : "csrf_token";
         const cookies = document.cookie.split(";");
         for (const cookie of cookies) {
             const [name, value] = cookie.trim().split("=");
-            if (name === "csrf_token") return decodeURIComponent(value);
+            if (name === cookieName) return decodeURIComponent(value);
         }
     } catch (e) {
         console.error("CSRF: failed to read cookie fallback", e);
@@ -43,6 +48,14 @@ function getCSRFToken() {
 
     console.error("CSRF: no token found — requests will fail");
     return null;
+}
+
+function getCSRFHeaderName() {
+    const meta = document.querySelector('meta[name="csrf-header"]');
+    if (meta && meta.getAttribute("content")) {
+        return meta.getAttribute("content");
+    }
+    return "X-CSRF-Token";
 }
 
 /**
@@ -85,16 +98,17 @@ async function refreshCSRFToken() {
 
         // Skip if caller already set X-CSRF-Token manually
         const existingHeaders = options.headers || {};
+        const csrfHeaderName = getCSRFHeaderName();
         if (
-            existingHeaders["X-CSRF-Token"] ||
-            existingHeaders["x-csrf-token"]
+            existingHeaders[csrfHeaderName] ||
+            existingHeaders[csrfHeaderName.toLowerCase()]
         ) {
             return _originalFetch(url, options);
         }
 
         options.headers = {
             ...existingHeaders,
-            "X-CSRF-Token": getCSRFToken(),
+            [csrfHeaderName]: getCSRFToken(),
         };
         options.credentials = "include";
 
@@ -104,7 +118,7 @@ async function refreshCSRFToken() {
         if (response.status === 401 || response.status === 403) {
             try {
                 const newToken = await refreshCSRFToken();
-                options.headers["X-CSRF-Token"] = newToken;
+                options.headers[csrfHeaderName] = newToken;
                 return _originalFetch(url, options); // retry ONCE only — never loop
             } catch (e) {
                 console.error(
@@ -11699,47 +11713,14 @@ async function handleToggleSubmit(event, type) {
 
     const isInactiveCheckedBool = isInactiveChecked(type);
     const form = event.target;
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    const hiddenField = document.createElement("input");
+    hiddenField.type = "hidden";
+    hiddenField.name = "is_inactive_checked";
+    hiddenField.value = isInactiveCheckedBool;
 
-    // Build FormData from current form state (captures any fields already
-    // appended by handleDeleteSubmit such as purge_metrics).
-    const formData = new FormData(form);
-    formData.set("is_inactive_checked", String(isInactiveCheckedBool));
-    if (teamId && !formData.has("team_id")) {
-        formData.set("team_id", teamId);
-    }
-    const csrfToken =
-        typeof getCookie === "function"
-            ? getCookie("mcpgateway_csrf_token") || ""
-            : "";
-    if (csrfToken) {
-        formData.set("csrf_token", csrfToken);
-    }
-
-    try {
-        // Use redirect:'manual' so the browser does not follow the 303
-        // redirect to the backend-direct URL (which bypasses the proxy).
-        await fetch(form.action, {
-            method: "POST",
-            body: formData,
-            credentials: "include",
-            redirect: "manual",
-        });
-    } catch (e) {
-        // Network error — still navigate so the user sees refreshed state.
-        console.error("Toggle submit error:", e);
-    }
-
-    // Navigate using proxy-aware helper so proxy prefix is preserved.
-    const fragment = _TOGGLE_FRAGMENT_MAP[type] || type;
-    const params = new URLSearchParams();
-    if (isInactiveCheckedBool) {
-        params.set("include_inactive", "true");
-    }
-    if (teamId) {
-        params.set("team_id", teamId);
-    }
-    _navigateAdmin(fragment, params);
+    form.appendChild(hiddenField);
+    injectCSRFIntoForm(form);
+    form.submit();
 }
 
 function handleSubmitWithConfirmation(event, type) {

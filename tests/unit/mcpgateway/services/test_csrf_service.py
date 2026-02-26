@@ -172,6 +172,7 @@ class TestSetCSRFCookie:
         """Test that cookie is set with correct security parameters."""
         response = Mock()
         settings = Mock(
+            csrf_cookie_name="csrf_token",
             csrf_cookie_secure=True,
             csrf_cookie_samesite="Strict",
             csrf_token_expiry=3600
@@ -195,6 +196,7 @@ class TestSetCSRFCookie:
         """Test that httponly is always False (CSRF tokens must be readable by JS)."""
         response = Mock()
         settings = Mock(
+            csrf_cookie_name="csrf_token",
             csrf_cookie_secure=False,
             csrf_cookie_samesite="Lax",
             csrf_token_expiry=7200
@@ -210,6 +212,7 @@ class TestSetCSRFCookie:
         """Test that secure flag comes from settings."""
         response = Mock()
         settings = Mock(
+            csrf_cookie_name="csrf_token",
             csrf_cookie_secure=False,
             csrf_cookie_samesite="Lax",
             csrf_token_expiry=3600
@@ -225,6 +228,7 @@ class TestSetCSRFCookie:
         """Test that samesite comes from settings."""
         response = Mock()
         settings = Mock(
+            csrf_cookie_name="csrf_token",
             csrf_cookie_secure=True,
             csrf_cookie_samesite="None",
             csrf_token_expiry=3600
@@ -244,6 +248,7 @@ class TestClearCSRFCookie:
         """Test that cookie is cleared with max_age=0."""
         response = Mock()
         settings = Mock(
+            csrf_cookie_name="csrf_token",
             csrf_cookie_secure=True,
             csrf_cookie_samesite="Strict"
         )
@@ -265,6 +270,7 @@ class TestClearCSRFCookie:
         """Test that settings are respected when clearing cookie."""
         response = Mock()
         settings = Mock(
+            csrf_cookie_name="csrf_token",
             csrf_cookie_secure=False,
             csrf_cookie_samesite="Lax"
         )
