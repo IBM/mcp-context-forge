@@ -525,7 +525,7 @@ async def test_toolops_execute_nl_testcases_success(monkeypatch):
         AsyncMock(return_value=["ok"]),
     )
 
-    payload = toolops_router.ToolNLTestInput(tool_id="tool1", tool_nl_test_cases=["hello"])
+    payload = toolops_router.ToolNLTestInput(tool_id="tool1", tool_nl_test_cases=["hello"], model_id="model1")
     result = await _call_toolops(
         toolops_router.execute_tool_nl_testcases,
         monkeypatch,
