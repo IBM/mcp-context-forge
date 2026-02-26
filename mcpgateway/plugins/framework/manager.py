@@ -616,7 +616,11 @@ class PluginManager:
 
     @executor.setter
     def executor(self, value: PluginExecutor) -> None:
-        """Set the plugin executor instance."""
+        """Set the plugin executor instance.
+
+        Args:
+            value: The plugin executor to assign.
+        """
         self._executor = value
 
     @classmethod
