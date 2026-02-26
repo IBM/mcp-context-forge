@@ -15,7 +15,6 @@ The module handles API endpoints created for several toolops features.
 """
 
 # Standard
-import html
 from typing import Any, Dict, List
 
 # Third-Party
@@ -163,7 +162,7 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
         logger.info("Running tool enrichment for Tool - " + tool_id)
         enriched_tool_description, tool_schema = await enrich_tool(tool_id, tool_service, db)
         result: dict[str, Any] = {}
-        result["tool_id"] = html.escape(tool_id)
+        result["tool_id"] = tool_id
         result["tool_name"] = tool_schema.name
         result["original_desc"] = tool_schema.description
         result["enriched_desc"] = enriched_tool_description
@@ -174,5 +173,5 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
         logger.info("Error in tool enrichment for Tool - " + str(e))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON in request body: " + html.escape(str(e)),
+            detail="Invalid JSON in request body" + str(e),
         ) from e

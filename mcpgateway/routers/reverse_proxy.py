@@ -13,7 +13,6 @@ to connect and tunnel their local MCP servers through the gateway.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import html
 from typing import Any, Dict, Optional
 import uuid
 
@@ -382,10 +381,9 @@ async def disconnect_session(
     Raises:
         HTTPException: If session is not found or user is not authorized.
     """
-    safe_session_id = html.escape(session_id)
     session = manager.get_session(session_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {safe_session_id} not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     # Validate session ownership
     _validate_session_ownership(session, credentials, "disconnect")
@@ -394,7 +392,7 @@ async def disconnect_session(
     await session.websocket.close()
     await manager.remove_session(session_id)
 
-    return {"status": "disconnected", "session_id": safe_session_id}
+    return {"status": "disconnected", "session_id": session_id}
 
 
 @router.post("/sessions/{session_id}/request")
@@ -421,10 +419,9 @@ async def send_request_to_session(
     Raises:
         HTTPException: If session is not found, user is not authorized, or request fails.
     """
-    safe_session_id = html.escape(session_id)
     session = manager.get_session(session_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {safe_session_id} not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     # Validate session ownership
     _validate_session_ownership(session, credentials, "send request to")
@@ -434,9 +431,9 @@ async def send_request_to_session(
 
     try:
         await session.send_message(message)
-        return {"status": "sent", "session_id": safe_session_id}
+        return {"status": "sent", "session_id": session_id}
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request: {html.escape(str(e))}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request: {e}")
 
 
 def _get_user_from_credentials(credentials: str | dict) -> tuple[str | None, bool]:

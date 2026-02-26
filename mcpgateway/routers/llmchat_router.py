@@ -19,7 +19,6 @@ history management via ChatHistoryManager from mcp_client_chat_service.
 
 # Standard
 import asyncio
-import html
 import os
 import time
 from typing import Any, Dict, Optional
@@ -829,9 +828,9 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         try:
             config = build_config(input_data)
         except ValueError as ve:
-            raise HTTPException(status_code=400, detail=f"Invalid configuration: {html.escape(str(ve))}")
+            raise HTTPException(status_code=400, detail=f"Invalid configuration: {str(ve)}")
         except Exception as config_error:
-            raise HTTPException(status_code=400, detail=f"Configuration error: {html.escape(str(config_error))}")
+            raise HTTPException(status_code=400, detail=f"Configuration error: {str(config_error)}")
 
         # Store user configuration
         await set_user_config(user_id, config)
@@ -846,15 +845,15 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         except ConnectionError as ce:
             # Clean up partial state
             await delete_user_config(user_id)
-            raise HTTPException(status_code=503, detail=f"Failed to connect to MCP server: {html.escape(str(ce))}. Please verify the server URL and authentication.")
+            raise HTTPException(status_code=503, detail=f"Failed to connect to MCP server: {str(ce)}. Please verify the server URL and authentication.")
         except ValueError as ve:
             # Clean up partial state
             await delete_user_config(user_id)
-            raise HTTPException(status_code=400, detail=f"Invalid LLM configuration: {html.escape(str(ve))}")
+            raise HTTPException(status_code=400, detail=f"Invalid LLM configuration: {str(ve)}")
         except Exception as init_error:
             # Clean up partial state
             await delete_user_config(user_id)
-            raise HTTPException(status_code=500, detail=f"Service initialization failed: {html.escape(str(init_error))}")
+            raise HTTPException(status_code=500, detail=f"Service initialization failed: {str(init_error)}")
 
         await set_active_session(user_id, chat_service)
 
@@ -870,14 +869,14 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
             logger.warning(f"Failed to extract tool names: {tool_error}")
             # Continue without tools list
 
-        return {"status": "connected", "user_id": html.escape(user_id), "provider": config.llm.provider, "tool_count": len(tool_names), "tools": tool_names}
+        return {"status": "connected", "user_id": user_id, "provider": config.llm.provider, "tool_count": len(tool_names), "tools": tool_names}
 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         logger.error(f"Unexpected error in connect endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Unexpected connection error: {html.escape(str(e))}")
+        raise HTTPException(status_code=500, detail=f"Unexpected connection error: {str(e)}")
 
 
 async def token_streamer(chat_service: MCPChatService, message: str, user_id: str):
@@ -939,13 +938,8 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         Yields:
             bytes: UTF-8 encoded SSE formatted lines.
         """
-        safe_event_type = html.escape(event_type)
-        # Escape HTML-significant characters in JSON for defense-in-depth against XSS.
-        # Unicode escapes (\u003c etc.) are valid JSON that clients parse correctly.
-        json_str = orjson.dumps(data).decode()
-        json_str = json_str.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-        yield f"event: {safe_event_type}\n".encode("utf-8")
-        yield f"data: {json_str}\n\n".encode("utf-8")
+        yield f"event: {event_type}\n".encode("utf-8")
+        yield f"data: {orjson.dumps(data).decode()}\n\n".encode("utf-8")
 
     try:
         async for ev in chat_service.chat_events(message):
@@ -962,7 +956,7 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
                     yield part
 
     except ConnectionError as ce:
-        error_event = {"type": "error", "error": f"Connection lost: {html.escape(str(ce))}", "recoverable": False}
+        error_event = {"type": "error", "error": f"Connection lost: {str(ce)}", "recoverable": False}
         async for part in sse("error", error_event):
             yield part
     except TimeoutError:
@@ -970,12 +964,12 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         async for part in sse("error", error_event):
             yield part
     except RuntimeError as re:
-        error_event = {"type": "error", "error": f"Service error: {html.escape(str(re))}", "recoverable": False}
+        error_event = {"type": "error", "error": f"Service error: {str(re)}", "recoverable": False}
         async for part in sse("error", error_event):
             yield part
     except Exception as e:
         logger.error(f"Unexpected streaming error: {e}", exc_info=True)
-        error_event = {"type": "error", "error": f"Unexpected error: {html.escape(str(e))}", "recoverable": False}
+        error_event = {"type": "error", "error": f"Unexpected error: {str(e)}", "recoverable": False}
         async for part in sse("error", error_event):
             yield part
 
@@ -1075,7 +1069,7 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
                 result = await chat_service.chat_with_metadata(input_data.message)
 
                 return {
-                    "user_id": html.escape(user_id),
+                    "user_id": user_id,
                     "response": result["text"],
                     "tool_used": result["tool_used"],
                     "tools": result["tools"],
@@ -1083,17 +1077,17 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
                     "elapsed_ms": result["elapsed_ms"],
                 }
             except RuntimeError as re:
-                raise HTTPException(status_code=503, detail=f"Chat service error: {html.escape(str(re))}")
+                raise HTTPException(status_code=503, detail=f"Chat service error: {str(re)}")
 
     except ConnectionError as ce:
-        raise HTTPException(status_code=503, detail=f"Lost connection to MCP server: {html.escape(str(ce))}. Please reconnect.")
+        raise HTTPException(status_code=503, detail=f"Lost connection to MCP server: {str(ce)}. Please reconnect.")
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Request timed out. The LLM took too long to respond.")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in chat endpoint for user {user_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {html.escape(str(e))}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
 @llmchat_router.post("/disconnect")
@@ -1160,9 +1154,8 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
     # Remove user config
     await delete_user_config(user_id)
 
-    safe_user_id = html.escape(user_id)
     if not chat_service:
-        return {"status": "no_active_session", "user_id": safe_user_id, "message": "No active session to disconnect"}
+        return {"status": "no_active_session", "user_id": user_id, "message": "No active session to disconnect"}
 
     try:
         # Clear chat history on disconnect
@@ -1170,11 +1163,11 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
         logger.info(f"Chat session disconnected for {user_id}")
 
         await chat_service.shutdown()
-        return {"status": "disconnected", "user_id": safe_user_id, "message": "Successfully disconnected"}
+        return {"status": "disconnected", "user_id": user_id, "message": "Successfully disconnected"}
     except Exception as e:
         logger.error(f"Error during disconnect for user {user_id}: {e}", exc_info=True)
         # Session already removed, so return success with warning
-        return {"status": "disconnected_with_errors", "user_id": safe_user_id, "message": "Disconnected but cleanup encountered errors", "warning": html.escape(str(e))}
+        return {"status": "disconnected_with_errors", "user_id": user_id, "message": "Disconnected but cleanup encountered errors", "warning": str(e)}
 
 
 @llmchat_router.get("/status/{user_id}")
@@ -1219,7 +1212,7 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
     """
     resolved_user_id = _resolve_user_id(user_id, user)
     connected = bool(await get_active_session(resolved_user_id))
-    return {"user_id": html.escape(resolved_user_id) if resolved_user_id else resolved_user_id, "connected": connected}
+    return {"user_id": resolved_user_id, "connected": connected}
 
 
 @llmchat_router.get("/config/{user_id}")
@@ -1338,4 +1331,4 @@ async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
             }
     except Exception as e:
         logger.error(f"Failed to get gateway models: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve gateway models: {html.escape(str(e))}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve gateway models: {str(e)}")
