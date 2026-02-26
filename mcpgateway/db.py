@@ -6367,3 +6367,71 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
     else:
         target.name = target.custom_name_slug
+
+
+class JITGrant(Base):
+    """Just-in-Time access grant model.
+
+    Tracks temporary privilege elevation requests, approvals,
+    and their lifecycle for least-privilege compliance.
+
+    Examples:
+        >>> grant = JITGrant(
+        ...     requester_email="dev@example.com",
+        ...     requested_role="incident-responder",
+        ...     justification="INC-123 prod issue",
+        ...     duration_hours=2
+        ... )
+        >>> grant.status
+        'pending'
+    """
+
+    __tablename__ = "jit_grants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    requester_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False, index=True)
+    requested_role: Mapped[str] = mapped_column(String(255), nullable=False)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    duration_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    ticket_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Approval
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Rejection
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Access window
+    starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Revocation
+    revoked_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    revoke_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        Index("idx_jit_requester_status", "requester_email", "status"),
+        Index("idx_jit_expires", "expires_at", "status"),
+    )
+
+    def is_expired(self) -> bool:
+        """Check if grant has expired.
+
+        Returns:
+            True if grant has expired, False otherwise
+
+        Examples:
+            >>> grant = JITGrant(status="active")
+            >>> grant.is_expired()
+            False
+        """
+        if not self.expires_at:
+            return False
+        return utc_now() > self.expires_at

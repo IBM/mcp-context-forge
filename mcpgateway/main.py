@@ -7652,6 +7652,11 @@ if settings.email_auth_enabled:
 
         app.include_router(rbac_router, tags=["RBAC"])
         logger.info("RBAC router included - Role-based access control enabled")
+        # First-Party
+        from mcpgateway.routers.jit import router as jit_router
+
+        app.include_router(jit_router, tags=["JIT Access"])
+        logger.info("JIT router included - Just-in-Time access enabled")
     except ImportError as e:
         logger.error(f"RBAC router not available: {e}")
 else:

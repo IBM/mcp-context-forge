@@ -7764,3 +7764,141 @@ class PerformanceHistoryResponse(BaseModel):
     aggregates: List[PerformanceAggregateRead] = Field(default_factory=list, description="Historical aggregates")
     period_type: str = Field(..., description="Aggregation period type")
     total_count: int = Field(0, description="Total matching records")
+
+
+# Standard
+# ---------------------------------------------------------------------------
+# JIT (Just-in-Time) Access Schemas
+# ---------------------------------------------------------------------------
+class JITGrantStatus(str, Enum):
+    """Status of a JIT access grant."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+    REJECTED = "rejected"
+
+
+class JITGrantRequest(BaseModel):
+    """Request to create a JIT access grant.
+
+    Attributes:
+        requested_role: Role name being requested
+        justification: Reason for the access request
+        duration_hours: How long access is needed (1-8 hours)
+        ticket_url: Optional URL to incident/ticket
+
+    Examples:
+        >>> r = JITGrantRequest(requested_role="incident-responder", justification="INC-123 prod issue", duration_hours=2)
+        >>> r.requested_role
+        'incident-responder'
+        >>> r.duration_hours
+        2
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    requested_role: str = Field(..., min_length=1, max_length=255, description="Role being requested")
+    justification: str = Field(..., min_length=10, max_length=2000, description="Reason for access")
+    duration_hours: int = Field(default=4, ge=1, le=8, description="Duration in hours (1-8)")
+    ticket_url: Optional[str] = Field(None, max_length=500, description="Optional ticket/incident URL")
+
+
+class JITGrantApproveRequest(BaseModel):
+    """Request to approve a JIT grant.
+
+    Attributes:
+        note: Optional approval note
+
+    Examples:
+        >>> r = JITGrantApproveRequest(note="Approved for INC-123")
+        >>> r.note
+        'Approved for INC-123'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    note: Optional[str] = Field(None, max_length=1000, description="Optional approval note")
+
+
+class JITGrantRejectRequest(BaseModel):
+    """Request to reject a JIT grant.
+
+    Attributes:
+        reason: Reason for rejection
+
+    Examples:
+        >>> r = JITGrantRejectRequest(reason="No active incident found")
+        >>> r.reason
+        'No active incident found'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    reason: str = Field(..., min_length=1, max_length=1000, description="Reason for rejection")
+
+
+class JITGrantRevokeRequest(BaseModel):
+    """Request to revoke an active JIT grant.
+
+    Attributes:
+        reason: Reason for revocation
+
+    Examples:
+        >>> r = JITGrantRevokeRequest(reason="Incident resolved")
+        >>> r.reason
+        'Incident resolved'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    reason: str = Field(..., min_length=1, max_length=1000, description="Reason for revocation")
+
+
+class JITGrantResponse(BaseModel):
+    """Response schema for a JIT grant.
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> r = JITGrantResponse(
+        ...     id="abc-123",
+        ...     requester_email="dev@example.com",
+        ...     requested_role="incident-responder",
+        ...     justification="INC-123",
+        ...     duration_hours=2,
+        ...     status="pending",
+        ...     created_at=datetime.now(timezone.utc)
+        ... )
+        >>> r.status
+        'pending'
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    id: str = Field(..., description="Grant ID")
+    requester_email: str = Field(..., description="Email of requester")
+    requested_role: str = Field(..., description="Role requested")
+    justification: str = Field(..., description="Justification for access")
+    duration_hours: int = Field(..., description="Duration in hours")
+    ticket_url: Optional[str] = Field(None, description="Ticket URL")
+    status: str = Field(..., description="Current status")
+    approved_by: Optional[str] = Field(None, description="Email of approver")
+    approved_at: Optional[datetime] = Field(None, description="When approved")
+    starts_at: Optional[datetime] = Field(None, description="When access starts")
+    expires_at: Optional[datetime] = Field(None, description="When access expires")
+    revoked_by: Optional[str] = Field(None, description="Email of revoker")
+    revoke_reason: Optional[str] = Field(None, description="Reason for revocation")
+    reject_reason: Optional[str] = Field(None, description="Reason for rejection")
+    note: Optional[str] = Field(None, description="Approval note")
+    created_at: datetime = Field(..., description="When grant was created")
+    updated_at: datetime = Field(..., description="When grant was last updated")
+
+
+class JITGrantListResponse(BaseModel):
+    """Paginated list of JIT grants.
+
+    Examples:
+        >>> r = JITGrantListResponse(grants=[], total=0)
+        >>> r.total
+        0
+    """
+
+    grants: List[JITGrantResponse] = Field(default_factory=list, description="List of grants")
+    total: int = Field(0, description="Total count")
