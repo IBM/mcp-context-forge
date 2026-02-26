@@ -140,3 +140,29 @@ JIT access supports the following compliance requirements:
 - [RBAC Configuration](rbac.md)
 - [Audit Logging](logging.md)
 - [Teams](teams.md)
+
+---
+
+## Configuration
+
+JIT access can be configured via environment variables or the settings file:
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `JIT_ENABLED` | `true` | Enable/disable JIT access feature |
+| `JIT_MAX_DURATION_HOURS` | `8` | Maximum allowed duration for a grant (1-24) |
+| `JIT_DEFAULT_DURATION_HOURS` | `4` | Default duration when not specified (1-24) |
+| `JIT_REQUIRE_JUSTIFICATION` | `true` | Require justification text on requests |
+| `JIT_REQUIRE_APPROVAL` | `true` | Require admin approval before access is granted |
+| `JIT_APPROVAL_TIMEOUT_HOURS` | `24` | Hours before a pending request auto-expires |
+
+### Example `.env` Configuration
+```bash
+# JIT Access
+JIT_ENABLED=true
+JIT_MAX_DURATION_HOURS=8
+JIT_DEFAULT_DURATION_HOURS=4
+JIT_REQUIRE_JUSTIFICATION=true
+JIT_REQUIRE_APPROVAL=true
+JIT_APPROVAL_TIMEOUT_HOURS=24
+```
