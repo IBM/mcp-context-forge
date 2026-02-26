@@ -2081,6 +2081,8 @@ class TestGatewayService:
         session.execute.return_value = _make_execute_result(scalar=existing_gateway)
         session.commit = MagicMock()
         session.refresh = MagicMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+        gateway_service._publish_event = AsyncMock()
 
         # Update to cache mode
         update_data = GatewayUpdate(gateway_mode="cache")
@@ -6212,7 +6214,7 @@ class TestSetGatewayStateActivation:
 
     @pytest.mark.asyncio
     async def test_activate_only_update_reachable(self, gateway_service, mock_gateway, monkeypatch):
-        """only_update_reachable skips full re-initialization."""
+        """only_update_reachable skips tool refresh but still initializes gateway connection."""
         db = MagicMock()
         db.execute.return_value = _make_execute_result(scalar=mock_gateway)
         mock_gateway.enabled = True
@@ -6223,11 +6225,16 @@ class TestSetGatewayStateActivation:
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
         monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+        gateway_service._publish_event = AsyncMock()
 
         result = await gateway_service.set_gateway_state(
             db, mock_gateway.id, activate=True, reachable=True, only_update_reachable=True
         )
         assert mock_gateway.reachable is True
+        # _initialize_gateway is still called even with only_update_reachable;
+        # the flag only controls whether tool/resource/prompt bulk updates run.
+        gateway_service._initialize_gateway.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
