@@ -233,18 +233,23 @@ function updateDefaultVisibility() {
         const privateRadios = document.querySelectorAll(privateIdStr);
 
         // Disable public radio when flag is false AND we're in a team-scoped view.
-        const publicBlocked = window.ALLOW_PUBLIC_VISIBILITY === false && hasTeam;
+        const publicBlocked =
+            window.ALLOW_PUBLIC_VISIBILITY === false && hasTeam;
         publicRadios.forEach((radio) => {
             radio.disabled = publicBlocked;
             const wrapper = radio.closest(".flex.items-center");
             if (wrapper) {
                 if (publicBlocked) {
                     wrapper.classList.add("opacity-40", "cursor-not-allowed");
-                    wrapper.title = "Public visibility is disabled by platform configuration";
+                    wrapper.title =
+                        "Public visibility is disabled by platform configuration";
                     const label = wrapper.querySelector("label");
                     if (label) label.classList.add("line-through");
                 } else {
-                    wrapper.classList.remove("opacity-40", "cursor-not-allowed");
+                    wrapper.classList.remove(
+                        "opacity-40",
+                        "cursor-not-allowed",
+                    );
                     wrapper.removeAttribute("title");
                     const label = wrapper.querySelector("label");
                     if (label) label.classList.remove("line-through");
@@ -3375,7 +3380,9 @@ async function editTool(toolId) {
             // When public visibility is disabled and we're in a team-scoped view,
             // coerce legacy-public records to team or private.
             const effectiveVisibility =
-                (window.ALLOW_PUBLIC_VISIBILITY === false && visibility === "public" && teamId)
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
                     ? "team"
                     : visibility;
             if (effectiveVisibility === "public" && publicRadio) {
@@ -4059,7 +4066,9 @@ async function editA2AAgent(agentId) {
             // When public visibility is disabled and we're in a team-scoped view,
             // coerce legacy-public records to team.
             const effectiveVisibility =
-                (window.ALLOW_PUBLIC_VISIBILITY === false && visibility === "public" && teamId)
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
                     ? "team"
                     : visibility;
             if (effectiveVisibility === "public" && publicRadio) {
@@ -4967,9 +4976,13 @@ async function editResource(resourceId) {
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
             // coerce legacy-public records to team.
-            const _teamId = new URL(window.location.href).searchParams.get("team_id");
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
             const effectiveVisibility =
-                (window.ALLOW_PUBLIC_VISIBILITY === false && visibility === "public" && _teamId)
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
                     ? "team"
                     : visibility;
             if (effectiveVisibility === "public" && publicRadio) {
@@ -5462,9 +5475,13 @@ async function editPrompt(promptId) {
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
             // coerce legacy-public records to team.
-            const _teamId = new URL(window.location.href).searchParams.get("team_id");
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
             const effectiveVisibility =
-                (window.ALLOW_PUBLIC_VISIBILITY === false && visibility === "public" && _teamId)
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
                     ? "team"
                     : visibility;
             if (effectiveVisibility === "public" && publicRadio) {
@@ -5884,7 +5901,9 @@ async function editGateway(gatewayId) {
             // When public visibility is disabled and we're in a team-scoped view,
             // coerce legacy-public records to team.
             const effectiveVisibility =
-                (window.ALLOW_PUBLIC_VISIBILITY === false && visibility === "public" && teamId)
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
                     ? "team"
                     : visibility;
             if (effectiveVisibility === "public" && publicRadio) {
@@ -6692,9 +6711,13 @@ async function editServer(serverId) {
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
             // coerce legacy-public records to team.
-            const _teamId = new URL(window.location.href).searchParams.get("team_id");
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
             const effectiveVisibility =
-                (window.ALLOW_PUBLIC_VISIBILITY === false && visibility === "public" && _teamId)
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
                     ? "team"
                     : visibility;
             if (effectiveVisibility === "public" && publicRadio) {
