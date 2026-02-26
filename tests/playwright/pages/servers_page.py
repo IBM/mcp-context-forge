@@ -534,6 +534,11 @@ class ServersPage(BasePage):
         return self.page.locator("#searchEditResources")
 
     @property
+    def edit_select_all_resources_btn(self) -> Locator:
+        """Select All resources button in edit modal."""
+        return self.page.locator("#selectAllEditResourcesBtn")
+
+    @property
     def edit_prompts_container(self) -> Locator:
         """Associated Prompts container in edit modal."""
         return self.page.locator("#edit-server-prompts")
@@ -542,6 +547,11 @@ class ServersPage(BasePage):
     def edit_prompts_search_input(self) -> Locator:
         """Prompts search input in edit modal."""
         return self.page.locator("#searchEditPrompts")
+
+    @property
+    def edit_select_all_prompts_btn(self) -> Locator:
+        """Select All prompts button in edit modal."""
+        return self.page.locator("#selectAllEditPromptsBtn")
 
     # ==================== Edit Server Modal Methods ====================
 
@@ -573,11 +583,24 @@ class ServersPage(BasePage):
 
     def get_edit_tool_store_size(self) -> int:
         """Read the in-memory editServerSelections store size for tools."""
+        return self._get_edit_store_size("edit-server-tools")
+
+    def get_edit_resource_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for resources."""
+        return self._get_edit_store_size("edit-server-resources")
+
+    def get_edit_prompt_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for prompts."""
+        return self._get_edit_store_size("edit-server-prompts")
+
+    def _get_edit_store_size(self, key: str) -> int:
+        """Read the in-memory editServerSelections store size for a given key."""
         return self.page.evaluate(
             """
-            () => {
-                const store = window.editServerSelections && window.editServerSelections['edit-server-tools'];
+            (key) => {
+                const store = window.editServerSelections && window.editServerSelections[key];
                 return store ? store.size : 0;
             }
-        """
+        """,
+            key,
         )

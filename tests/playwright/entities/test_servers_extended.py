@@ -841,48 +841,83 @@ class TestEditServerSelectionBugs:
 
     @pytest.mark.ui
     @pytest.mark.e2e
-    def test_resource_and_prompt_search_preserves_selections(self, servers_page: ServersPage):
-        """Regression test for #3260: search in resource/prompt pickers preserves selections.
+    def test_select_all_resources_survives_search(self, servers_page: ServersPage):
+        """Regression test for #3257: Select All resources + search + clear preserves selections.
 
-        Verifies the add-only flush fix works for resources and prompts, not just tools.
+        Clicks Select All resources, captures store size, searches, clears,
+        then asserts the in-memory store size is unchanged.
         """
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_visible(servers_page.add_server_form)
         server_name = self._create_server_with_tools(servers_page)
 
         try:
-            # Open edit modal
             servers_page.open_edit_modal(server_name)
 
-            # --- Resources ---
-            resource_cbs = servers_page.edit_resources_container.locator('input[name="associatedResources"]:checked')
-            initial_res_count = resource_cbs.count()
+            # Wait for resource checkboxes to load
+            servers_page.page.wait_for_selector('#edit-server-resources input[name="associatedResources"]', state="attached", timeout=10000)
+            res_count = servers_page.edit_resources_container.locator('input[name="associatedResources"]').count()
+            if res_count == 0:
+                pytest.skip("No resources available to test Select All")
 
-            if initial_res_count > 0:
-                # Search and clear resources
-                servers_page.fill_locator(servers_page.edit_resources_search_input, "xyznonexistent999")
-                servers_page.page.wait_for_timeout(2000)
-                servers_page.fill_locator(servers_page.edit_resources_search_input, "")
-                servers_page.page.wait_for_timeout(2000)
+            # Click Select All resources
+            servers_page.edit_select_all_resources_btn.evaluate("el => el.click()")
+            servers_page.page.wait_for_timeout(3000)
 
-                restored_res = servers_page.edit_resources_container.locator('input[name="associatedResources"]:checked').count()
-                assert restored_res >= initial_res_count, f"Resources lost after search: {restored_res} vs {initial_res_count}"
+            select_all_count = servers_page.get_edit_resource_store_size()
+            assert select_all_count >= 1, f"Select All should populate store, got {select_all_count}"
 
-            # --- Prompts ---
-            prompt_cbs = servers_page.edit_prompts_container.locator('input[name="associatedPrompts"]:checked')
-            initial_prompt_count = prompt_cbs.count()
+            # Search and clear
+            servers_page.fill_locator(servers_page.edit_resources_search_input, "xyznonexistent999")
+            servers_page.page.wait_for_timeout(2000)
+            servers_page.fill_locator(servers_page.edit_resources_search_input, "")
+            servers_page.page.wait_for_timeout(2000)
 
-            if initial_prompt_count > 0:
-                # Search and clear prompts
-                servers_page.fill_locator(servers_page.edit_prompts_search_input, "xyznonexistent999")
-                servers_page.page.wait_for_timeout(2000)
-                servers_page.fill_locator(servers_page.edit_prompts_search_input, "")
-                servers_page.page.wait_for_timeout(2000)
+            restored = servers_page.get_edit_resource_store_size()
+            assert restored == select_all_count, f"Resource store lost entries: {restored} vs {select_all_count}"
 
-                restored_prompts = servers_page.edit_prompts_container.locator('input[name="associatedPrompts"]:checked').count()
-                assert restored_prompts >= initial_prompt_count, f"Prompts lost after search: {restored_prompts} vs {initial_prompt_count}"
+            servers_page.click_locator(servers_page.edit_server_cancel_btn)
+            expect(servers_page.edit_server_modal).to_be_hidden(timeout=5000)
+        finally:
+            cleanup_server(servers_page.page, server_name)
 
-            # Clean close
+    @pytest.mark.ui
+    @pytest.mark.e2e
+    def test_select_all_prompts_survives_search(self, servers_page: ServersPage):
+        """Regression test for #3257: Select All prompts + search + clear preserves selections.
+
+        Clicks Select All prompts, captures store size, searches, clears,
+        then asserts the in-memory store size is unchanged.
+        """
+        servers_page.navigate_to_servers_tab()
+        servers_page.wait_for_visible(servers_page.add_server_form)
+        server_name = self._create_server_with_tools(servers_page)
+
+        try:
+            servers_page.open_edit_modal(server_name)
+
+            # Wait for prompt checkboxes to load
+            servers_page.page.wait_for_selector('#edit-server-prompts input[name="associatedPrompts"]', state="attached", timeout=10000)
+            prompt_count = servers_page.edit_prompts_container.locator('input[name="associatedPrompts"]').count()
+            if prompt_count == 0:
+                pytest.skip("No prompts available to test Select All")
+
+            # Click Select All prompts
+            servers_page.edit_select_all_prompts_btn.evaluate("el => el.click()")
+            servers_page.page.wait_for_timeout(3000)
+
+            select_all_count = servers_page.get_edit_prompt_store_size()
+            assert select_all_count >= 1, f"Select All should populate store, got {select_all_count}"
+
+            # Search and clear
+            servers_page.fill_locator(servers_page.edit_prompts_search_input, "xyznonexistent999")
+            servers_page.page.wait_for_timeout(2000)
+            servers_page.fill_locator(servers_page.edit_prompts_search_input, "")
+            servers_page.page.wait_for_timeout(2000)
+
+            restored = servers_page.get_edit_prompt_store_size()
+            assert restored == select_all_count, f"Prompt store lost entries: {restored} vs {select_all_count}"
+
             servers_page.click_locator(servers_page.edit_server_cancel_btn)
             expect(servers_page.edit_server_modal).to_be_hidden(timeout=5000)
         finally:
