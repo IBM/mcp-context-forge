@@ -25,10 +25,12 @@ import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
 let doc;
+let realInitToolSelect;
 
 beforeAll(() => {
     win = loadAdminJs();
     doc = win.document;
+    realInitToolSelect = win.initToolSelect;
 });
 
 afterAll(() => {
@@ -1651,5 +1653,265 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
 
         const teamRadio = flagDoc.getElementById("edit-visibility-team");
         expect(teamRadio.checked).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// closeModal — failure-tolerant cleanup (#3259)
+// ---------------------------------------------------------------------------
+describe("closeModal — cleanup failure does not prevent modal hiding (#3259)", () => {
+    test("modal hides even when resetEditSelections throws", () => {
+        const modal = doc.createElement("div");
+        modal.id = "server-edit-modal";
+        doc.body.appendChild(modal);
+
+        // Sabotage resetEditSelections so it throws
+        const originalReset = win.resetEditSelections;
+        win.resetEditSelections = () => {
+            throw new Error("intentional cleanup failure");
+        };
+
+        // Should not throw and should still hide the modal
+        expect(() => win.closeModal("server-edit-modal")).not.toThrow();
+        expect(modal.classList.contains("hidden")).toBe(true);
+
+        win.resetEditSelections = originalReset;
+    });
+
+    test("AppState.setModalInactive is called even when cleanup throws", () => {
+        const modal = doc.createElement("div");
+        modal.id = "server-edit-modal";
+        doc.body.appendChild(modal);
+        win.AppState.setModalActive("server-edit-modal");
+
+        const originalReset = win.resetEditSelections;
+        win.resetEditSelections = () => {
+            throw new Error("intentional cleanup failure");
+        };
+
+        win.closeModal("server-edit-modal");
+        expect(win.AppState.isModalActive("server-edit-modal")).toBe(false);
+
+        win.resetEditSelections = originalReset;
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditToolSearch — add-only flush preserves prior selections (#3260)
+// ---------------------------------------------------------------------------
+describe("serverSideEditToolSearch — add-only flush (#3260)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("unchecked search-result checkboxes do NOT delete prior selections from store", async () => {
+        const container = makeContainer("edit-server-tools");
+
+        // Pre-populate the in-memory store with a selection the user made earlier
+        win.getEditSelections("edit-server-tools").add(
+            "tool-previously-selected",
+        );
+
+        // Container currently shows two checkboxes — one checked, one not
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "tool-checked",
+            checked: true,
+        });
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "tool-previously-selected",
+            checked: false,
+        });
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tools: [{ id: "tool-checked", name: "Checked Tool" }] },
+            }),
+        );
+
+        await win.serverSideEditToolSearch("checked");
+
+        const toolSel = win.getEditSelections("edit-server-tools");
+        // The previously-selected tool should still be in the store
+        expect(toolSel.has("tool-previously-selected")).toBe(true);
+        // The currently checked tool should also be in the store
+        expect(toolSel.has("tool-checked")).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditPromptsSearch — add-only flush preserves prior selections (#3260)
+// ---------------------------------------------------------------------------
+describe("serverSideEditPromptsSearch — add-only flush (#3260)", () => {
+    beforeEach(() => {
+        win.initPromptSelect = vi.fn();
+        win.updatePromptMapping = vi.fn();
+    });
+
+    test("unchecked search-result checkboxes do NOT delete prior prompt selections", async () => {
+        const container = makeContainer("edit-server-prompts");
+
+        win.getEditSelections("edit-server-prompts").add("prompt-prior");
+
+        addCheckbox(container, {
+            name: "associatedPrompts",
+            value: "prompt-checked",
+            checked: true,
+        });
+        addCheckbox(container, {
+            name: "associatedPrompts",
+            value: "prompt-prior",
+            checked: false,
+        });
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: {
+                    prompts: [{ id: "prompt-checked", name: "Checked Prompt" }],
+                },
+            }),
+        );
+
+        await win.serverSideEditPromptsSearch("checked");
+
+        const promptSel = win.getEditSelections("edit-server-prompts");
+        expect(promptSel.has("prompt-prior")).toBe(true);
+        expect(promptSel.has("prompt-checked")).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditResourcesSearch — add-only flush preserves prior selections (#3260)
+// ---------------------------------------------------------------------------
+describe("serverSideEditResourcesSearch — add-only flush (#3260)", () => {
+    beforeEach(() => {
+        win.initResourceSelect = vi.fn();
+        win.updateResourceMapping = vi.fn();
+    });
+
+    test("unchecked search-result checkboxes do NOT delete prior resource selections", async () => {
+        const container = makeContainer("edit-server-resources");
+
+        win.getEditSelections("edit-server-resources").add("res-prior");
+
+        addCheckbox(container, {
+            name: "associatedResources",
+            value: "res-checked",
+            checked: true,
+        });
+        addCheckbox(container, {
+            name: "associatedResources",
+            value: "res-prior",
+            checked: false,
+        });
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: {
+                    resources: [
+                        { id: "res-checked", name: "Checked Resource" },
+                    ],
+                },
+            }),
+        );
+
+        await win.serverSideEditResourcesSearch("checked");
+
+        const resSel = win.getEditSelections("edit-server-resources");
+        expect(resSel.has("res-prior")).toBe(true);
+        expect(resSel.has("res-checked")).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// initToolSelect Select All — populates in-memory store (#3257)
+// ---------------------------------------------------------------------------
+describe("initToolSelect Select All populates in-memory store (#3257)", () => {
+    beforeEach(() => {
+        // Restore the real initToolSelect in case earlier tests replaced it
+        win.initToolSelect = realInitToolSelect;
+    });
+
+    test("Select All populates getEditSelections store for the container", async () => {
+        // Build a wrapper so that the button can be cloneNode+replaceChild'd
+        const wrapper = doc.createElement("div");
+        doc.body.appendChild(wrapper);
+
+        const container = doc.createElement("div");
+        container.id = "edit-server-tools";
+        wrapper.appendChild(container);
+
+        // Add checkboxes (JSDOM has no layout so offsetParent is null —
+        // the handler will take the paginated/fetch path)
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "tool-a",
+            checked: false,
+        });
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "tool-b",
+            checked: false,
+        });
+
+        // Pill + warning containers
+        const pills = doc.createElement("div");
+        pills.id = "selectedEditToolsPills";
+        wrapper.appendChild(pills);
+
+        const warn = doc.createElement("div");
+        warn.id = "selectedEditToolsWarning";
+        wrapper.appendChild(warn);
+
+        // Select All button (must have a parentNode for replaceChild)
+        const selectBtn = doc.createElement("button");
+        selectBtn.id = "selectAllEditToolsBtn";
+        wrapper.appendChild(selectBtn);
+
+        // Clear button (must have a parentNode for replaceChild)
+        const clearBtn = doc.createElement("button");
+        clearBtn.id = "clearAllEditToolsBtn";
+        wrapper.appendChild(clearBtn);
+
+        // Mock fetch to return tool IDs (paginated path)
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tool_ids: ["tool-a", "tool-b", "tool-c"] },
+            }),
+        );
+
+        win.initToolSelect(
+            "edit-server-tools",
+            "selectedEditToolsPills",
+            "selectedEditToolsWarning",
+            6,
+            "selectAllEditToolsBtn",
+            "clearAllEditToolsBtn",
+        );
+
+        // After initToolSelect the button is cloned+replaced — get the new one
+        const newSelectBtn = doc.getElementById("selectAllEditToolsBtn");
+        newSelectBtn.click();
+
+        // Wait for the async click handler (fetch + DOM update) to settle
+        for (let i = 0; i < 20; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (win.getEditSelections("edit-server-tools").size >= 3) break;
+        }
+
+        const editSel = win.getEditSelections("edit-server-tools");
+        expect(editSel.has("tool-a")).toBe(true);
+        expect(editSel.has("tool-b")).toBe(true);
+        expect(editSel.has("tool-c")).toBe(true);
     });
 });
