@@ -656,7 +656,7 @@ test-profile:
 		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
 
 .PHONY: coverage-pytest
-coverage-pytest:
+coverage-pytest: install-dev
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -673,7 +673,7 @@ coverage-pytest:
 			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ \
 			--ignore=tests/e2e/test_entra_id_integration.py || true"
 
-coverage: coverage-pytest
+coverage: coverage-pytest install-dev
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
@@ -688,9 +688,8 @@ coverage: coverage-pytest
 			--cov=mcpgateway mcpgateway/ || true"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && PYTHONWARNINGS='ignore::UserWarning' coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage report -m --no-skip-covered"
-	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR), XML & badge ✔"
+	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR) & XML ✔"
 
 .PHONY: coverage-annotated
 coverage-annotated: coverage

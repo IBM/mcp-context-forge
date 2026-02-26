@@ -7,12 +7,11 @@ branch coverage beyond the current 63%.
 
 # Standard
 import asyncio
-import base64
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import time
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, call, MagicMock, patch
 
 # Third-Party
 import jsonschema
@@ -21,13 +20,12 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 # First-Party
-from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
 from mcpgateway.common.models import TextContent, ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
+from mcpgateway.schemas import ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -43,7 +41,6 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
-from mcpgateway.utils.services_auth import encode_auth
 
 # ─── autouse fixtures ────────────────────────────────────────────────────────
 
@@ -354,33 +351,16 @@ class TestInitializeShutdown:
         service._http_client.aclose.assert_awaited_once()
         service._event_service.shutdown.assert_awaited_once()
 
-    def test_init_plugins_enabled_env_true(self, monkeypatch):
-        """PLUGINS_ENABLED=true env should enable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "true")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+    def test_init_delegates_to_get_plugin_manager(self):
+        """ToolService.__init__ should assign whatever get_plugin_manager() returns."""
+        mock_pm = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_plugin_manager", return_value=mock_pm):
             service = ToolService()
-        assert service._plugin_manager is not None
-        mock_pm.assert_called_once()
+        assert service._plugin_manager is mock_pm
 
-    def test_init_plugins_enabled_env_false(self, monkeypatch):
-        """PLUGINS_ENABLED=false env should disable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "false")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
-            service = ToolService()
-        assert service._plugin_manager is None
-        mock_pm.assert_not_called()
-
-    def test_init_plugins_enabled_env_on(self, monkeypatch):
-        """PLUGINS_ENABLED=on env should enable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "on")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
-            service = ToolService()
-        assert service._plugin_manager is not None
-
-    def test_init_plugins_enabled_env_off(self, monkeypatch):
-        """PLUGINS_ENABLED=off env should disable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "off")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+    def test_init_plugin_manager_none_when_disabled(self):
+        """ToolService._plugin_manager should be None when get_plugin_manager() returns None."""
+        with patch("mcpgateway.services.tool_service.get_plugin_manager", return_value=None):
             service = ToolService()
         assert service._plugin_manager is None
 
@@ -4598,9 +4578,6 @@ class TestInvokeToolRestSuccess:
         mock_response.status_code = 200
         mock_response.json = MagicMock(return_value={"result": "ok"})
         mock_response.raise_for_status = MagicMock()
-
-        # Standard
-        import asyncio as aio
 
         async def fake_get(*a, **kw):
             return mock_response

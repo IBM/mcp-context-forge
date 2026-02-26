@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/framework/utils.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor, Mihai Criveti
+Authors: Teryl Taylor, Mihai Criveti, Fred Araujo
 
 Utility module for plugins layer.
 This module implements the utility functions associated with
@@ -12,11 +12,105 @@ plugins.
 # Standard
 from functools import cache
 import importlib
+import logging
 from types import ModuleType
 from typing import Any, Optional
 
+# Third-Party
+from fastapi.responses import JSONResponse
+import orjson
+from pydantic import BaseModel, ConfigDict
+
 # First-Party
 from mcpgateway.plugins.framework.models import GlobalContext, PluginCondition
+
+logger = logging.getLogger(__name__)
+
+
+class StructuredData(BaseModel):
+    """Dynamic model that provides attribute access on deserialized dicts.
+
+    When framework payload fields are typed as ``Any``, Pydantic keeps
+    nested dicts as plain dicts during ``model_validate``.  This class
+    is used by :func:`coerce_nested` to convert those dicts into objects
+    with attribute-style access, preserving compatibility with plugin
+    code that expects ``payload.result.messages[0].content.text``.
+
+    Examples:
+        >>> sd = StructuredData(name="test", value=42)
+        >>> sd.name
+        'test'
+        >>> sd.model_dump()
+        {'name': 'test', 'value': 42}
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
+def coerce_messages(v: Any) -> Any:
+    """Convert nested dicts in a messages list to objects with attribute access.
+
+    Shared validator logic for agent payload ``messages`` fields.
+    When deserializing from JSON, messages arrive as plain dicts.  This
+    converts each dict to a :class:`StructuredData` so plugin code like
+    ``payload.messages[0].content.text`` works regardless of the transport.
+
+    Args:
+        v: The raw value for the ``messages`` field.
+
+    Returns:
+        The coerced list with attribute access on each element.
+    """
+    if isinstance(v, list):
+        return [coerce_nested(item) if isinstance(item, dict) else item for item in v]
+    return v
+
+
+_COERCE_MAX_DEPTH = 20
+_COERCE_MAX_BREADTH = 500
+
+
+def coerce_nested(v: Any, *, _depth: int = 0) -> Any:
+    """Recursively convert dicts to :class:`StructuredData` for attribute access.
+
+    Already-constructed Pydantic models (e.g. a real ``PromptResult``
+    passed by the gateway) are returned as-is.  Depth is capped at
+    ``_COERCE_MAX_DEPTH`` and breadth (keys per dict / items per list)
+    at ``_COERCE_MAX_BREADTH`` to guard against resource exhaustion.
+
+    Args:
+        v: Value to coerce — dict, list, or scalar.
+        _depth: Internal recursion depth counter (do not set manually).
+
+    Returns:
+        A ``StructuredData`` (for dicts), a list of coerced items, or
+        the original value unchanged.
+
+    Examples:
+        >>> from pydantic import BaseModel
+        >>> result = coerce_nested({"messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}]})
+        >>> result.messages[0].content.text
+        'hi'
+        >>> class Existing(BaseModel):
+        ...     x: int = 1
+        >>> coerce_nested(Existing()) is not None
+        True
+    """
+    if _depth >= _COERCE_MAX_DEPTH:
+        return v
+    if isinstance(v, BaseModel):
+        return v
+    if isinstance(v, dict):
+        if len(v) > _COERCE_MAX_BREADTH:
+            logger.warning("coerce_nested: dict has %d keys (limit %d); returning as plain dict", len(v), _COERCE_MAX_BREADTH)
+            return v
+        return StructuredData(**{k: coerce_nested(val, _depth=_depth + 1) for k, val in v.items()})
+    if isinstance(v, list):
+        if len(v) > _COERCE_MAX_BREADTH:
+            logger.warning("coerce_nested: list has %d items (limit %d); skipping coercion", len(v), _COERCE_MAX_BREADTH)
+            return v
+        return [coerce_nested(item, _depth=_depth + 1) for item in v]
+    return v
 
 
 @cache  # noqa
@@ -250,3 +344,32 @@ def payload_matches(
 
     # No conditions matched
     return False
+
+
+class ORJSONResponse(JSONResponse):
+    """JSON response using orjson for faster serialization.
+
+    Drop-in replacement for FastAPI's default JSONResponse.
+    The framework already depends on both fastapi and orjson.
+
+    Example:
+        >>> response = ORJSONResponse(content={"status": "healthy"})
+        >>> response.media_type
+        'application/json'
+    """
+
+    media_type = "application/json"
+
+    def render(self, content: Any) -> bytes:
+        """Render content to JSON bytes using orjson.
+
+        Args:
+            content: The content to serialize to JSON.
+
+        Returns:
+            JSON bytes ready for HTTP response.
+        """
+        return orjson.dumps(
+            content,
+            option=orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY,
+        )

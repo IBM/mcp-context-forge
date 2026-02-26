@@ -77,7 +77,7 @@ from mcpgateway.utils.validate_signature import validate_signature
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -175,11 +175,11 @@ class ResourceService:
         self._plugin_manager = None
         if PLUGINS_AVAILABLE:
             try:
-                if settings.plugins.enabled:
-                    self._plugin_manager = PluginManager(settings.plugins.config_file)
-                    logger.info(f"Plugin manager initialized for ResourceService with config: {settings.plugins.config_file}")
+                self._plugin_manager = get_plugin_manager()
+                if self._plugin_manager:
+                    logger.info("Plugin manager initialized for ResourceService with config: %s", settings.plugins.config_file)
             except Exception as e:
-                logger.warning(f"Plugin manager initialization failed in ResourceService: {e}")
+                logger.warning("Plugin manager initialization failed in ResourceService: %s", e)
                 self._plugin_manager = None
 
         # Initialize mime types

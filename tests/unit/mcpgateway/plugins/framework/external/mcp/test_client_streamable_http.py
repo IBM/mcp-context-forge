@@ -65,6 +65,17 @@ def _get_free_port() -> int:
         return sock.getsockname()[1]
 
 
+@pytest.fixture(autouse=True)
+def _disable_ssrf_for_local_tests(monkeypatch):
+    """Disable SSRF IP blocking so tests can use 127.0.0.1 for real local servers."""
+    monkeypatch.setenv("PLUGINS_SSRF_PROTECTION_ENABLED", "false")
+    from mcpgateway.plugins.framework.settings import settings  # pylint: disable=import-outside-toplevel
+
+    settings.cache_clear()
+    yield
+    settings.cache_clear()
+
+
 @pytest.fixture
 def server_proc():
     current_env = os.environ.copy()
@@ -74,6 +85,7 @@ def server_proc():
     current_env["PLUGINS_TRANSPORT"] = "http"
     current_env["PLUGINS_SERVER_HOST"] = "127.0.0.1"
     current_env["PLUGINS_SERVER_PORT"] = str(port)
+    current_env["PLUGINS_SSRF_PROTECTION_ENABLED"] = "false"
     # Start the server as a subprocess
     try:
         with subprocess.Popen([sys.executable, "mcpgateway/plugins/framework/external/mcp/server/runtime.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=current_env) as server_proc:
