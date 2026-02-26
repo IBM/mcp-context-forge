@@ -415,7 +415,7 @@
   <body class="bg-gray-100 dark:bg-gray-900">
     {% set hidden_sections = ui_hidden_sections | default([]) %}
     {% set hidden_header_items = ui_hidden_header_items | default([]) %}
-    <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }">
+    <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }" @resize.window="if (window.innerWidth >= 1024) sidebarOpen = true">
 
       <!-- Mobile sidebar backdrop -->
       <div
