@@ -548,14 +548,15 @@ class OAuthManager:
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")
 
-        # Backward compatibility for in-flight legacy states that embedded user context.
+        # Backward compatibility for in-flight legacy states that embedded
+        # gateway context.  Identity fields (app_user_email) are intentionally
+        # NOT extracted from unsigned legacy payloads (CWE-345).
         if not app_user_email:
             legacy_state_payload = self._extract_legacy_state_payload(state)
             if legacy_state_payload:
                 legacy_gateway_id = legacy_state_payload.get("gateway_id")
                 if legacy_gateway_id and legacy_gateway_id != gateway_id:
                     raise OAuthError("State parameter gateway mismatch")
-                app_user_email = legacy_state_payload.get("app_user_email")
 
         if not app_user_email:
             logger.error("User context (app_user_email) missing from OAuth state; refusing to bind tokens from ambient request context (CWE-287).")
@@ -620,12 +621,19 @@ class OAuthManager:
         - base64url(payload || signature) where payload is JSON
         - gateway_id_random suffix format
 
+        Security: Legacy payloads lack signature verification, so only
+        ``gateway_id`` is returned — never identity-sensitive fields like
+        ``app_user_email`` which could be forged (CWE-345).
+
         Args:
             state: Callback state token to decode.
 
         Returns:
-            Decoded legacy payload when format is recognized; otherwise ``None``.
+            Dict containing only ``gateway_id`` when format is recognized;
+            otherwise ``None``.
         """
+        _SAFE_LEGACY_FIELDS = {"gateway_id"}
+
         try:
             state_raw = base64.urlsafe_b64decode(state.encode())
             if len(state_raw) <= 32:
@@ -634,7 +642,10 @@ class OAuthManager:
             payload_bytes = state_raw[:-32]
             payload = orjson.loads(payload_bytes)
             if isinstance(payload, dict):
-                return payload
+                # Only return gateway_id — unsigned payloads must not
+                # carry identity claims.
+                safe = {k: v for k, v in payload.items() if k in _SAFE_LEGACY_FIELDS}
+                return safe if safe else None
         except Exception:
             # Fall back to legacy gateway_id_random format
             if "_" in state:
