@@ -2387,6 +2387,83 @@ class TestEmailAuthServiceUserUpdates:
             with pytest.raises(ValueError, match="last remaining active admin"):
                 await service.update_user(email="admin@example.com", is_admin=False)
 
+
+    @pytest.mark.asyncio
+    async def test_update_user_cross_admin_demotion_allowed(self, service, mock_db, monkeypatch):
+        """Test that Admin A can demote Admin B when both are active and not last admin.
+
+        This test verifies the cross-admin demotion scenario where:
+        - Admin A (requesting_user_email="admin-a@example.com") is making the change
+        - Admin B (target email="admin-b@example.com") is being demoted
+        - Both are active admins
+        - Admin B is NOT the last active admin
+        - Self-demotion check passes (different emails)
+        """
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "protect_all_admins", False)
+        monkeypatch.setattr(settings, "default_admin_role", "platform_admin")
+        monkeypatch.setattr(settings, "default_user_role", "user")
+
+        # Setup Admin B (target user to be demoted)
+        admin_b = MagicMock(spec=EmailUser)
+        admin_b.email = "admin-b@example.com"
+        admin_b.is_admin = True
+        admin_b.is_active = True
+        admin_b.admin_origin = "manual"
+
+        # Mock db.execute to return Admin B
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = admin_b
+        mock_db.execute.return_value = mock_execute_result
+
+        # Mock is_last_active_admin to return False (not the last admin)
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
+            # Mock role service
+            mock_role_service_instance = MagicMock()
+            mock_role_service_instance.get_role_by_name = AsyncMock(side_effect=[
+                MagicMock(id="admin_role_id", name="platform_admin"),
+                MagicMock(id="user_role_id", name="user")
+            ])
+            mock_role_service_instance.revoke_role_from_user = AsyncMock(return_value=True)
+            mock_role_service_instance.assign_role_to_user = AsyncMock(return_value=True)
+            mock_role_service_instance.get_user_role_assignment = AsyncMock(return_value=None)
+
+            with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service_instance):
+                # Admin A demotes Admin B
+                updated_user = await service.update_user(
+                    email="admin-b@example.com",
+                    is_admin=False,
+                    admin_origin_source="api",
+                    requesting_user_email="admin-a@example.com",  # Different admin making the change
+                )
+
+                # Verify demotion succeeded
+                assert updated_user is admin_b
+                assert updated_user.is_admin is False
+                assert updated_user.admin_origin is None  # Cleared on demotion
+                mock_db.commit.assert_called_once()
+
+                # Verify is_last_active_admin was checked
+                service.is_last_active_admin.assert_called_once_with("admin-b@example.com")
+
+                # Verify role changes
+                mock_role_service_instance.revoke_role_from_user.assert_called_once_with(
+                    user_email="admin-b@example.com",
+                    role_id="admin_role_id",
+                    scope="global",
+                    scope_id=None
+                )
+                mock_role_service_instance.assign_role_to_user.assert_called_once_with(
+                    user_email="admin-b@example.com",
+                    role_id="user_role_id",
+                    scope="global",
+                    scope_id=None,
+                    granted_by="admin-b@example.com"
+                )
+
+
     @pytest.mark.asyncio
     async def test_activate_user_success(self, service, mock_db, mock_user):
         """Test activating a user account."""
