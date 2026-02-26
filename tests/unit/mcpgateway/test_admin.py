@@ -17790,6 +17790,55 @@ class TestAdminCsrfProtection:
         with pytest.raises(HTTPException, match="token validation failed"):
             await admin_mod.enforce_admin_csrf(request)
 
+    # -- _resolve_root_path tests ------------------------------------------
+
+    def test_resolve_root_path_prefers_scope_root_path(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "/mounted"}
+
+        assert admin_mod._resolve_root_path(request) == "/mounted"
+
+    def test_resolve_root_path_falls_back_to_settings(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
+
+    def test_resolve_root_path_returns_empty_when_both_empty(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == ""
+
+    def test_resolve_root_path_normalizes_leading_slash(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "api/proxy/mcp", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
+
+    def test_resolve_root_path_strips_trailing_slash(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "/mounted/"}
+
+        assert admin_mod._resolve_root_path(request) == "/mounted"
+
+    # -- _admin_cookie_path tests -------------------------------------------
+
     def test_admin_cookie_path_uses_scope_root_path_when_present(self, monkeypatch):
         # First-Party
         from mcpgateway import admin as admin_mod
