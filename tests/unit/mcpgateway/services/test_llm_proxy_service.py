@@ -707,9 +707,17 @@ async def test_chat_completion_request_error(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_ssrf_blocked(service):
-    """chat_completion rejects SSRF-risky provider URLs (lines 436-439)."""
-    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base="http://169.254.169.254")
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://169.254.169.254",
+        "http://0.0.0.0",
+    ],
+    ids=["cloud-metadata", "bind-all"],
+)
+async def test_chat_completion_ssrf_blocked(service, api_base):
+    """chat_completion rejects SSRF-risky provider URLs."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
     model = _make_model()
     service._resolve_model = MagicMock(return_value=(provider, model))
 
@@ -721,6 +729,39 @@ async def test_chat_completion_ssrf_blocked(service):
         await service.chat_completion(MagicMock(), request)
 
     service._client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://127.0.0.1",
+        "http://10.0.0.1",
+    ],
+    ids=["localhost", "private-rfc1918"],
+)
+async def test_chat_completion_ssrf_blocked_private(service, api_base):
+    """chat_completion rejects localhost/private IPs when SSRF protection is strict."""
+    from mcpgateway.config import settings
+
+    settings.ssrf_allow_localhost = False
+    settings.ssrf_allow_private_networks = False
+    try:
+        provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
+        model = _make_model()
+        service._resolve_model = MagicMock(return_value=(provider, model))
+
+        request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+
+        service._client = AsyncMock()
+
+        with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+            await service.chat_completion(MagicMock(), request)
+
+        service._client.post.assert_not_called()
+    finally:
+        settings.ssrf_allow_localhost = True
+        settings.ssrf_allow_private_networks = True
 
 
 class DummyStreamResponse:
@@ -917,9 +958,17 @@ async def test_chat_completion_stream_request_error(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_ssrf_blocked(service):
-    """chat_completion_stream rejects SSRF-risky provider URLs (lines 500-503)."""
-    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base="http://169.254.169.254")
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://169.254.169.254",
+        "http://0.0.0.0",
+    ],
+    ids=["cloud-metadata", "bind-all"],
+)
+async def test_chat_completion_stream_ssrf_blocked(service, api_base):
+    """chat_completion_stream rejects SSRF-risky provider URLs."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
     model = _make_model(model_id="gpt-4")
     service._resolve_model = MagicMock(return_value=(provider, model))
 
@@ -933,6 +982,40 @@ async def test_chat_completion_stream_ssrf_blocked(service):
             chunks.append(chunk)
 
     service._client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://127.0.0.1",
+        "http://10.0.0.1",
+    ],
+    ids=["localhost", "private-rfc1918"],
+)
+async def test_chat_completion_stream_ssrf_blocked_private(service, api_base):
+    """chat_completion_stream rejects localhost/private IPs when SSRF protection is strict."""
+    from mcpgateway.config import settings
+
+    settings.ssrf_allow_localhost = False
+    settings.ssrf_allow_private_networks = False
+    try:
+        provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
+        model = _make_model(model_id="gpt-4")
+        service._resolve_model = MagicMock(return_value=(provider, model))
+
+        request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
+
+        service._client = MagicMock()
+
+        with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+            async for chunk in service.chat_completion_stream(MagicMock(), request):
+                pass
+
+        service._client.stream.assert_not_called()
+    finally:
+        settings.ssrf_allow_localhost = True
+        settings.ssrf_allow_private_networks = True
 
 
 @pytest.mark.asyncio
