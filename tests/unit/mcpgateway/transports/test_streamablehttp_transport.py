@@ -296,6 +296,75 @@ async def test_call_tool_exception(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_call_tool_requires_tools_execute_permission(monkeypatch):
+    """Authenticated Streamable HTTP calls must enforce tools.execute."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock())
+
+    with pytest.raises(PermissionError, match="tools.execute"):
+        await call_tool("mytool", {"foo": "bar"})
+
+    tool_service.invoke_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_streamable_session_access_denies_non_owner(monkeypatch):
+    """Session access helper denies non-admin callers for another owner's session."""
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(return_value="owner@example.com")
+    session_registry.session_exists = AsyncMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-abc",
+        user_context={"email": "attacker@example.com", "is_admin": False, "is_authenticated": True},
+        rpc_method="ping",
+    )
+
+    assert allowed is False
+    assert status == 403
+    assert "Session access denied" in detail
+
+
+@pytest.mark.asyncio
+async def test_validate_streamable_session_access_fake_session_not_found(monkeypatch):
+    """Session access helper returns 404 when no owner exists and session is unknown."""
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(return_value=None)
+    session_registry.session_exists = AsyncMock(return_value=False)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-fake",
+        user_context={"email": "dev@example.com", "is_admin": False, "is_authenticated": True},
+        rpc_method="ping",
+    )
+
+    assert allowed is False
+    assert status == 404
+    assert "Session not found" in detail
+
+
+@pytest.mark.asyncio
 async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
     # First-Party
@@ -3308,6 +3377,28 @@ async def test_set_logging_level_exception():
         assert isinstance(result, mcp_types.EmptyResult)
 
 
+@pytest.mark.asyncio
+async def test_set_logging_level_requires_admin_system_config(monkeypatch):
+    """Authenticated Streamable HTTP logging/setLevel must enforce admin.system_config."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=False))
+
+    with pytest.raises(PermissionError, match="admin.system_config"):
+        await set_logging_level("info")
+
+
 # ---------------------------------------------------------------------------
 # complete function (Lines 1177-1221)
 # ---------------------------------------------------------------------------
@@ -5793,6 +5884,42 @@ async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_forwarded_post_denies_non_owner_session_access(monkeypatch):
+    """Internally forwarded requests must deny when session owner does not match requester."""
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(False, 403, "Session access denied")))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","method":"ping","id":"x1"}'
+    scope = _make_scope("/mcp", method="POST", headers=[(b"x-forwarded-internally", b"true"), (b"mcp-session-id", b"sess-abc")])
+
+    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+
+        mock_client.post.assert_not_awaited()
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 403
+
+
+@pytest.mark.asyncio
 async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
     """Test internally-forwarded notification does not inject server_id.
 
@@ -6251,6 +6378,55 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_denies_non_owner_session_access(monkeypatch):
+    """Local affinity /rpc routing must deny cross-user stateful session replay."""
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(False, 403, "Session access denied")))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","method":"ping","id":"x2"}'
+    scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-abc")])
+
+    mock_pool = MagicMock()
+    mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    with (
+        patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
+        patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class),
+        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+
+        mock_client.post.assert_not_awaited()
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 403
 
 
 @pytest.mark.asyncio
@@ -6737,6 +6913,98 @@ async def test_send_with_capture_no_session_id_no_registration(monkeypatch):
         patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
     ):
         await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+
+    await wrapper.shutdown()
+    mock_pool.register_pool_session_owner.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_with_capture_claims_owner_for_new_session(monkeypatch):
+    """Captured server-emitted session IDs must be bound to the authenticated principal."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
+            await send_func({"type": "http.response.body", "body": b"ok"})
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._claim_streamable_session_owner", AsyncMock(return_value="dev@example.com"))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[])
+
+    mock_pool = MagicMock()
+    mock_pool.register_pool_session_owner = AsyncMock()
+
+    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+            token = tr.user_context_var.set(
+                {
+                    "email": "dev@example.com",
+                    "teams": ["team-1"],
+                    "is_authenticated": True,
+                    "is_admin": False,
+                }
+            )
+            try:
+                await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+            finally:
+                tr.user_context_var.reset(token)
+
+    await wrapper.shutdown()
+    tr._claim_streamable_session_owner.assert_awaited_once_with("new-session-id", "dev@example.com")
+    mock_pool.register_pool_session_owner.assert_called_once_with("new-session-id")
+
+
+@pytest.mark.asyncio
+async def test_send_with_capture_does_not_register_denied_client_supplied_session(monkeypatch):
+    """Client-supplied session IDs must not become owned when access is denied."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            await send_func({"type": "http.response.start", "status": 404, "headers": []})
+            await send_func({"type": "http.response.body", "body": b"not found"})
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(False, 404, "Session not found")))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"attacker-sid")])
+
+    mock_pool = MagicMock()
+    mock_pool.register_pool_session_owner = AsyncMock()
+
+    with (
+        patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
+        patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.mcp_session_pool.MCPSessionPool") as mock_session_class,
+    ):
+        mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"ping","id":"x3"}'), send)
 
     await wrapper.shutdown()
     mock_pool.register_pool_session_owner.assert_not_called()
@@ -8431,6 +8699,50 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
                     assert posted_json["params"]["server_id"] == server_id
 
     await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_server_scope_requires_servers_use(monkeypatch):
+    """Server-scoped Streamable HTTP requests must enforce servers.use before dispatch."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    dummy_manager = DummySessionManager()
+    dummy_manager.handle_request = AsyncMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: dummy_manager)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=False))
+
+        scope = _make_scope("/servers/abc-123-def/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+        receive = _make_receive(orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": "1"}))
+        send, messages = _make_send_collector()
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        assert messages and messages[0]["type"] == "http.response.start"
+        assert messages[0]["status"] == tr.HTTP_403_FORBIDDEN
+        dummy_manager.handle_request.assert_not_awaited()
+    finally:
+        user_context_var.reset(token)
+        await wrapper.shutdown()
 
 
 # ---------------------------------------------------------------------------

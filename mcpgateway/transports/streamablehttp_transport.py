@@ -53,7 +53,7 @@ from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceReques
 import orjson
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
-from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
+from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND
 from starlette.types import Receive, Scope, Send
 
 # First-Party
@@ -62,6 +62,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
@@ -88,6 +89,7 @@ mcp_app: Server[Any] = Server("mcp-streamable-http")
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+_shared_session_registry: Optional[Any] = None
 
 # ------------------------------ Event store ------------------------------
 
@@ -460,6 +462,161 @@ def get_user_email_from_context() -> str:
     return str(user) if user else "unknown"
 
 
+def _should_enforce_streamable_rbac(user_context: Optional[dict[str, Any]]) -> bool:
+    """Return True when request originated from authenticated Streamable HTTP middleware.
+
+    Direct unit tests may call MCP handlers without middleware context; those
+    invocations should preserve historical behavior and avoid forced RBAC checks.
+
+    Args:
+        user_context: Request user context propagated by Streamable HTTP auth middleware.
+
+    Returns:
+        bool: ``True`` when permission checks should be enforced for this request.
+    """
+    return isinstance(user_context, dict) and "is_authenticated" in user_context
+
+
+async def _check_streamable_permission(
+    *,
+    user_context: dict[str, Any],
+    permission: str,
+    allow_admin_bypass: bool = True,
+    check_any_team: bool = False,
+) -> bool:
+    """Evaluate RBAC permission for a Streamable HTTP request context.
+
+    Args:
+        user_context: Authenticated user context from Streamable HTTP middleware.
+        permission: Permission name to evaluate (for example ``tools.execute``).
+        allow_admin_bypass: Whether unrestricted admin tokens can bypass team checks.
+        check_any_team: Whether any matching team grants permission.
+
+    Returns:
+        bool: ``True`` when the caller is authorized for ``permission``.
+    """
+    user_email = user_context.get("email")
+    if not user_email:
+        return False
+
+    try:
+        async with get_db() as db:
+            permission_service = PermissionService(db)
+            return await permission_service.check_permission(
+                user_email=user_email,
+                permission=permission,
+                token_teams=user_context.get("teams"),
+                allow_admin_bypass=allow_admin_bypass,
+                check_any_team=check_any_team,
+            )
+    except Exception as exc:
+        logger.warning(f"Streamable HTTP RBAC check failed for {user_email} / {permission}: {exc}")
+        return False
+
+
+def set_shared_session_registry(session_registry: Any) -> None:
+    """Set the process-wide session registry used by Streamable HTTP helpers.
+
+    Args:
+        session_registry: Registry instance created by application bootstrap.
+    """
+    global _shared_session_registry  # pylint: disable=global-statement
+    _shared_session_registry = session_registry
+
+
+def _get_shared_session_registry() -> Optional[Any]:
+    """Return the process-wide session registry reference.
+
+    Returns:
+        Optional[Any]: Session registry instance, or ``None`` when unavailable.
+    """
+    return _shared_session_registry
+
+
+async def _claim_streamable_session_owner(session_id: str, owner_email: str) -> Optional[str]:
+    """Claim or resolve the logical owner for a Streamable HTTP session.
+
+    Args:
+        session_id: Logical MCP session identifier to claim.
+        owner_email: Caller email that should own the session.
+
+    Returns:
+        Optional[str]: Effective owner email after claim, or ``None`` if unavailable.
+    """
+    if not session_id or not owner_email:
+        return None
+
+    session_registry = _get_shared_session_registry()
+    if session_registry is None:
+        return None
+
+    try:
+        return await session_registry.claim_session_owner(session_id, owner_email)
+    except Exception as exc:
+        logger.warning(f"Failed to claim session owner for {session_id}: {exc}")
+        return None
+
+
+async def _validate_streamable_session_access(
+    *,
+    mcp_session_id: Optional[str],
+    user_context: Optional[dict[str, Any]],
+    rpc_method: Optional[str] = None,
+) -> tuple[bool, int, str]:
+    """Authorize access to a stateful Streamable HTTP session identifier.
+
+    Args:
+        mcp_session_id: Session identifier from request headers.
+        user_context: Authenticated user context for the current request.
+        rpc_method: JSON-RPC method name when available.
+
+    Returns:
+        Tuple ``(allowed, deny_status_code, deny_message)``.
+    """
+    if not settings.use_stateful_sessions:
+        return True, 200, ""
+
+    if not mcp_session_id or mcp_session_id == "not-provided":
+        return True, 200, ""
+
+    if not _should_enforce_streamable_rbac(user_context):
+        return True, 200, ""
+
+    # Initialize establishes a new session and is authorized separately.
+    if (rpc_method or "").strip() == "initialize":
+        return True, 200, ""
+
+    requester_email = user_context.get("email") if isinstance(user_context, dict) else None
+    requester_is_admin = bool(user_context.get("is_admin", False)) if isinstance(user_context, dict) else False
+
+    session_registry = _get_shared_session_registry()
+    if session_registry is None:
+        return False, HTTP_403_FORBIDDEN, "Session ownership unavailable"
+
+    try:
+        session_owner = await session_registry.get_session_owner(mcp_session_id)
+    except Exception as exc:
+        logger.warning(f"Failed to get session owner for {mcp_session_id}: {exc}")
+        return False, HTTP_403_FORBIDDEN, "Session ownership unavailable"
+
+    if session_owner:
+        if requester_is_admin:
+            return True, 200, ""
+        if requester_email and requester_email == session_owner:
+            return True, 200, ""
+        return False, HTTP_403_FORBIDDEN, "Session access denied"
+
+    try:
+        session_exists = await session_registry.session_exists(mcp_session_id)
+    except Exception as exc:
+        logger.warning(f"Failed to check session existence for {mcp_session_id}: {exc}")
+        return False, HTTP_403_FORBIDDEN, "Session ownership unavailable"
+
+    if session_exists is False:
+        return False, HTTP_404_NOT_FOUND, "Session not found"
+    return False, HTTP_403_FORBIDDEN, "Session owner metadata unavailable"
+
+
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
@@ -643,10 +800,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
         types.CallToolResult: MCP SDK CallToolResult with content and optional structuredContent.
 
     Raises:
+        PermissionError: If the caller lacks ``tools.execute`` permission.
         Exception: Re-raised after logging to allow MCP SDK to convert to JSON-RPC error response.
-
-    Raises:
-        Exception: Re-raises exceptions encountered during tool invocation after logging.
 
     Examples:
         >>> # Test call_tool function signature
@@ -683,6 +838,14 @@ async def call_tool(name: str, arguments: dict) -> Union[
         # token_teams stays None (unrestricted)
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
+
+    if _should_enforce_streamable_rbac(user_context):
+        has_execute_permission = await _check_streamable_permission(
+            user_context=user_context,
+            permission="tools.execute",
+        )
+        if not has_execute_permission:
+            raise PermissionError("Insufficient permissions. Required: tools.execute")
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
     gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -1561,12 +1724,24 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
     Returns:
         types.EmptyResult: An empty result indicating success.
 
+    Raises:
+        PermissionError: If the caller lacks ``admin.system_config`` permission.
+
     Examples:
         >>> import inspect
         >>> sig = inspect.signature(set_logging_level)
         >>> list(sig.parameters.keys())
         ['level']
     """
+    _, _, user_context = await _get_request_context_or_default()
+    if _should_enforce_streamable_rbac(user_context):
+        has_admin_permission = await _check_streamable_permission(
+            user_context=user_context,
+            permission="admin.system_config",
+        )
+        if not has_admin_permission:
+            raise PermissionError("Insufficient permissions. Required: admin.system_config")
+
     try:
         # Convert MCP logging level to our LogLevel enum
         level_map = {
@@ -1582,6 +1757,8 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         log_level = level_map.get(level.lower(), LogLevel.INFO)
         await logging_service.set_level(log_level)
         return types.EmptyResult()
+    except PermissionError:
+        raise
     except Exception as e:
         logger.exception(f"Error setting logging level: {e}")
         return types.EmptyResult()
@@ -1833,6 +2010,22 @@ class SessionManagerWrapper:
         # Log session manager ID for debugging
         logger.debug(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)}")
 
+        # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
+        # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
+        user_context = user_context_var.get()
+        if match and _should_enforce_streamable_rbac(user_context):
+            has_server_access = await _check_streamable_permission(
+                user_context=user_context,
+                permission="servers.use",
+            )
+            if not has_server_access:
+                response = ORJSONResponse(
+                    {"detail": "Insufficient permissions. Required: servers.use"},
+                    status_code=HTTP_403_FORBIDDEN,
+                )
+                await response(scope, receive, send)
+                return
+
         if is_internally_forwarded:
             logger.debug(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: {method} | Session: {mcp_session_id}")
 
@@ -1868,6 +2061,16 @@ class SessionManagerWrapper:
                 json_body = orjson.loads(body)
                 rpc_method = json_body.get("method", "")
                 logger.debug(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
+
+                session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+                    mcp_session_id=mcp_session_id,
+                    user_context=user_context,
+                    rpc_method=rpc_method,
+                )
+                if not session_allowed:
+                    response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
+                    await response(scope, receive, send)
+                    return
 
                 # Notifications don't need /rpc routing - just acknowledge
                 if rpc_method.startswith("notifications/"):
@@ -2021,6 +2224,16 @@ class SessionManagerWrapper:
                         rpc_method = json_body.get("method", "")
                         logger.debug(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
 
+                        session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+                            mcp_session_id=mcp_session_id,
+                            user_context=user_context,
+                            rpc_method=rpc_method,
+                        )
+                        if not session_allowed:
+                            response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
+                            await response(scope, receive, send)
+                            return
+
                         # Notifications don't need /rpc routing
                         if rpc_method.startswith("notifications/"):
                             logger.debug("[HTTP_AFFINITY_LOCAL] Notification, returning 202 Accepted")
@@ -2129,7 +2342,29 @@ class SessionManagerWrapper:
                 f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}"
             )
             if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
-                session_to_register = captured_session_id or (mcp_session_id if mcp_session_id != "not-provided" else None)
+                session_to_register: Optional[str] = None
+
+                # Only server-emitted session IDs (from successful initialize) can
+                # establish new ownership state for affinity.
+                if captured_session_id:
+                    session_to_register = captured_session_id
+
+                    requester_email = user_context.get("email") if isinstance(user_context, dict) else None
+                    if requester_email:
+                        effective_owner = await _claim_streamable_session_owner(captured_session_id, requester_email)
+                        if effective_owner and effective_owner != requester_email and not bool(user_context.get("is_admin", False)):
+                            logger.warning(f"Session owner mismatch for {captured_session_id[:8]}... " f"(requester={requester_email}, owner={effective_owner})")
+                elif mcp_session_id != "not-provided":
+                    # Existing client-provided IDs may only refresh affinity when they
+                    # are already bound to the caller's principal.
+                    session_allowed, _deny_status, _deny_detail = await _validate_streamable_session_access(
+                        mcp_session_id=mcp_session_id,
+                        user_context=user_context,
+                        rpc_method=None,
+                    )
+                    if session_allowed:
+                        session_to_register = mcp_session_id
+
                 logger.debug(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
                 if session_to_register:
                     try:

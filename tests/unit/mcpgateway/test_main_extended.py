@@ -3351,8 +3351,12 @@ def test_client(app_with_temp_db):
         resource_type=None,
         resource_id=None,
         team_id=None,
+        token_teams=None,
         ip_address=None,
         user_agent=None,
+        allow_admin_bypass=True,
+        check_any_team=False,
+        **_kwargs,
     ) -> bool:
         return True
 

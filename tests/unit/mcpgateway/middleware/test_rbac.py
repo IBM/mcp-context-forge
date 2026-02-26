@@ -209,6 +209,34 @@ async def test_require_permission_granted(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_require_permission_public_only_token_denies_admin_permission(monkeypatch):
+    """Public-only token scope must not pass admin.* checks through decorator paths."""
+
+    async def dummy_func(user=None):
+        return "ok"
+
+    class _ScopedPermissionService:
+        def __init__(self, _db):
+            pass
+
+        async def check_permission(self, **kwargs):
+            token_teams = kwargs.get("token_teams")
+            permission = kwargs.get("permission", "")
+            return not (permission.startswith("admin.") and token_teams is not None and len(token_teams) == 0)
+
+    monkeypatch.setattr(rbac, "PermissionService", _ScopedPermissionService)
+
+    decorated = rbac.require_permission("admin.system_config")(dummy_func)
+
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": []})
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+    allowed = await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": None})
+    assert allowed == "ok"
+
+
+@pytest.mark.asyncio
 async def test_require_admin_permission_granted(monkeypatch):
     async def dummy_func(user=None):
         return "admin-ok"
@@ -254,6 +282,21 @@ async def test_permission_checker_methods(monkeypatch):
     assert await checker.has_admin_permission()
     assert await checker.has_any_permission(["tools.read", "tools.execute"])
     await checker.require_permission("tools.read")
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_permission_passes_token_teams(monkeypatch):
+    mock_db = MagicMock()
+    mock_user = {"email": "admin@example.com", "db": mock_db, "token_teams": []}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    checker = rbac.PermissionChecker(mock_user)
+    result = await checker.has_permission("admin.system_config")
+
+    assert result is False
+    assert mock_perm_service.check_permission.call_args.kwargs["token_teams"] == []
 
 
 # ============================================================================
