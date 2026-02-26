@@ -6339,7 +6339,7 @@ async def admin_cancel_join_request(
 @require_permission("teams.manage_members", allow_admin_bypass=False)
 async def admin_list_join_requests(
     team_id: str,
-    request: Request,
+    _request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -6347,7 +6347,7 @@ async def admin_list_join_requests(
 
     Args:
         team_id: ID of the team
-        request: FastAPI request object
+        _request: FastAPI request object (unused, required by route signature)
         db: Database session
         user: Authenticated user
 
