@@ -293,6 +293,18 @@ class TestSecurityValidatorParity:
         assert expected.issubset(blocked), f"Missing standard private ranges: {expected - blocked}"
 
 
+class TestUrlHtmlJsPatternBlocking:
+    """Tests for HTML/JS XSS pattern detection within validate_url."""
+
+    def test_html_tag_in_url_rejected(self):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_url("https://example.com/<script>alert(1)</script>")
+
+    def test_js_event_handler_in_url_rejected(self):
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.validate_url("https://example.com/page?q=onclick=alert(1)")
+
+
 class TestDangerousPatternDetection:
     """Functional tests for HTML/JS XSS pattern detection."""
 

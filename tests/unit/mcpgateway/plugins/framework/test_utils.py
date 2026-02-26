@@ -418,6 +418,27 @@ def test_coerce_nested_depth_limit():
     assert isinstance(node, dict)
 
 
+def test_coerce_nested_dict_breadth_limit():
+    """Dict exceeding _COERCE_MAX_BREADTH is returned as plain dict."""
+    from mcpgateway.plugins.framework.utils import _COERCE_MAX_BREADTH, coerce_nested
+
+    big_dict = {f"key_{i}": i for i in range(_COERCE_MAX_BREADTH + 1)}
+    result = coerce_nested(big_dict)
+    assert isinstance(result, dict), "Oversized dict should be returned as plain dict"
+    assert len(result) == _COERCE_MAX_BREADTH + 1
+
+
+def test_coerce_nested_list_breadth_limit():
+    """List exceeding _COERCE_MAX_BREADTH is returned as plain list."""
+    from mcpgateway.plugins.framework.utils import _COERCE_MAX_BREADTH, coerce_nested
+
+    big_list = [{"v": i} for i in range(_COERCE_MAX_BREADTH + 1)]
+    result = coerce_nested(big_list)
+    assert isinstance(result, list), "Oversized list should be returned as plain list"
+    # Items should NOT be coerced to StructuredData
+    assert isinstance(result[0], dict), "Items in oversized list should remain plain dicts"
+
+
 def test_coerce_messages_converts_dicts():
     """Test coerce_messages converts list of dicts to StructuredData."""
     from mcpgateway.plugins.framework.utils import StructuredData, coerce_messages

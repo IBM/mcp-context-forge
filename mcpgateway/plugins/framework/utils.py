@@ -21,10 +21,10 @@ from fastapi.responses import JSONResponse
 import orjson
 from pydantic import BaseModel, ConfigDict
 
-logger = logging.getLogger(__name__)
-
 # First-Party
 from mcpgateway.plugins.framework.models import GlobalContext, PluginCondition
+
+logger = logging.getLogger(__name__)
 
 
 class StructuredData(BaseModel):

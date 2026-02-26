@@ -96,7 +96,6 @@ dev = [
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.7",
-    "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
     "diff-cover>=9.0.0",
     "dlint>=0.16.0",
@@ -166,6 +165,7 @@ dev = [
     "grpcio-reflection>=1.76.0",
     "grpcio-tools>=1.76.0",
     "pipdeptree>=2.31.0",
+    "setuptools>=82.0.0",
 ]
 
 # ----------------------------------------------------------------
@@ -655,7 +655,6 @@ ignore_unused = [
   "code2flow",
   "cookiecutter",
   "coverage",
-  "coverage-badge",
   "darglint",
   "diff-cover",
   "flake8",

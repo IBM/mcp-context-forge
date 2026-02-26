@@ -113,6 +113,64 @@ class TestApplyPolicy:
         result = apply_policy(original, modified, policy)
         assert result is None
 
+    def test_sentinel_skip_for_missing_attribute(self):
+        """When a declared field is absent from the modified instance's __dict__
+        (defensive guard), the field is skipped via the _SENTINEL check."""
+        policy = HookPayloadPolicy(writable_fields=frozenset({"name", "secret"}))
+        original = SamplePayload(name="old", secret="s")
+        modified = SamplePayload(name="new", secret="changed")
+
+        # Remove 'secret' from the modified instance's internal storage
+        # to trigger the new_val is _SENTINEL branch
+        del modified.__dict__["secret"]
+
+        result = apply_policy(original, modified, policy)
+        assert result is not None
+        assert result.name == "new"  # type: ignore[union-attr]
+        # secret should be unchanged (skipped because sentinel)
+        assert result.secret == "s"  # type: ignore[union-attr]
+
+    def test_basemodel_field_equal_skipped(self):
+        """When both old and new values are BaseModel instances with identical
+        content, apply_policy uses model_dump() comparison and skips the field."""
+
+        class Inner(BaseModel):
+            x: int = 1
+            y: str = "hello"
+
+        class PayloadWithModel(PluginPayload):
+            name: str
+            nested: Inner = Field(default_factory=Inner)
+
+        policy = HookPayloadPolicy(writable_fields=frozenset({"name", "nested"}))
+        original = PayloadWithModel(name="old", nested=Inner(x=1, y="hello"))
+        modified = PayloadWithModel(name="new", nested=Inner(x=1, y="hello"))
+
+        result = apply_policy(original, modified, policy)
+        assert result is not None
+        assert result.name == "new"  # type: ignore[union-attr]
+        # nested is structurally identical so should not appear in updates
+        assert result.nested.x == 1  # type: ignore[union-attr]
+
+    def test_basemodel_field_changed_accepted(self):
+        """When both old and new values are BaseModel but differ, the writable
+        field change is accepted via model_dump() comparison."""
+
+        class Inner(BaseModel):
+            x: int = 1
+
+        class PayloadWithModel(PluginPayload):
+            name: str
+            nested: Inner = Field(default_factory=Inner)
+
+        policy = HookPayloadPolicy(writable_fields=frozenset({"nested"}))
+        original = PayloadWithModel(name="old", nested=Inner(x=1))
+        modified = PayloadWithModel(name="old", nested=Inner(x=99))
+
+        result = apply_policy(original, modified, policy)
+        assert result is not None
+        assert result.nested.x == 99  # type: ignore[union-attr]
+
 
 class TestPluginPayloadFrozen:
     """Tests for frozen PluginPayload base class."""
