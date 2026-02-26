@@ -93,8 +93,6 @@
   {% set hx_target = '#prompts-table' %}
   {% set hx_indicator = '#prompts-loading' %}
   {% set table_name = 'prompts' %}
-  {% set query_params = {'include_inactive': include_inactive} %}
-  {% autoescape false %}
+  {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}
   {% include 'pagination_controls.html' %}
-  {% endautoescape %}
 </div>

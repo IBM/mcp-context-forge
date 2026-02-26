@@ -1,6 +1,6 @@
 # ✨ Red Hat OpenShift
 
-OpenShift (both **OKD** and **Red Hat OpenShift Container Platform**) adds opinionated security (SCC), integrated routing, and optional build pipelines on top of Kubernetes.  Deploying MCP Gateway therefore means (1) building or pulling a compatible image, (2) wiring database + cache back-ends, (3) obeying the default *restricted-v2* SCC, and (4) exposing the service through a **Route** instead of an Ingress.  This guide walks through each step, offers ready-made YAML snippets, and explains the differences from the vanilla Kubernetes.
+OpenShift (both **OKD** and **Red Hat OpenShift Container Platform**) adds opinionated security (SCC), integrated routing, and optional build pipelines on top of Kubernetes.  Deploying ContextForge therefore means (1) building or pulling a compatible image, (2) wiring database + cache back-ends, (3) obeying the default *restricted-v2* SCC, and (4) exposing the service through a **Route** instead of an Ingress.  This guide walks through each step, offers ready-made YAML snippets, and explains the differences from the vanilla Kubernetes.
 
 ---
 

@@ -179,10 +179,10 @@ ngrok http 3000
    # Edit the webhook URL to point to your local server
    ```
 
-3. **Start MCP Gateway**
+3. **Start ContextForge**
    ```bash
    export PLUGINS_ENABLED=true
-   export PLUGIN_CONFIG_FILE=plugins/config.yaml
+   export PLUGINS_CONFIG_FILE=plugins/config.yaml
    make dev
    ```
 

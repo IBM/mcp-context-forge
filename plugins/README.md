@@ -1,6 +1,6 @@
 # ContextForge Plugin Framework
 
-The ContextForge Plugin Framework provides a powerful, production-ready system for AI safety middleware, content security, policy enforcement, and operational excellence. Plugins run as middleware components that can intercept and transform requests and responses at various points in the gateway lifecycle.
+ContextForge Plugin Framework provides a powerful, production-ready system for AI safety middleware, content security, policy enforcement, and operational excellence. Plugins run as middleware components that can intercept and transform requests and responses at various points in the gateway lifecycle.
 
 ## Quick Start
 
@@ -9,7 +9,7 @@ The ContextForge Plugin Framework provides a powerful, production-ready system f
 1. Set environment variables in `.env`:
 ```bash
 PLUGINS_ENABLED=true
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 PLUGINS_CLI_COMPLETION=false
 PLUGINS_CLI_MARKUP_MODE=rich
 ```

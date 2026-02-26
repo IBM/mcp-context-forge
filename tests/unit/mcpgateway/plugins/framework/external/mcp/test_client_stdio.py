@@ -154,7 +154,7 @@ async def test_client_get_plugin_configs():
     assert all_configs[0].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert all_configs[0].description == "A plugin for finding and replacing synonyms."
     assert all_configs[0].version == "0.1"
-    assert all_configs[0].author == "MCP Context Forge Team"
+    assert all_configs[0].author == "ContextForge Team"
     assert all_configs[0].hooks[0] == "prompt_pre_fetch"
     assert all_configs[0].hooks[1] == "prompt_post_fetch"
     assert all_configs[0].config
@@ -166,7 +166,7 @@ async def test_client_get_plugin_configs():
     assert all_configs[1].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert all_configs[1].description == "A plugin for finding and replacing words."
     assert all_configs[1].version == "0.1"
-    assert all_configs[1].author == "MCP Context Forge Team"
+    assert all_configs[1].author == "ContextForge Team"
     assert all_configs[1].hooks[0] == "prompt_pre_fetch"
     assert all_configs[1].hooks[1] == "prompt_post_fetch"
     assert all_configs[1].config

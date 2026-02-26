@@ -1,6 +1,6 @@
 # JMeter Performance Testing
 
-This directory contains JMeter test plans for MCP Gateway performance testing, providing industry-standard baseline measurements and CI/CD integration capabilities.
+This directory contains JMeter test plans for ContextForge performance testing, providing industry-standard baseline measurements and CI/CD integration capabilities.
 
 ## Prerequisites
 

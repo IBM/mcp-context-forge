@@ -28,6 +28,7 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-        if settings.trust_proxy_auth:
+        if is_proxy_auth_trust_active(settings):
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
@@ -273,8 +274,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         if is_browser_request:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
 
-        # If auth is disabled, return the stock admin user
-        if not settings.auth_required:
+        # AUTH_REQUIRED=false no longer implies admin access.
+        # Preserve explicit unsafe override for local-only compatibility.
+        if not settings.auth_required and getattr(settings, "allow_unauthenticated_admin", False) is True:
             return {
                 "email": settings.platform_admin_email,
                 "full_name": "Platform Admin",
@@ -285,6 +287,21 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 "auth_method": "disabled",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
+            }
+
+        if not settings.auth_required:
+            return {
+                "email": "anonymous",
+                "full_name": "Anonymous User",
+                "is_admin": False,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "db": None,  # Session closed; use endpoint's db param instead
+                "auth_method": "anonymous",
+                "request_id": getattr(request.state, "request_id", None),
+                "team_id": getattr(request.state, "team_id", None),
+                "plugin_context_table": getattr(request.state, "plugin_context_table", None),
+                "plugin_global_context": getattr(request.state, "plugin_global_context", None),
             }
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
@@ -303,6 +320,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         auth_method = getattr(request.state, "auth_method", None)
         request_id = getattr(request.state, "request_id", None)
         team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
         # Read plugin context data from request.state for cross-hook context sharing
         # (set by HttpAuthMiddleware for passing contexts between different hook types)
@@ -323,6 +341,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
+            "token_teams": token_teams,  # Include token teams for query-level scoping
             "token_use": token_use,  # Include token_use for RBAC team derivation
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
             "plugin_global_context": plugin_global_context,  # Global context for consistency
@@ -618,6 +637,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=user_context.get("token_teams"),
                     ip_address=user_context.get("ip_address"),
                     user_agent=user_context.get("user_agent"),
                     allow_admin_bypass=allow_admin_bypass,
@@ -632,6 +652,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
+                        token_teams=user_context.get("token_teams"),
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
@@ -829,6 +850,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
+                        token_teams=user_context.get("token_teams"),
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
@@ -848,6 +870,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                             permission=permission,
                             resource_type=resource_type,
                             team_id=team_id,
+                            token_teams=user_context.get("token_teams"),
                             ip_address=user_context.get("ip_address"),
                             user_agent=user_context.get("user_agent"),
                             allow_admin_bypass=allow_admin_bypass,
@@ -910,6 +933,7 @@ class PermissionChecker:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 team_id=team_id,
+                token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
             )
@@ -922,6 +946,7 @@ class PermissionChecker:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 team_id=team_id,
+                token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
             )
@@ -961,6 +986,7 @@ class PermissionChecker:
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=self.user_context.get("token_teams"),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):
@@ -975,6 +1001,7 @@ class PermissionChecker:
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=self.user_context.get("token_teams"),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):

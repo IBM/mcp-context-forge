@@ -1,10 +1,18 @@
-# MCP Gateway
+# ContextForge
 
-> Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
+> An open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. Optimizes Agent & Tool calling, and supports plugins.
 
-ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+**ContextForge** is an open source registry and proxy that federates tools, agents, and APIs into one clean endpoint for your AI clients. It provides centralized governance, discovery, and observability across your AI infrastructure:
 
-![MCP Gateway](images/mcpgateway.gif)
+- **Tools Gateway** — MCP, REST, gRPC-to-MCP translation, and TOON compression
+- **Agent Gateway** — A2A protocol, OpenAI-compatible and Anthropic agent routing
+- **API Gateway** — Rate limiting, auth, retries, and reverse proxy for REST services
+- **Plugin Extensibility** — 40+ plugins for additional transports, protocols, and integrations
+- **Observability** — OpenTelemetry tracing with Phoenix, Jaeger, Zipkin, and other OTLP backends
+
+It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+
+![ContextForge](images/mcpgateway.gif)
 
 ---
 
@@ -26,7 +34,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ## Overview & Goals
 
-**ContextForge** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server or REST API-exposing a unified endpoint for all your AI clients. See the [project roadmap](architecture/roadmap.md) for more details.
+**ContextForge** is an open source registry and proxy that federates any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server, or REST/gRPC API, providing centralized governance, discovery, and observability. It optimizes agent and tool calling, and supports plugins. See the [project roadmap](architecture/roadmap.md) for more details.
 
 It currently supports:
 
@@ -40,7 +48,7 @@ It currently supports:
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
 
-![MCP Gateway Architecture](images/mcpgateway.svg)
+![ContextForge Architecture](images/mcpgateway.svg)
 
 For a list of upcoming features, check out the [ContextForge Roadmap](architecture/roadmap.md)
 
@@ -48,7 +56,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](architectu
 
 ??? info "Gateway Layer with Protocol Flexibility"
 
-    * Sits in front of any MCP server or REST API
+    * Federates any MCP server or REST API
     * Lets you choose your MCP protocol version (e.g., `2025-06-18`)
     * Exposes a single, unified interface for diverse backends
 
@@ -295,7 +303,7 @@ docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
 **What you get:**
 
 - **MariaDB 10.6** - Production-ready database with 36+ tables
-- **MCP Gateway** - Full-featured gateway with Admin UI
+- **ContextForge** - Full-featured gateway with Admin UI
 - **Redis** - High-performance caching and session storage
 - **Admin Tools** - pgAdmin, Redis Insight for database management
 - **Nginx Proxy** - Caching reverse proxy (optional)
@@ -557,7 +565,7 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ## Cloud Deployment
 
-MCP Gateway can be deployed to any major cloud platform:
+ContextForge can be deployed to any major cloud platform:
 
 | Platform | Guide |
 |----------|-------|

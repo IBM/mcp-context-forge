@@ -9,6 +9,7 @@ Team page object for Teams features.
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -171,12 +172,20 @@ class TeamPage(BasePage):
         team_search = self.page.locator("#team-search")
         if team_search.is_visible():
             team_search.fill("")
-            # Wait for network to be idle after clearing search (ensures HTMX refresh completes)
+
+            # Teams search is debounced + HTMX-driven; avoid networkidle because
+            # admin pages can keep long-lived requests open.
             try:
-                self.page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                # If networkidle times out, fall back to fixed timeout
-                self.page.wait_for_timeout(1500)
+                self.page.wait_for_selector("#teams-loading.htmx-request", timeout=3000)
+            except PlaywrightTimeoutError:
+                # Fallback: explicitly trigger server-side teams search refresh.
+                self.page.evaluate("window.serverSideTeamSearch && window.serverSideTeamSearch('')")
+
+            self.page.wait_for_function(
+                "() => !document.querySelector('#teams-loading.htmx-request')",
+                timeout=10000,
+            )
+            self.page.wait_for_selector("#unified-teams-list", state="attached", timeout=10000)
 
         # Now check that the team card is hidden
         team_card = self.get_team_card(team_name)

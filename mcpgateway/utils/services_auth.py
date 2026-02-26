@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-mcpgateway.utils.services_auth - Authentication utilities for MCP Gateway
+mcpgateway.utils.services_auth - Authentication utilities for ContextForge
 Doctest examples
 ----------------
 >>> import os
@@ -36,7 +36,7 @@ error
 import base64
 import hashlib
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 
 # Third-Party
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -151,7 +151,7 @@ def clear_crypto_cache() -> None:
     _crypto_cache.clear()
 
 
-def encode_auth(auth_value: dict) -> str:
+def encode_auth(auth_value: dict) -> Optional[str]:
     """
     Encrypt and encode an authentication dictionary into a compact base64-url string.
 

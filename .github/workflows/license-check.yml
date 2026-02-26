@@ -3,17 +3,34 @@ name: License Check
 on:
   push:
     branches: ["main"]
+    paths:
+      - "pyproject.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/license-check.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
-  schedule:
-    - cron: "15 10 * * 6"  # Weekly Saturday 10:15 UTC
+    paths:
+      - "pyproject.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/license-check.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   license-check:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-MCP Gateway implements [RFC 9728: OAuth 2.0 Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) to enable OAuth-protected MCP servers to advertise their authorization server configuration. This allows MCP clients (like Claude Desktop, MCP Inspector) to discover OAuth endpoints and initiate browser-based SSO flows.
+ContextForge implements [RFC 9728: OAuth 2.0 Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) to enable OAuth-protected MCP servers to advertise their authorization server configuration. This allows MCP clients (like Claude Desktop, MCP Inspector) to discover OAuth endpoints and initiate browser-based SSO flows.
 
 ## RFC 9728 Requirements
 
@@ -43,7 +43,7 @@ The metadata response fields (per RFC 9728 Section 2):
 
 **Authentication:** None required (per RFC 9728)
 
-**Implementation:** [`mcpgateway/routers/well_known.py:118`](../../mcpgateway/routers/well_known.py#L118)
+**Implementation:** [`mcpgateway/routers/well_known.py:118`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L118)
 
 **Features:**
 
@@ -73,7 +73,7 @@ curl https://gateway.example.com/.well-known/oauth-protected-resource/servers/55
 
 ### Service Layer
 
-**Implementation:** [`mcpgateway/services/server_service.py:1913`](../../mcpgateway/services/server_service.py#L1913)
+**Implementation:** [`mcpgateway/services/server_service.py:1913`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/services/server_service.py#L1913)
 
 The `get_oauth_protected_resource_metadata()` method:
 
@@ -105,7 +105,7 @@ The endpoint validates that `server_id` is a valid UUID using regex pattern matc
 - Private/team servers return 404 (prevents information leakage)
 - OAuth must be explicitly enabled on the server
 
-**Implementation:** [`mcpgateway/routers/well_known.py:39`](../../mcpgateway/routers/well_known.py#L39)
+**Implementation:** [`mcpgateway/routers/well_known.py:39`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L39)
 
 ```python
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
@@ -184,7 +184,7 @@ This is automatically wrapped in an array in the response.
 
 ### Unit Tests
 
-Comprehensive test suite: [`tests/unit/mcpgateway/routers/test_well_known_rfc9728.py`](../../tests/unit/mcpgateway/routers/test_well_known_rfc9728.py)
+Comprehensive test suite: [`tests/unit/mcpgateway/routers/test_well_known_rfc9728.py`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/tests/unit/mcpgateway/routers/test_well_known_rfc9728.py)
 
 **Test Coverage:**
 
@@ -221,7 +221,7 @@ curl -i https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000
 
 **Test with MCP Inspector:**
 
-1. Configure an OAuth-enabled server in MCP Gateway
+1. Configure an OAuth-enabled server in ContextForge
 2. Open MCP Inspector
 3. Connect to the server using the MCP endpoint: `https://gateway.example.com/servers/{server_id}/mcp`
 4. MCP Inspector should automatically discover OAuth metadata via RFC 9728
@@ -229,7 +229,7 @@ curl -i https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000
 
 ## Migration Guide
 
-### For MCP Gateway Administrators
+### For ContextForge Administrators
 
 **No action required.** The implementation maintains backward compatibility:
 

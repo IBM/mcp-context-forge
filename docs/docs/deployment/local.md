@@ -1,6 +1,6 @@
 # 🐍 Local Deployment
 
-This guide walks you through running MCP Gateway on your local machine using a virtual environment or directly via Python.
+This guide walks you through running ContextForge on your local machine using a virtual environment or directly via Python.
 
 ---
 
@@ -42,7 +42,7 @@ make dev        # hot-reload (Uvicorn) on :8000
 
 ## 🗄 Database Configuration
 
-By default, MCP Gateway uses SQLite for simplicity. You can configure alternative databases via the `DATABASE_URL` environment variable:
+By default, ContextForge uses SQLite for simplicity. You can configure alternative databases via the `DATABASE_URL` environment variable:
 
 === "SQLite (Default)"
     ```bash

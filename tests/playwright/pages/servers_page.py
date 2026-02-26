@@ -9,6 +9,7 @@ Servers page object for Virtual MCP Server management features.
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -212,8 +213,9 @@ class ServersPage(BasePage):
     # ==================== High-Level Navigation Methods ====================
 
     def navigate_to_servers_tab(self) -> None:
-        """Navigate to Servers/Catalog tab and wait for panel to be visible."""
+        """Navigate to Servers/Catalog tab and wait for the table to finish loading."""
         self.sidebar.click_servers_tab()
+        self.wait_for_servers_table_loaded()
 
     # ==================== High-Level Server Operations ====================
 
@@ -282,14 +284,98 @@ class ServersPage(BasePage):
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
 
+        Search is server-side via HTMX with a debounce. Avoid Playwright
+        ``networkidle`` because admin pages can keep long-lived requests open.
+        Wait for table/indicator state instead.
+
         Args:
             query: Search query string
         """
+        if query == "":
+            self.clear_search()
+            return
+
         self.fill_locator(self.search_input, query)
 
+        try:
+            self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+        except PlaywrightTimeoutError:
+            # Fallback: explicitly trigger the server-side reload for the catalog panel.
+            self.page.evaluate(
+                "(q) => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                query,
+            )
+            try:
+                self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
+        try:
+            self.page.wait_for_selector(
+                "#servers-table-body",
+                state="attached",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            # Recovery path: if the partial response did not restore the table
+            # structure, hard-reload and reopen catalog.
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_servers_tab()
+            self.wait_for_servers_table_loaded()
+            return
+
+        # In some environments the clear action can leave the table in a stale
+        # empty state (e.g., after a zero-result search). Recover by reloading
+        # and re-opening the catalog tab so subsequent assertions see the
+        # canonical server list.
+        if self.get_server_count() == 0:
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_servers_tab()
+            self.wait_for_servers_table_loaded()
+
     def clear_search(self) -> None:
-        """Clear the server search."""
-        self.click_locator(self.clear_search_btn)
+        """Clear the server search.
+
+        Triggers an HTMX reload of the servers table, then waits for
+        table/indicator settling.
+        """
+        request_seen = False
+        try:
+            with self.page.expect_response(
+                lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                timeout=5000,
+            ):
+                self.click_locator(self.clear_search_btn)
+            request_seen = True
+        except PlaywrightTimeoutError:
+            pass
+
+        if not request_seen:
+            # Fallback: invoke the same clear function the button uses and
+            # explicitly wait for the partial reload request.
+            try:
+                with self.page.expect_response(
+                    lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                    timeout=5000,
+                ):
+                    self.page.evaluate("window.clearSearch && window.clearSearch('catalog')")
+                request_seen = True
+            except PlaywrightTimeoutError:
+                # Last-resort best effort: force a reload call even if request
+                # observation missed due timing.
+                self.page.evaluate(
+                    "() => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                )
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#servers-table-body", state="attached", timeout=15000)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive servers checkbox.
@@ -297,6 +383,7 @@ class ServersPage(BasePage):
         Args:
             show: True to show inactive servers, False to hide them
         """
+        self.page.wait_for_selector("#catalog-panel:not(.hidden)", timeout=15000)
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
@@ -307,6 +394,7 @@ class ServersPage(BasePage):
         Returns:
             Number of visible server rows
         """
+        self.page.wait_for_selector("#catalog-panel:not(.hidden)", timeout=15000)
         self.page.wait_for_selector('[data-testid="server-list"]', state="attached")
         return self.server_items.locator(":visible").count()
 

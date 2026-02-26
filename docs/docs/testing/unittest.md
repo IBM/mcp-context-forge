@@ -1,6 +1,6 @@
 ## JavaScript Unit Testing
 
-MCP Gateway uses **Vitest** for JavaScript unit testing, providing fast and modern testing capabilities for browser-based code. Tests cover pure/near-pure utility functions in `admin.js` (validation, formatting, parsing, error handling, display, and config).
+ContextForge uses **Vitest** for JavaScript unit testing, providing fast and modern testing capabilities for browser-based code. Tests cover pure/near-pure utility functions in `admin.js` (validation, formatting, parsing, error handling, display, and config).
 
 ### Configuration Files
 

@@ -7,12 +7,11 @@ branch coverage beyond the current 63%.
 
 # Standard
 import asyncio
-import base64
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import time
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, call, MagicMock, patch
 
 # Third-Party
 import jsonschema
@@ -21,13 +20,12 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 # First-Party
-from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
 from mcpgateway.common.models import TextContent, ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
+from mcpgateway.schemas import ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -43,7 +41,6 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
-from mcpgateway.utils.services_auth import encode_auth
 
 # ─── autouse fixtures ────────────────────────────────────────────────────────
 
@@ -354,33 +351,16 @@ class TestInitializeShutdown:
         service._http_client.aclose.assert_awaited_once()
         service._event_service.shutdown.assert_awaited_once()
 
-    def test_init_plugins_enabled_env_true(self, monkeypatch):
-        """PLUGINS_ENABLED=true env should enable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "true")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+    def test_init_delegates_to_get_plugin_manager(self):
+        """ToolService.__init__ should assign whatever get_plugin_manager() returns."""
+        mock_pm = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_plugin_manager", return_value=mock_pm):
             service = ToolService()
-        assert service._plugin_manager is not None
-        mock_pm.assert_called_once()
+        assert service._plugin_manager is mock_pm
 
-    def test_init_plugins_enabled_env_false(self, monkeypatch):
-        """PLUGINS_ENABLED=false env should disable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "false")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
-            service = ToolService()
-        assert service._plugin_manager is None
-        mock_pm.assert_not_called()
-
-    def test_init_plugins_enabled_env_on(self, monkeypatch):
-        """PLUGINS_ENABLED=on env should enable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "on")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
-            service = ToolService()
-        assert service._plugin_manager is not None
-
-    def test_init_plugins_enabled_env_off(self, monkeypatch):
-        """PLUGINS_ENABLED=off env should disable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "off")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+    def test_init_plugin_manager_none_when_disabled(self):
+        """ToolService._plugin_manager should be None when get_plugin_manager() returns None."""
+        with patch("mcpgateway.services.tool_service.get_plugin_manager", return_value=None):
             service = ToolService()
         assert service._plugin_manager is None
 
@@ -4599,9 +4579,6 @@ class TestInvokeToolRestSuccess:
         mock_response.json = MagicMock(return_value={"result": "ok"})
         mock_response.raise_for_status = MagicMock()
 
-        # Standard
-        import asyncio as aio
-
         async def fake_get(*a, **kw):
             return mock_response
 
@@ -4926,6 +4903,132 @@ class TestInvokeToolGatewayQueryParams:
 
             result = await tool_service.invoke_tool(db, "test_tool", {})
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_gateway_query_param_auth_uses_runtime_gateway_query_params(self, tool_service, mock_tool, mock_gateway):
+        """Runtime ORM gateway query params should be used when they are a dict."""
+        mock_gateway.id = "gw-uuid-1"
+        mock_gateway.name = "test_gw"
+        mock_gateway.url = "http://gateway:9000"
+        mock_gateway.auth_type = "query_param"
+        mock_gateway.auth_value = None
+        mock_gateway.auth_query_params = {"api_key": "runtime_encrypted"}
+        mock_gateway.oauth_config = None
+        mock_gateway.ca_certificate = None
+        mock_gateway.ca_certificate_sig = None
+        mock_gateway.passthrough_headers = None
+
+        mock_tool.id = "tool-uuid-1"
+        mock_tool.original_name = "test_tool"
+        mock_tool.name = "test_tool"
+        mock_tool.url = "http://tool:9001"
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.headers = {}
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.oauth_config = None
+        mock_tool.gateway_id = "gw-uuid-1"
+        mock_tool.gateway = mock_gateway
+        mock_tool.jsonpath_filter = ""
+        mock_tool.output_schema = None
+        mock_tool.annotations = {}
+        mock_tool.timeout_ms = None
+        mock_tool.enabled = True
+        mock_tool.reachable = True
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
+
+        cache = MagicMock()
+        cache.enabled = False
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*_a, **_kw):
+            return mock_response
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "runtime-secret"}),
+            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=runtime-secret") as mock_apply,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "runtime-secret"})
+
+    @pytest.mark.asyncio
+    async def test_gateway_query_param_auth_hydrates_gateway_dict_from_db(self, tool_service):
+        """Cache-hit hydration should accept dict query params from ORM gateway rows."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-uuid-1")
+        gp = _make_gateway_payload(auth_type="query_param", auth_query_params=None)
+        db = MagicMock()
+
+        hydrated_gateway = SimpleNamespace(
+            auth_value=None,
+            auth_query_params={"api_key": "hydrated_encrypted"},
+            oauth_config=None,
+        )
+        hydrated_tool = SimpleNamespace(
+            auth_value=None,
+            oauth_config=None,
+            gateway=hydrated_gateway,
+        )
+        db.execute.return_value.scalar_one_or_none.return_value = hydrated_tool
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*_a, **_kw):
+            return mock_response
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "hydrated-secret"}),
+            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=hydrated-secret") as mock_apply,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "hydrated-secret"})
 
     @pytest.mark.asyncio
     async def test_gateway_query_param_decryption_failure(self, tool_service):

@@ -1,6 +1,6 @@
 # Gateway Tuning Guide
 
-> This page collects practical levers for squeezing the most performance, reliability, and observability out of **MCP Gateway**-no matter where you run the container (Code Engine, Kubernetes, Docker Compose, Nomad, etc.).
+> This page collects practical levers for squeezing the most performance, reliability, and observability out of **ContextForge**-no matter where you run the container (Code Engine, Kubernetes, Docker Compose, Nomad, etc.).
 >
 > **TL;DR**
 >
@@ -62,7 +62,7 @@ Edit the file **before** building the image, then redeploy.
 
 ## 2b - Uvicorn Performance Extras
 
-MCP Gateway uses `uvicorn[standard]` which includes high-performance components that are automatically detected and used:
+ContextForge uses `uvicorn[standard]` which includes high-performance components that are automatically detected and used:
 
 | Package | Purpose | Platform | Improvement |
 |---------|---------|----------|-------------|
@@ -108,7 +108,7 @@ Combined improvements from uvloop and httptools:
 
 ## 2c - Granian (Alternative HTTP Server)
 
-MCP Gateway supports two HTTP servers:
+ContextForge supports two HTTP servers:
 
 - **Gunicorn + Uvicorn** (default) - Battle-tested, mature, excellent stability
 - **Granian** (alternative) - Rust-based, native HTTP/2, lower memory
@@ -522,7 +522,7 @@ After enabling pooling:
 
 ## 7 - Nginx Reverse Proxy Tuning
 
-When deploying MCP Gateway behind nginx (as in the default `docker-compose.yml`), several optimizations can significantly improve performance under load.
+When deploying ContextForge behind nginx (as in the default `docker-compose.yml`), several optimizations can significantly improve performance under load.
 
 ### Admin UI Caching
 
@@ -775,7 +775,7 @@ sudo sysctl -w \
 **Apply permanently** (`/etc/sysctl.d/99-mcp-loadtest.conf`):
 
 ```ini
-# High-concurrency TCP tuning for MCP Gateway load testing
+# High-concurrency TCP tuning for ContextForge load testing
 net.core.somaxconn = 65535
 net.core.netdev_max_backlog = 65535
 net.ipv4.tcp_max_syn_backlog = 65535

@@ -152,6 +152,14 @@ async def test_check_permission_admin_bypass(svc):
 
 
 @pytest.mark.asyncio
+async def test_check_permission_public_only_token_blocks_admin_permissions(svc):
+    """Public-only token scope must deny admin.* permissions even for admin identities."""
+    with patch.object(svc, "_is_user_admin", return_value=True):
+        result = await svc.check_permission("admin@test.com", "admin.system_config", token_teams=[])
+    assert result is False
+
+
+@pytest.mark.asyncio
 async def test_check_permission_has_exact_perm(svc):
     """User with exact permission gets access."""
     with patch.object(svc, "_is_user_admin", return_value=False):
@@ -180,22 +188,24 @@ async def test_check_permission_denied(svc):
 
 @pytest.mark.asyncio
 async def test_check_permission_team_fallback(svc):
-    """teams.* permission falls back to team membership check."""
+    """teams.* permissions require explicit RBAC grants."""
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value=set()):
-            with patch.object(svc, "_check_team_fallback_permissions", return_value=True):
+            with patch.object(svc, "_check_team_fallback_permissions") as mock_fallback:
                 result = await svc.check_permission("user@test.com", "teams.read")
-    assert result is True
+    assert result is False
+    mock_fallback.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_check_permission_token_fallback(svc):
-    """tokens.* permission falls back to token self-management."""
+    """tokens.* permissions require explicit RBAC grants."""
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value=set()):
-            with patch.object(svc, "_check_token_fallback_permissions", return_value=True):
+            with patch.object(svc, "_check_token_fallback_permissions") as mock_fallback:
                 result = await svc.check_permission("user@test.com", "tokens.create")
-    assert result is True
+    assert result is False
+    mock_fallback.assert_not_called()
 
 
 @pytest.mark.asyncio

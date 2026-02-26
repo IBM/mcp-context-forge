@@ -1,6 +1,6 @@
 # Packaging & Distribution
 
-This guide covers how to package MCP Gateway for deployment in various environments, including building production containers and generating releases.
+This guide covers how to package ContextForge for deployment in various environments, including building production containers and generating releases.
 
 ---
 
@@ -48,7 +48,7 @@ This runs the container without TLS on port `4444`.
 
 ## 📝 Versioning
 
-MCP Gateway uses semantic versioning (`MAJOR.MINOR.PATCH`) and the version is defined in:
+ContextForge uses semantic versioning (`MAJOR.MINOR.PATCH`) and the version is defined in:
 
 ```python
 mcpgateway/__init__.py

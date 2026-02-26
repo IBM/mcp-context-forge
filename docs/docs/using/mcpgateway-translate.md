@@ -1,4 +1,4 @@
-# MCP Gateway Transport Bridge (`mcpgateway.translate`)
+# ContextForge Transport Bridge (`mcpgateway.translate`)
 
 `mcpgateway.translate` is a powerful command-line tool that bridges Model Context Protocol (MCP) servers across different transport protocols. It enables seamless communication between stdio/JSON-RPC, HTTP/SSE, and streamable HTTP protocols, making MCP servers accessible from various clients and environments.
 
@@ -491,9 +491,9 @@ When bridging to remote endpoints, connections are reused with automatic retry:
 4. **Run with minimal privileges** in production
 5. **Use HTTPS** when exposing to public networks (reverse proxy recommended)
 
-## Integration with MCP Gateway
+## Integration with ContextForge
 
-This tool complements the full MCP Gateway by providing:
+This tool complements the full ContextForge by providing:
 
 - Lightweight alternative for simple bridging needs
 - Development and testing utility
@@ -506,7 +506,7 @@ For production deployments requiring:
 - Advanced routing
 - Admin UI
 
-Consider using the full [MCP Gateway](../overview/index.md).
+Consider using the full [ContextForge](../overview/index.md).
 
 ## Advanced Configuration
 
@@ -611,7 +611,7 @@ For full gRPC service management (registry, admin UI, persistence), see [gRPC Se
 ## Related Documentation
 
 - [gRPC Services](grpc-services.md)
-- [MCP Gateway Overview](../overview/index.md)
+- [ContextForge Overview](../overview/index.md)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
 - [Transport Protocols](../architecture/index.md#system-architecture)
 - [Authentication Guide](../manage/securing.md)

@@ -22,18 +22,25 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
     {% else %}
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     {% endif %}
     <script>
-      tailwind.config = {
-        darkMode: "class",
-      };
+      if (window.tailwind && typeof window.tailwind === "object") {
+        window.tailwind.config = {
+          darkMode: "class",
+        };
+      }
     </script>
     <!-- HTMX for dynamic interactions -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
     {% else %}
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script
+      src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"
+      integrity="{{ sri_hashes.htmx }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <script>
       // Configure HTMX to swap content on 4xx responses (for inline error display)
@@ -60,11 +67,17 @@
       document.addEventListener("htmx:configRequest", function (evt) {
         // Force include credentials for same-origin requests
         evt.detail.credentials = "same-origin";
+        evt.detail.headers = evt.detail.headers || {};
 
         // Add JWT token from cookie if available
         const jwtToken = getCookie("jwt_token");
         if (jwtToken) {
           evt.detail.headers["Authorization"] = "Bearer " + jwtToken;
+        }
+
+        const csrfToken = getCookie("mcpgateway_csrf_token");
+        if (csrfToken) {
+          evt.detail.headers["X-CSRF-Token"] = csrfToken;
         }
       });
 
@@ -73,7 +86,75 @@
         const value = "; " + document.cookie;
         const parts = value.split("; " + name + "=");
         if (parts.length == 2) return parts.pop().split(";").shift();
+        return "";
       }
+
+      function isUnsafeHttpMethod(method) {
+        const normalized = (method || "GET").toUpperCase();
+        return normalized !== "GET" && normalized !== "HEAD" && normalized !== "OPTIONS" && normalized !== "TRACE";
+      }
+
+      function isSameOriginRequest(resource) {
+        try {
+          if (resource instanceof Request) {
+            return new URL(resource.url, window.location.origin).origin === window.location.origin;
+          }
+          return new URL(String(resource), window.location.origin).origin === window.location.origin;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      // Ensure all same-origin fetch mutations carry the CSRF header.
+      (function wrapFetchWithCsrf() {
+        if (window.__mcpgatewayCsrfFetchWrapped || typeof window.fetch !== "function") {
+          return;
+        }
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = function(resource, init = {}) {
+          const requestInit = init ? { ...init } : {};
+          const methodFromRequest = resource instanceof Request ? resource.method : null;
+          const method = (requestInit.method || methodFromRequest || "GET").toUpperCase();
+          if (isUnsafeHttpMethod(method) && isSameOriginRequest(resource)) {
+            const csrfToken = getCookie("mcpgateway_csrf_token");
+            if (csrfToken) {
+              const nextHeaders = new Headers(requestInit.headers || (resource instanceof Request ? resource.headers : undefined));
+              nextHeaders.set("X-CSRF-Token", csrfToken);
+              requestInit.headers = nextHeaders;
+            }
+          }
+          return originalFetch(resource, requestInit);
+        };
+        window.__mcpgatewayCsrfFetchWrapped = true;
+      })();
+
+      // Add CSRF token to same-origin non-GET forms as a hidden field.
+      document.addEventListener("submit", function (event) {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) {
+          return;
+        }
+        const method = (form.getAttribute("method") || "GET").toUpperCase();
+        if (!isUnsafeHttpMethod(method)) {
+          return;
+        }
+        const action = form.getAttribute("action") || window.location.href;
+        if (!isSameOriginRequest(action)) {
+          return;
+        }
+        const csrfToken = getCookie("mcpgateway_csrf_token");
+        if (!csrfToken) {
+          return;
+        }
+        let tokenInput = form.querySelector('input[name="csrf_token"]');
+        if (!tokenInput) {
+          tokenInput = document.createElement("input");
+          tokenInput.type = "hidden";
+          tokenInput.name = "csrf_token";
+          form.appendChild(tokenInput);
+        }
+        tokenInput.value = csrfToken;
+      });
 
       // Helper function to get pagination parameters from URL (namespaced per table)
       function getPaginationParams(tableName) {
@@ -90,6 +171,8 @@
       // URL state takes precedence over checkbox state for shareability
       function buildTableUrl(tableName, baseUrl, additionalParams = {}) {
         const params = getPaginationParams(tableName);
+        const urlParams = new URLSearchParams(window.location.search);
+        const prefix = tableName + '_';
         const url = new URL(baseUrl, window.location.origin);
         url.searchParams.set('page', params.page);
         url.searchParams.set('per_page', params.perPage);
@@ -107,6 +190,16 @@
         // If include_inactive wasn't in additionalParams but is in URL, still use it
         if (!additionalParams.hasOwnProperty('include_inactive') && params.includeInactive !== null) {
           url.searchParams.set('include_inactive', params.includeInactive);
+        }
+
+        // Preserve namespaced search state for shareable URLs
+        const namespacedQuery = urlParams.get(prefix + 'q');
+        const namespacedTags = urlParams.get(prefix + 'tags');
+        if (namespacedQuery) {
+          url.searchParams.set('q', namespacedQuery);
+        }
+        if (namespacedTags) {
+          url.searchParams.set('tags', namespacedTags);
         }
 
         return url.pathname + url.search;
@@ -168,13 +261,41 @@
     <script src="{{ root_path }}/static/vendor/codemirror/mode/go/go.min.js"></script>
     <script src="{{ root_path }}/static/vendor/codemirror/mode/rust/rust.min.js"></script>
     {% else %}
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/mode/simple.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/shell/shell.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/go/go.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/rust/rust.min.js"></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js"
+      integrity="{{ sri_hashes.codemirror_js }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/addon/mode/simple.min.js"
+      integrity="{{ sri_hashes.codemirror_addon_simple }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/javascript/javascript.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_javascript }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/python/python.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_python }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/shell/shell.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_shell }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/go/go.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_go }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/rust/rust.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_rust }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <!-- Alpine.js -->
     {% if ui_airgapped %}
@@ -184,7 +305,9 @@
     ></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.8/dist/cdn.min.js"
+      integrity="{{ sri_hashes.alpinejs }}"
+      crossorigin="anonymous"
       defer
     ></script>
     {% endif %}
@@ -193,7 +316,11 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
     {% else %}
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+      integrity="{{ sri_hashes.chartjs }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     {% endif %}
     <!-- Markdown and Sanitization -->
@@ -201,8 +328,16 @@
     <script src="{{ root_path }}/static/vendor/marked/marked.min.js"></script>
     <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
     {% else %}
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js"
+      integrity="{{ sri_hashes.marked }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.1/dist/purify.min.js"
+      integrity="{{ sri_hashes.dompurify }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
     {% if is_admin %}
@@ -221,19 +356,28 @@
     />
     {% else %}
     <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css"
       rel="stylesheet"
+      integrity="{{ sri_hashes.codemirror_css }}"
+      crossorigin="anonymous"
     />
     <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/monokai.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css"
       rel="stylesheet"
+      integrity="{{ sri_hashes.codemirror_theme_monokai }}"
+      crossorigin="anonymous"
     />
     {% endif %}
     <!-- Font Awesome -->
     {% if ui_airgapped %}
     <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
     {% else %}
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      integrity="{{ sri_hashes.fontawesome }}"
+      crossorigin="anonymous"
+    />
     {% endif %}
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
@@ -269,6 +413,8 @@
   </head>
 
   <body class="bg-gray-100 dark:bg-gray-900">
+    {% set hidden_sections = ui_hidden_sections | default([]) %}
+    {% set hidden_header_items = ui_hidden_header_items | default([]) %}
     <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }">
 
       <!-- Mobile sidebar backdrop -->
@@ -330,6 +476,7 @@
         <nav class="flex-1 overflow-y-auto py-4 sidebar-scroll">
           <!-- Overview Section -->
           <div class="space-y-1 px-2 mb-4">
+            {% if 'overview' not in hidden_sections %}
             <a href="#overview" id="tab-overview" data-testid="overview-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -337,6 +484,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Overview</span>
             </a>
+            {% endif %}
           </div>
 
           <!-- MCP Section -->
@@ -344,6 +492,7 @@
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">MCP</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'gateways' not in hidden_sections %}
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -351,6 +500,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
               <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
+            {% endif %}
+            {% if 'servers' not in hidden_sections %}
             <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -358,6 +509,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
               <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
+            {% endif %}
+            {% if 'tools' not in hidden_sections %}
             <a href="#tools" id="tab-tools" data-testid="tools-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -374,6 +527,8 @@
               <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
             {% endif %}
+            {% endif %}
+            {% if 'prompts' not in hidden_sections %}
             <a href="#prompts" id="tab-prompts"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -381,6 +536,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
               <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
+            {% endif %}
+            {% if 'resources' not in hidden_sections %}
             <a href="#resources" id="tab-resources"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -388,6 +545,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
               <span x-show="!sidebarCollapsed">Resources</span>
             </a>
+            {% endif %}
+            {% if 'roots' not in hidden_sections %}
             <a href="#roots" id="tab-roots"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -395,6 +554,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
               <span x-show="!sidebarCollapsed">Roots</span>
             </a>
+            {% endif %}
+            {% if 'mcp-registry' not in hidden_sections %}
             <a href="#mcp-registry" id="tab-mcp-registry" data-testid="mcp-registry-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -402,10 +563,11 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
+            {% endif %}
           </div>
 
           <!-- Agents Section -->
-          {% if a2a_enabled or grpc_enabled %}
+          {% if ('agents' not in hidden_sections) and (a2a_enabled or grpc_enabled) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Agents</span>
           </div>
@@ -432,11 +594,12 @@
           {% endif %}
 
           <!-- LLM Section -->
-          {% if llmchat_enabled %}
+          {% if llmchat_enabled or 'settings' not in hidden_sections %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">LLM</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if llmchat_enabled %}
             <a href="#llm-chat" id="tab-llm-chat" data-testid="llm-chat-tab"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -444,6 +607,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
               <span x-show="!sidebarCollapsed">LLM Chat</span>
             </a>
+            {% endif %}
+            {% if 'settings' not in hidden_sections %}
             <a href="#llm-settings" id="tab-llm-settings"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -451,15 +616,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">LLM Settings</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and ('metrics' not in hidden_sections or performance_enabled or observability_enabled) %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'metrics' not in hidden_sections %}
             <a href="#metrics" id="tab-metrics"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -467,6 +634,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
+            {% endif %}
             {% if performance_enabled %}
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
@@ -488,12 +656,13 @@
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'plugins' not in hidden_sections %}
             <a href="#plugins" id="tab-plugins" data-testid="plugins-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -501,15 +670,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
           <!-- Organization Section -->
-          {% if email_auth_enabled %}
+          {% if email_auth_enabled and ('teams' not in hidden_sections or ('users' not in hidden_sections and is_admin) or 'tokens' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Organization</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'teams' not in hidden_sections %}
             <a href="#teams" id="tab-teams" data-testid="teams-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -517,7 +688,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
-            {% if is_admin %}
+            {% endif %}
+            {% if is_admin and 'users' not in hidden_sections %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -526,6 +698,7 @@
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
             {% endif %}
+            {% if 'tokens' not in hidden_sections %}
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -533,15 +706,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
               <span x-show="!sidebarCollapsed">API Tokens</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'export-import' not in hidden_sections %}
             <a href="#export-import" id="tab-export-import"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -549,6 +724,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
               <span x-show="!sidebarCollapsed">Export/Import</span>
             </a>
+            {% endif %}
+            {% if 'logs' not in hidden_sections %}
             <a href="#logs" id="tab-logs"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -556,6 +733,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
               <span x-show="!sidebarCollapsed">System Logs</span>
             </a>
+            {% endif %}
+            {% if 'version-info' not in hidden_sections %}
             <a href="#version-info" id="tab-version-info"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -563,6 +742,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
+            {% endif %}
+            {% if 'maintenance' not in hidden_sections %}
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -570,6 +751,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
         </nav>
@@ -578,6 +760,7 @@
         <div class="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
           <div class="flex items-center" :class="{ 'justify-center': sidebarCollapsed, 'justify-between': !sidebarCollapsed }">
             <!-- Dark mode toggle -->
+            {% if 'theme_toggle' not in hidden_header_items %}
             <button
               @click="darkMode = !darkMode"
               class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -585,6 +768,7 @@
             >
               <span x-text="darkMode ? '☀️' : '🌙'" class="text-lg"></span>
             </button>
+            {% endif %}
             <!-- Links (hidden when collapsed) -->
             <div x-show="!sidebarCollapsed" class="flex items-center space-x-2">
               <a href="https://ibm.github.io/mcp-context-forge/" target="_blank"
@@ -627,8 +811,19 @@
 
             <!-- Right side: team selector, user, logout -->
             <div class="flex items-center space-x-4">
+              <button
+                type="button"
+                id="global-search-trigger"
+                onclick="openGlobalSearchModal()"
+                class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:border-gray-400 dark:hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                title="Search across tools, prompts, resources, servers, gateways, and agents (Ctrl/Cmd+K)"
+              >
+                <span>Search</span>
+                <span class="hidden sm:inline text-xs text-gray-500 dark:text-gray-400">Ctrl/Cmd+K</span>
+              </button>
+
               <!-- Team Selector with Search and Infinite Scroll -->
-              {% if email_auth_enabled %}
+              {% if email_auth_enabled and 'team_selector' not in hidden_header_items %}
               <div
                 class="relative inline-block text-left"
                 x-data="{
@@ -637,12 +832,26 @@
                   selectedTeamName: 'All Teams',
                   init() {
                     const urlParams = new URLSearchParams(window.location.search);
-                    this.selectedTeam = urlParams.get('team_id') || '';
-                    if (this.selectedTeam) {
-                      // Try to find team name from USER_TEAMS_DATA
-                      const teams = window.USER_TEAMS_DATA || [];
-                      const team = teams.find(t => t.id === this.selectedTeam);
-                      this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
+                    const requestedTeamId = urlParams.get('team_id') || '';
+                    this.selectedTeam = '';
+                    this.selectedTeamName = 'All Teams';
+
+                    if (requestedTeamId) {
+                      // Keep team scope only when it exists in known visible teams.
+                      const teams = (Array.isArray(window.USER_TEAMS_DATA) && window.USER_TEAMS_DATA.length > 0)
+                        ? window.USER_TEAMS_DATA
+                        : (Array.isArray(window.USER_TEAMS) ? window.USER_TEAMS : []);
+                      const team = teams.find(t => t.id === requestedTeamId);
+
+                      if (team) {
+                        this.selectedTeam = requestedTeamId;
+                        this.selectedTeamName = team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name;
+                      } else if (teams.length > 0) {
+                        // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
+                        const cleanUrl = new URL(window.location.href);
+                        cleanUrl.searchParams.delete('team_id');
+                        safeReplaceState({}, '', cleanUrl);
+                      }
                     }
                   },
                   loadTeams() {
@@ -728,14 +937,17 @@
               {% endif %}
 
               <!-- User Email -->
+              {% if 'user_identity' not in hidden_header_items %}
               <div class="text-sm text-gray-600 dark:text-gray-400 flex items-center hidden sm:flex">
                 <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
                 </svg>
                 {{ current_user }}
               </div>
+              {% endif %}
 
               <!-- Logout -->
+              {% if 'logout' not in hidden_header_items %}
               <form method="post" action="{{ root_path }}/admin/logout" class="inline">
                 <button
                   type="submit"
@@ -745,6 +957,7 @@
                   Logout
                 </button>
               </form>
+              {% endif %}
             </div>
           </div>
         </header>
@@ -754,10 +967,33 @@
           <!-- Notification content will be inserted here -->
         </div>
 
+        <!-- Global Search Modal -->
+        <div id="global-search-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+          <div class="absolute inset-0 bg-black/40" onclick="closeGlobalSearchModal()"></div>
+          <div class="relative max-w-3xl mx-auto mt-24 px-4">
+            <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden">
+              <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+                <input
+                  type="text"
+                  id="global-search-input"
+                  placeholder="Search across servers, gateways, tools, resources, prompts, and agents..."
+                  class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autocomplete="off"
+                />
+              </div>
+              <div id="global-search-results" class="max-h-[28rem] overflow-y-auto">
+                <div class="p-4 text-sm text-gray-500 dark:text-gray-400">
+                  Start typing to search all entities.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
-      {% if is_admin %}
+      {% if is_admin and 'logs' not in hidden_sections %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -978,7 +1214,7 @@
       </div>
       {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'export-import' not in hidden_sections %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1408,14 +1644,19 @@
             </div>
           </div>
       </div>
+      {% endif %}
+
+      {% if is_admin and 'version-info' not in hidden_sections %}
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
+      {% if is_admin and 'maintenance' not in hidden_sections %}
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
       {% endif %}
@@ -1749,7 +1990,9 @@
             </div>
           </div>
         </div>
+        {% endif %}
 
+        {% if 'settings' not in hidden_sections %}
         <!-- LLM Settings Panel -->
       <div id="llm-settings-panel" class="tab-panel hidden">
         <div class="container mx-auto">
@@ -1849,7 +2092,7 @@
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMProviderModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+            <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
               <form id="llm-provider-form" onsubmit="saveLLMProvider(event)">
                 <input type="hidden" id="llm-provider-id" name="provider_id" value="">
                 <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
@@ -1947,7 +2190,7 @@
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMModelModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+            <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
               <form id="llm-model-form" onsubmit="saveLLMModel(event)">
                 <input type="hidden" id="llm-model-id" name="model_id" value="">
                 <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
@@ -2053,6 +2296,7 @@
       </div>
       {% endif %}
 
+      {% if 'mcp-registry' not in hidden_sections %}
       <!-- MCP Registry Panel -->
       <div id="mcp-registry-panel" class="tab-panel hidden">
         <div class="container mx-auto">
@@ -2130,9 +2374,17 @@
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if 'servers' not in hidden_sections %}
       <!-- Catalog Panel (Virtual Servers) -->
       <div id="catalog-panel" class="tab-panel hidden">
+        {% if not catalog_enabled %}
+        <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6 dark:bg-yellow-800 dark:border-yellow-400 dark:text-yellow-200">
+          <p class="font-bold">Catalog is currently disabled</p>
+          <p class="text-sm">Set <code>MCPGATEWAY_CATALOG_ENABLED=true</code> to enable catalog-backed server operations.</p>
+        </div>
+        {% endif %}
         <div class="flex justify-between items-center mb-4">
           <div class="flex items-center space-x-10">
             <h2 class="text-2xl font-bold dark:text-gray-200">Virtual MCP Servers</h2>
@@ -2150,7 +2402,7 @@
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('catalog-search-input')?.value || '', tags: document.getElementById('catalog-tag-filter')?.value || ''}"
               hx-target="#servers-table"
               hx-swap="outerHTML"
               hx-indicator="#servers-loading"
@@ -2176,7 +2428,7 @@
                   type="text"
                   id="catalog-search-input"
                   data-testid="search-input"
-                  placeholder="Search servers via tags..."
+                  placeholder="Search servers..."
                   class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                   oninput="filterServerTable(this.value)"
                 />
@@ -2234,10 +2486,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (servers|length if servers is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = servers|length if servers is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -2270,9 +2522,7 @@
             {% set hx_indicator = '#servers-loading' %}
             {% set table_name = 'servers' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
 
@@ -2464,8 +2714,8 @@
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if server.team %}
-                    <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ server.team|e|replace(' ', '<br />')|safe }}
+                    <span class="text-sm text-gray-900 dark:text-gray-100" style="display: block; white-space: normal; word-spacing: 9999px;">
+                      {{ server.team }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -2942,6 +3192,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -2957,6 +3208,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -2987,6 +3239,27 @@
                 </div>
               </div>
             </div>
+
+            {% if selected_team_id %}
+            <!-- View Public toggle for team-scoped server creation -->
+            <div class="mt-4" id="add-server-view-public-container">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="add-server-view-public"
+                  class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                />
+                <label
+                  for="add-server-view-public"
+                  class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                >
+              </div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+              </p>
+            </div>
+            {% endif %}
 
             <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
             <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -3079,6 +3352,8 @@
 
 
 
+      {% endif %}
+      {% if 'tools' not in hidden_sections %}
       <!-- Tools Panel -->
       <div id="tools-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -3118,7 +3393,7 @@
               x-init="syncCheckboxFromUrl('tools', 'show-inactive-tools')"
               @change="updateInactiveUrlState('tools', $el.checked)"
               hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50, q: document.getElementById('tools-search-input')?.value || '', tags: document.getElementById('tools-tag-filter')?.value || ''}"
               hx-target="#tools-table"
               hx-swap="outerHTML"
               hx-indicator="#tools-loading"
@@ -3141,7 +3416,7 @@
                 <input
                   type="text"
                   id="tools-search-input"
-                  placeholder="Search tools via tags..."
+                  placeholder="Search tools..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -3182,10 +3457,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (tools|length if tools is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = tools|length if tools is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -3218,9 +3493,7 @@
             {% set hx_indicator = '#tools-loading' %}
             {% set table_name = 'tools' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
@@ -3318,7 +3591,7 @@
     "auth_value": "your-openweather-api-key-here",
     "headers": {
       "Accept": "application/json",
-      "User-Agent": "MCP-Gateway/1.0"
+      "User-Agent": "ContextForge/1.0"
     },
     "input_schema": {
       "type": "object",
@@ -3811,6 +4084,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -3826,6 +4100,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -3869,7 +4144,7 @@
         </div>
       </div>
       {% if toolops_enabled %}
-      <div id="tool-ops-panel" class="tab-panel">
+      <div id="tool-ops-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <div>
             <h2 class="text-2xl font-bold dark:text-gray-200">Tool Operations</h2>
@@ -4113,6 +4388,8 @@
         </div>
       </div>
 
+      {% endif %}
+      {% if 'resources' not in hidden_sections %}
       <!-- Resources Panel -->
       <div id="resources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4131,7 +4408,7 @@
               x-init="syncCheckboxFromUrl('resources', 'show-inactive-resources')"
               @change="updateInactiveUrlState('resources', $el.checked)"
               hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50, q: document.getElementById('resources-search-input')?.value || '', tags: document.getElementById('resources-tag-filter')?.value || ''}"
               hx-target="#resources-table"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4154,7 +4431,7 @@
                 <input
                   type="text"
                   id="resources-search-input"
-                  placeholder="Search resources via tags..."
+                  placeholder="Search resources..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4294,6 +4571,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4309,6 +4587,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4352,6 +4631,8 @@
         </div>
       </div>
 
+      {% endif %}
+      {% if 'prompts' not in hidden_sections %}
       <!-- Prompts Panel -->
       <div id="prompts-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4370,7 +4651,7 @@
               x-init="syncCheckboxFromUrl('prompts', 'show-inactive-prompts')"
               @change="updateInactiveUrlState('prompts', $el.checked)"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50, q: document.getElementById('prompts-search-input')?.value || '', tags: document.getElementById('prompts-tag-filter')?.value || ''}"
               hx-target="#prompts-table"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4393,7 +4674,7 @@
                 <input
                   type="text"
                   id="prompts-search-input"
-                  placeholder="Search prompts via tags..."
+                  placeholder="Search prompts..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4559,6 +4840,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4574,6 +4856,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4617,7 +4900,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% endif %}
       <!-- Overview Panel -->
+      {% if 'overview' not in hidden_sections %}
       <div id="overview-panel" class="tab-panel"
            hx-get="{{ root_path }}/admin/overview/partial"
            hx-trigger="load"
@@ -4632,7 +4917,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if 'gateways' not in hidden_sections %}
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4652,7 +4939,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
               hx-target="#gateways-table"
               hx-swap="outerHTML"
               hx-indicator="#gateways-loading"
@@ -4675,7 +4962,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <input
                   type="text"
                   id="gateways-search-input"
-                  placeholder="Search MCP servers..."
+                  placeholder="Search gateways..."
                   class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4717,10 +5004,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (gateways|length if gateways is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = gateways|length if gateways is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -4753,9 +5040,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             {% set hx_indicator = '#gateways-loading' %}
             {% set table_name = 'gateways' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800" style="display: none;">
@@ -4924,8 +5209,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if gateway.team %}
-                    <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ gateway.team|e|replace(' ', '<br />')|safe }}
+                    <span class="text-sm text-gray-900 dark:text-gray-100" style="display: block; white-space: normal; word-spacing: 9999px;">
+                      {{ gateway.team }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -5151,6 +5436,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   Visibility
                 </label>
                 <div class="mt-1 flex space-x-6">
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -5166,6 +5452,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       >🌍Public</label
                     >
                   </div>
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -5764,8 +6051,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% endif %}
       <!-- Teams Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and 'teams' not in hidden_sections %}
       <div id="teams-panel" class="tab-panel hidden">
           <!-- Header with Create Team Button -->
           <div class="flex justify-between items-center mb-8">
@@ -5872,7 +6160,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled and is_admin %}
+      {% if email_auth_enabled and is_admin and 'users' not in hidden_sections %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -6114,7 +6402,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- API Tokens Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and 'tokens' not in hidden_sections %}
       <div id="tokens-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -6257,6 +6545,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                     For team-level access, select a specific team from the header above before creating a token.
                                 </p>
                             </div>
+                            <p class="mt-2 text-xs text-yellow-700 dark:text-yellow-300 ml-8">
+                                The header team selector is global. It filters tools, servers, prompts, and other tabs to that team context.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -6395,12 +6686,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else 0)) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = 0 %}
+            {% set total_pages = 0 %}
             {% set has_prev = page > 1 %}
-            {% set has_next = (page * per_page) < total_items %}
+            {% set has_next = false %}
 
             {% set pagination = {
               'page': page,
@@ -6435,9 +6726,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {% set query_params = {'include_inactive': include_inactive} %}
               {% if selected_team_id %}{% set _ = query_params.update({'team_id': selected_team_id}) %}{% endif %}
               {% if q %}{% set _ = query_params.update({'q': q}) %}{% endif %}
-              {% autoescape false %}
               {% include 'pagination_controls.html' %}
-              {% endautoescape %}
             </div>
           </div>
         </div>
@@ -6445,7 +6734,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- A2A Agents Panel -->
-      {% if a2a_enabled %}
+      {% if a2a_enabled and 'agents' not in hidden_sections %}
        <div id="a2a-agents-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -6464,7 +6753,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="syncCheckboxFromUrl('agents', 'show-inactive-a2a-agents')"
               @change="updateInactiveUrlState('agents', $el.checked)"
               hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50, q: document.getElementById('a2a-agents-search-input')?.value || '', tags: document.getElementById('a2a-agents-tag-filter')?.value || ''}"
               hx-target="#agents-table"
               hx-swap="outerHTML"
               hx-indicator="#agents-loading"
@@ -6487,7 +6776,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <input
                   type="text"
                   id="a2a-agents-search-input"
-                  placeholder="Search agents via tags..."
+                  placeholder="Search agents..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -6543,10 +6832,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values first ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (a2a_agents|length if a2a_agents is defined else 0))) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = a2a_agents|length if a2a_agents is defined else 0 %}
+            {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
             {% set has_prev = page > 1 %}
             {% set has_next = (page * per_page) < total_items %}
 
@@ -6579,9 +6868,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {% set hx_indicator = '#agents-loading' %}
               {% set table_name = 'agents' %}
               {% set query_params = {'include_inactive': include_inactive} %}
-              {% autoescape false %}
               {% include 'pagination_controls.html' %}
-              {% endautoescape %}
             </div>
           </div>
         </div>
@@ -7293,6 +7580,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >Visibility</label
                 >
                 <div class="flex gap-x-6 mt-2">
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -7308,6 +7596,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       >🌍 Public</label
                     >
                   </div>
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -7392,7 +7681,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- gRPC Services Panel -->
-      {% if grpc_enabled %}
+      {% if grpc_enabled and 'agents' not in hidden_sections %}
       <div id="grpc-services-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -7550,10 +7839,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">Visibility</label>
                 <div class="flex items-center space-x-4">
+
                   <div class="flex items-center">
                     <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-public" checked />
                     <label for="grpc-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Public</label>
                   </div>
+
                   <div class="flex items-center">
                     <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-team" />
                     <label for="grpc-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Team</label>
@@ -7672,6 +7963,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
+      {% if 'roots' not in hidden_sections %}
       <!-- Roots Panel -->
       <div id="roots-panel" class="tab-panel hidden">
         <!-- List of roots ------------------------------------------------------->
@@ -7835,8 +8127,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </form>
         </div>
       </div>
+      {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'metrics' not in hidden_sections %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->
@@ -7994,11 +8287,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8302,12 +8595,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <!-- Increased max width (sm:max-w-2xl) for a larger modal -->
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8394,11 +8687,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8676,6 +8969,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     >
                     <div class="flex gap-x-6 mt-2">
                       <!-- Add gap-x-6 for more space between radio options -->
+
                       <div class="flex items-center">
                         <input
                           type="radio"
@@ -8690,6 +8984,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >🌍Public</label
                         >
                       </div>
+
                       <div class="flex items-center">
                         <input
                           type="radio"
@@ -8752,11 +9047,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8795,13 +9090,13 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
           <!-- Overlay -->
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
 
           <!-- Modal Panel -->
           <div
-            class="inline-block align-bottom bg-white dark:bg-gray-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
 
@@ -8883,11 +9178,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8990,6 +9285,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         >Visibility</label
                       >
                       <div class="flex gap-x-6 mt-2">
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9004,6 +9300,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9064,11 +9361,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9104,11 +9401,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9213,6 +9510,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         >Visibility</label
                       >
                       <div class="flex gap-x-6 mt-2">
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9227,6 +9525,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9290,12 +9589,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <!-- Increased max width (sm:max-w-2xl) for a larger modal -->
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9393,11 +9692,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9585,11 +9884,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9665,6 +9964,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       >
                       <div class="flex gap-x-6 mt-2">
                         <!-- Add gap-x-6 for more space between radio options -->
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9679,6 +9979,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -10165,11 +10466,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- A2A Agent Edit Modal -->
        <div id="a2a-edit-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
               <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
             </div>
             <div
-              class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+              class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
             >
               <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
@@ -10612,6 +10913,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
                         <div class="flex gap-x-6 mt-2">
+
                           <label class="flex items-center">
                             <input
                               type="radio"
@@ -10623,6 +10925,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             />
                             <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</span>
                           </label>
+
                           <label class="flex items-center">
                             <input
                               type="radio"
@@ -10702,11 +11005,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -10742,11 +11045,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -10839,6 +11142,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       >
                       <div class="flex gap-x-6 mt-2">
                         <!-- Add gap-x-6 for more space between radio options -->
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -10853,6 +11157,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -10884,6 +11189,26 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       </div>
                     </div>
                   </div>
+                  {% if selected_team_id %}
+                  <!-- View Public toggle for team-scoped server editing -->
+                  <div class="mt-4" id="edit-server-view-public-container">
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="edit-server-view-public"
+                        class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      />
+                      <label
+                        for="edit-server-view-public"
+                        class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                      >
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+                    </p>
+                  </div>
+                  {% endif %}
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                     <div
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
@@ -10967,7 +11292,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-tools"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
@@ -11266,11 +11591,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11328,7 +11653,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 class="mt-1 px-1.5 block w-full rounded-md shadow-sm p-2 bg-gray-200 dark:bg-gray-800"
                 placeholder="Enter your query (e.g., calc: 5*10+2 or weather: Dallas)"
                 aria-describedby="a2a-test-query-help"
-              >Hello from MCP Gateway Admin UI test!</textarea>
+              >Hello from ContextForge Admin UI test!</textarea>
               <p id="a2a-test-query-help" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Enter the message/query to send to the A2A agent
               </p>
@@ -11381,11 +11706,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11472,11 +11797,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11557,11 +11882,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11597,11 +11922,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11702,12 +12027,16 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
+      window.ALLOW_PUBLIC_VISIBILITY = {{ allow_public_visibility | tojson }};
       window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
       window.MAX_NAME_LENGTH = {{ max_name_length | tojson }};
       window.USER_TEAMS = {{ user_teams | default([]) | tojson }};
       window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT = {{ mcpgateway_ui_tool_test_timeout | tojson }};
       window.CURRENT_USER = {{ current_user | tojson }};
       window.IS_ADMIN = {{ is_admin | tojson }};
+      window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
+      window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
+      window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
 
       // Display flash messages from URL parameters
       (function() {
@@ -11741,15 +12070,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       })();
 
-      // Tag filtering functionality moved to admin.js
-      function clearTagFilter(entityType) {
-        const input = document.getElementById(entityType + '-tag-filter');
-        input.value = '';
-        // Use the corrected filterEntitiesByTags function from admin.js
-        if (typeof filterEntitiesByTags === 'function') {
-          filterEntitiesByTags(entityType, '');
-        }
-      }
+      // Tag filtering functionality is implemented in admin.js.
 
 
       // Team context switching functions
@@ -14309,7 +14630,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div id="user-edit-modal-content">
             <!-- Content will be loaded here -->
@@ -14334,7 +14655,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6"
         >
           <div>
             <div class="flex items-center justify-between mb-4">
@@ -14514,7 +14835,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
           style="max-height: 90vh; overflow-y: auto"
         >
           <div id="team-edit-modal-content">
@@ -14540,7 +14861,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div class="flex justify-between items-center mb-4">
             <h3 class="text-lg font-medium text-gray-900 dark:text-white">
@@ -14589,7 +14910,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div>
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -14706,7 +15027,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div>
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -14995,7 +15316,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             "auth_value": "your-openweather-api-key-here",
             "headers": {
               "Accept": "application/json",
-              "User-Agent": "MCP-Gateway/1.0"
+              "User-Agent": "ContextForge/1.0"
             },
             "input_schema": {
               "type": "object",
@@ -15052,7 +15373,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               "properties": {
                 "channel": {"type": "string", "description": "Slack channel (e.g., #general)"},
                 "text": {"type": "string", "description": "Message text"},
-                "username": {"type": "string", "description": "Bot username", "default": "MCP Gateway"}
+                "username": {"type": "string", "description": "Bot username", "default": "ContextForge"}
               },
               "required": ["text"]
             },

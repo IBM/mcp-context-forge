@@ -1106,11 +1106,30 @@ def test_user_role_is_expired():
 def test_permissions_helpers():
     permissions = db.Permissions.get_all_permissions()
     assert "tools.read" in permissions
+    assert "llm.read" in permissions
+    assert "llm.invoke" in permissions
+    assert "admin.metrics" in permissions
+    assert "admin.sso_providers:read" in permissions
+    assert "logs:read" in permissions
     assert db.Permissions.ALL_PERMISSIONS not in permissions
 
     by_resource = db.Permissions.get_permissions_by_resource()
     assert "tools" in by_resource
     assert "tools.read" in by_resource["tools"]
+    assert "llm" in by_resource
+    assert "llm.read" in by_resource["llm"]
+    assert "logs" in by_resource
+    assert "logs:read" in by_resource["logs"]
+
+
+def test_permissions_helpers_without_separator(monkeypatch):
+    """Permissions without separators should map to their own resource bucket."""
+    monkeypatch.setattr(db.Permissions, "get_all_permissions", classmethod(lambda cls: ["standalone", "tools.read"]))
+
+    by_resource = db.Permissions.get_permissions_by_resource()
+
+    assert by_resource["standalone"] == ["standalone"]
+    assert by_resource["tools"] == ["tools.read"]
 
 
 # --- Email user helpers ---
@@ -1619,12 +1638,13 @@ def test_reset_connection_on_reset_swallows_rollback_failure():
     db.reset_connection_on_reset(Conn(), None, None)
 
 
-def test_before_commit_handler_flush_failure_is_swallowed():
+def test_before_commit_handler_flush_failure_propagates():
     class DummySession:
         def flush(self):
             raise RuntimeError("boom")
 
-    db.before_commit_handler(DummySession())
+    with pytest.raises(RuntimeError, match="boom"):
+        db.before_commit_handler(DummySession())
 
 
 # --- Slug/name refresh helpers ---

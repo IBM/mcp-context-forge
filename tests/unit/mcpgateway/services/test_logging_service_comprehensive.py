@@ -715,27 +715,28 @@ def test_log_enricher_adds_context(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_log_router_persist_success(monkeypatch: pytest.MonkeyPatch):
-    """LogRouter should persist to DB when enabled."""
+    """LogRouter should persist to DB using a fresh session, not the caller's db."""
     router = structured_logger.LogRouter()
-    db = MagicMock()
+    mock_session = MagicMock()
+    mock_fresh = MagicMock()
+    mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr(structured_logger, "fresh_db_session", mock_fresh)
     monkeypatch.setattr(structured_logger, "StructuredLogEntry", MagicMock(return_value="entry"))
 
-    router._persist_to_database({"level": "INFO", "message": "ok"}, db=db)
+    router._persist_to_database({"level": "INFO", "message": "ok"})
 
-    db.add.assert_called_once_with("entry")
-    db.commit.assert_called_once()
+    mock_fresh.assert_called_once()
+    mock_session.add.assert_called_once_with("entry")
 
 
-def test_log_router_persist_failure_rolls_back(monkeypatch: pytest.MonkeyPatch):
-    """LogRouter should rollback on persistence failure."""
+def test_log_router_persist_failure_does_not_raise(monkeypatch: pytest.MonkeyPatch):
+    """LogRouter should catch persistence failures without raising."""
     router = structured_logger.LogRouter()
-    db = MagicMock()
-    db.add.side_effect = Exception("boom")
-    monkeypatch.setattr(structured_logger, "StructuredLogEntry", MagicMock(return_value="entry"))
+    monkeypatch.setattr(structured_logger, "fresh_db_session", MagicMock(side_effect=Exception("boom")))
 
-    router._persist_to_database({"level": "INFO", "message": "fail"}, db=db)
-
-    db.rollback.assert_called_once()
+    # Should not raise
+    router._persist_to_database({"level": "INFO", "message": "fail"})
 
 
 def test_structured_logger_log_routes(monkeypatch: pytest.MonkeyPatch):

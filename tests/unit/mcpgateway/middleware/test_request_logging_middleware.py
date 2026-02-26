@@ -91,6 +91,29 @@ def test_mask_sensitive_data_list():
 def test_mask_sensitive_data_non_dict_list():
     assert mask_sensitive_data("string") == "string"
 
+
+def test_mask_sensitive_data_masks_common_key_variants():
+    data = {
+        "db_password": "pw",
+        "clientSecret": "secret-value",
+        "auth-token": "token-value",
+        "token_count": 7,
+        "tokenizer": "gpt",
+    }
+    masked = mask_sensitive_data(data)
+    assert masked["db_password"] == "******"
+    assert masked["clientSecret"] == "******"
+    assert masked["auth-token"] == "******"
+    assert masked["token_count"] == 7
+    assert masked["tokenizer"] == "gpt"
+
+
+def test_mask_sensitive_data_ignores_empty_normalized_keys():
+    data = {"!!!": "value", "password": "secret"}
+    masked = mask_sensitive_data(data)
+    assert masked["!!!"] == "value"
+    assert masked["password"] == "******"
+
 # --- mask_jwt_in_cookies tests ---
 
 def test_mask_jwt_in_cookies_with_sensitive():
@@ -121,6 +144,25 @@ def test_mask_sensitive_headers_non_sensitive():
     headers = {"Content-Type": "application/json"}
     masked = mask_sensitive_headers(headers)
     assert masked["Content-Type"] == "application/json"
+
+
+def test_mask_sensitive_headers_masks_api_key_variants():
+    headers = {"X-Api-Key": "super-secret", "X-Token-Count": "5"}
+    masked = mask_sensitive_headers(headers)
+    assert masked["X-Api-Key"] == "******"
+    assert masked["X-Token-Count"] == "5"
+
+def test_mask_sensitive_headers_masks_auth_like_names():
+    headers = {"X-Auth-Device": "device-secret", "X-Custom-JWT": "tokenish"}
+    masked = mask_sensitive_headers(headers)
+    assert masked["X-Auth-Device"] == "******"
+    assert masked["X-Custom-JWT"] == "******"
+
+def test_mask_sensitive_headers_respects_non_sensitive_suffixes():
+    headers = {"X-Auth-Count": "5", "X-JWT_Status_Count": "7"}
+    masked = mask_sensitive_headers(headers)
+    assert masked["X-Auth-Count"] == "5"
+    assert masked["X-JWT_Status_Count"] == "7"
 
 # --- RequestLoggingMiddleware tests ---
 

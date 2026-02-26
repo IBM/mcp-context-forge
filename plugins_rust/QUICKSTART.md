@@ -1,6 +1,6 @@
 # Rust Plugins Quick Start Guide
 
-Get started with Rust-accelerated plugins for MCP Gateway in under 5 minutes.
+Get started with Rust-accelerated plugins for ContextForge in under 5 minutes.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ Get started with Rust-accelerated plugins for MCP Gateway in under 5 minutes.
 The fastest way to get started is using pre-built wheels (when available):
 
 ```bash
-# Install MCP Gateway with Rust plugins
+# Install ContextForge with Rust plugins
 pip install mcpgateway[rust]
 ```
 
@@ -88,7 +88,7 @@ Force Rust plugin usage via environment variables:
 ```bash
 # Enable plugins
 export PLUGINS_ENABLED=true
-export PLUGIN_CONFIG_FILE=plugins/config.yaml
+export PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Start gateway
 python -m mcpgateway.main
@@ -316,7 +316,7 @@ gunicorn mcpgateway.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.
 export PLUGINS_ENABLED=true
 
 # Plugin configuration file
-export PLUGIN_CONFIG_FILE=plugins/config.yaml
+export PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Log level
 export LOG_LEVEL=INFO

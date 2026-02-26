@@ -2,7 +2,6 @@
 """Unit tests for OAuthManager service."""
 
 # Standard
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -75,17 +74,11 @@ async def test_get_access_token_password(oauth_manager):
 
 
 @pytest.mark.asyncio
-async def test_get_access_token_authorization_code_fallback(oauth_manager):
-    with patch.object(oauth_manager, "_client_credentials_flow", new_callable=AsyncMock, return_value="fallback-tok"):
-        result = await oauth_manager.get_access_token({"grant_type": "authorization_code"})
-    assert result == "fallback-tok"
-
-
-@pytest.mark.asyncio
-async def test_get_access_token_authorization_code_failure(oauth_manager):
-    with patch.object(oauth_manager, "_client_credentials_flow", new_callable=AsyncMock, side_effect=Exception("no creds")):
-        with pytest.raises(OAuthError, match="Authorization code flow cannot be used"):
+async def test_get_access_token_authorization_code_requires_consent(oauth_manager):
+    with patch.object(oauth_manager, "_client_credentials_flow", new_callable=AsyncMock) as mock_client_flow:
+        with pytest.raises(OAuthError, match="requires user consent"):
             await oauth_manager.get_access_token({"grant_type": "authorization_code"})
+    mock_client_flow.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -328,6 +321,87 @@ async def test_password_flow_decrypt_secret(oauth_manager):
     assert result == "tok"
 
 
+@pytest.mark.asyncio
+async def test_password_flow_decrypts_encrypted_password(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    mock_enc = MagicMock()
+    mock_enc.is_encrypted.side_effect = lambda value: value == "enc-password"
+    mock_enc.decrypt_secret_async = AsyncMock(return_value="plain-password")
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs,
+        patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
+    ):
+        mock_gs.return_value = MagicMock(auth_encryption_secret="key")
+        result = await oauth_manager._password_flow(
+            {"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"}
+        )
+
+    assert result == "tok"
+    posted_data = mock_client.post.await_args.kwargs["data"]
+    assert posted_data["password"] == "plain-password"
+
+
+@pytest.mark.asyncio
+async def test_password_flow_encrypted_password_decrypt_returns_none(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    mock_enc = MagicMock()
+    mock_enc.is_encrypted.side_effect = lambda value: value == "enc-password"
+    mock_enc.decrypt_secret_async = AsyncMock(return_value=None)
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs,
+        patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
+    ):
+        mock_gs.return_value = MagicMock(auth_encryption_secret="key")
+        result = await oauth_manager._password_flow(
+            {"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"}
+        )
+
+    assert result == "tok"
+    posted_data = mock_client.post.await_args.kwargs["data"]
+    assert posted_data["password"] == "enc-password"
+
+
+@pytest.mark.asyncio
+async def test_password_flow_encrypted_password_decrypt_exception(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs,
+        patch("mcpgateway.services.oauth_manager.get_encryption_service", side_effect=RuntimeError("enc fail")),
+    ):
+        mock_gs.return_value = MagicMock(auth_encryption_secret="key")
+        result = await oauth_manager._password_flow(
+            {"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"}
+        )
+
+    assert result == "tok"
+
+
 # ---------- exchange_code_for_token ----------
 
 
@@ -383,6 +457,87 @@ async def test_refresh_token_success(oauth_manager):
         result = await oauth_manager.refresh_token(
             "old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"}
         )
+    assert result["access_token"] == "new-tok"
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_decrypts_encrypted_client_secret(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "new-tok", "refresh_token": "new-rt"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    mock_enc = MagicMock()
+    mock_enc.is_encrypted.side_effect = lambda value: value == "enc-secret"
+    mock_enc.decrypt_secret_async = AsyncMock(return_value="plain-secret")
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs,
+        patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
+    ):
+        mock_gs.return_value = MagicMock(auth_encryption_secret="key")
+        result = await oauth_manager.refresh_token(
+            "old-rt",
+            {"client_id": "cid", "client_secret": "enc-secret", "token_url": "https://auth/token"},
+        )
+
+    assert result["access_token"] == "new-tok"
+    posted_data = mock_client.post.await_args.kwargs["data"]
+    assert posted_data["client_secret"] == "plain-secret"
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_encrypted_client_secret_decrypt_returns_none(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "new-tok", "refresh_token": "new-rt"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    mock_enc = MagicMock()
+    mock_enc.is_encrypted.side_effect = lambda value: value == "enc-secret"
+    mock_enc.decrypt_secret_async = AsyncMock(return_value=None)
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs,
+        patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
+    ):
+        mock_gs.return_value = MagicMock(auth_encryption_secret="key")
+        result = await oauth_manager.refresh_token(
+            "old-rt",
+            {"client_id": "cid", "client_secret": "enc-secret", "token_url": "https://auth/token"},
+        )
+
+    assert result["access_token"] == "new-tok"
+    posted_data = mock_client.post.await_args.kwargs["data"]
+    assert posted_data["client_secret"] == "enc-secret"
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_encrypted_client_secret_decrypt_exception(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "new-tok", "refresh_token": "new-rt"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs,
+        patch("mcpgateway.services.oauth_manager.get_encryption_service", side_effect=RuntimeError("enc fail")),
+    ):
+        mock_gs.return_value = MagicMock(auth_encryption_secret="key")
+        result = await oauth_manager.refresh_token(
+            "old-rt",
+            {"client_id": "cid", "client_secret": "enc-secret", "token_url": "https://auth/token"},
+        )
+
     assert result["access_token"] == "new-tok"
 
 
@@ -461,6 +616,23 @@ async def test_refresh_token_http_error(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_refresh_token_http_error_retries_with_backoff(oauth_manager):
+    """HTTP errors trigger retry backoff before final failure."""
+    oauth_manager.max_retries = 2
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = httpx.HTTPError("timeout")
+
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.asyncio.sleep", new=AsyncMock()) as sleep_mock,
+    ):
+        with pytest.raises(OAuthError, match="Failed to refresh token after 2 attempts"):
+            await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
+
+    sleep_mock.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
 async def test_refresh_token_with_resource_string(oauth_manager):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -488,6 +660,58 @@ async def test_refresh_token_with_resource_list(oauth_manager):
             "old-rt", {"client_id": "cid", "token_url": "https://auth/token", "resource": ["https://a.com", "https://b.com"]}
         )
     assert result["access_token"] == "new-tok"
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_tokens_omits_resource_for_entra_v2_scope_flow(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "new-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager._exchange_code_for_tokens(
+            {
+                "client_id": "cid",
+                "token_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token",
+                "authorization_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize",
+                "redirect_uri": "https://gateway.example.com/oauth/callback",
+                "scopes": ["openid", "profile"],
+                "resource": "https://mcp.example.com",
+            },
+            code="auth-code",
+        )
+
+    assert result["access_token"] == "new-tok"
+    request_data = mock_client.post.call_args[1]["data"]
+    assert "resource" not in request_data
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_omits_resource_for_entra_v2_scope_flow(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "new-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager.refresh_token(
+            "old-rt",
+            {
+                "client_id": "cid",
+                "token_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token",
+                "authorization_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize",
+                "scopes": ["openid", "profile"],
+                "resource": "https://mcp.example.com",
+            },
+        )
+
+    assert result["access_token"] == "new-tok"
+    request_data = mock_client.post.call_args[1]["data"]
+    assert "resource" not in request_data
 
 
 @pytest.mark.asyncio
@@ -568,6 +792,13 @@ def test_generate_state_no_email(oauth_manager):
     assert isinstance(state, str)
 
 
+def test_generate_state_is_opaque_and_no_email_leak(oauth_manager):
+    state = oauth_manager._generate_state("gw-1", "user@test.com")
+    assert isinstance(state, str)
+    assert "user@test.com" not in state
+    assert "gw-1" not in state
+
+
 # ---------- _create_authorization_url_with_pkce ----------
 
 
@@ -604,6 +835,91 @@ def test_create_authorization_url_with_pkce_resource_list(oauth_manager):
     assert "resource=" in url
 
 
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_sovereign_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.us/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_china_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.partner.microsoftonline.cn/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_keeps_resource_for_lookalike_host(oauth_manager):
+    """Ensure a host like login.microsoftonline.evil.com is NOT treated as Entra."""
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.evil.com/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "resource=" in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_when_flag_enabled(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://auth.example.com/authorize",
+            "scopes": ["openid"],
+            "resource": "https://mcp.example.com",
+            "omit_resource": True,
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "resource=" not in url
+
+
 def test_create_authorization_url_with_pkce_no_scopes(oauth_manager):
     url = oauth_manager._create_authorization_url_with_pkce(
         {"client_id": "cid", "redirect_uri": "https://cb", "authorization_url": "https://auth"},
@@ -612,6 +928,38 @@ def test_create_authorization_url_with_pkce_no_scopes(oauth_manager):
         code_challenge_method="S256",
     )
     assert "scope" not in url
+
+
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_uses_legacy_fallback(oauth_manager):
+    import mcpgateway.services.oauth_manager as om
+
+    with (
+        patch("mcpgateway.services.oauth_manager.get_settings", return_value=MagicMock(cache_type="memory")),
+        patch.dict(om._oauth_states, {}, clear=True),
+        patch.dict(om._oauth_state_lookup, {}, clear=True),
+        patch.object(oauth_manager, "_extract_legacy_state_payload", return_value={"gateway_id": "legacy-gw"}) as mock_legacy,
+    ):
+        result = await oauth_manager.resolve_gateway_id_from_state("legacy-state", allow_legacy_fallback=True)
+
+    assert result == "legacy-gw"
+    mock_legacy.assert_called_once_with("legacy-state")
+
+
+@pytest.mark.asyncio
+async def test_resolve_gateway_id_from_state_skips_legacy_fallback_when_disabled(oauth_manager):
+    import mcpgateway.services.oauth_manager as om
+
+    with (
+        patch("mcpgateway.services.oauth_manager.get_settings", return_value=MagicMock(cache_type="memory")),
+        patch.dict(om._oauth_states, {}, clear=True),
+        patch.dict(om._oauth_state_lookup, {}, clear=True),
+        patch.object(oauth_manager, "_extract_legacy_state_payload", return_value={"gateway_id": "legacy-gw"}) as mock_legacy,
+    ):
+        result = await oauth_manager.resolve_gateway_id_from_state("legacy-state", allow_legacy_fallback=False)
+
+    assert result is None
+    mock_legacy.assert_not_called()
 
 
 # ---------- OAuthError ----------

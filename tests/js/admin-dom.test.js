@@ -90,6 +90,59 @@ describe("safeSetInnerHTML", () => {
         f()(div, "<b>test</b>");
         expect(div.textContent).toBe("<b>test</b>");
     });
+
+    test("sanitizes trusted HTML before insertion", () => {
+        const div = doc.createElement("div");
+        f()(div, '<p onclick="alert(1)">ok</p><script>alert(1)</script>', true);
+        expect(div.querySelector("script")).toBeNull();
+        expect(div.querySelector("p").getAttribute("onclick")).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeHtmlForInsertion + global innerHTML guard
+// ---------------------------------------------------------------------------
+describe("sanitizeHtmlForInsertion", () => {
+    const f = () => win.sanitizeHtmlForInsertion;
+
+    test("removes script tags and event-handler attributes", () => {
+        const html = '<div onclick="x()"><script>alert(1)</script><a href="javascript:alert(1)">link</a></div>';
+        const sanitized = f()(html);
+
+        const container = doc.createElement("div");
+        container.innerHTML = sanitized;
+
+        expect(container.querySelector("script")).toBeNull();
+        expect(container.querySelector("div").getAttribute("onclick")).toBeNull();
+        expect(container.querySelector("a").hasAttribute("href")).toBe(false);
+    });
+
+    test("preserves framework attributes needed by UI rendering", () => {
+        const html = '<button hx-post="/admin/test" x-on:click="run()" data-id="123">Run</button>';
+        const sanitized = f()(html);
+
+        const container = doc.createElement("div");
+        container.innerHTML = sanitized;
+        const button = container.querySelector("button");
+
+        expect(button).not.toBeNull();
+        expect(button.getAttribute("hx-post")).toBe("/admin/test");
+        expect(button.getAttribute("x-on:click")).toBe("run()");
+        expect(button.getAttribute("data-id")).toBe("123");
+    });
+
+    test("global innerHTML guard sanitizes direct assignments", () => {
+        const div = doc.createElement("div");
+        div.innerHTML = '<img src="javascript:alert(1)" /><p onclick="alert(2)">safe</p>';
+
+        const img = div.querySelector("img");
+        const p = div.querySelector("p");
+
+        expect(img).not.toBeNull();
+        expect(img.hasAttribute("src")).toBe(false);
+        expect(p).not.toBeNull();
+        expect(p.getAttribute("onclick")).toBeNull();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -438,7 +491,20 @@ describe("getCurrentTeamId", () => {
     const f = () => win.getCurrentTeamId;
 
     test("returns null when no team selector or URL params", () => {
+        win.history.replaceState({}, "", "http://localhost/");
         expect(f()()).toBeNull();
+    });
+
+    test("returns null for stale URL team_id not in known teams", () => {
+        win.history.replaceState({}, "", "http://localhost/admin/?team_id=stale-team");
+        win.USER_TEAMS_DATA = [{ id: "known-team", name: "Known Team" }];
+        expect(f()()).toBeNull();
+    });
+
+    test("returns URL team_id when present in known teams", () => {
+        win.history.replaceState({}, "", "http://localhost/admin/?team_id=known-team");
+        win.USER_TEAMS_DATA = [{ id: "known-team", name: "Known Team" }];
+        expect(f()()).toBe("known-team");
     });
 });
 
@@ -446,6 +512,8 @@ describe("getCurrentTeamName", () => {
     const f = () => win.getCurrentTeamName;
 
     test("returns null when no team selected", () => {
+        win.history.replaceState({}, "", "http://localhost/");
+        win.USER_TEAMS_DATA = [];
         expect(f()()).toBeNull();
     });
 });

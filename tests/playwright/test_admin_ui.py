@@ -27,7 +27,7 @@ class TestAdminUI:
         """Test that admin panel loads successfully."""
         # admin_page fixture already navigated and authenticated
         # Verify admin panel loaded (no need to navigate again)
-        expect(admin_page.page).to_have_title(re.compile(r"(MCP Gateway Admin|ContextForge - Gateway Administration)"))
+        expect(admin_page.page).to_have_title(re.compile(r"(ContextForge Admin|ContextForge - Gateway Administration)"))
         expect(admin_page.servers_tab).to_be_visible()
         expect(admin_page.tools_tab).to_be_visible()
         expect(admin_page.gateways_tab).to_be_visible()
@@ -83,7 +83,12 @@ class TestAdminUI:
 
         # The tabs should still be accessible even in mobile view
         # Check if the page adapts by verifying the main content area
-        assert admin_page.catalog_panel.locator(":visible").count() > 0 or admin_page.tools_panel.locator(":visible").count() > 0 or admin_page.gateways_panel.locator(":visible").count() > 0
+        assert (
+            admin_page.page.locator("#overview-panel:visible").count() > 0
+            or admin_page.catalog_panel.locator(":visible").count() > 0
+            or admin_page.tools_panel.locator(":visible").count() > 0
+            or admin_page.gateways_panel.locator(":visible").count() > 0
+        )
 
         # Test tablet viewport
         admin_page.page.set_viewport_size({"width": 768, "height": 1024})

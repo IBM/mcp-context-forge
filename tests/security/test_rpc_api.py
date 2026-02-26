@@ -28,7 +28,7 @@ except ImportError:
     sys.exit(1)
 
 
-@pytest.mark.skip(reason="Disabled temporarily as this requires a live MCP Gateway instance")
+@pytest.mark.skip(reason="Disabled temporarily as this requires a live ContextForge instance")
 def test_rpc_vulnerability():
     """Test the RPC endpoint with malicious method names."""
 

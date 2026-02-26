@@ -3,7 +3,7 @@
 1. **Install Minikube and kubectl** (Docker or Podman driver required).
 2. Start a local cluster with Ingress and DNS addons.
 3. Load the `ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1` image into Minikube.
-4. Apply your Kubernetes manifests.
+4. Deploy with the Helm chart (`charts/mcp-stack`).
 5. Access the Gateway at [http://gateway.local](http://gateway.local) or `127.0.0.1:80` via NGINX Ingress.
 
 Minikube provides a self-contained environment, enabling you to replicate production features like persistent volumes and TLS on your local machine.
@@ -27,7 +27,7 @@ Minikube provides a self-contained environment, enabling you to replicate produc
           └──────────┬───────────┬──────┘
                      │/          │/
       ┌──────────────▼─────┐ ┌────▼───────────┐
-      │  MCP Context Forge │ │ PgAdmin (opt.) │
+      │  ContextForge │ │ PgAdmin (opt.) │
       └─────────┬──────────┘ └────┬───────────┘
                 │                 │
    ┌────────────▼──────┐ ┌────────▼────────────┐
@@ -150,7 +150,7 @@ This target builds the `ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1` image and load
 
 ---
 
-## 📄 Step 4 - Apply Kubernetes manifests
+## 📄 Step 4 - Deploy with Helm
 
 > **Make target**
 
@@ -158,34 +158,56 @@ This target builds the `ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1` image and load
 make minikube-k8s-apply
 ```
 
-This applies the Kubernetes manifests. Alternative manual step:
+This deploys the full stack (ContextForge, PostgreSQL, Redis) using the `charts/mcp-stack` Helm chart.
+
+### Manual Helm install
 
 ```bash
-# PostgreSQL
-kubectl apply -f deployment/k8s/postgres-config.yaml
-kubectl apply -f deployment/k8s/postgres-pv.yaml
-kubectl apply -f deployment/k8s/postgres-pvc.yaml
-kubectl apply -f deployment/k8s/postgres-deployment.yaml
-kubectl apply -f deployment/k8s/postgres-service.yaml
-
-# Redis
-kubectl apply -f deployment/k8s/redis-deployment.yaml
-kubectl apply -f deployment/k8s/redis-service.yaml
-
-# MCP Gateway
-kubectl apply -f deployment/k8s/mcp-context-forge-deployment.yaml
-kubectl apply -f deployment/k8s/mcp-context-forge-service.yaml
-kubectl apply -f deployment/k8s/mcp-context-forge-ingress.yaml
+helm install mcp-stack charts/mcp-stack
 ```
 
-If you've enabled `ingress-dns`, set the Ingress `host:` to `gateway.local`. Otherwise, omit the `host:` and access via NodePort.
+The chart defaults to `ingress.enabled: true` with `className: nginx` and `host: gateway.local`, which works out of the box with the Minikube Ingress addon enabled in Step 2.
+
+To customise values (e.g. disable ingress or change the host):
+
+```bash
+helm install mcp-stack charts/mcp-stack \
+  --set mcpContextForge.ingress.host=my-gateway.local
+```
+
+See `charts/mcp-stack/values.yaml` for the full list of configurable values.
+
+### SSRF settings for in-cluster fast-time / fast-test registration
+
+If you enable Helm testing registrations (`testing.fastTime.register.enabled=true`,
+`testing.fastTest.register.enabled=true`), the gateway URLs use in-cluster services:
+
+- `http://<release>-mcp-fast-time-server:80/http`
+- `http://<release>-fast-test-server:8880/mcp`
+
+Strict SSRF defaults block private destinations, which can cause registration jobs to fail with `422`.
+
+Use one of the following:
+
+```yaml
+# Preferred: explicit cluster CIDR allowlist
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust for your minikube setup
+```
+
+```yaml
+# Local-only shortcut for benchmark/testing
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+```
 
 **Note:** Minikube automatically configures the `kubectl` context upon cluster creation. If not, set it manually:
 
 ```bash
 kubectl config use-context minikube
-# or:
-minikube kubectl -- apply -f ...
 ```
 
 ---
@@ -203,10 +225,10 @@ kubectl get pods
 Expect output like:
 
 ```
-NAME                                      READY   STATUS    RESTARTS   AGE
-postgres-5b66bdf445-rp8kl                 1/1     Running   0          15s
-redis-668976c4f9-2hljd                    1/1     Running   0          15s
-mcp-context-forge-6d87f8c5d8-nnmgx        1/1     Running   0          10s
+NAME                                           READY   STATUS    RESTARTS   AGE
+mcp-stack-postgres-5b66bdf445-rp8kl            1/1     Running   0          15s
+mcp-stack-redis-668976c4f9-2hljd               1/1     Running   0          15s
+mcp-stack-mcpcontextforge-6d87f8c5d8-nnmgx     1/1     Running   0          10s
 ```
 
 ---
@@ -214,7 +236,7 @@ mcp-context-forge-6d87f8c5d8-nnmgx        1/1     Running   0          10s
 ### 📜 Check logs (optional)
 
 ```bash
-kubectl logs deploy/mcp-context-forge
+kubectl logs deploy/mcp-stack-mcpgateway
 ```
 
 This can help diagnose startup errors or missing dependencies (e.g. bad env vars, Postgres connection issues).
@@ -224,7 +246,7 @@ This can help diagnose startup errors or missing dependencies (e.g. bad env vars
 ### 🚥 Wait for rollout (optional)
 
 ```bash
-kubectl rollout status deploy/mcp-context-forge
+kubectl rollout status deploy/mcp-stack-mcpgateway
 ```
 
 If the pod gets stuck in `CrashLoopBackOff`, run:
@@ -250,8 +272,8 @@ kubectl get ingress
 Should show something like:
 
 ```
-NAME                        CLASS    HOSTS           ADDRESS        PORTS   AGE
-mcp-context-forge-ingress   nginx    gateway.local   192.168.49.2   80      1m
+NAME                          CLASS    HOSTS           ADDRESS        PORTS   AGE
+mcp-stack-mcpgateway-ingress  nginx    gateway.local   192.168.49.2   80      1m
 ```
 
 If `ADDRESS` is empty, the ingress controller may still be warming up.
@@ -268,7 +290,7 @@ You may want to add this to `/etc/hosts`. Ex:
 
 ```bash
 # Via NodePort:
-curl $(minikube service mcp-context-forge --url)/health
+curl $(minikube service mcp-stack-mcpgateway --url)/health
 
 # Via DNS:
 curl http://gateway.local/health
@@ -280,6 +302,7 @@ curl http://gateway.local/health
 
 | Action              | Make target            | Manual command                                               |
 | ------------------- | ---------------------- | ------------------------------------------------------------ |
+| Uninstall Helm release | -                   | `helm uninstall mcp-stack`                                   |
 | Pause cluster       | `make minikube-stop`   | `minikube stop -p mcpgw`                                     |
 | Delete cluster      | `make minikube-delete` | `minikube delete -p mcpgw`                                   |
 | Remove cached image | -                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1` |
@@ -326,4 +349,4 @@ curl http://gateway.local/health
 
 ---
 
-Minikube gives you the fastest, vendor-neutral sandbox for experimenting with MCP Gateway-and everything above doubles as CI instructions for self-hosted GitHub runners or ephemeral integration tests.
+Minikube gives you the fastest, vendor-neutral sandbox for experimenting with ContextForge-and everything above doubles as CI instructions for self-hosted GitHub runners or ephemeral integration tests.

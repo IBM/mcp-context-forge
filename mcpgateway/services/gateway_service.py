@@ -93,6 +93,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -818,7 +819,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             else:
                 authentication_headers = None
 
-            oauth_config = getattr(gateway, "oauth_config", None)
+            oauth_config = await protect_oauth_config_for_storage(getattr(gateway, "oauth_config", None))
             ca_certificate = getattr(gateway, "ca_certificate", None)
 
             # Check if gateway is in direct_proxy mode
@@ -1151,7 +1152,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     "visibility": visibility,
                     "transport": db_gateway.transport,
                 },
-                db=db,
             )
 
             return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
@@ -1159,6 +1159,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
             logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
+            db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -1169,13 +1170,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 user_email=owner_email,
                 error=ge.exceptions[0],
                 custom_fields={"gateway_name": gateway.name, "gateway_url": str(gateway.url)},
-                db=db,
             )
             raise ge.exceptions[0]
         except* GatewayNameConflictError as gnce:  # pragma: no mutate
             if TYPE_CHECKING:
                 gnce: ExceptionGroup[GatewayNameConflictError]
             logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
+            db.rollback()
 
             structured_logger.log(
                 level="WARNING",
@@ -1185,13 +1186,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 user_id=created_by,
                 user_email=owner_email,
                 custom_fields={"gateway_name": gateway.name, "visibility": visibility},
-                db=db,
             )
             raise gnce.exceptions[0]
         except* GatewayDuplicateConflictError as guce:  # pragma: no mutate
             if TYPE_CHECKING:
                 guce: ExceptionGroup[GatewayDuplicateConflictError]
             logger.error(f"GatewayDuplicateConflictError in group: {guce.exceptions}")
+            db.rollback()
 
             structured_logger.log(
                 level="WARNING",
@@ -1201,13 +1202,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 user_id=created_by,
                 user_email=owner_email,
                 custom_fields={"gateway_name": gateway.name},
-                db=db,
             )
             raise guce.exceptions[0]
         except* ValueError as ve:  # pragma: no mutate
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]
             logger.error(f"ValueErrors in group: {ve.exceptions}")
+            db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -1218,13 +1219,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 user_email=owner_email,
                 error=ve.exceptions[0],
                 custom_fields={"gateway_name": gateway.name},
-                db=db,
             )
             raise ve.exceptions[0]
         except* RuntimeError as re:  # pragma: no mutate
             if TYPE_CHECKING:
                 re: ExceptionGroup[RuntimeError]
             logger.error(f"RuntimeErrors in group: {re.exceptions}")
+            db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -1235,13 +1236,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 user_email=owner_email,
                 error=re.exceptions[0],
                 custom_fields={"gateway_name": gateway.name},
-                db=db,
             )
             raise re.exceptions[0]
         except* IntegrityError as ie:  # pragma: no mutate
             if TYPE_CHECKING:
                 ie: ExceptionGroup[IntegrityError]
             logger.error(f"IntegrityErrors in group: {ie.exceptions}")
+            db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -1252,13 +1253,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 user_email=owner_email,
                 error=ie.exceptions[0],
                 custom_fields={"gateway_name": gateway.name},
-                db=db,
             )
             raise ie.exceptions[0]
         except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
             if TYPE_CHECKING:
                 other: ExceptionGroup[Exception]
             logger.error(f"Other grouped errors: {other.exceptions}")
+            db.rollback()
             raise other.exceptions[0]
 
     async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
@@ -1267,7 +1268,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
-            app_user_email: MCP Gateway user email for token retrieval
+            app_user_email: ContextForge user email for token retrieval
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -1317,9 +1318,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Debug: Check if token was decrypted
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
-                logger.error(f"Token appears to be encrypted! Encryption service may have failed. Token length: {len(access_token)}")
+                logger.error("OAuth token decryption may have failed before gateway initialization")
             else:
-                logger.info(f"Using decrypted OAuth token for {gateway.name} (length: {len(access_token)})")
+                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
@@ -1457,10 +1458,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
         except GatewayConnectionError as gce:
+            db.rollback()
             # Surface validation or depth-related failures directly to the user
             logger.error(f"GatewayConnectionError during OAuth fetch for {gateway_id}: {gce}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
         except Exception as e:
+            db.rollback()
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
@@ -1755,7 +1758,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
         user_email: Optional[str] = None,
-    ) -> GatewayRead:
+    ) -> Optional[GatewayRead]:
         """Update a gateway.
 
         Args:
@@ -1945,7 +1948,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
-                    gateway.oauth_config = gateway_update.oauth_config
+                    gateway.oauth_config = await protect_oauth_config_for_storage(gateway_update.oauth_config, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token
@@ -2273,7 +2276,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         "gateway_name": gateway.name,
                         "version": gateway.version,
                     },
-                    db=db,
                 )
 
                 return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
@@ -2281,6 +2283,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return None
         except GatewayNameConflictError as ge:
             logger.error(f"GatewayNameConflictError in group: {ge}")
+            db.rollback()
 
             structured_logger.log(
                 level="WARNING",
@@ -2291,11 +2294,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=ge,
-                db=db,
             )
             raise ge
         except GatewayNotFoundError as gnfe:
             logger.error(f"GatewayNotFoundError: {gnfe}")
+            db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -2306,11 +2309,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=gnfe,
-                db=db,
             )
             raise gnfe
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
+            db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -2321,7 +2324,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=ie,
-                db=db,
             )
             raise ie
         except PermissionError as pe:
@@ -2336,7 +2338,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=pe,
-                db=db,
             )
             raise
         except Exception as e:
@@ -2351,7 +2352,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=e,
-                db=db,
             )
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
@@ -2441,7 +2441,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     "gateway_url": gateway.url,
                     "include_inactive": include_inactive,
                 },
-                db=db,
             )
 
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
@@ -2733,12 +2732,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         "enabled": gateway.enabled,
                         "reachable": gateway.reachable,
                     },
-                    db=db,
                 )
 
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         except PermissionError as e:
+            db.rollback()
+
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
@@ -2749,7 +2749,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=e,
-                db=db,
             )
             raise e
         except Exception as e:
@@ -2765,7 +2764,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=e,
-                db=db,
             )
             raise GatewayError(f"Failed to set gateway state: {str(e)}")
 
@@ -2947,7 +2945,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     "gateway_name": gateway_name,
                     "gateway_url": gateway_info["url"],
                 },
-                db=db,
             )
 
         except PermissionError as pe:
@@ -2963,7 +2960,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=pe,
-                db=db,
             )
             raise
         except Exception as e:
@@ -2979,7 +2975,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 resource_type="gateway",
                 resource_id=gateway_id,
                 error=e,
-                db=db,
             )
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
@@ -3569,7 +3564,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             url: Gateway URL to connect to
             authentication: Optional authentication headers for the connection
             transport: Transport protocol - "SSE" or "StreamableHTTP"
-            auth_type: Authentication type - "basic", "bearer", "headers", "oauth", "query_param" or None
+            auth_type: Authentication type - "basic", "bearer", "authheaders", "oauth", "query_param" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
             ca_certificate: CA certificate for SSL verification
             pre_auth_headers: Pre-authenticated headers to skip OAuth token fetch (for reuse)
@@ -3656,7 +3651,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             tools = []
             resources = []
             prompts = []
-            if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
+            if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)

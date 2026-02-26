@@ -1,6 +1,6 @@
 # Migration Guide: Upgrading to Multi-Tenancy (v0.6.0 to v0.7.0)
 
-This guide walks you through upgrading from MCP Gateway v0.6.0 to v0.7.0 that implements comprehensive multi-tenancy, team management, and RBAC.
+This guide walks you through upgrading from ContextForge v0.6.0 to v0.7.0 that implements comprehensive multi-tenancy, team management, and RBAC.
 
 ## Overview
 
@@ -53,7 +53,7 @@ cp .env .env.bak
 **💡 Export your current configuration via the Admin UI before migration:**
 
 ```bash
-# 1. Start your current MCP Gateway
+# 1. Start your current ContextForge
 make dev  # or however you normally run it
 
 # 2. Access the admin UI
@@ -666,7 +666,7 @@ python3 scripts/fix_multitenancy_0_7_0_resources.py
 
 > **Common Issue**: `sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) disk I/O error`
 
-This section helps diagnose and fix SQLite database issues, especially with MCP Gateway v0.7.0 multitenancy.
+This section helps diagnose and fix SQLite database issues, especially with ContextForge v0.7.0 multitenancy.
 
 ### Quick Diagnosis Commands
 
@@ -921,7 +921,7 @@ python3 scripts/test_sqlite.py --database-url "sqlite:////Users/$USER/Library/Ap
 
 This script tests:
 - Direct SQLite access
-- SQLAlchemy engine with MCP Gateway settings
+- SQLAlchemy engine with ContextForge settings
 - System diagnostics and recommendations
 
 ### Quick Reference Table

@@ -1,6 +1,6 @@
 # Tool Annotations
 
-Tool annotations provide metadata hints about tool behavior, helping clients and UIs make informed decisions about how to present and use tools. MCP Gateway supports the standard MCP annotation types for enhanced tool interaction.
+Tool annotations provide metadata hints about tool behavior, helping clients and UIs make informed decisions about how to present and use tools. ContextForge supports the standard MCP annotation types for enhanced tool interaction.
 
 ## Overview
 

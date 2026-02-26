@@ -1,6 +1,6 @@
 # Export/Import System Architecture
 
-Technical architecture documentation for MCP Gateway's configuration export and import system.
+Technical architecture documentation for ContextForge's configuration export and import system.
 
 ---
 
@@ -522,4 +522,4 @@ tests/
 
 ---
 
-This architecture provides a solid foundation for configuration management while maintaining compatibility with existing MCP Gateway systems and allowing for future enhancements.
+This architecture provides a solid foundation for configuration management while maintaining compatibility with existing ContextForge systems and allowing for future enhancements.

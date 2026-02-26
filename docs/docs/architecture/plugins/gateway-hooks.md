@@ -1,6 +1,6 @@
 # Gateway Administrative Hooks
 
-This document details the administrative hook points in the MCP Gateway Plugin Framework, covering gateway management operations including server registration, updates, federation, and entity lifecycle management.
+This document details the administrative hook points in ContextForge Plugin Framework, covering gateway management operations including server registration, updates, federation, and entity lifecycle management.
 ## Administrative Hook Functions
 
 The framework provides administrative hooks for gateway management operations:
@@ -1191,7 +1191,7 @@ class GatewayInfo(BaseModel):
     description: Optional[str] = Field(None, description="Gateway description")
     url: str = Field(..., description="Gateway endpoint URL")
     transport: str = Field(default="SSE", description="Transport protocol (SSE, STREAMABLEHTTP)")
-    auth_type: Optional[str] = Field(None, description="Authentication type (basic, bearer, headers, oauth)")
+    auth_type: Optional[str] = Field(None, description="Authentication type (basic, bearer, authheaders, oauth)")
     auth_value: Optional[str] = Field(None, description="Authentication credentials")
     enabled: bool = Field(default=True, description="Whether gateway is enabled")
     reachable: bool = Field(default=True, description="Whether gateway is reachable")

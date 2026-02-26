@@ -12,6 +12,7 @@ import logging
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -174,6 +175,33 @@ class GatewaysPage(BasePage):
         return self.page.locator("#auth-headers-fields-gw")
 
     @property
+    def add_header_btn(self) -> Locator:
+        """Add Header button inside the custom headers section."""
+        return self.auth_headers_fields.get_by_role("button", name="Add Header")
+
+    @property
+    def auth_headers_json_input(self) -> Locator:
+        """Hidden JSON input that stores the serialised header list."""
+        return self.page.locator("#auth-headers-json-gw")
+
+    def add_auth_header(self, key: str, value: str) -> None:
+        """Click Add Header, type key and value into the new row.
+
+        Args:
+            key: Header name (e.g. ``X-API-Key``).
+            value: Header value.
+        """
+        self.add_header_btn.click()
+        # The last header row just appended
+        last_row = self.page.locator("#auth-headers-container-gw > div").last
+        last_row.locator(".auth-header-key").fill(key)
+        last_row.locator(".auth-header-value").fill(value)
+
+    def get_auth_headers_json(self) -> str:
+        """Return the current value of the hidden auth-headers JSON input."""
+        return self.auth_headers_json_input.input_value()
+
+    @property
     def auth_query_param_fields(self) -> Locator:
         """Query parameter auth fields container."""
         return self.page.locator("#auth-query_param-fields-gw")
@@ -292,8 +320,9 @@ class GatewaysPage(BasePage):
     # ==================== High-Level Navigation Methods ====================
 
     def navigate_to_gateways_tab(self) -> None:
-        """Navigate to Gateways tab and wait for panel to be visible."""
+        """Navigate to Gateways tab and wait for the table to finish loading."""
         self.sidebar.click_gateways_tab()
+        self.wait_for_gateways_table_loaded()
 
     # ==================== High-Level Gateway Operations ====================
 
@@ -313,6 +342,7 @@ class GatewaysPage(BasePage):
         except AssertionError:
             # Alpine.js x-init / HTMX load race: reload to re-run the sequence
             self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
             self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=timeout)
             self.wait_for_attached(self.gateways_table_body, timeout=timeout)
 
@@ -381,34 +411,101 @@ class GatewaysPage(BasePage):
     def search_gateways(self, query: str) -> None:
         """Search for gateways using the search input.
 
+        Search is server-side via HTMX with a debounce. Avoid Playwright
+        ``networkidle`` because the admin UI can keep long-lived requests open.
+        Wait for table/indicator state instead.
+
         Args:
             query: Search query string
         """
-        # Fill the search input
+        if query == "":
+            self.clear_search()
+            return
+
+        # Searches are debounced in admin.js (250ms) and search inputs are
+        # occasionally re-initialized on tab switches (cloned/replaced). That
+        # can create a short window where filling doesn't trigger a request.
         self.search_input.fill(query)
 
-        # Trigger the search using JavaScript to ensure the filtering happens
-        # The page uses client-side filtering that listens to input events
-        self.page.evaluate(
-            """
-            (searchQuery) => {
-                const searchInput = document.getElementById('gateways-search-input');
-                if (searchInput) {
-                    searchInput.value = searchQuery;
-                    // Trigger input event to activate the search filter
-                    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    searchInput.dispatchEvent(new Event('keyup', { bubbles: true }));
-                }
-            }
-        """,
-            query,
-        )
+        try:
+            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=5000)
+        except PlaywrightTimeoutError:
+            # Fallback: explicitly trigger the server-side reload.
+            self.page.evaluate(
+                "(q) => { const el = document.getElementById('gateways-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('gateways'); } }",
+                query,
+            )
+            try:
+                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
 
-        self.page.wait_for_timeout(500)  # Wait for client-side filtering to complete
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        try:
+            self.page.wait_for_selector(
+                "#gateways-table-body",
+                state="attached",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            # Recovery path: if the partial response did not restore the table
+            # structure, hard-reload and reopen gateways.
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
+            return
+
+        # In some environments the clear action can leave the table in a stale
+        # empty state (e.g., after a zero-result search). Recover by reloading
+        # and re-opening the gateways tab so subsequent assertions see the
+        # canonical gateway list.
+        if self.get_gateway_count() == 0:
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
 
     def clear_search(self) -> None:
-        """Clear the gateway search."""
-        self.click_locator(self.clear_search_btn)
+        """Clear the gateway search.
+
+        Triggers an HTMX reload of the gateways table, then waits for
+        table/indicator settling.
+        """
+        request_seen = False
+        try:
+            with self.page.expect_response(
+                lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
+                timeout=5000,
+            ):
+                self.click_locator(self.clear_search_btn)
+            request_seen = True
+        except PlaywrightTimeoutError:
+            pass
+
+        if not request_seen:
+            # Fallback: invoke the same clear function the button uses and
+            # explicitly wait for the partial reload request.
+            try:
+                with self.page.expect_response(
+                    lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
+                    timeout=5000,
+                ):
+                    self.page.evaluate("window.clearSearch && window.clearSearch('gateways')")
+                request_seen = True
+            except PlaywrightTimeoutError:
+                # Last-resort best effort: force a reload call even if request
+                # observation missed due timing.
+                self.page.evaluate(
+                    "() => { const el = document.getElementById('gateways-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('gateways'); } }",
+                )
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive gateways checkbox.
@@ -416,6 +513,7 @@ class GatewaysPage(BasePage):
         Args:
             show: True to show inactive gateways, False to hide them
         """
+        self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=15000)
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
@@ -638,6 +736,7 @@ class GatewaysPage(BasePage):
 
                 # Reload to see updated table
                 self.page.reload()
+                self.navigate_to_gateways_tab()
                 self.wait_for_gateways_table_loaded()
                 self.page.wait_for_timeout(1000)
 

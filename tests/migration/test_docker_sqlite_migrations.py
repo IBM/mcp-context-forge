@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 SQLite container migration tests.
 
 This module tests database migrations using SQLite containers across
-different MCP Gateway versions with comprehensive validation.
+different ContextForge versions with comprehensive validation.
 """
 
 # Standard

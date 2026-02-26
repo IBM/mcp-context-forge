@@ -20,12 +20,17 @@ on:
       - "**/tests/**"
       - "**/docs/**"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths-ignore:
       - "**/tests/**"
       - "**/docs/**"
   # schedule:
   #   - cron: '15 21 * * 3'   # Weekly on Wednesday at 21:15 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read # For checking out the code
@@ -35,8 +40,10 @@ permissions:
 
 jobs:
   analyze:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: CodeQL (${{ matrix.language }})
     runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false

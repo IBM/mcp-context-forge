@@ -15,6 +15,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import math
@@ -34,6 +35,9 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Strong references to background tasks to prevent GC before completion
+_background_tasks: set[asyncio.Task] = set()
 
 
 class TokenScope:
@@ -221,7 +225,7 @@ class TokenCatalogService:
 
         This internal method creates a properly formatted JWT token with all
         necessary claims including user identity, scopes, team membership,
-        and expiration. The token follows the MCP Gateway JWT structure.
+        and expiration. The token follows ContextForge JWT structure.
 
         Args:
             user_email: User's email address for the token subject
@@ -837,13 +841,12 @@ class TokenCatalogService:
 
         # Invalidate auth cache for revoked token
         try:
-            # Standard
-            import asyncio  # pylint: disable=import-outside-toplevel
-
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            task = asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache for revoked token: {cache_error}")
 
@@ -880,13 +883,12 @@ class TokenCatalogService:
         self.db.commit()
 
         try:
-            # Standard
-            import asyncio  # pylint: disable=import-outside-toplevel
-
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            task = asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache: {cache_error}")
 
@@ -956,13 +958,6 @@ class TokenCatalogService:
 
         self.db.add(usage_log)
         self.db.commit()
-
-        # Update token last_used timestamp
-        token = self.db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
-
-        if token:
-            token.last_used = utc_now()
-            self.db.commit()
 
     async def get_token_usage_stats(self, user_email: str, token_id: Optional[str] = None, days: int = 30) -> dict:
         """Get token usage statistics.

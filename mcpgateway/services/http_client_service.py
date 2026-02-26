@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Shared HTTP Client Service.
 
 This module provides a singleton httpx.AsyncClient that is shared across all
-services in MCP Gateway. Using a shared client instead of per-request clients
+services in ContextForge. Using a shared client instead of per-request clients
 provides significant performance benefits:
 
 - Connection reuse: Avoids TCP handshake and TLS negotiation per request

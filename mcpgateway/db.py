@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Database Models.
+ContextForge Database Models.
 This module defines SQLAlchemy models for storing MCP entities including:
 - Tools with input schema validation
 - Resources with subscription tracking
@@ -472,15 +472,13 @@ def before_commit_handler(session):
     """Handler before commit to ensure transaction is in good state.
 
     This is called before COMMIT, ensuring any pending work is flushed.
+    If the flush fails, the exception is propagated so the commit also fails
+    and the caller's error handling (e.g. get_db rollback) can clean up properly.
 
     Args:
         session: The SQLAlchemy session about to commit.
     """
-    try:
-        session.flush()
-    except Exception:  # nosec B110
-        # If flush fails, the commit will also fail and trigger rollback
-        pass
+    session.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -950,6 +948,10 @@ class Permissions:
     PROMPTS_DELETE = "prompts.delete"
     PROMPTS_EXECUTE = "prompts.execute"
 
+    # LLM proxy permissions
+    LLM_READ = "llm.read"
+    LLM_INVOKE = "llm.invoke"
+
     # Server permissions
     SERVERS_CREATE = "servers.create"
     SERVERS_READ = "servers.read"
@@ -973,6 +975,19 @@ class Permissions:
     ADMIN_EVENTS = "admin.events"
     ADMIN_GRPC = "admin.grpc"
     ADMIN_PLUGINS = "admin.plugins"
+    ADMIN_METRICS = "admin.metrics"
+    ADMIN_EXPORT = "admin.export"
+    ADMIN_IMPORT = "admin.import"
+    ADMIN_SSO_PROVIDERS_CREATE = "admin.sso_providers:create"
+    ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
+    ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
+    ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
+
+    # Observability and audit read permissions
+    LOGS_READ = "logs:read"
+    METRICS_READ = "metrics:read"
+    AUDIT_READ = "audit:read"
+    SECURITY_READ = "security:read"
 
     # A2A Agent permissions
     A2A_CREATE = "a2a.create"
@@ -1001,7 +1016,7 @@ class Permissions:
         for attr_name in dir(cls):
             if not attr_name.startswith("_") and attr_name.isupper() and attr_name != "ALL_PERMISSIONS":
                 attr_value = getattr(cls, attr_name)
-                if isinstance(attr_value, str) and "." in attr_value:
+                if isinstance(attr_value, str):
                     permissions.append(attr_value)
         return sorted(permissions)
 
@@ -1014,7 +1029,12 @@ class Permissions:
         """
         resource_permissions = {}
         for permission in cls.get_all_permissions():
-            resource_type = permission.split(".")[0]
+            if "." in permission:
+                resource_type = permission.split(".", 1)[0]
+            elif ":" in permission:
+                resource_type = permission.split(":", 1)[0]
+            else:
+                resource_type = permission
             if resource_type not in resource_permissions:
                 resource_permissions[resource_type] = []
             resource_permissions[resource_type].append(permission)
@@ -4408,7 +4428,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4557,7 +4577,7 @@ class A2AAgent(Base):
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4826,7 +4846,7 @@ class OAuthToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
-    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # ContextForge user
     access_token: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
@@ -4852,6 +4872,7 @@ class OAuthState(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
+    app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -5165,6 +5186,7 @@ class SSOProvider(Base):
         token_url (str): OAuth token endpoint
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
+        jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5202,6 +5224,7 @@ class SSOProvider(Base):
     token_url: Mapped[str] = mapped_column(String(500), nullable=False)
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
+    jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

@@ -30,7 +30,7 @@ class HookRegistry:
         >>> registry = HookRegistry()
         >>> registry.register_hook("test_hook", PluginPayload, PluginResult)
         >>> registry.get_payload_type("test_hook")
-        <class 'pydantic.main.BaseModel'>
+        <class 'mcpgateway.plugins.framework.models.PluginPayload'>
         >>> registry.get_result_type("test_hook")
         <class 'mcpgateway.plugins.framework.models.PluginResult'>
     """

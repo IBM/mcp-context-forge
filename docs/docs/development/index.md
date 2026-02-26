@@ -1,6 +1,6 @@
 # Development
 
-Welcome! This guide is for developers contributing to MCP Gateway. Whether you're fixing bugs, adding features, or extending federation or protocol support, this doc will help you get up and running quickly and consistently.
+Welcome! This guide is for developers contributing to ContextForge. Whether you're fixing bugs, adding features, or extending federation or protocol support, this doc will help you get up and running quickly and consistently.
 
 ---
 
@@ -19,7 +19,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 
 ## 🛠 Developer Environment
 
-MCP Gateway is built with:
+ContextForge is built with:
 
 * **Python 3.11+**
 * **FastAPI** + **SQLAlchemy (async)** + **Pydantic Settings**

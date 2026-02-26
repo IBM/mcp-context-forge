@@ -1,8 +1,10 @@
 # Benchmark MCP Server
 
-> Author: Mihai Criveti
+> Authors: Mihai Criveti, Jonathan Springer
 
 A configurable MCP (Model Context Protocol) server written in Go for benchmarking and load testing. This server can dynamically generate an arbitrary number of tools, resources, and prompts to help you test MCP gateway performance, client behavior, and scalability.
+
+**Note:** used in testing, will add 1000s of sample Tools, Resources and Prompts to test ContextForge behaviour under load.
 
 ## Features
 
@@ -363,4 +365,4 @@ Apache-2.0
 
 ## Contributing
 
-This is a benchmarking tool for the MCP Context Forge project. Contributions are welcome!
+This is a benchmarking tool for ContextForge project. Contributions are welcome!

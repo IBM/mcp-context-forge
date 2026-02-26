@@ -14,13 +14,28 @@ import re
 import uuid
 
 # Third-Party
-from playwright.sync_api import expect
+from playwright.sync_api import Error as PlaywrightError, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 # Local
 from ..pages.admin_utils import cleanup_server, find_server
 from ..pages.servers_page import ServersPage
+
+
+def _reload_catalog_after_create(servers_page: ServersPage) -> None:
+    """Stabilize catalog page after create redirect.
+
+    Some environments race between hash navigation and full document reload,
+    which can surface as ``net::ERR_ABORTED`` on ``page.reload``.
+    """
+    try:
+        servers_page.page.reload(wait_until="domcontentloaded")
+    except PlaywrightError:
+        servers_page.page.goto("/admin#catalog", wait_until="domcontentloaded")
+
+    servers_page.navigate_to_servers_tab()
+    servers_page.wait_for_servers_table_loaded()
 
 
 class TestServersExtended:
@@ -414,20 +429,14 @@ class TestServersExtended:
         expect(catalog_search).to_be_visible()
 
         # Search for something that won't match
-        catalog_search.fill("nonexistent-xyz-server-999")
-
-        # Wait for filtering to take effect
-        servers_page.wait_for_count_change(servers_page.server_items.locator(":visible"), initial_count, timeout=5000)
+        servers_page.search_servers("nonexistent-xyz-server-999")
 
         # Verify filtering occurred
         filtered_count = servers_page.server_items.locator(":visible").count()
         assert filtered_count < initial_count
 
         # Clear search
-        catalog_search.fill("")
-
-        # Wait for servers to be restored
-        servers_page.wait_for_count_change(servers_page.server_items.locator(":visible"), filtered_count, timeout=5000)
+        servers_page.search_servers("")
 
         # Verify servers are restored
         restored_count = servers_page.get_server_count()
@@ -448,9 +457,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _reload_catalog_after_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -495,9 +502,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _reload_catalog_after_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -547,9 +552,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _reload_catalog_after_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -588,9 +591,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _reload_catalog_after_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -635,9 +636,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _reload_catalog_after_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
