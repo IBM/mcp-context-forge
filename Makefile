@@ -580,7 +580,9 @@ clean:
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-altk            - Run tests with ALTK (agent-lifecycle-toolkit) installed
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
-# help: coverage             - Run tests with coverage, emit HTML/XML + badge, generate annotated files
+# help: coverage             - Run tests with coverage, emit HTML/XML + badge
+# help: coverage-pytest      - Run pytest unit tests with coverage collection
+# help: coverage-annotated   - Run coverage and generate annotated source files (.py,cover)
 # help: test-docs            - Run coverage and generate docs/docs/test/unittest.md report
 # help: htmlcov              - (re)build just the HTML coverage report into docs
 # help: test-curl            - Smoke-test API endpoints with curl script
@@ -601,7 +603,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test test-verbose test-altk test-profile coverage-pytest coverage coverage-annotated test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -619,7 +621,8 @@ test:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
+		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
+			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -653,7 +656,7 @@ test-profile:
 		export ARGON2ID_MEMORY_COST=1024 && \
 		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
 
-coverage:
+coverage-pytest:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -665,9 +668,12 @@ coverage:
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
-			--cov=mcpgateway mcpgateway/ || true"
+			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--durations=120 --cov-report=term --cov=mcpgateway \
+			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ \
+			--ignore=tests/e2e/test_entra_id_integration.py || true"
+
+coverage: coverage-pytest
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
@@ -677,16 +683,19 @@ coverage:
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-			--durations=120 --cov-report=term --cov=mcpgateway \
-			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ || true"
+			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
+			--cov=mcpgateway mcpgateway/ || true"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && PYTHONWARNINGS='ignore::UserWarning' coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage report -m --no-skip-covered"
+	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR), XML & badge ✔"
+
+coverage-annotated: coverage
 	@echo "🔍  Generating annotated coverage files..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage annotate -d ."
-	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR), XML, badge & annotated files (.py,cover) ✔"
+	@echo "✅  Annotated files (.py,cover) generated ✔"
 
 test-docs:
 	@echo "📝  Generating test documentation (docs/docs/test/unittest.md)..."
@@ -2627,7 +2636,7 @@ ifneq ($(filter lint lint-quick lint-fix lint-smart,$(MAKECMDGOALS)),)
 endif
 
 # List of individual lint targets
-LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
+LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
 	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
 		pytype check-manifest markdownlint vulture unimport
 
@@ -3741,6 +3750,7 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q tomlcheck 2>/dev/null || true"
 	@find . -type f -name '*.toml' \
+	  -not -path './.cache/*' \
 	  -not -path './plugin_templates/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \

@@ -607,8 +607,8 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_user_token = AsyncMock(return_value="valid_token")
 
-            # Mock connection to fail
-            gateway_service.connect_to_sse_server = AsyncMock(side_effect=GatewayConnectionError("Connection refused"))
+            # Mock the actual method called by fetch_tools_after_oauth to fail
+            gateway_service._connect_to_sse_server_without_validation = AsyncMock(side_effect=GatewayConnectionError("Connection refused"))
 
             # Execute and expect error
             with pytest.raises(GatewayConnectionError) as exc_info:
@@ -666,13 +666,28 @@ class TestGatewayServiceOAuthComprehensive:
                 pass  # Expected if connection setup fails
 
     @pytest.mark.asyncio
-    async def test_oauth_token_refresh_during_health_check(self, gateway_service, mock_oauth_gateway, test_db):
+    @patch("mcpgateway.services.gateway_service.get_isolated_http_client")
+    async def test_oauth_token_refresh_during_health_check(self, mock_get_client, gateway_service, mock_oauth_gateway, test_db):
         """Test OAuth token refresh happens during health checks."""
         # First call returns token1, second call returns token2 (simulating refresh)
         gateway_service.oauth_manager.get_access_token.side_effect = ["token1", "token2"]
 
-        # Mock HTTP client
-        gateway_service._http_client.get = AsyncMock(return_value=MagicMock(status=200))
+        # Mock the isolated HTTP client used by _check_single_gateway_health.
+        # The SSE transport path uses client.stream() as an async context manager.
+        mock_stream_response = MagicMock()
+        mock_stream_response.status_code = 200
+        mock_stream_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_stream_response),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+
+        mock_get_client.return_value = AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_client),
+            __aexit__=AsyncMock(return_value=False),
+        )
 
         # Run health check twice (no db parameter - health checks use fresh_db_session internally)
         await gateway_service.check_health_of_gateways([mock_oauth_gateway], "user@example.com")
@@ -681,8 +696,9 @@ class TestGatewayServiceOAuthComprehensive:
         # Verify OAuth manager was called twice (token refresh)
         assert gateway_service.oauth_manager.get_access_token.call_count == 2
 
-        # Verify different tokens were used
-        calls = gateway_service._http_client.get.call_args_list
-        if len(calls) >= 2:
-            assert calls[0][1]["headers"]["Authorization"] == "Bearer token1"
-            assert calls[1][1]["headers"]["Authorization"] == "Bearer token2"
+        # Verify the correct OAuth tokens were used in the outgoing requests
+        assert mock_client.stream.call_count == 2
+        first_headers = mock_client.stream.call_args_list[0][1].get("headers", {})
+        second_headers = mock_client.stream.call_args_list[1][1].get("headers", {})
+        assert first_headers.get("Authorization") == "Bearer token1"
+        assert second_headers.get("Authorization") == "Bearer token2"

@@ -212,8 +212,18 @@ def server_proc_uds():
             env=current_env,
         ) as server_proc:
             _wait_for_socket(uds_path, proc=server_proc)
-            # Give the server a moment to fully initialize after socket creation
-            time.sleep(5)
+            # Verify the server is actually accepting connections on the UDS
+            _start = time.time()
+            while time.time() - _start < 10:
+                try:
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as _s:
+                        _s.settimeout(0.5)
+                        _s.connect(uds_path)
+                        break
+                except (ConnectionRefusedError, OSError):
+                    time.sleep(0.1)
+            else:
+                raise RuntimeError(f"Server never accepted connections on {uds_path}")
             yield server_proc, uds_path
             server_proc.terminate()
             server_proc.wait(timeout=3)
