@@ -32859,7 +32859,6 @@ function performTeamSelectorSearch(searchTerm) {
 
     // Load results via fetch for reliable error handling; htmx.ajax() does not
     // reject on HTTP 5xx so we cannot detect backend failures with it.
-    const container = document.getElementById("team-selector-items");
     if (container) {
         container.innerHTML =
             '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading\u2026</div>';
