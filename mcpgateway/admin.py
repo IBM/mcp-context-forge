@@ -2479,10 +2479,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
+    visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
-        visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Handle "Select All" for tools
         associated_tools_list = form.getlist("associatedTools")
@@ -2598,8 +2599,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
-    except HTTPException:
-        raise
     except Exception as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -10751,8 +10750,6 @@ async def admin_add_tool(
     except ValidationError as ex:  # This block should catch ValidationError
         LOGGER.error(f"ValidationError in admin_add_tool: {str(ex)}")
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-    except HTTPException:
-        raise
     except Exception as ex:
         LOGGER.error(f"Unexpected error in admin_add_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -10900,8 +10897,6 @@ async def admin_edit_tool(
     except ValidationError as ex:  # Catch Pydantic validation errors
         LOGGER.error(f"ValidationError in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-    except HTTPException:
-        raise
     except Exception as ex:  # Generic catch-all for unexpected errors
         LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -11074,6 +11069,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
     form = await request.form()
+    visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     try:
         # Parse tags from comma-separated string
         tags_str = str(form.get("tags", ""))
@@ -11155,9 +11152,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
                 LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
-
-        visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Handle passthrough_headers
         passthrough_headers = str(form.get("passthrough_headers"))
@@ -11296,8 +11290,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
-    except HTTPException:
-        raise
     except Exception as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -11726,8 +11718,6 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             content={"message": "Add resource registered successfully!", "success": True},
             status_code=200,
         )
-    except HTTPException:
-        raise
     except Exception as ex:
         # Roll back only when a transaction is active to avoid sqlite3 "no transaction" errors.
         try:
@@ -11828,8 +11818,6 @@ async def admin_edit_resource(
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
-    except HTTPException:
-        raise
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
@@ -12064,8 +12052,6 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             content={"message": "Prompt registered successfully!", "success": True},
             status_code=200,
         )
-    except HTTPException:
-        raise
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
@@ -12163,8 +12149,6 @@ async def admin_edit_prompt(
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
-    except HTTPException:
-        raise
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
