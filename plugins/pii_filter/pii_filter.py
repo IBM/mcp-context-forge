@@ -849,8 +849,8 @@ class PIIFilterPlugin(Plugin):
             # Check if this path has detections
             current_detections = all_detections.get(base_path, {})
             if current_detections:
-                # This won't work since strings are immutable, but the caller handles assignment
-                return self.detector.mask(data, current_detections)
+                # Strings are immutable — caller handles assignment
+                return
 
         elif isinstance(data, dict):
             for key, value in data.items():
