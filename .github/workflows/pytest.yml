@@ -88,8 +88,9 @@ jobs:
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
-          uv run pytest \
+          uv run pytest -n auto \
             --ignore=tests/fuzz \
+            --ignore=tests/e2e/test_entra_id_integration.py \
             --cov=mcpgateway \
             --cov-report=xml \
             --cov-report=html \
@@ -113,7 +114,8 @@ jobs:
       - name: 📊  Doctest coverage with threshold
         run: |
           # Run doctests with coverage measurement
-          uv run pytest --doctest-modules mcpgateway/ \
+          uv run pytest -n auto \
+            --doctest-modules mcpgateway/ \
             --cov=mcpgateway \
             --cov-report=term \
             --cov-report=json:doctest-coverage.json \

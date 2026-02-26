@@ -2081,6 +2081,8 @@ class TestGatewayService:
         session.execute.return_value = _make_execute_result(scalar=existing_gateway)
         session.commit = MagicMock()
         session.refresh = MagicMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+        gateway_service._publish_event = AsyncMock()
 
         # Update to cache mode
         update_data = GatewayUpdate(gateway_mode="cache")
@@ -6223,6 +6225,8 @@ class TestSetGatewayStateActivation:
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
         monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+        gateway_service._publish_event = AsyncMock()
 
         result = await gateway_service.set_gateway_state(
             db, mock_gateway.id, activate=True, reachable=True, only_update_reachable=True
