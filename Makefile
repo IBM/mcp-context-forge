@@ -2078,7 +2078,7 @@ JMETER_RENDER := python3 $(JMETER_DIR)/render_fragments.py --out $(JMETER_RENDER
 JMETER_GATEWAY_URL ?= http://localhost:8080
 export JMETER_OPTS ?= -Djava.util.prefs.userRoot=/tmp/jmeter-prefs -Djava.util.prefs.systemRoot=/tmp/jmeter-prefs
 JMETER_JWT_SECRET ?= $(or $(JWT_SECRET_KEY),my-test-key)
-JMETER_TOKEN ?= $(shell python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $(JMETER_JWT_SECRET) 2>/dev/null || echo "")
+JMETER_TOKEN ?= $(shell python3 -m mcpgateway.utils.create_jwt_token --data '{"sub":"admin@example.com","is_admin":true,"teams":null}' --exp 10080 --secret $(JMETER_JWT_SECRET) 2>/dev/null || echo "")
 JMETER_SERVER_ID ?=
 JMETER_FAST_TIME_URL ?= http://localhost:8888
 JMETER_FAST_TEST_URL ?= http://localhost:8880
