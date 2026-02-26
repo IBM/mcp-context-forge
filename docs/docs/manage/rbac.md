@@ -179,7 +179,7 @@ These three values are related, but they control different things:
 
 Key points:
 
-1. `is_admin` does **not** automatically mean “see everything”.
+1. `is_admin` does **not** automatically mean "see everything".
 2. Visibility comes from normalized `token_teams`:
    - `None` = admin bypass scope
    - `[]` = public-only scope
