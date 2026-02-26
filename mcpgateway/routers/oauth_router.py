@@ -486,6 +486,7 @@ async def oauth_callback(
             )
 
         def _invalid_state_response() -> HTMLResponse:
+            """Return an HTML error page for invalid or missing OAuth state."""
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>

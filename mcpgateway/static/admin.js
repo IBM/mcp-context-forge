@@ -272,6 +272,62 @@ function updateDefaultVisibility() {
     });
 }
 
+/**
+ * Toggle "View Public" for server selectors.
+ * When checked, removes team_id from HTMX URLs so public items are included.
+ * When unchecked, re-adds team_id to filter to team-only items.
+ *
+ * @param {string} checkboxId - ID of the View Public checkbox
+ * @param {string[]} containerIds - IDs of the HTMX selector containers to update
+ * @param {string} teamId - The current team_id value
+ */
+function toggleViewPublic(checkboxId, containerIds, teamId) {
+    const checkbox = document.getElementById(checkboxId);
+    if (!checkbox || !teamId) return;
+
+    checkbox.onchange = function () {
+        const includePublic = this.checked;
+
+        // Capture current gateway selection so we can preserve it in reloaded URLs
+        const selectedGatewayIds =
+            typeof getSelectedGatewayIds === "function"
+                ? getSelectedGatewayIds()
+                : [];
+        const gatewayIdParam =
+            selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+        containerIds.forEach((containerId) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            let url = container.getAttribute("hx-get");
+            if (!url) return;
+
+            if (includePublic) {
+                // Remove team_id param to show team + public items
+                url = url.replace(/&team_id=[^&]*/, "");
+            } else {
+                // Add team_id param back to filter to team-only
+                if (!url.includes("team_id=")) {
+                    url += `&team_id=${encodeURIComponent(teamId)}`;
+                }
+            }
+
+            // Preserve active gateway filter so toggling View Public
+            // does not drop the user's gateway selection
+            url = url.replace(/&gateway_id=[^&]*/, "");
+            if (gatewayIdParam) {
+                url += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+            }
+
+            container.setAttribute("hx-get", url);
+            // Re-process HTMX attributes and trigger re-fetch
+            htmx.process(container);
+            htmx.trigger(container, "load");
+        });
+    };
+}
+
 // Attach event listener after DOM is loaded or when modal opens
 document.addEventListener("DOMContentLoaded", function () {
     const TypeField = document.getElementById("edit-tool-type");
@@ -283,6 +339,23 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize default visibility based on URL team_id
     updateDefaultVisibility();
+
+    // Initialize View Public toggle for Add Server modal
+    const addServerTeamId = new URL(window.location.href).searchParams.get(
+        "team_id",
+    );
+    if (addServerTeamId) {
+        toggleViewPublic(
+            "add-server-view-public",
+            [
+                "associatedGateways",
+                "associatedTools",
+                "associatedResources",
+                "associatedPrompts",
+            ],
+            addServerTeamId,
+        );
+    }
 
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
@@ -6590,6 +6663,26 @@ async function editServer(serverId) {
             editForm.appendChild(hiddenInput);
         }
 
+        // Initialize View Public toggle for Edit Server modal
+        if (teamId) {
+            const viewPublicCheckbox = document.getElementById(
+                "edit-server-view-public",
+            );
+            if (viewPublicCheckbox) {
+                viewPublicCheckbox.checked = false; // Default unchecked
+            }
+            toggleViewPublic(
+                "edit-server-view-public",
+                [
+                    "associatedEditGateways",
+                    "edit-server-tools",
+                    "edit-server-resources",
+                    "edit-server-prompts",
+                ],
+                teamId,
+            );
+        }
+
         // Set form action and populate fields with validation
         if (editForm) {
             editForm.action = `${window.ROOT_PATH}/admin/servers/${serverId}/edit`;
@@ -6811,6 +6904,92 @@ async function editServer(serverId) {
                 }
             });
         }, 350);
+
+        // Auto-enable "View Public" if server has public associations not visible in team-filtered selectors
+        if (teamId) {
+            setTimeout(() => {
+                const viewPublicCheckbox = document.getElementById(
+                    "edit-server-view-public",
+                );
+                if (!viewPublicCheckbox || viewPublicCheckbox.checked) return;
+
+                let hasMissingItems = false;
+
+                // Check tools
+                const toolsContainer =
+                    document.getElementById("edit-server-tools");
+                if (toolsContainer && server.associatedToolIds) {
+                    const visibleToolIds = new Set(
+                        Array.from(
+                            toolsContainer.querySelectorAll(
+                                'input[name="associatedTools"]',
+                            ),
+                        ).map((cb) => String(cb.value)),
+                    );
+                    for (const id of server.associatedToolIds) {
+                        if (!visibleToolIds.has(String(id))) {
+                            hasMissingItems = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Check resources
+                if (!hasMissingItems) {
+                    const resourcesContainer = document.getElementById(
+                        "edit-server-resources",
+                    );
+                    if (resourcesContainer && server.associatedResources) {
+                        const visibleResourceIds = new Set(
+                            Array.from(
+                                resourcesContainer.querySelectorAll(
+                                    'input[name="associatedResources"]',
+                                ),
+                            ).map((cb) => String(cb.value)),
+                        );
+                        for (const id of server.associatedResources) {
+                            if (!visibleResourceIds.has(String(id))) {
+                                hasMissingItems = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Check prompts
+                if (!hasMissingItems) {
+                    const promptsContainer = document.getElementById(
+                        "edit-server-prompts",
+                    );
+                    if (promptsContainer && server.associatedPrompts) {
+                        const visiblePromptIds = new Set(
+                            Array.from(
+                                promptsContainer.querySelectorAll(
+                                    'input[name="associatedPrompts"]',
+                                ),
+                            ).map((cb) => String(cb.value)),
+                        );
+                        for (const id of server.associatedPrompts) {
+                            if (!visiblePromptIds.has(String(id))) {
+                                hasMissingItems = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (hasMissingItems) {
+                    console.log(
+                        "Auto-enabling View Public: server has associations not visible in team-filtered selectors",
+                    );
+                    viewPublicCheckbox.checked = true;
+                    viewPublicCheckbox.dispatchEvent(new Event("change"));
+                    // Re-run association setting after the re-fetch completes
+                    setTimeout(() => setEditServerAssociations(server), 500);
+                    setTimeout(() => setEditServerAssociations(server), 1000);
+                }
+            }, 500); // Wait for HTMX selectors to finish loading
+        }
 
         console.log("✓ Server edit modal loaded successfully");
     } catch (error) {
@@ -10313,10 +10492,16 @@ function initGatewaySelect(
             newSelectBtn.textContent = "Selecting all gateways...";
 
             try {
-                // Fetch all gateway IDs from the server
+                // Fetch all gateway IDs from the server.
+                // Respect View Public checkbox: omit team_id when checked.
+                // Use the correct checkbox for the active modal context.
                 const selectedTeamId = getCurrentTeamId();
+                const vpCbId = selectId.includes("Edit")
+                    ? "edit-server-view-public"
+                    : "add-server-view-public";
+                const vpCb = document.getElementById(vpCbId);
                 const params = new URLSearchParams();
-                if (selectedTeamId) {
+                if (selectedTeamId && (!vpCb || !vpCb.checked)) {
                     params.set("team_id", selectedTeamId);
                 }
                 const queryString = params.toString();
@@ -10622,12 +10807,25 @@ function reloadAssociatedItems() {
         ? "edit-server-prompts"
         : "associatedPrompts";
 
+    // Respect View Public checkbox: include team_id only when unchecked
+    const vpCheckboxId = useEditContainers
+        ? "edit-server-view-public"
+        : "add-server-view-public";
+    const vpCheckbox = document.getElementById(vpCheckboxId);
+    const urlTeamId = new URL(window.location.href).searchParams.get("team_id");
+    const teamIdSuffix =
+        urlTeamId && (!vpCheckbox || !vpCheckbox.checked)
+            ? `&team_id=${encodeURIComponent(urlTeamId)}`
+            : "";
+
     // Reload tools
     const toolsContainer = document.getElementById(toolsContainerId);
     if (toolsContainer) {
-        const toolsUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+        let toolsUrl = `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            toolsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        toolsUrl += teamIdSuffix;
 
         console.log(
             "[Filter Update DEBUG] Tools URL:",
@@ -10690,9 +10888,11 @@ function reloadAssociatedItems() {
     // Reload resources - use fetch directly to avoid HTMX race conditions
     const resourcesContainer = document.getElementById(resourcesContainerId);
     if (resourcesContainer) {
-        const resourcesUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+        let resourcesUrl = `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            resourcesUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        resourcesUrl += teamIdSuffix;
 
         console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
 
@@ -10891,9 +11091,11 @@ function reloadAssociatedItems() {
     // Reload prompts
     const promptsContainer = document.getElementById(promptsContainerId);
     if (promptsContainer) {
-        const promptsUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+        let promptsUrl = `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            promptsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        promptsUrl += teamIdSuffix;
 
         // Flush current DOM state into the Map store before HTMX replaces the container
         if (promptsContainerId === "associatedPrompts") {
@@ -26948,9 +27150,20 @@ async function serverSideToolSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool list with gateway filter
         try {
-            const toolsUrl = gatewayIdParam
+            let toolsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: include team_id only when unchecked
+            const viewPublicCb = document.getElementById(
+                "add-server-view-public",
+            );
+            const urlTeamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+                toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
 
             console.log(
                 `[Tool Search] Loading default tools with URL: ${toolsUrl}`,
@@ -27025,7 +27238,11 @@ async function serverSideToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        if (selectedTeamId) {
+        // Respect View Public checkbox state: include team_id only when unchecked
+        const addViewPublicCb = document.getElementById(
+            "add-server-view-public",
+        );
+        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
             params.set("team_id", selectedTeamId);
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
@@ -27249,9 +27466,20 @@ async function serverSidePromptSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompt selector with gateway filter
         try {
-            const promptsUrl = gatewayIdParam
+            let promptsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: include team_id only when unchecked
+            const viewPublicCb = document.getElementById(
+                "add-server-view-public",
+            );
+            const urlTeamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+                promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
 
             console.log(
                 `[Prompt Search] Loading default prompts with URL: ${promptsUrl}`,
@@ -27325,7 +27553,11 @@ async function serverSidePromptSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        if (selectedTeamId) {
+        // Respect View Public checkbox state: include team_id only when unchecked
+        const addViewPublicCb = document.getElementById(
+            "add-server-view-public",
+        );
+        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
             params.set("team_id", selectedTeamId);
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
@@ -27469,9 +27701,20 @@ async function serverSideResourceSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default resource selector with gateway filter
         try {
-            const resourcesUrl = gatewayIdParam
+            let resourcesUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: include team_id only when unchecked
+            const viewPublicCb = document.getElementById(
+                "add-server-view-public",
+            );
+            const urlTeamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+                resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
 
             console.log(
                 `[Resource Search] Loading default resources with URL: ${resourcesUrl}`,
@@ -27541,7 +27784,11 @@ async function serverSideResourceSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        if (selectedTeamId) {
+        // Respect View Public checkbox state: include team_id only when unchecked
+        const addViewPublicCb = document.getElementById(
+            "add-server-view-public",
+        );
+        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
             params.set("team_id", selectedTeamId);
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
@@ -27702,9 +27949,20 @@ async function serverSideEditToolSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool selector partial with gateway filter
         try {
-            const toolsUrl = gatewayIdParam
+            let toolsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: include team_id only when unchecked
+            const viewPublicCb = document.getElementById(
+                "edit-server-view-public",
+            );
+            const urlTeamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+                toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
 
             const response = await fetch(toolsUrl);
             if (response.ok) {
@@ -27822,7 +28080,14 @@ async function serverSideEditToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        if (selectedTeamId) {
+        // Respect View Public checkbox state: include team_id only when unchecked
+        const editViewPublicCb = document.getElementById(
+            "edit-server-view-public",
+        );
+        if (
+            selectedTeamId &&
+            (!editViewPublicCb || !editViewPublicCb.checked)
+        ) {
             params.set("team_id", selectedTeamId);
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
@@ -28011,9 +28276,20 @@ async function serverSideEditPromptsSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompts selector partial with gateway filter
         try {
-            const promptsUrl = gatewayIdParam
+            let promptsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: include team_id only when unchecked
+            const viewPublicCb = document.getElementById(
+                "edit-server-view-public",
+            );
+            const urlTeamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+                promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
 
             console.log(
                 `[Edit Prompt Search] Loading default prompts with URL: ${promptsUrl}`,
@@ -28119,7 +28395,14 @@ async function serverSideEditPromptsSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        if (selectedTeamId) {
+        // Respect View Public checkbox state: include team_id only when unchecked
+        const editViewPublicCb = document.getElementById(
+            "edit-server-view-public",
+        );
+        if (
+            selectedTeamId &&
+            (!editViewPublicCb || !editViewPublicCb.checked)
+        ) {
             params.set("team_id", selectedTeamId);
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
@@ -28310,9 +28593,20 @@ async function serverSideEditResourcesSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default resources selector partial with gateway filter
         try {
-            const resourcesUrl = gatewayIdParam
+            let resourcesUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: include team_id only when unchecked
+            const viewPublicCb = document.getElementById(
+                "edit-server-view-public",
+            );
+            const urlTeamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+                resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
 
             console.log(
                 `[Edit Resource Search] Loading default resources with URL: ${resourcesUrl}`,
@@ -28415,7 +28709,14 @@ async function serverSideEditResourcesSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        if (selectedTeamId) {
+        // Respect View Public checkbox state: include team_id only when unchecked
+        const editViewPublicCb = document.getElementById(
+            "edit-server-view-public",
+        );
+        if (
+            selectedTeamId &&
+            (!editViewPublicCb || !editViewPublicCb.checked)
+        ) {
             params.set("team_id", selectedTeamId);
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
