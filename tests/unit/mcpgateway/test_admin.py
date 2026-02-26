@@ -17820,6 +17820,26 @@ class TestAdminCsrfProtection:
 
         assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp/admin"
 
+    def test_admin_cookie_path_returns_default_when_both_scope_and_settings_empty(self, monkeypatch):
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._admin_cookie_path(request) == "/admin"
+
+    def test_admin_cookie_path_strips_trailing_slash_from_scope_root_path(self, monkeypatch):
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "/mounted/"}
+
+        assert admin_mod._admin_cookie_path(request) == "/mounted/admin"
+
 
 # ---------------------------------------------------------------------------
 # Pagination variable cascade isolation (#3244)
