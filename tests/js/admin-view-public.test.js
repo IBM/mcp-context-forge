@@ -11,7 +11,15 @@
  *  - Early-return guards (missing checkbox, missing teamId, missing container)
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import {
+    describe,
+    test,
+    expect,
+    beforeAll,
+    beforeEach,
+    afterAll,
+    vi,
+} from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -93,9 +101,7 @@ describe("toggleViewPublic — URL mutation", () => {
         cb.checked = false;
         cb.dispatchEvent(new win.Event("change"));
 
-        expect(container.getAttribute("hx-get")).toContain(
-            "team_id=team-abc",
-        );
+        expect(container.getAttribute("hx-get")).toContain("team_id=team-abc");
     });
 
     test("round-trip check → uncheck → check leaves team_id absent", () => {
@@ -334,5 +340,92 @@ describe("toggleViewPublic — early-return guards", () => {
         cb.dispatchEvent(new win.Event("change"));
 
         expect(win.htmx.process).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// toggleViewPublic — gateway_id preservation
+// ---------------------------------------------------------------------------
+
+describe("toggleViewPublic — gateway_id preservation", () => {
+    test("preserves gateway_id already present in hx-get when toggling", () => {
+        makeCheckbox("add-server-view-public");
+        const container = makeHtmxContainer(
+            "associatedTools",
+            "/admin/tools/partial?page=1&render=selector&gateway_id=gw-1&team_id=team-abc",
+        );
+
+        // No getSelectedGatewayIds available — falls back to empty
+        win.getSelectedGatewayIds = undefined;
+
+        win.toggleViewPublic(
+            "add-server-view-public",
+            ["associatedTools"],
+            "team-abc",
+        );
+
+        const cb = doc.getElementById("add-server-view-public");
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change"));
+
+        const url = container.getAttribute("hx-get");
+        // team_id removed, gateway_id stripped (no active selection)
+        expect(url).not.toContain("team_id");
+        expect(url).not.toContain("gateway_id");
+    });
+
+    test("injects current gateway selection into hx-get on toggle", () => {
+        makeCheckbox("add-server-view-public");
+        const container = makeHtmxContainer(
+            "associatedTools",
+            "/admin/tools/partial?page=1&render=selector&team_id=team-abc",
+        );
+
+        // Simulate selected gateways
+        win.getSelectedGatewayIds = () => ["gw-1", "gw-2"];
+
+        win.toggleViewPublic(
+            "add-server-view-public",
+            ["associatedTools"],
+            "team-abc",
+        );
+
+        const cb = doc.getElementById("add-server-view-public");
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change"));
+
+        const url = container.getAttribute("hx-get");
+        expect(url).not.toContain("team_id");
+        expect(url).toContain("gateway_id=gw-1%2Cgw-2");
+    });
+
+    test("round-trip preserves gateway_id when unchecking", () => {
+        makeCheckbox("add-server-view-public");
+        const container = makeHtmxContainer(
+            "associatedTools",
+            "/admin/tools/partial?page=1&render=selector&team_id=team-abc",
+        );
+
+        win.getSelectedGatewayIds = () => ["gw-1"];
+
+        win.toggleViewPublic(
+            "add-server-view-public",
+            ["associatedTools"],
+            "team-abc",
+        );
+
+        const cb = doc.getElementById("add-server-view-public");
+
+        // check
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change"));
+
+        // uncheck
+        cb.checked = false;
+        cb.dispatchEvent(new win.Event("change"));
+
+        const url = container.getAttribute("hx-get");
+        expect(url).toContain("team_id=team-abc");
+        expect(url).toContain("gateway_id=gw-1");
     });
 });

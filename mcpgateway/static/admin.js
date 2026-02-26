@@ -288,6 +288,14 @@ function toggleViewPublic(checkboxId, containerIds, teamId) {
     checkbox.onchange = function () {
         const includePublic = this.checked;
 
+        // Capture current gateway selection so we can preserve it in reloaded URLs
+        const selectedGatewayIds =
+            typeof getSelectedGatewayIds === "function"
+                ? getSelectedGatewayIds()
+                : [];
+        const gatewayIdParam =
+            selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
         containerIds.forEach((containerId) => {
             const container = document.getElementById(containerId);
             if (!container) return;
@@ -303,6 +311,13 @@ function toggleViewPublic(checkboxId, containerIds, teamId) {
                 if (!url.includes("team_id=")) {
                     url += `&team_id=${encodeURIComponent(teamId)}`;
                 }
+            }
+
+            // Preserve active gateway filter so toggling View Public
+            // does not drop the user's gateway selection
+            url = url.replace(/&gateway_id=[^&]*/, "");
+            if (gatewayIdParam) {
+                url += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
             }
 
             container.setAttribute("hx-get", url);
@@ -10477,10 +10492,14 @@ function initGatewaySelect(
             newSelectBtn.textContent = "Selecting all gateways...";
 
             try {
-                // Fetch all gateway IDs from the server
+                // Fetch all gateway IDs from the server.
+                // Respect View Public checkbox: omit team_id when checked.
                 const selectedTeamId = getCurrentTeamId();
+                const vpCb =
+                    document.getElementById("add-server-view-public") ||
+                    document.getElementById("edit-server-view-public");
                 const params = new URLSearchParams();
-                if (selectedTeamId) {
+                if (selectedTeamId && (!vpCb || !vpCb.checked)) {
                     params.set("team_id", selectedTeamId);
                 }
                 const queryString = params.toString();
@@ -10786,12 +10805,25 @@ function reloadAssociatedItems() {
         ? "edit-server-prompts"
         : "associatedPrompts";
 
+    // Respect View Public checkbox: include team_id only when unchecked
+    const vpCheckboxId = useEditContainers
+        ? "edit-server-view-public"
+        : "add-server-view-public";
+    const vpCheckbox = document.getElementById(vpCheckboxId);
+    const urlTeamId = new URL(window.location.href).searchParams.get("team_id");
+    const teamIdSuffix =
+        urlTeamId && (!vpCheckbox || !vpCheckbox.checked)
+            ? `&team_id=${encodeURIComponent(urlTeamId)}`
+            : "";
+
     // Reload tools
     const toolsContainer = document.getElementById(toolsContainerId);
     if (toolsContainer) {
-        const toolsUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+        let toolsUrl = `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            toolsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        toolsUrl += teamIdSuffix;
 
         console.log(
             "[Filter Update DEBUG] Tools URL:",
@@ -10854,9 +10886,11 @@ function reloadAssociatedItems() {
     // Reload resources - use fetch directly to avoid HTMX race conditions
     const resourcesContainer = document.getElementById(resourcesContainerId);
     if (resourcesContainer) {
-        const resourcesUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+        let resourcesUrl = `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            resourcesUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        resourcesUrl += teamIdSuffix;
 
         console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
 
@@ -11055,9 +11089,11 @@ function reloadAssociatedItems() {
     // Reload prompts
     const promptsContainer = document.getElementById(promptsContainerId);
     if (promptsContainer) {
-        const promptsUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+        let promptsUrl = `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            promptsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        promptsUrl += teamIdSuffix;
 
         // Flush current DOM state into the Map store before HTMX replaces the container
         if (promptsContainerId === "associatedPrompts") {
