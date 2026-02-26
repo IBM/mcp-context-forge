@@ -4,7 +4,7 @@
 // Stub file generator for pii_filter module
 //
 // This binary generates Python type stub files (.pyi) for the pii_filter module.
-// Run with: cargo run --bin stub_gen
+// Run with: cargo run --bin pii_filter_stub_gen
 
 use pii_filter_rust::stub_info;
 

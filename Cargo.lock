@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "a2a_service"
+name = "a2a_agent_service"
 version = "1.0.0-BETA-2"
 
 [[package]]

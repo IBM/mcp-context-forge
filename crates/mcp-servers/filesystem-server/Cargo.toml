@@ -29,18 +29,7 @@ axum-test = "18.7.0"
 bytes = "1.11.0"
 http = "1.4.0"
 hyper = "1.8.1"
-reqwest = { version = "0.13.1", default-features = false, features = [
-    "native-tls",
-    "json",
-] }
+reqwest = { version = "0.13.1", default-features = false, features = ["native-tls", "json"] }
 tokio-test = "0.4.5"
 tokio-util = "0.7.18"
 tower = "0.5.3"
-
-
-[profile.release]
-opt-level = 'z'   # Optimize for size
-lto = true        # Enable link-time optimization
-codegen-units = 1 # Reduce number of codegen units to increase optimizations
-panic = 'abort'   # Abort on panic
-strip = true      # Strip symbols from binary*

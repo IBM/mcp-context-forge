@@ -23,14 +23,6 @@ regex = "1.12"
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 
-[profile.release]
-opt-level = 3
-lto = "fat"
-
-[profile.bench]
-inherits = "release"
-debug = true
-
 [[bench]]
 name = "secrets_detection"
 harness = false

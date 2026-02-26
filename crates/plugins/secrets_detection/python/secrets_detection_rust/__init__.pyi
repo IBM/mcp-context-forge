@@ -3,7 +3,6 @@
 
 import builtins
 import typing
-
 __all__ = [
     "py_scan_container",
 ]
@@ -12,3 +11,4 @@ def py_scan_container(container: typing.Any, config: typing.Any) -> tuple[builti
     r"""
     Scan Python container for secrets using optimized type dispatch
     """
+

@@ -32,42 +32,38 @@ crates/plugins/
 # Install Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Build all maturin crates in the workspace (from repo root; includes crates/plugins, crates/tools, etc.)
+# Build all maturin crates in the workspace (from repo root; includes crates/plugins, crates/tools, crates/mcpgateway, etc.)
 make rust-install
 
 # Or build a specific plugin
-cd crates/plugins/pii_filter && make install
+cd crates/plugins/pii_filter && maturin develop --release
 ```
 
 ## 🔧 Development
 
 ```bash
 # Per-plugin commands (run from plugin directory, e.g. crates/plugins/pii_filter)
-make install          # Install plugin
-make test             # Run tests
-make test-verbose     # Run tests with output
-make bench            # Run benchmarks
-make fmt              # Format code
-make fmt-check        # Check format (CI)
-make clippy           # Lint
-make doc              # Build Rust docs
+maturin develop --release   # Install plugin
+cargo test                  # Run tests
+cargo bench                 # Run benchmarks
+cargo fmt                   # Format code
+cargo clippy                # Lint
 
 # All maturin crates (from repo root)
-make rust-test        # Test workspace
-make rust-check       # Format, clippy, test all
-make rust-audit       # Security audit
+make rust-test              # Test workspace
+make rust-format            # Format all
+make rust-lint              # Lint all
 ```
 
 ## 🧪 Verification
 
 ```bash
-# Verify installation (PII filter example)
-python -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter OK')"
+# Verify installation
+python -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('OK')"
 
 # Security audit (from repo root)
 make rust-audit
-# Or per plugin:
-cd crates/plugins/pii_filter && cargo audit
+# Or: cd crates/plugins/pii_filter && cargo audit
 ```
 
 Rust plugins auto-activate with graceful Python fallback. Start gateway normally with `make dev` or `make serve`.

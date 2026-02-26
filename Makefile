@@ -7850,20 +7850,28 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # =============================================================================
 # help: 🦀 RUST
 # help: -----------------------------------------------------------------------------
-# help: Workspace-wide (all crates):
+# help: Rust (auto-installs Rust + maturin if needed)
+# help: ========================================================================================================
+# help: rust-install                          - Install maturin crates into venv
 # help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are available
 # help: rust-build                            - Build Rust workspace (release)
-# help: rust-build-check                      - Build workspace (debug) + verify maturin crates build
+# help: rust-dev                              - Build and install maturin crates (development mode)
 # help: rust-test                             - Run Rust workspace tests
+# help: rust-test-integration                 - Run Rust integration tests
+# help: rust-test-all                         - Run all Rust and Python integration tests
+# help: rust-bench                            - Run Rust workspace benchmarks
+# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
+# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
+# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
+# help: rust-build-check                      - Build workspace (debug, no release)
 # help: rust-format                           - Format Rust code (cargo fmt)
 # help: rust-fmt-check                        - Check formatting (cargo fmt --check)
 # help: rust-lint                             - Lint Rust code (cargo clippy)
-# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
-# help: rust-doc                              - Build Rust documentation
-# help: rust-audit                            - Run cargo audit (security)
-# help: rust-licenses                         - Run cargo-deny license check
-# help: rust-coverage                         - Run coverage (cargo-llvm-cov)
+# help: rust-verify                           - Verify maturin crate installation
+# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for maturin crates
+# help: rust-stub-gen                         - Generate Python type stubs for maturin crates (workspace)
 # help: rust-clean                            - Clean Rust build artifacts
+# help: rust-licenses                         - Run cargo-deny license check (workspace)
 # help:
 # help: Maturin (Python bindings, crates/plugins):
 # help: rust-install                          - Install maturin crates into venv
@@ -7897,11 +7905,11 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 .PHONY: rust-plugins-build rust-plugins-test rust-plugins-fmt-check rust-plugins-clippy
 .PHONY: rust-tools-build rust-tools-test rust-tools-fmt-check rust-tools-clippy
 
-# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml
+# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml (plugins, tools, mcpgateway, etc.)
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
 
 # Per-subfolder crate directories (for build/test/fmt/clippy)
-RUST_GATEWAY_DIRS   := $(shell find crates/mcpgateway crates/gateway_rs -maxdepth 3 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+RUST_GATEWAY_DIRS   := $(shell find crates/mcpgateway -maxdepth 3 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 RUST_MCP_DIRS       := $(shell find crates/mcp-servers -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 RUST_PLUGINS_DIRS   := $(shell find crates/plugins -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 RUST_TOOLS_DIRS     := $(shell find crates/tools -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
@@ -8106,12 +8114,6 @@ rust-stub-gen: rust-ensure-deps         ## Generate Python type stubs for maturi
 		fi; \
 	done
 	@echo "✅ All stub files generated"
-
-rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
-	@$(MAKE) -C plugins_rust verify-stubs
-
-rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
-	@$(MAKE) -C plugins_rust clean-stubs
 
 rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
 	@echo "✅ Rust build dependencies installed"

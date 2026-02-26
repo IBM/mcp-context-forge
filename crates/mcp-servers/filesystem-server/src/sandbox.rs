@@ -131,11 +131,9 @@ mod tests {
             .resolve_path(file_path.to_str().unwrap())
             .await
             .unwrap();
-
-        // On macOS, temp paths may be canonicalized from /var to /private/var
-        // So we compare against the canonicalized temp_dir path
-        let expected_canon = fs::canonicalize(temp_dir.path()).await.unwrap();
-        assert!(canon.starts_with(&expected_canon));
+        // On macOS, temp_dir.path() may be /var/... while canonical form is /private/var/...
+        let canon_root = stdfs::canonicalize(temp_dir.path()).unwrap();
+        assert!(canon.starts_with(&canon_root));
     }
 
     #[tokio::test]
