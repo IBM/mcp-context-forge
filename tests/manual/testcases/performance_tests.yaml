@@ -105,3 +105,10 @@ tests:
     test_method: "Test concurrent A2A agent calls, measure response times"
     success_criteria: "Agent calls handled efficiently, timeouts respected"
     tools_used: "Agent testing framework"
+
+  - test_id: "PERF-013"
+    performance_area: "CONC-01 Same-Name Create Race"
+    load_parameters: "100 parallel POST /servers with identical name"
+    test_method: "Run: CONC_TOKEN=<token> CONC_N=100 python tests/manual/concurrency/conc_01_parallel_create.py"
+    success_criteria: "Exactly 1x 201 and 99x 409; any other status/error is a failure"
+    tools_used: "Python asyncio + httpx manual script"
