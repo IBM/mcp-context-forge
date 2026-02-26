@@ -523,12 +523,8 @@ class PluginManager:
     _registry: PluginInstanceRegistry = PluginInstanceRegistry()
     _config: Config | None = None
     _config_path: str | None = None
-<<<<<<< fix/plugin-dirs-sys-path
     _executor: PluginExecutor = PluginExecutor()
     _added_plugin_dirs: list[str] = []
-=======
-    _executor: PluginExecutor | None = None
->>>>>>> main
 
     def __init__(
         self,
