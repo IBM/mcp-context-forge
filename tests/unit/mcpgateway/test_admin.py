@@ -43,6 +43,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_timeseries_metrics_postgresql,
     _get_timeseries_metrics_python,
     _get_user_team_roles,
+    _build_admin_redirect,
     _normalize_team_id,
     _normalize_search_query,
     _owner_access_condition,
@@ -2847,9 +2848,7 @@ class TestNormalizeUiHideValues:
         assert result == {"tools", "prompts"}
 
     def test_alias_resolution(self):
-        result = _normalize_ui_hide_values(
-            "catalog,a2a,api_tokens", UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
-        )
+        result = _normalize_ui_hide_values("catalog,a2a,api_tokens", UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
         assert result == {"servers", "agents", "tokens"}
 
     def test_no_aliases_when_none(self):
@@ -2892,9 +2891,7 @@ class TestUIVisibilityConfig:
         request.query_params = {"ui_hide": "prompts,tools,invalid"}
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
 
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_sections", ["teams"], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["teams"], raising=False)
         monkeypatch.setattr(
             settings,
             "mcpgateway_ui_hide_header_items",
@@ -2924,12 +2921,8 @@ class TestUIVisibilityConfig:
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources,catalog"}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_embedded", False, raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
 
@@ -2945,12 +2938,8 @@ class TestUIVisibilityConfig:
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_embedded", False, raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
 
@@ -2965,9 +2954,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -2985,9 +2972,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -3006,9 +2991,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -3064,7 +3047,11 @@ class TestAdminUIRoute:
 
         # Ensure no sections are hidden (env may set MCPGATEWAY_UI_HIDE_SECTIONS)
         # Patch logger to verify logging occurred
-        with patch("mcpgateway.admin.LOGGER.exception") as mock_log, patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources), patch.object(settings, "mcpgateway_ui_hide_sections", []):
+        with (
+            patch("mcpgateway.admin.LOGGER.exception") as mock_log,
+            patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources),
+            patch.object(settings, "mcpgateway_ui_hide_sections", []),
+        ):
             response = await admin_ui(
                 request=mock_request,
                 team_id=None,
@@ -3283,9 +3270,7 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
@@ -3333,9 +3318,7 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
@@ -3382,9 +3365,7 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
@@ -6842,7 +6823,11 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
     auth_service = MagicMock()
     auth_service.list_users = AsyncMock(
         return_value=SimpleNamespace(
-            data=[SimpleNamespace(email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)],
+            data=[
+                SimpleNamespace(
+                    email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False
+                )
+            ],
             pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
         )
     )
@@ -10527,8 +10512,20 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
-    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
+    metadata.extract_creation_metadata = MagicMock(
+        return_value={
+            "created_by": "user@example.com",
+            "created_from_ip": "1.1.1.1",
+            "created_via": "ui",
+            "created_user_agent": "test/1.0",
+            "import_batch_id": None,
+            "federation_source": None,
+            "version": 1,
+        }
+    )
+    metadata.extract_modification_metadata = MagicMock(
+        return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1}
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10579,7 +10576,9 @@ async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
+    metadata.extract_modification_metadata = MagicMock(
+        return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1}
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10613,7 +10612,17 @@ async def test_admin_create_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
+    metadata.extract_creation_metadata = MagicMock(
+        return_value={
+            "created_by": "user@example.com",
+            "created_from_ip": "1.1.1.1",
+            "created_via": "ui",
+            "created_user_agent": "test/1.0",
+            "import_batch_id": None,
+            "federation_source": None,
+            "version": 1,
+        }
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -13204,6 +13213,28 @@ class TestUtilityFunctions:
         with pytest.raises(HTTPException) as exc_info:
             _validated_team_id_param("bad")
         assert exc_info.value.status_code == 400
+
+    def test_build_admin_redirect_with_invalid_team_id(self):
+        result = _build_admin_redirect("/", "tools", team_id="invalid-uuid")
+        assert result == "//admin#tools"
+
+    def test_build_admin_redirect_with_valid_team_id(self):
+        uid = "12345678-1234-5678-1234-567812345678"
+        result = _build_admin_redirect("/", "tools", team_id=uid)
+        assert "team_id=12345678123456781234567812345678" in result
+
+    def test_build_admin_redirect_with_error_and_team_id(self):
+        uid = "12345678-1234-5678-1234-567812345678"
+        result = _build_admin_redirect("/", "tools", error="some error", team_id=uid)
+        assert "error=some%20error" in result
+        assert "team_id=12345678123456781234567812345678" in result
+        assert "#tools" in result
+
+    def test_build_admin_redirect_with_include_inactive_and_team_id(self):
+        uid = "12345678-1234-5678-1234-567812345678"
+        result = _build_admin_redirect("/", "tools", include_inactive=True, team_id=uid)
+        assert "include_inactive=true" in result
+        assert "team_id=12345678123456781234567812345678" in result
 
     def test_get_client_ip_forwarded_for(self):
         request = MagicMock(spec=Request)
@@ -17215,6 +17246,7 @@ class TestAdminTokensPartialSearch:
                 mock_service_cls.return_value.unlock_user_account = AsyncMock(side_effect=RuntimeError("boom"))
                 response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
                 assert response.status_code == 400
+
 
 # ============================================================================
 # SRI Hash Loading Tests
