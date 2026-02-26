@@ -6360,8 +6360,6 @@ async def admin_list_join_requests(
     try:
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
-        request.scope.get("root_path", "")
-
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
         if not team:

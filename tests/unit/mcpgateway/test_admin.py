@@ -17837,6 +17837,33 @@ class TestAdminCsrfProtection:
 
         assert admin_mod._resolve_root_path(request) == "/mounted"
 
+    def test_resolve_root_path_missing_scope_key_falls_back(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
+        request = MagicMock()
+        request.scope = {}
+
+        assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
+
+    def test_resolve_root_path_none_settings_returns_empty(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", None, raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == ""
+
+    def test_resolve_root_path_scope_none_value_falls_back(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": None}
+
+        assert admin_mod._resolve_root_path(request) == "/fallback"
+
     # -- _admin_cookie_path tests -------------------------------------------
 
     def test_admin_cookie_path_uses_scope_root_path_when_present(self, monkeypatch):
