@@ -2595,6 +2595,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+    except HTTPException:
+        raise
     except Exception as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -2631,10 +2633,6 @@ async def admin_edit_server(
 
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server update operation.
-
-    Raises:
-        HTTPException: If the server is not found or if the user does not have permission to edit the server.
-        Exception: For any other unexpected errors.
 
     Examples:
         >>> callable(admin_edit_server)
@@ -7267,16 +7265,12 @@ async def admin_get_user_edit(
                     <input type="text" name="full_name" value="{user_obj.full_name or ""}" required
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                 </div>
-                {
-            ""
-            if is_editing_self
-            else f'''<div>
+                {"" if is_editing_self else f'''<div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="is_admin" {"checked" if user_obj.is_admin else ""}
                                class="mr-2"> Administrator
                     </label>
-                </div>'''
-        }
+                </div>'''}
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
@@ -10748,6 +10742,8 @@ async def admin_add_tool(
     except ValidationError as ex:  # This block should catch ValidationError
         LOGGER.error(f"ValidationError in admin_add_tool: {str(ex)}")
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    except HTTPException:
+        raise
     except Exception as ex:
         LOGGER.error(f"Unexpected error in admin_add_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -10892,6 +10888,8 @@ async def admin_edit_tool(
     except ValidationError as ex:  # Catch Pydantic validation errors
         LOGGER.error(f"ValidationError in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    except HTTPException:
+        raise
     except Exception as ex:  # Generic catch-all for unexpected errors
         LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -11283,6 +11281,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+    except HTTPException:
+        raise
     except Exception as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -11313,10 +11313,6 @@ async def admin_edit_gateway(
 
     Returns:
         A redirect response to the admin dashboard.
-
-    Raises:
-        HTTPException: If the gateway is not found or if the user lacks permissions.
-        Exception: For any other unexpected errors.
 
     Examples:
         >>> callable(admin_edit_gateway)
@@ -11709,6 +11705,8 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             content={"message": "Add resource registered successfully!", "success": True},
             status_code=200,
         )
+    except HTTPException:
+        raise
     except Exception as ex:
         # Roll back only when a transaction is active to avoid sqlite3 "no transaction" errors.
         try:
@@ -11806,6 +11804,8 @@ async def admin_edit_resource(
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except HTTPException:
+        raise
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
@@ -12037,6 +12037,8 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             content={"message": "Prompt registered successfully!", "success": True},
             status_code=200,
         )
+    except HTTPException:
+        raise
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
@@ -12131,6 +12133,8 @@ async def admin_edit_prompt(
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except HTTPException:
+        raise
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
@@ -14449,10 +14453,6 @@ async def admin_edit_a2a_agent(
 
     Returns:
         JSONResponse: A JSON response indicating success or failure.
-
-    Raises:
-        HTTPException: If the agent is not found, validation fails, or if A2A features are disabled.
-        Exception: For any other unexpected errors.
 
     Examples:
         >>> callable(admin_edit_a2a_agent)

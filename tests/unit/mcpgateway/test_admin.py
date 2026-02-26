@@ -18177,3 +18177,18 @@ class TestPublicVisibilityGuard:
         mock_request.form = AsyncMock(return_value=form_data)
         result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code != 422
+
+    @pytest.mark.asyncio
+    async def test_create_grpc_service_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
+        monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_grpc_enabled", True)
+        mock_mgr = MagicMock()
+        mock_mgr.register_service = AsyncMock(return_value={"id": "svc-new", "name": "G"})
+        monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mock_mgr)
+        from mcpgateway.schemas import GrpcServiceCreate
+
+        service = GrpcServiceCreate(name="G", target="localhost:50051", visibility="public")
+        # No team_id → guard should not fire even with flag=false
+        result = await admin_create_grpc_service(service, mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
+        assert result.status_code == 201

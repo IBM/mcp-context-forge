@@ -1581,14 +1581,14 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
             text: () => Promise.resolve(JSON.stringify(serverData)),
             clone: makeResponse,
         });
-        flagWin.fetch = vi.fn().mockImplementation(() => Promise.resolve(makeResponse()));
+        flagWin.fetch = vi
+            .fn()
+            .mockImplementation(() => Promise.resolve(makeResponse()));
     }
 
     test("legacy public server coerces to team when teamId is set", async () => {
         buildEditServerDOM("team-abc");
-        // Temporarily enable console.error to debug
-        const errors = [];
-        flagWin.console.error = (...args) => errors.push(args.join(" "));
+        flagWin.console.error = vi.fn();
         mockServerFetch({
             id: "srv-1",
             name: "OldPublicServer",
@@ -1602,25 +1602,10 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
 
         try {
             await flagWin.editServer("srv-1");
-        } catch (e) {
-            errors.push("CAUGHT: " + e.message);
+        } catch {
+            // editServer may throw on missing DOM elements (modal etc.)
         }
 
-        // eslint-disable-next-line no-console
-        console.log("ERRORS:", JSON.stringify(errors));
-        console.log("fetch called:", flagWin.fetch.mock.calls.length);
-        console.log(
-            "team radio:",
-            flagDoc.getElementById("edit-visibility-team")?.checked,
-        );
-        console.log(
-            "public radio:",
-            flagDoc.getElementById("edit-visibility-public")?.checked,
-        );
-        console.log(
-            "private radio:",
-            flagDoc.getElementById("edit-visibility-private")?.checked,
-        );
         const teamRadio = flagDoc.getElementById("edit-visibility-team");
         const publicRadio = flagDoc.getElementById("edit-visibility-public");
         expect(teamRadio.checked).toBe(true);
