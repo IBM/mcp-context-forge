@@ -7014,6 +7014,37 @@ async def test_admin_users_partial_html_controls(monkeypatch, mock_request, mock
 
 
 @pytest.mark.asyncio
+async def test_admin_users_partial_html_controls_uses_resolve_root_path(monkeypatch, mock_request, mock_db, allow_permission):
+    """Controls pagination base_url uses _resolve_root_path fallback when scope root_path is empty."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
+    mock_request.scope = {"root_path": ""}
+
+    auth_service = MagicMock()
+    auth_service.list_users = AsyncMock(
+        return_value=SimpleNamespace(
+            data=[SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)],
+            pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
+        )
+    )
+    auth_service.count_active_admin_users = AsyncMock(return_value=1)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_users_partial_html(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        render="controls",
+        team_id=None,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    assert template_call[0][2]["base_url"] == "/api/proxy/mcp/admin/users/partial"
+
+
+@pytest.mark.asyncio
 async def test_admin_users_partial_html_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     response = await admin_users_partial_html(
@@ -8307,6 +8338,34 @@ async def test_admin_tool_ops_partial_html(monkeypatch, mock_request, mock_db):
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_tool_ops_partial_uses_resolve_root_path(monkeypatch, mock_request, mock_db):
+    """paginate_query receives fallback-resolved base_url when scope root_path is empty."""
+    monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
+    mock_request.scope = {"root_path": ""}
+
+    pagination = make_pagination_meta()
+    mock_paginate = AsyncMock(return_value={"data": [SimpleNamespace(id="tool-ops-1", team_id="team-1")], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", mock_paginate)
+    setup_team_service(monkeypatch, ["team-1"])
+    tool_service = MagicMock()
+    tool_service.convert_tool_to_read.return_value = {"id": "tool-ops-1", "name": "Tool Ops"}
+    monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
+
+    mock_request.headers = {}
+    await admin_tool_ops_partial(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        gateway_id="gw-1",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert mock_paginate.call_args.kwargs["base_url"] == "/api/proxy/mcp/admin/tool-ops/partial"
 
 
 @pytest.mark.asyncio
@@ -17789,6 +17848,100 @@ class TestAdminCsrfProtection:
 
         with pytest.raises(HTTPException, match="token validation failed"):
             await admin_mod.enforce_admin_csrf(request)
+
+    # -- _resolve_root_path tests ------------------------------------------
+
+    def test_resolve_root_path_prefers_scope_root_path(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "/mounted"}
+
+        assert admin_mod._resolve_root_path(request) == "/mounted"
+
+    def test_resolve_root_path_falls_back_to_settings(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
+
+    def test_resolve_root_path_returns_empty_when_both_empty(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == ""
+
+    def test_resolve_root_path_normalizes_leading_slash(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "api/proxy/mcp", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
+
+    def test_resolve_root_path_strips_trailing_slash(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "/mounted/"}
+
+        assert admin_mod._resolve_root_path(request) == "/mounted"
+
+    def test_resolve_root_path_missing_scope_key_falls_back(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
+        request = MagicMock()
+        request.scope = {}
+
+        assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
+
+    def test_resolve_root_path_none_settings_returns_empty(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", None, raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": ""}
+
+        assert admin_mod._resolve_root_path(request) == ""
+
+    def test_resolve_root_path_scope_none_value_falls_back(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": None}
+
+        assert admin_mod._resolve_root_path(request) == "/fallback"
+
+    def test_resolve_root_path_strips_scheme_relative_double_slash(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "//evil.com"}
+
+        assert admin_mod._resolve_root_path(request) == "/evil.com"
+
+    def test_resolve_root_path_whitespace_only_scope_falls_back(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "   "}
+
+        assert admin_mod._resolve_root_path(request) == "/fallback"
+
+    # -- _admin_cookie_path tests -------------------------------------------
 
     def test_admin_cookie_path_uses_scope_root_path_when_present(self, monkeypatch):
         # First-Party

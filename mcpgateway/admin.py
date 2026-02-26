@@ -1022,6 +1022,29 @@ ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
 
 
+def _resolve_root_path(request: Request) -> str:
+    """Resolve the application root path from the request scope with fallback.
+
+    Some embedded/proxy deployments do not populate ``scope["root_path"]``
+    consistently.  This helper checks the ASGI scope first and falls back
+    to ``settings.app_root_path`` when the scope value is empty.
+
+    Args:
+        request: Incoming request used to read ASGI ``root_path``.
+
+    Returns:
+        Normalized root path (leading ``/``, no trailing ``/``), or empty
+        string when no root path is configured.
+    """
+    root_path = request.scope.get("root_path", "") or ""
+    if not root_path or not str(root_path).strip():
+        root_path = settings.app_root_path or ""
+    root_path = str(root_path).strip()
+    if root_path:
+        root_path = "/" + root_path.lstrip("/")
+    return root_path.rstrip("/")
+
+
 def _admin_cookie_path(request: Request) -> str:
     """Build admin cookie path honoring ASGI root_path.
 
@@ -1031,15 +1054,7 @@ def _admin_cookie_path(request: Request) -> str:
     Returns:
         Admin cookie path scoped under the deployed app root.
     """
-    root_path = request.scope.get("root_path", "") or ""
-    if not root_path:
-        # Some embedded/proxy deployments do not populate scope root_path
-        # consistently for admin requests; fall back to configured app root.
-        root_path = settings.app_root_path or ""
-    root_path = str(root_path).strip()
-    if root_path and not root_path.startswith("/"):
-        root_path = f"/{root_path}"
-    root_path = root_path.rstrip("/")
+    root_path = _resolve_root_path(request)
     return f"{root_path}/admin" if root_path else "/admin"
 
 
@@ -1655,7 +1670,7 @@ async def get_overview_partial(
         # Prepare context
         context = {
             "request": request,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             # Inputs
             "servers_total": servers_total,
             "servers_active": servers_active,
@@ -2314,7 +2329,7 @@ async def admin_servers_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/servers/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -2361,7 +2376,7 @@ async def admin_servers_partial_html(
                 "hx_target": "#servers-table-body",
                 "hx_indicator": "#servers-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -2373,7 +2388,7 @@ async def admin_servers_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -2387,7 +2402,7 @@ async def admin_servers_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -2472,7 +2487,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         True
     """
     form = await request.form()
-    # root_path = request.scope.get("root_path", "")
     # is_inactive_checked = form.get("is_inactive_checked", "false")
 
     # Parse tags from comma-separated string
@@ -2824,7 +2838,7 @@ async def admin_set_server_state(
         LOGGER.error(f"Error setting server status: {e}")
         error_message = "Error setting server status. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -2870,7 +2884,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         LOGGER.error(f"Error deleting server: {e}")
         error_message = "Failed to delete server. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -3082,7 +3096,7 @@ async def admin_set_gateway_state(
         LOGGER.error(f"Error setting gateway state: {e}")
         error_message = "Failed to set gateway state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -3637,7 +3651,7 @@ async def admin_ui(
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
-        scope_root_path = request.scope.get("root_path", "") or ""
+        scope_root_path = _resolve_root_path(request)
         ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
         use_secure = (settings.environment == "production") or settings.secure_cookies
         samesite = settings.cookie_samesite
@@ -3700,7 +3714,7 @@ async def admin_login_page(request: Request) -> Response:
     """
     # Check if email auth is enabled
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     root_path = settings.app_root_path
@@ -3771,7 +3785,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         True
     """
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -3782,7 +3796,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         password = password_val if isinstance(password_val, str) else None
 
         if not email or not password:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             params = "error=missing_fields"
             if email:
                 params += f"&email={urllib.parse.quote(email)}"
@@ -3799,12 +3813,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
                 LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
@@ -3851,14 +3865,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 token, _ = await create_access_token(user)
 
                 # Create redirect response to password change page
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
                 try:
                     set_auth_cookie(response, token, remember_me=False)
                 except CookieTooLargeError:
-                    root_path = request.scope.get("root_path", "")
+                    root_path = _resolve_root_path(request)
                     return RedirectResponse(
                         url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
                         status_code=303,
@@ -3871,7 +3885,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
@@ -3893,12 +3907,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if settings.secure_cookies and settings.environment == "development":
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
 
@@ -3941,7 +3955,7 @@ async def admin_forgot_password_handler(request: Request, db: Session = Depends(
     Returns:
         RedirectResponse: Redirect to login or forgot-password page with status.
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
@@ -4021,7 +4035,7 @@ async def admin_reset_password_handler(token: str, request: Request, db: Session
     Returns:
         RedirectResponse: Redirect to login or reset page with status.
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
@@ -4203,7 +4217,7 @@ async def _admin_logout(request: Request) -> Response:
         return f"{logout_endpoint}?{urllib.parse.urlencode(query_params)}"
 
     LOGGER.info(f"Admin user logging out (method: {request.method})")
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec.
     if request.method == "GET":
@@ -4293,11 +4307,11 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
         True
     """
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     # Get root path for template
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -4362,7 +4376,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         True
     """
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -4376,11 +4390,11 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
 
         if not all([current_password, new_password, confirm_password]):
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
 
         if new_password != confirm_password:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
 
         # Get user from JWT token in cookie
@@ -4395,7 +4409,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             current_user = None
 
         if not current_user:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
         # Authenticate using the email auth service
@@ -4425,19 +4439,19 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         current_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
                         if current_user is None:
                             LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
-                            root_path = request.scope.get("root_path", "")
+                            root_path = _resolve_root_path(request)
                             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
-                    root_path = request.scope.get("root_path", "")
+                    root_path = _resolve_root_path(request)
                     return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
 
                 # Create redirect response to admin panel
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
@@ -4452,24 +4466,24 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
 
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
 
         except AuthenticationError:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Password change handler error: {e}")
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
 
@@ -4822,7 +4836,7 @@ async def admin_teams_partial_html(
     """
     team_service = TeamManagementService(db)
     user_email = get_user_email(user)
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     # Base URL for pagination links - preserve search query and relationship filter
     base_url = f"{root_path}/admin/teams/partial"
@@ -5049,7 +5063,7 @@ async def admin_list_teams(
         if not current_user:
             return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
 
         if unified:
             # Generate unified team view
@@ -5231,7 +5245,7 @@ async def admin_view_team_members(
 
     try:
         # Get root_path from request
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
 
         # Get current user context for logging and authorization
         user_email = get_user_email(user)
@@ -5381,7 +5395,7 @@ async def admin_add_team_members_view(
 
     try:
         # Get root_path from request
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
 
         # Get current user context for logging and authorization
         user_email = get_user_email(user)
@@ -5515,7 +5529,7 @@ async def admin_get_team_edit(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
         team_service = TeamManagementService(db)
 
         team = await team_service.get_team_by_id(team_id)
@@ -5594,7 +5608,7 @@ async def admin_update_team(
         Response: Result of team update operation
     """
     # Ensure root_path is available for URL construction in all branches
-    root_path = request.scope.get("root_path", "") if request else ""
+    root_path = _resolve_root_path(request) if request else ""
 
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
@@ -6325,7 +6339,7 @@ async def admin_cancel_join_request(
 @require_permission("teams.manage_members", allow_admin_bypass=False)
 async def admin_list_join_requests(
     team_id: str,
-    request: Request,
+    _request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -6333,7 +6347,7 @@ async def admin_list_join_requests(
 
     Args:
         team_id: ID of the team
-        request: FastAPI request object
+        _request: FastAPI request object (unused, required by route signature)
         db: Database session
         user: Authenticated user
 
@@ -6346,8 +6360,6 @@ async def admin_list_join_requests(
     try:
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
-        request.scope.get("root_path", "")
-
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
         if not team:
@@ -6820,7 +6832,7 @@ async def admin_users_partial_html(
                     "request": request,
                     "data": users_data,
                     "pagination": pagination.model_dump(),
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                     "team_member_emails": team_member_emails,
                     "team_member_data": team_member_data,
                     "current_user_email": current_user_email,
@@ -6829,7 +6841,7 @@ async def admin_users_partial_html(
                 },
             )
         elif render == "controls":
-            base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
+            base_url = f"{_resolve_root_path(request)}/admin/users/partial"
             response = request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -6841,7 +6853,7 @@ async def admin_users_partial_html(
                     "hx_indicator": "#users-loading",
                     "hx_swap": "outerHTML",
                     "query_params": {},
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                 },
             )
         else:
@@ -6853,7 +6865,7 @@ async def admin_users_partial_html(
                     "request": request,
                     "data": users_data,
                     "pagination": pagination.model_dump(),
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                     "current_user_email": current_user_email,
                 },
             )
@@ -6926,7 +6938,7 @@ async def admin_team_members_partial_html(
         # End the read-only transaction early
         db.commit()
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         response = request.app.state.templates.TemplateResponse(
             request,
@@ -7011,7 +7023,7 @@ async def admin_team_non_members_partial_html(
         # End the read-only transaction early
         db.commit()
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         response = request.app.state.templates.TemplateResponse(
             request,
@@ -7179,7 +7191,7 @@ async def admin_get_user_edit(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         # First-Party
 
@@ -7428,7 +7440,7 @@ async def admin_activate_user(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         # First-Party
 
@@ -7473,7 +7485,7 @@ async def admin_deactivate_user(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         # First-Party
 
@@ -7578,7 +7590,7 @@ async def admin_unlock_user(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
         auth_service = EmailAuthService(db)
         decoded_email = urllib.parse.unquote(user_email)
         current_user_email = get_user_email(user)
@@ -7641,7 +7653,7 @@ async def admin_force_password_change(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         auth_service = EmailAuthService(db)
 
@@ -7847,7 +7859,7 @@ async def admin_tools_partial_html(
     query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
 
     # Use unified pagination function (offset-based for UI compatibility)
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/tools/partial"
     query_params_dict = {}
     if include_inactive:
@@ -7919,7 +7931,7 @@ async def admin_tools_partial_html(
                 "hx_target": "#tools-table-body",
                 "hx_indicator": "#tools-loading",
                 "query_params": query_params_dict,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -7932,7 +7944,7 @@ async def admin_tools_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
             },
         )
@@ -7946,7 +7958,7 @@ async def admin_tools_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params_dict,
             "current_user_email": user_email,
@@ -8035,7 +8047,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{request.scope.get('root_path', '')}/admin/tool-ops/partial",
+        base_url=f"{_resolve_root_path(request)}/admin/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",
@@ -8066,7 +8078,7 @@ async def admin_tool_ops_partial(
         {
             "request": request,
             "tools": tools_pydantic,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -8419,7 +8431,7 @@ async def admin_prompts_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/prompts/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -8476,7 +8488,7 @@ async def admin_prompts_partial_html(
                 "hx_target": "#prompts-table-body",
                 "hx_indicator": "#prompts-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -8488,7 +8500,7 @@ async def admin_prompts_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
             },
         )
@@ -8503,7 +8515,7 @@ async def admin_prompts_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -8625,7 +8637,7 @@ async def admin_gateways_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/gateways/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -8672,7 +8684,7 @@ async def admin_gateways_partial_html(
                 "hx_target": "#gateways-table-body",
                 "hx_indicator": "#gateways-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -8680,7 +8692,7 @@ async def admin_gateways_partial_html(
         return request.app.state.templates.TemplateResponse(
             request,
             "gateways_selector_items.html",
-            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
+            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": _resolve_root_path(request)},
         )
 
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
@@ -8693,7 +8705,7 @@ async def admin_gateways_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -9177,7 +9189,7 @@ async def admin_resources_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/resources/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -9233,7 +9245,7 @@ async def admin_resources_partial_html(
                 "hx_target": "#resources-table-body",
                 "hx_indicator": "#resources-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -9245,7 +9257,7 @@ async def admin_resources_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
             },
         )
@@ -9260,7 +9272,7 @@ async def admin_resources_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -9782,7 +9794,7 @@ async def admin_tokens_partial_html(
                 "hx_target": "#tokens-table",
                 "hx_indicator": "#tokens-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -9840,7 +9852,7 @@ async def admin_tokens_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "team_id": team_id,
         },
@@ -10046,7 +10058,7 @@ async def admin_a2a_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/a2a/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -10102,7 +10114,7 @@ async def admin_a2a_partial_html(
                 "hx_target": "#agents-table-body",
                 "hx_indicator": "#agents-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -10114,7 +10126,7 @@ async def admin_a2a_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
             },
         )
@@ -10129,7 +10141,7 @@ async def admin_a2a_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -10943,7 +10955,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         LOGGER.error(f"Error deleting tool: {e}")
         error_message = "Failed to delete tool. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -10999,7 +11011,7 @@ async def admin_set_tool_state(
         LOGGER.error(f"Error setting tool state: {e}")
         error_message = "Failed to set tool state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -11540,7 +11552,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -11879,7 +11891,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     except Exception as e:
         LOGGER.error(f"Error deleting resource: {e}")
         error_message = "Failed to delete resource. Please try again."
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -11932,7 +11944,7 @@ async def admin_set_resource_state(
         LOGGER.error(f"Error setting resource state: {e}")
         error_message = "Failed to set resource state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -12204,7 +12216,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     except Exception as e:
         LOGGER.error(f"Error deleting prompt: {e}")
         error_message = "Failed to delete prompt. Please try again."
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -12257,7 +12269,7 @@ async def admin_set_prompt_state(
         LOGGER.error(f"Error setting prompt state: {e}")
         error_message = "Failed to set prompt state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -12412,7 +12424,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         LOGGER.error(f"Error adding root: {e}")
         error_message = "Failed to add root. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "roots", error=error_message, team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -12461,7 +12473,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
         await root_service.update_root(uri, name)
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
         team_id = str(form.get("team_id", "") or "")
         redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
@@ -12503,7 +12515,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
     LOGGER.debug(f"User {get_user_email(user)} is deleting root URI {uri}")
     await root_service.remove_root(uri)
     form = await request.form()
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     team_id = str(form.get("team_id", "") or "")
     redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
@@ -12670,7 +12682,7 @@ async def admin_metrics_partial_html(
             "entity_type": entity_type,
             "data": data,
             "pagination": pagination.model_dump(),
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
         },
     )
 
@@ -14675,7 +14687,7 @@ async def admin_set_a2a_agent_state(
         HTTPException: If A2A features are disabled
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     user_email = get_user_email(user)
@@ -14701,7 +14713,7 @@ async def admin_set_a2a_agent_state(
         LOGGER.error(f"Error setting A2A agent state: {e}")
         error_message = "Failed to set state of A2A agent. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
@@ -14729,7 +14741,7 @@ async def admin_delete_a2a_agent(
         HTTPException: If A2A features are disabled
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     error_message = None
@@ -14752,7 +14764,7 @@ async def admin_delete_a2a_agent(
         LOGGER.error(f"Error deleting A2A agent: {e}")
         error_message = "Failed to delete A2A agent. Please try again."
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
@@ -15408,7 +15420,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         stats = await plugin_service.get_plugin_statistics()
 
         # Prepare context for template
-        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": request.scope.get("root_path", "")}
+        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": _resolve_root_path(request)}
 
         # Render the partial template
         return request.app.state.templates.TemplateResponse(request, "plugins_partial.html", context)
@@ -15891,7 +15903,7 @@ async def catalog_partial(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     # Calculate pagination
     page_size = settings.mcpgateway_catalog_page_size
@@ -16011,7 +16023,7 @@ async def get_system_stats(
                 {
                     "request": request,
                     "stats": stats,
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                     "db_metrics_recording_enabled": settings.db_metrics_recording_enabled,
                 },
             )
@@ -16137,7 +16149,7 @@ async def get_maintenance_partial(
     Raises:
         HTTPException: 403 if user is not a platform admin
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     # Build payload with settings for the template
     payload = {
@@ -16173,7 +16185,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
     Returns:
         HTMLResponse: Rendered observability dashboard template
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(request, "observability_partial.html", {"request": request, "root_path": root_path})
 
 
@@ -16190,7 +16202,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
     Returns:
         HTMLResponse: Rendered metrics dashboard template
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(request, "observability_metrics.html", {"request": request, "root_path": root_path})
 
 
@@ -16330,7 +16342,7 @@ async def get_observability_traces(
         # Get traces ordered by most recent
         traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return request.app.state.templates.TemplateResponse(request, "observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
     finally:
         # Ensure close() always runs even if commit() fails
@@ -16364,7 +16376,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return request.app.state.templates.TemplateResponse(request, "observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
     finally:
         # Ensure close() always runs even if commit() fails
@@ -17724,7 +17736,7 @@ async def get_tools_partial(
     Returns:
         HTMLResponse: Rendered tool metrics dashboard partial
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(
         request,
         "observability_tools.html",
@@ -17946,7 +17958,7 @@ async def get_prompts_partial(
     Returns:
         HTMLResponse: Rendered prompt metrics dashboard partial
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(
         request,
         "observability_prompts.html",
@@ -18168,7 +18180,7 @@ async def get_resources_partial(
     Returns:
         HTMLResponse: Rendered resource metrics dashboard partial
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(
         request,
         "observability_resources.html",
@@ -18229,7 +18241,7 @@ async def get_performance_stats(
                 worker["create_time"] = worker["create_time"].isoformat()
 
         if request.headers.get("hx-request"):
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return request.app.state.templates.TemplateResponse(
                 request,
                 "performance_partial.html",
