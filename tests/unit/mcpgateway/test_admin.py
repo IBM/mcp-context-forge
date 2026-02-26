@@ -17864,6 +17864,24 @@ class TestAdminCsrfProtection:
 
         assert admin_mod._resolve_root_path(request) == "/fallback"
 
+    def test_resolve_root_path_strips_scheme_relative_double_slash(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "//evil.com"}
+
+        assert admin_mod._resolve_root_path(request) == "/evil.com"
+
+    def test_resolve_root_path_whitespace_only_scope_falls_back(self, monkeypatch):
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
+        request = MagicMock()
+        request.scope = {"root_path": "   "}
+
+        assert admin_mod._resolve_root_path(request) == "/fallback"
+
     # -- _admin_cookie_path tests -------------------------------------------
 
     def test_admin_cookie_path_uses_scope_root_path_when_present(self, monkeypatch):

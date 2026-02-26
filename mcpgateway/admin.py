@@ -1037,11 +1037,11 @@ def _resolve_root_path(request: Request) -> str:
         string when no root path is configured.
     """
     root_path = request.scope.get("root_path", "") or ""
-    if not root_path:
+    if not root_path or not str(root_path).strip():
         root_path = settings.app_root_path or ""
     root_path = str(root_path).strip()
-    if root_path and not root_path.startswith("/"):
-        root_path = f"/{root_path}"
+    if root_path:
+        root_path = "/" + root_path.lstrip("/")
     return root_path.rstrip("/")
 
 
@@ -6841,7 +6841,7 @@ async def admin_users_partial_html(
                 },
             )
         elif render == "controls":
-            base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
+            base_url = f"{_resolve_root_path(request)}/admin/users/partial"
             response = request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -8047,7 +8047,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{request.scope.get('root_path', '')}/admin/tool-ops/partial",
+        base_url=f"{_resolve_root_path(request)}/admin/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",
