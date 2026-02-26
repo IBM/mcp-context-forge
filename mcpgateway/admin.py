@@ -11789,7 +11789,7 @@ async def admin_edit_resource(
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_resource: {ex}")
-            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
+            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_resource: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 

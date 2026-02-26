@@ -4499,7 +4499,7 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in creating resource: {e}")
-        return ORJSONResponse(status_code=413, content={"detail": str(e)})
+        raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
 
 
 @resource_router.get("/{resource_id}")
@@ -4682,7 +4682,7 @@ async def update_resource(
         raise HTTPException(status_code=409, detail=str(e))
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in updating resource: {e}")
-        return ORJSONResponse(status_code=413, content={"detail": str(e)})
+        raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
     db.commit()
     db.close()
     await invalidate_resource_cache(resource_id)
@@ -5004,7 +5004,7 @@ async def create_prompt(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
         if isinstance(e, ContentSizeError):
             logger.error(f"Content size exceeded in creating prompt: {e}")
-            return ORJSONResponse(status_code=413, content={"detail": str(e)})
+            raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while creating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
@@ -5198,8 +5198,8 @@ async def update_prompt(
             # If there is a general prompt error, return a 400 Bad Request error
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         if isinstance(e, ContentSizeError):
-            logger.error(f"Content size exceeded in in updating prompt: {e}")
-            return ORJSONResponse(status_code=413, content={"detail": str(e)})
+            logger.error(f"Content size exceeded in updating prompt: {e}")
+            raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while updating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")

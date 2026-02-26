@@ -429,10 +429,13 @@ class ResourceService:
             content_to_validate = ""
 
             # Extract content from resource for validation
+            # Use raw bytes for accurate size measurement to prevent bypass via non-UTF-8 content
             if hasattr(resource, "content") and resource.content:
                 if isinstance(resource.content, bytes):
-                    content_to_validate = resource.content.decode("utf-8", errors="ignore")
+                    # Validate using raw bytes to get accurate size
+                    content_to_validate = resource.content
                 else:
+                    # Convert string to bytes for consistent size measurement
                     content_to_validate = str(resource.content)
 
             content_security.validate_resource_size(content=content_to_validate, uri=resource.uri, user_email=created_by, ip_address=created_from_ip)

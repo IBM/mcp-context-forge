@@ -1762,7 +1762,10 @@ class ResourceUpdate(BaseModelWithConfigDict):
     @field_validator("content")
     @classmethod
     def validate_content(cls, v: Optional[Union[str, bytes]]) -> Optional[Union[str, bytes]]:
-        """Validate content size and safety
+        """Validate content safety.
+
+        Note: Size validation is performed at the service layer using configurable limits.
+        This validator only checks encoding and dangerous patterns.
 
         Args:
             v (Union[str, bytes]): Value to validate
@@ -1776,9 +1779,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
         if v is None:
             return v
 
-        if len(v) > SecurityValidator.MAX_CONTENT_LENGTH:
-            raise ValueError(f"Content exceeds maximum length of {SecurityValidator.MAX_CONTENT_LENGTH}")
-
+        # Validate UTF-8 encoding for bytes
         if isinstance(v, bytes):
             try:
                 text = v.decode("utf-8")
@@ -1786,6 +1787,8 @@ class ResourceUpdate(BaseModelWithConfigDict):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
+
+        # Check for dangerous HTML patterns
         # Runtime pattern matching (not precompiled to allow test monkeypatching)
         if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             raise ValueError("Content contains HTML tags that may cause display issues")

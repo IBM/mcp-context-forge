@@ -760,6 +760,17 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
+### 🛡️ Content Security
+
+Content size limits prevent DoS attacks and ensure system stability:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
+| `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
+
+**Note:** Existing content is not affected. See [Content Limits Migration Guide](docs/MIGRATION_CONTENT_LIMITS.md) for details.
+
 
 ### ⚙️ Project Defaults (Dev Setup)
 

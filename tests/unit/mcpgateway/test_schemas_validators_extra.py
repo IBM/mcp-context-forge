@@ -132,12 +132,14 @@ def test_resource_update_content_and_description():
     truncated = ResourceUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
-    with pytest.raises(ValueError):
-        ResourceUpdate.validate_content("x" * (SecurityValidator.MAX_CONTENT_LENGTH + 1))
-
+    # Size validation is now done at service layer, not schema layer
+    # Schema layer only validates encoding and dangerous patterns
+    
+    # Test UTF-8 encoding validation
     with pytest.raises(ValueError):
         ResourceUpdate.validate_content(b"\xff\xfe\xfd")
 
+    # Test dangerous HTML pattern detection
     with pytest.raises(ValueError):
         ResourceUpdate.validate_content("<script>alert(1)</script>")
 
