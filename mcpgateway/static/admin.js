@@ -21982,8 +21982,12 @@ async function createToken(form) {
         form.reset();
 
         // Clear any lingering inline error
-        const inlineMessagesSuccess = document.getElementById("token-creation-messages");
-        if (inlineMessagesSuccess) { inlineMessagesSuccess.innerHTML = ""; }
+        const inlineMessagesSuccess = document.getElementById(
+            "token-creation-messages",
+        );
+        if (inlineMessagesSuccess) {
+            inlineMessagesSuccess.innerHTML = "";
+        }
 
         // Show appropriate success message
         const tokenType = currentTeamId ? "team-scoped" : "public-only";
@@ -21992,7 +21996,9 @@ async function createToken(form) {
         console.error("Error creating token:", error);
         showNotification(`Error creating token: ${error.message}`, "error");
         // Also show inline near the form — the toast may be missed if the user scrolled
-        const inlineMessages = document.getElementById("token-creation-messages");
+        const inlineMessages = document.getElementById(
+            "token-creation-messages",
+        );
         if (inlineMessages) {
             inlineMessages.innerHTML =
                 '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +

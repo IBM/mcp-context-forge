@@ -174,6 +174,12 @@ def make_mock_integrity_error(msg):
         ("FOREIGN KEY constraint failed", "Referenced item not found"),
         ("NOT NULL constraint failed", "Required field is missing"),
         ("CHECK constraint failed: invalid_data", "Validation failed. Please check the input data."),
+        # Token name uniqueness – ORM constraint name
+        ("uq_email_api_tokens_user_name", "A token with this name already exists for this user. Token names must be unique per user across all teams. Please choose a different name."),
+        # Token name uniqueness – Alembic migration constraint name
+        ("uq_email_api_tokens_user_email_name", "A token with this name already exists for this user. Token names must be unique per user across all teams. Please choose a different name."),
+        # Token name uniqueness – SQLite column-path variant
+        ("UNIQUE constraint failed: email_api_tokens.user_email, email_api_tokens.name", "A token with this name already exists for this user. Token names must be unique per user across all teams. Please choose a different name."),
     ],
 )
 def test_format_database_error_integrity_patterns(msg, expected):
