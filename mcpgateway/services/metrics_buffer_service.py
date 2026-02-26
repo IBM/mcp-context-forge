@@ -16,11 +16,13 @@ from datetime import datetime, timezone
 import logging
 import threading
 import time
-from typing import Deque, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgentMetric, fresh_db_session, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import A2AAgentMetric, fresh_db_session, get_for_update, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
+from gateway_rs import a2a_service as rust_a2a
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +375,27 @@ class MetricsBufferService:
         with self._lock:
             self._a2a_agent_metrics.append(metric)
             self._total_buffered += 1
+
+    def record_a2a_agent_metrics_batch(
+        self,
+        metrics: List[BufferedA2AAgentMetric],
+    ) -> None:
+        """Buffer a batch of A2A agent metrics (e.g. from Rust invoke). One lock, one extend.
+
+        Args:
+            metrics: List of BufferedA2AAgentMetric to append.
+        """
+        if not self.recording_enabled or not metrics:
+            return
+        if not self.enabled:
+            for m in metrics:
+                self._write_a2a_agent_metric_with_duration_immediately(
+                    m.a2a_agent_id, m.response_time, m.is_success, m.interaction_type, m.error_message
+                )
+            return
+        with self._lock:
+            self._a2a_agent_metrics.extend(metrics)
+            self._total_buffered += len(metrics)
 
     async def _flush_loop(self) -> None:
         """Background task that periodically flushes buffered metrics.
@@ -764,6 +787,69 @@ class MetricsBufferService:
             "total_flushed": self._total_flushed,
             "flush_count": self._flush_count,
         }
+
+
+def record_a2a_invoke_results_batch(
+    batch_payloads: List[Dict[str, Any]],
+    result_by_id: Dict[int, Any],
+    end_time: datetime,
+) -> None:
+    """Record A2A invoke results: metrics recording in Rust, buffer and DB in Python.
+
+    Builds the batch of metric entries via Rust (build_a2a_metrics_batch); pushes to the
+    metrics buffer and updates last_interaction in Python (DB stays in Python).
+    Logs and swallows errors so invoke_agent can still return results.
+
+    Args:
+        batch_payloads: List of payload dicts (with agent_id, interaction_type) or error dicts (code in key).
+        result_by_id: Map request index -> (response_with.status_code/.body, duration_secs).
+        end_time: Timestamp for metrics and last_interaction.
+    """
+    metrics_list: List[BufferedA2AAgentMetric]
+    success_agent_ids: List[str]
+
+    entries: List[tuple] = []
+    for idx, p in enumerate(batch_payloads):
+        if "code" in p or idx not in result_by_id:
+            continue
+        agent_id = str(p["agent_id"])
+        interaction_type = p.get("interaction_type", "invoke")
+        resp, duration_secs = result_by_id[idx]
+        status_code = getattr(resp, "status_code", 500)
+        body = getattr(resp, "body", None) or ""
+        entries.append((agent_id, interaction_type, status_code, body, float(duration_secs)))
+
+    if not entries:
+        return
+
+    metrics_tuples, success_agent_ids = rust_a2a.build_a2a_metrics_batch(entries, end_time.timestamp())
+    metrics_list = [
+        BufferedA2AAgentMetric(
+            a2a_agent_id=t[0],
+            timestamp=datetime.fromtimestamp(t[1], tz=timezone.utc),
+            response_time=float(t[2]),
+            is_success=bool(t[3]),
+            interaction_type=str(t[4]),
+            error_message=t[5],
+        )
+        for t in metrics_tuples
+    ]
+
+    try:
+        if metrics_list:
+            get_metrics_buffer_service().record_a2a_agent_metrics_batch(metrics_list)
+    except Exception as e:
+        logger.warning("Failed to record A2A metrics batch: %s", e)
+    try:
+        if success_agent_ids:
+            with fresh_db_session() as ts_db:
+                for agent_id in success_agent_ids:
+                    db_agent = get_for_update(ts_db, DbA2AAgent, agent_id)
+                    if db_agent and getattr(db_agent, "enabled", False):
+                        db_agent.last_interaction = end_time
+                ts_db.commit()
+    except Exception as e:
+        logger.warning("Failed to update last_interaction batch: %s", e)
 
 
 # Singleton instance

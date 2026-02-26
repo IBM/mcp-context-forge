@@ -15024,17 +15024,26 @@ async def admin_test_a2a_agent(
             # Generic test format
             test_params = {"query": user_query, "message": user_query, "test": True, "timestamp": int(time.time())}
 
-        # Invoke the agent
-        result = await a2a_service.invoke_agent(
-            db,
-            agent.name,
-            test_params,
-            "admin_test",
-            user_email=user_email,
-            user_id=user_email,
-        )
+        # Invoke the agent (batch API: one request).
+        # Use user_email=None and omit token_teams so invoke_agent sees (None, None) and
+        # grants admin bypass, allowing testing of private/team-scoped agents from the admin UI.
+        # user_id is set for auditing (who ran the test).
+        single_request = {
+            "agent_name": agent.name,
+            "parameters": test_params,
+            "interaction_type": "admin_test",
+            "user_id": user_email,
+            "user_email": None,
+        }
+        results = await a2a_service.invoke_agent(db, [single_request])
+        first = results[0]
+        if first.get("code") == "not_found":
+            return ORJSONResponse(content={"success": False, "error": first["error"], "agent_id": agent_id}, status_code=404)
+        if first.get("code") == "agent_error":
+            return ORJSONResponse(content={"success": False, "error": first["error"], "agent_id": agent_id}, status_code=400)
+        result_body = first.get("parsed") if first.get("parsed") is not None else first.get("body", first)
 
-        return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
+        return ORJSONResponse(content={"success": True, "result": result_body, "agent_name": agent.name, "test_timestamp": time.time()})
 
     except Exception as e:
         LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")

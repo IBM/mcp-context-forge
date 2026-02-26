@@ -386,9 +386,17 @@ class TestPluginsCliSettings:
 
         monkeypatch.setattr(PluginsCliSettings, "model_config", {**PluginsCliSettings.model_config, "env_file": None})
 
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
         from mcpgateway.plugins.framework.settings import PluginsCliSettings
 
+        monkeypatch.delenv("PLUGINS_CLI_MARKUP_MODE", raising=False)
+        monkeypatch.delenv("PLUGINS_CLI_COMPLETION", raising=False)
+        # Prevent .env from supplying PLUGINS_CLI_MARKUP_MODE so we see true default
+        monkeypatch.setattr(
+            PluginsCliSettings,
+            "model_config",
+            {**PluginsCliSettings.model_config, "env_file": None},
+        )
         s = PluginsCliSettings()
         assert s.cli_completion is False
         assert s.cli_markup_mode is None

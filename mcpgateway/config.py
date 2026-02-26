@@ -616,6 +616,8 @@ class Settings(BaseSettings):
     mcpgateway_a2a_default_timeout: int = 30
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
+    mcpgateway_a2a_invoke_max_concurrent: int = Field(default=30, description="Max concurrent A2A invoke tasks; extra requests wait in queue (FIFO)")
+    mcpgateway_a2a_invoke_max_queued: Optional[int] = Field(default=None, description="Optional max queue depth for A2A invoke; when exceeded can return 503 (default: unbounded, wait)")
 
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")

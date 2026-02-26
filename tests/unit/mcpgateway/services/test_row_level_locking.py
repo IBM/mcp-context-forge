@@ -388,42 +388,39 @@ class TestA2AServiceLocking:
         service = A2AAgentService()
         db = MagicMock(spec=Session)
 
-        # Mock the initial name lookup
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = "agent-id"
-        db.execute.return_value = mock_result
-        db.commit = MagicMock()
-        db.close = MagicMock()
-
         mock_agent = MagicMock(spec=A2AAgent)
         mock_agent.id = "agent-id"
+        mock_agent.name = "test-agent"
         mock_agent.enabled = True
         mock_agent.endpoint_url = "http://test.com"
         mock_agent.agent_type = "generic"
         mock_agent.protocol_version = "v1"
         mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+
+        # First execute (select agents by name) returns rows; then get_for_update is called per row
+        mock_select_result = MagicMock()
+        mock_select_result.scalars.return_value.all.return_value = [mock_agent]
+        db.execute.return_value = mock_select_result
+        db.commit = MagicMock()
+        db.close = MagicMock()
 
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent) as mock_get:
-            # Patch the http_client_service module where get_http_client is imported from
-            with patch("mcpgateway.services.http_client_service.get_http_client") as mock_http:
-                mock_client = MagicMock()
-                mock_response = MagicMock()
-                mock_response.status_code = 200
-                mock_response.json.return_value = {"result": "success"}
-                mock_client.post.return_value = mock_response
-                mock_http.return_value = mock_client
+            with patch("gateway_rs.a2a_service.invoke", new_callable=AsyncMock) as mock_rust_invoke:
+                mock_resp = MagicMock(status_code=200, body="{}", parsed={"result": "success"})
+                mock_rust_invoke.return_value = [(0, mock_resp, 0.5)]
+                with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service"):
+                    with patch("mcpgateway.utils.correlation_id.get_correlation_id", return_value="test-id"):
+                        with patch("mcpgateway.services.structured_logger.get_structured_logger"):
+                            await service.invoke_agent(
+                                db, [{"agent_name": "test-agent", "parameters": {}}]
+                            )
 
-                with patch("mcpgateway.db.fresh_db_session"):
-                    with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service"):
-                        with patch("mcpgateway.utils.correlation_id.get_correlation_id", return_value="test-id"):
-                            with patch("mcpgateway.services.structured_logger.get_structured_logger"):
-                                try:
-                                    await service.invoke_agent(db, "test-agent", {})
-                                except Exception:
-                                    pass
-
-            # Verify get_for_update was called for the agent
-            assert mock_get.call_count >= 1, "get_for_update should be called during agent invocation"
+        assert mock_get.call_count >= 1, "get_for_update should be called during agent invocation"
 
     @pytest.mark.asyncio
     async def test_update_agent_uses_for_update(self):

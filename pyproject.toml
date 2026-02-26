@@ -317,9 +317,9 @@ cforge = "mcpgateway.tools.cli:main"
 [tool.setuptools]
 include-package-data = true          # ensure wheels include the data files
 
-# Automatic discovery: keep every package that starts with "mcpgateway"
+# Automatic discovery: mcpgateway + crates (Rust extensions install gateway_rs via maturin, no project package)
 [tool.setuptools.packages.find]
-include = ["mcpgateway*"]
+include = ["mcpgateway*", "crates*"]
 exclude = ["tests*"]
 
 ##  Runtime data files  ------------------------------------------------
@@ -489,7 +489,7 @@ from-first                 = true         # place all "from ... import ..." befo
 ###############################################################################
 # What belongs where
 ###############################################################################
-known-first-party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
+known-first-party          = ["gateway_rs", "mcpgateway"]    # gateway_rs = Rust extensions; mcpgateway.* = FIRSTPARTY
 known-local-folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
 known-third-party          = ["alembic"] # treat "alembic" as THIRDPARTY
 # src-paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
@@ -545,7 +545,7 @@ import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
 ###############################################################################
 # What belongs where
 ###############################################################################
-known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
+known_first_party          = ["gateway_rs", "mcpgateway"]    # gateway_rs = Rust extensions; mcpgateway.* = FIRSTPARTY
 known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
 known_third_party          = ["alembic"] # treat "alembic" as THIRDPARTY
 # src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/

@@ -68,7 +68,8 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 EXTRA_DIRS_TO_CLEAN := reports test-results tests/playwright/reports \
 	tests/playwright/screenshots tests/playwright/videos \
 	tests/jmeter/results tests/async/profiles tests/async/reports \
-	tests/migration/reports tests/migration/logs .jmeter target
+	tests/migration/reports tests/migration/logs .jmeter target plugins_rust/target \
+	benchmarks/reports
 
 EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
 	playwright-report-*.html test-results-*.xml \
@@ -593,6 +594,7 @@ clean:
 # help:                        Override gateway URL: MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-cli
 # help:                        No LLM or API key required - tests MCP protocol only
 # help: test                 - Run unit tests with pytest
+# help: test-with-rust       - Install Rust extension and run full test suite (CI-equivalent; requires rustup)
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
 # help: coverage             - Run tests with coverage, emit HTML/XML + badge
@@ -617,8 +619,14 @@ clean:
 # help: query-log-tail       - Tail the database query log file
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
+# help:
+# help: 🧪 BENCHMARKS (top-level: benchmarks/ and make benchmark)
+# help: benchmark           - Run all benchmarks (pytest, async, JSON script, Rust plugins)
+# help: benchmark-python    - Run Python benchmarks only (pytest + async + JSON serialization)
+# help: benchmark-rust      - Run Rust plugin benchmarks and Rust vs Python comparison
+# help: bench               - Run pytest benchmarks only; use BENCH=name or "make bench <name>" to filter
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-with-rust test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time benchmark benchmark-ensure-rust benchmark-python benchmark-rust bench
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -661,6 +669,26 @@ test:
 			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
 			--ignore=tests/e2e/test_mcp_cli_protocol.py \
 			--ignore=tests/e2e/test_mcp_rbac_transport.py"
+
+# Full test suite with Rust extension (same as .github/workflows/pytest.yml). Requires Rust: https://rustup.rs
+# Uses project .venv (uv) so pytest workers see the same gateway_rs as rust-install; no sourcing required.
+test-with-rust:
+	@echo "🦀 Installing Rust extension and running full test suite (CI-equivalent)..."
+	@test -d ".venv" || (uv venv && uv pip install -e ".[dev]" && echo "✅ Project .venv ready")
+	@/bin/bash -c "source \"$$HOME/.cargo/env\" 2>/dev/null || true; \
+		$(MAKE) --no-print-directory rust-clean-stubs && \
+		$(MAKE) --no-print-directory rust-install && \
+		$(MAKE) --no-print-directory rust-verify-stubs" || { echo "❌ Rust build/install failed. Install Rust: https://rustup.rs"; exit 1; }
+	@/bin/bash -c "export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export REQUIRE_RUST=1 && \
+		.venv/bin/python -m pytest -n auto --maxfail=0 -v --durations=5 \
+			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
+			--cov=mcpgateway --cov-report=xml --cov-report=html --cov-report=term \
+			--cov-branch --cov-fail-under=95" || exit 1
+	@echo "✅ test-with-rust passed"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -761,6 +789,54 @@ htmlcov:
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
 	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
+
+# -----------------------------------------------------------------------------
+# 🧪 BENCHMARKS (top-level benchmarks/; run all with make benchmark)
+# -----------------------------------------------------------------------------
+BENCHMARKS_REPORTS_DIR := benchmarks/reports
+# Filter by name: make bench BENCH=<name> or make bench <name>
+ifeq ($(firstword $(MAKECMDGOALS)),bench)
+BENCH ?= $(word 2,$(MAKECMDGOALS))
+endif
+BENCH ?=
+# -k matches test names only; if BENCH looks like a file stem, run that file so "make bench a2a_service" works
+BENCH_PATH := $(shell find benchmarks -maxdepth 4 -name '*.py' -path '*$(BENCH)*' 2>/dev/null | head -1)
+BENCH_K := $(if $(BENCH),$(if $(BENCH_PATH),,-k $(BENCH)),)
+BENCH_V := $(if $(BENCH),-vv,-v)
+# Dummy target so "make bench <name>" does not fail (second goal is not a real target)
+ifneq ($(word 2,$(MAKECMDGOALS)),)
+$(word 2,$(MAKECMDGOALS)):
+	@true
+endif
+
+# No-op when mcpgateway_rust is not present (benchmarks branch from main)
+benchmark-ensure-rust:
+	@:
+
+bench: benchmark-ensure-rust
+	@echo "📊 Running pytest benchmarks$(if $(BENCH), matching '$(BENCH)',)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@DATABASE_URL='sqlite:///:memory:' TEST_DATABASE_URL='sqlite:///:memory:' ARGON2ID_TIME_COST=1 ARGON2ID_MEMORY_COST=1024 \
+		uv run --active --extra fuzz pytest $(if $(BENCH_PATH),$(BENCH_PATH),benchmarks/) $(BENCH_K) --benchmark-only $(BENCH_V)
+
+benchmark: benchmark-python
+	@echo "🦀 Running Rust plugin benchmarks..."
+	@$(MAKE) --no-print-directory benchmark-rust || true
+	@echo "✅ All benchmarks finished."
+
+benchmark-python: benchmark-ensure-rust
+	@echo "📊 Running all Python benchmarks..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "  → Pytest benchmarks (benchmarks/)..."
+	@DATABASE_URL='sqlite:///:memory:' TEST_DATABASE_URL='sqlite:///:memory:' ARGON2ID_TIME_COST=1 ARGON2ID_MEMORY_COST=1024 \
+		uv run --active --extra fuzz pytest benchmarks/ --benchmark-only -v
+	@echo "  → Async benchmarks..."
+	@$(MAKE) --no-print-directory async-benchmark
+	@echo "  → JSON serialization (orjson vs stdlib)..."
+	@uv run --active python scripts/benchmark_json_serialization.py
+	@echo "✅ Python benchmarks finished."
+
+benchmark-rust: rust-bench rust-bench-compare
 
 diff-cover:
 	@echo "📊  Running diff-cover against main branch..."
@@ -7052,8 +7128,9 @@ async-debug:
 .PHONY: async-benchmark
 async-benchmark:
 	@echo "⚡ Running async performance benchmarks..."
-	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/benchmarks.py \
-		--output $(REPORTS_DIR)/benchmark-results.json \
+	@mkdir -p $(BENCHMARKS_REPORTS_DIR)
+	@uv run --active python $(ASYNC_TEST_DIR)/benchmarks.py \
+		--output $(BENCHMARKS_REPORTS_DIR)/benchmark-results.json \
 		--iterations 1000
 
 .PHONY: profile-compare
@@ -7873,40 +7950,40 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-clean                            - Clean Rust build artifacts
 # help: rust-licenses                         - Run cargo-deny license check (workspace)
 # help:
-# help: Maturin (Python bindings, crates/plugins):
-# help: rust-install                          - Install maturin crates into venv
-# help: rust-dev                              - Build and install maturin crates (development mode)
-# help: rust-stub-gen                         - Generate Python type stubs for maturin crates
-# help: rust-verify-stubs                     - Verify stub files and pyproject.toml
-# help: rust-verify                           - Verify maturin crate installation
-# help: rust-build-wheels                     - Build Python wheels for maturin crates
-# help: rust-release                         - Build release wheels
-# help: rust-release-publish                  - Publish wheels to PyPI (MATURIN_PYPI_TOKEN)
-# help: rust-python-test                     - Run Python tests for maturin crates
-# help: rust-test-all                         - Run Rust + Python tests for maturin crates
-# help: rust-bench-compare / rust-compare     - Compare Rust vs Python performance
+# help: rust-install-deps                     - Install all Rust build dependencies
+# help: rust-install-targets                  - Install all Rust cross-compilation targets
+# help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
+# help: rust-build-all-linux                  - Build for all Linux architectures
+# help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
+# help: rust-cross                            - Install targets + build all Linux (convenience)
+# help: rust-cross-install-build              - Install targets + build all platforms (one command)
 # help:
-# help: Per subfolder (gateway, mcp-servers, plugins, tools):
-# help: rust-gateway-build / test / fmt-check / clippy  - crates/mcpgateway
-# help: rust-mcp-build / test / fmt-check / clippy      - crates/mcp-servers
-# help: rust-plugins-build / test / fmt-check / clippy - crates/plugins
-# help: rust-tools-build / test / fmt-check / clippy   - crates/tools
-# help:
-# help: Cross-compilation:
-# help: rust-install-targets / rust-build-<TARGET> / rust-build-all-linux / rust-cross
-# help: container-build-rust / container-rust          - Build/run container with Rust (see Container)
-# help: -----------------------------------------------------------------------------
+# help: Gateway (core only; skips plugins, mcp-servers, tools):
+# help: gateway-rs                             - Build and install gateway Rust extensions (convenience)
+# help: gateway-rs-build                       - Build gateway crates (release)
+# help: gateway-rs-install                     - Install gateway PyO3 extensions (e.g. a2a_service)
+# help: gateway-rs-test                        - Run Rust tests for gateway crates
+# help: gateway-rs-check                       - Run cargo check on gateway crates
+# help: gateway-rs-fmt                         - Format gateway Rust code
+# help: gateway-rs-clippy                      - Run clippy on gateway crates
+# help: gateway-rs-clean                       - Clean gateway build artifacts
+# help: gateway-rs-verify                      - Build + test gateway crates
+# help: gateway-rs-info                        - List gateway Rust crates
 
 .PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+.PHONY: gateway-rs gateway-rs-build gateway-rs-install gateway-rs-test gateway-rs-check gateway-rs-fmt gateway-rs-clippy gateway-rs-clean gateway-rs-verify gateway-rs-info
 .PHONY: rust-gateway-build rust-gateway-install rust-gateway-test rust-gateway-test-verbose rust-gateway-check rust-gateway-fmt rust-gateway-fmt-check rust-gateway-clippy rust-gateway-clean rust-gateway-verify rust-gateway-info
 .PHONY: rust-mcp-build rust-mcp-test rust-mcp-fmt-check rust-mcp-clippy
 .PHONY: rust-plugins-build rust-plugins-test rust-plugins-fmt-check rust-plugins-clippy
 .PHONY: rust-tools-build rust-tools-test rust-tools-fmt-check rust-tools-clippy
+.PHONY: rust-ensure-deps
 
-# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml (plugins, tools, mcpgateway, etc.)
+# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml (plugins, tools, gateway, etc.)
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
+# Gateway: core crates (e.g. a2a_service); skips plugins, mcp-servers, tools
+RUST_GATEWAY_CRATES := $(shell find crates/gateway_rs -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
 
 # Per-subfolder crate directories (for build/test/fmt/clippy)
 RUST_GATEWAY_DIRS   := $(shell find crates/mcpgateway -maxdepth 3 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
@@ -7947,6 +8024,44 @@ rust-install: rust-ensure-deps rust-stub-gen  ## Install maturin crates into ven
 		uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
 	done
 	@echo "✅ All maturin crates installed"
+
+# --- Gateway (core only) ---
+gateway-rs-build: rust-ensure-deps  ## Build gateway crates (release)
+	@echo "🦀 Building gateway Rust crates (release)..."
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Building $$crate..."; \
+			cargo build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+		echo "✅ Gateway Rust crates built"; \
+	else \
+		echo "⚠️  No gateway maturin crates found"; \
+	fi
+
+gateway-rs-install: rust-ensure-deps  ## Install gateway PyO3 extensions (e.g. a2a_service)
+	@echo "🦀 Installing gateway maturin crates into venv..."
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Installing $$crate..."; \
+			uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+		echo "✅ Gateway extensions installed"; \
+	else \
+		echo "⚠️  No gateway maturin crates found"; \
+	fi
+
+gateway-rs-test: rust-ensure-deps  ## Run Rust tests for gateway crates only
+	@echo "🦀 Running Rust tests for gateway crates..."
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Testing $$crate..."; \
+			cargo test --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+		echo "✅ Gateway Rust tests passed"; \
+	else \
+		echo "⚠️  No gateway crates found"; \
+	fi
+
 
 rust-build: rust-ensure-deps            ## Build Rust workspace (release)
 	@echo "🦀 Building Rust workspace (release)..."
@@ -8090,9 +8205,11 @@ rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.
 	@echo "🦀 Verifying stub files and pyproject.toml..."
 	@for crate in $(RUST_MATURIN_CRATES); do \
 		if [ ! -f $$crate/pyproject.toml ]; then echo "❌ $$crate: pyproject.toml missing"; exit 1; fi; \
-		pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
-		if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
-		if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
+		if [ -f $$crate/src/bin/stub_gen.rs ]; then \
+			pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
+			if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
+			if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
+		fi; \
 		echo "  ✅ $$crate"; \
 	done
 	@echo "✅ All stubs verified"
@@ -8157,41 +8274,52 @@ rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-
 	@echo "✅ Full cross-compilation setup and build complete"
 
 # -----------------------------------------------------------------------------
-# 🦀 Rust Gateway Workspace (mcpgateway_rust)
+# 🦀 Rust Gateway Workspace (gateway-rs)
 # -----------------------------------------------------------------------------
+# rust-ensure-deps is defined earlier in this Makefile (see rust-ensure-deps target).
 
-rust-gateway-build: rust-ensure-deps  ## Build Rust gateway workspace (release)
-	@$(MAKE) -C mcpgateway_rust build
-
-rust-gateway-install: rust-ensure-deps  ## Build and install all PyO3 gateway modules
-	@$(MAKE) -C mcpgateway_rust install
-
-rust-gateway-test: rust-ensure-deps  ## Run all Rust gateway tests
-	@$(MAKE) -C mcpgateway_rust test
-
-rust-gateway-test-verbose: rust-ensure-deps  ## Run all Rust gateway tests (verbose)
-	@$(MAKE) -C mcpgateway_rust test-verbose
-
-rust-gateway-check: rust-ensure-deps  ## Run cargo check on gateway workspace
-	@$(MAKE) -C mcpgateway_rust check
-
-rust-gateway-fmt: rust-ensure-deps  ## Format Rust gateway code
-	@$(MAKE) -C mcpgateway_rust fmt
-
-rust-gateway-fmt-check: rust-ensure-deps  ## Check format for Rust gateway workspace
-	@$(MAKE) -C mcpgateway_rust fmt-check
-
-rust-gateway-clippy: rust-ensure-deps  ## Run clippy on gateway workspace
-	@$(MAKE) -C mcpgateway_rust clippy
-
-rust-gateway-clean: rust-ensure-deps  ## Clean Rust gateway build artifacts
-	@$(MAKE) -C mcpgateway_rust clean
-
-rust-gateway-verify: rust-ensure-deps  ## Run all gateway verification checks
-	@$(MAKE) -C mcpgateway_rust verify
-
-rust-gateway-info: rust-ensure-deps  ## Show Rust gateway workspace information
-	@$(MAKE) -C mcpgateway_rust info
+gateway-rs: gateway-rs-build gateway-rs-install  ## Build and install gateway Rust extensions (convenience)
+gateway-rs-build: rust-ensure-deps  ## Build gateway crates (release)
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Building $$crate..."; cargo build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+	fi
+gateway-rs-install: rust-ensure-deps  ## Install gateway PyO3 extensions (e.g. a2a_service)
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Installing $$crate..."; (cd "$$crate" && maturin develop --release) || exit 1; \
+		done; \
+	fi
+gateway-rs-test: rust-ensure-deps  ## Run Rust tests for gateway crates
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo test --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+	fi
+gateway-rs-check: rust-ensure-deps  ## Run cargo check on gateway crates
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo check --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+	fi
+gateway-rs-fmt: rust-ensure-deps  ## Format gateway Rust code
+	@cargo fmt --manifest-path crates/gateway_rs/services/a2a_service/Cargo.toml 2>/dev/null || true
+gateway-rs-clippy: rust-ensure-deps  ## Run clippy on gateway crates
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo clippy --manifest-path $$crate/Cargo.toml -- -D warnings || exit 1; \
+		done; \
+	fi
+gateway-rs-clean: rust-ensure-deps  ## Clean gateway build artifacts
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo clean --manifest-path $$crate/Cargo.toml; \
+		done; \
+	fi
+gateway-rs-verify: gateway-rs-build gateway-rs-test  ## Build + test gateway crates
+gateway-rs-info:  ## List gateway Rust crates
+	@echo "RUST_GATEWAY_CRATES: $(RUST_GATEWAY_CRATES)"
 
 # -----------------------------------------------------------------------------
 # Per subfolder: crates/mcp-servers, crates/plugins, crates/tools

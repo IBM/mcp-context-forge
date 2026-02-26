@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/mcpgateway/*",
+    "crates/gateway_rs/services/*",
     "crates/tools/*",
     "crates/mcp-servers/*",
     "crates/plugins/*",
@@ -32,6 +32,15 @@ tokio = { version = "1.49", features = ["full"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+
+# Concurrent collections
+dashmap = "6.1"
+
+# URL parsing (for A2A auth query params)
+url = "2.5"
 
 [profile.release]
 opt-level = 3

@@ -4672,7 +4672,9 @@ class TestA2AAgentManagement:
         mock_agent.name = "Test Agent"
         mock_get_agent.return_value = mock_agent
 
-        mock_invoke_agent.return_value = {"result": "success", "message": "Test completed"}
+        mock_invoke_agent.return_value = [
+            {"status_code": 200, "parsed": {"result": "success", "message": "Test completed"}}
+        ]
 
         form_data = FakeForm({"test_message": "Hello, test!"})
         mock_request.form = AsyncMock(return_value=form_data)
@@ -4685,6 +4687,36 @@ class TestA2AAgentManagement:
         assert "result" in body
         mock_get_agent.assert_called_with(mock_db, "agent-1")
         mock_invoke_agent.assert_called_once()
+
+    @patch("mcpgateway.admin._read_request_json", new_callable=AsyncMock, return_value={})
+    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "invoke_agent")
+    async def test_admin_test_a2a_agent_uses_admin_bypass_for_team_private_agents(
+        self, mock_invoke_agent, mock_get_agent, _mock_read_json, mock_request, mock_db
+    ):
+        """Admin test must pass user_email=None and omit token_teams so invoke_agent grants admin bypass.
+
+        This allows testing private and team-scoped agents from the admin UI; token_teams=[] would
+        restrict to public-only and break testing of non-public agents.
+        """
+        mock_agent = MagicMock()
+        mock_agent.name = "TeamAgent"
+        mock_get_agent.return_value = mock_agent
+        mock_invoke_agent.return_value = [{"status_code": 200, "parsed": {"result": "ok"}}]
+        mock_request.form = AsyncMock(return_value=FakeForm({}))
+
+        await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        mock_invoke_agent.assert_called_once()
+        call_args = mock_invoke_agent.call_args
+        requests_list = call_args.args[1]
+        assert len(requests_list) == 1
+        single_request = requests_list[0]
+        # Admin bypass requires user_email=None and token_teams not set (None)
+        assert single_request.get("user_email") is None
+        assert single_request.get("token_teams") is None
+        # user_id preserved for auditing
+        assert single_request.get("user_id") == "admin@example.com"
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_disabled(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -4700,28 +4732,28 @@ class TestA2AAgentManagement:
     async def test_admin_test_a2a_agent_body_read_exception_uses_default_message(self, monkeypatch, mock_request, mock_db, allow_permission):
         service = MagicMock()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
-        service.invoke_agent = AsyncMock(return_value={"ok": True})
+        service.invoke_agent = AsyncMock(return_value=[{"parsed": {"result": "ok"}}])
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(side_effect=RuntimeError("boom")), raising=True)
 
         result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result.status_code == 200
-        params = service.invoke_agent.call_args.args[2]
+        params = service.invoke_agent.call_args.args[1][0]["parameters"]
         assert "Hello from ContextForge Admin UI test!" in params["params"]["message"]["parts"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_generic_test_params_branch(self, monkeypatch, mock_request, mock_db, allow_permission):
         service = MagicMock()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
-        service.invoke_agent = AsyncMock(return_value={"ok": True})
+        service.invoke_agent = AsyncMock(return_value=[{"parsed": {"result": "ok"}}])
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "hi"}), raising=True)
 
         result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result.status_code == 200
-        params = service.invoke_agent.call_args.args[2]
+        params = service.invoke_agent.call_args.args[1][0]["parameters"]
         assert params["query"] == "hi"
         assert params["test"] is True
 
