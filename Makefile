@@ -581,7 +581,7 @@ clean:
 # help: test-altk            - Run tests with ALTK (agent-lifecycle-toolkit) installed
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
 # help: coverage             - Run tests with coverage, emit HTML/XML + badge
-# help: coverage-pytest      - Run pytest with coverage collection (doctests + unit tests)
+# help: coverage-pytest      - Run pytest unit tests with coverage collection
 # help: coverage-annotated   - Run coverage and generate annotated source files (.py,cover)
 # help: test-docs            - Run coverage and generate docs/docs/test/unittest.md report
 # help: htmlcov              - (re)build just the HTML coverage report into docs
@@ -2636,7 +2636,7 @@ ifneq ($(filter lint lint-quick lint-fix lint-smart,$(MAKECMDGOALS)),)
 endif
 
 # List of individual lint targets
-LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
+LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
 	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
 		pytype check-manifest markdownlint vulture unimport
 

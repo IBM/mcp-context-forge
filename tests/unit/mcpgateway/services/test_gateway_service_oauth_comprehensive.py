@@ -695,3 +695,10 @@ class TestGatewayServiceOAuthComprehensive:
 
         # Verify OAuth manager was called twice (token refresh)
         assert gateway_service.oauth_manager.get_access_token.call_count == 2
+
+        # Verify the correct OAuth tokens were used in the outgoing requests
+        assert mock_client.stream.call_count == 2
+        first_headers = mock_client.stream.call_args_list[0][1].get("headers", {})
+        second_headers = mock_client.stream.call_args_list[1][1].get("headers", {})
+        assert first_headers.get("Authorization") == "Bearer token1"
+        assert second_headers.get("Authorization") == "Bearer token2"

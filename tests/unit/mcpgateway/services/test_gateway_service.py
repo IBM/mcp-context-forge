@@ -6214,7 +6214,7 @@ class TestSetGatewayStateActivation:
 
     @pytest.mark.asyncio
     async def test_activate_only_update_reachable(self, gateway_service, mock_gateway, monkeypatch):
-        """only_update_reachable skips full re-initialization."""
+        """only_update_reachable skips tool refresh but still initializes gateway connection."""
         db = MagicMock()
         db.execute.return_value = _make_execute_result(scalar=mock_gateway)
         mock_gateway.enabled = True
@@ -6232,6 +6232,9 @@ class TestSetGatewayStateActivation:
             db, mock_gateway.id, activate=True, reachable=True, only_update_reachable=True
         )
         assert mock_gateway.reachable is True
+        # _initialize_gateway is still called even with only_update_reachable;
+        # the flag only controls whether tool/resource/prompt bulk updates run.
+        gateway_service._initialize_gateway.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
