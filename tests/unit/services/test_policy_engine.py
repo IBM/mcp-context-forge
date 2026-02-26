@@ -303,18 +303,13 @@ class TestPhase2AbacPolicyWiring:
 
     @pytest.fixture
     def mock_db(self):
-        """Create a mock DB chain for policy queries."""
+        """Create a mock DB session placeholder."""
         from unittest.mock import MagicMock
 
-        db = MagicMock()
-        query_chain = db.query.return_value
-        query_chain.filter.return_value = query_chain
-        query_chain.order_by.return_value = query_chain
-        query_chain.all.return_value = []
-        return db
+        return MagicMock()
 
     @pytest.mark.asyncio
-    async def test_abac_allow_policy_grants_access(self, mock_db):
+    async def test_abac_allow_policy_grants_access(self, mock_db, monkeypatch):
         """A matched allow policy should grant access."""
         from types import SimpleNamespace
 
@@ -325,9 +320,9 @@ class TestPhase2AbacPolicyWiring:
             conditions={"op": "eq", "left": "subject.email", "right": "user@example.com"},
             priority=100,
         )
-        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [allow_policy]
 
         engine = PolicyEngine(mock_db)
+        monkeypatch.setattr(engine, "_load_active_abac_policies", lambda: [allow_policy])
         subject = Subject(email="user@example.com", is_admin=False, permissions=[])
 
         decision = await engine.check_access(subject=subject, permission="tools.read", resource=Resource(type="tool", id="t1"))
@@ -335,7 +330,7 @@ class TestPhase2AbacPolicyWiring:
         assert "ABAC policy" in decision.reason
 
     @pytest.mark.asyncio
-    async def test_abac_deny_policy_blocks_access(self, mock_db):
+    async def test_abac_deny_policy_blocks_access(self, mock_db, monkeypatch):
         """A matched deny policy should block access."""
         from types import SimpleNamespace
 
@@ -346,9 +341,9 @@ class TestPhase2AbacPolicyWiring:
             conditions={"op": "eq", "left": "subject.email", "right": "user@example.com"},
             priority=200,
         )
-        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [deny_policy]
 
         engine = PolicyEngine(mock_db)
+        monkeypatch.setattr(engine, "_load_active_abac_policies", lambda: [deny_policy])
         subject = Subject(email="user@example.com", is_admin=False, permissions=["*"])
 
         decision = await engine.check_access(subject=subject, permission="tools.read", resource=Resource(type="tool", id="t1"))
@@ -356,7 +351,7 @@ class TestPhase2AbacPolicyWiring:
         assert "Denied by ABAC policy" in decision.reason
 
     @pytest.mark.asyncio
-    async def test_no_matching_policy_falls_back_to_phase1_logic(self, mock_db):
+    async def test_no_matching_policy_falls_back_to_phase1_logic(self, mock_db, monkeypatch):
         """If no policy matches, existing Phase 1 permission flow is used."""
         from types import SimpleNamespace
 
@@ -367,9 +362,9 @@ class TestPhase2AbacPolicyWiring:
             conditions={"op": "eq", "left": "subject.email", "right": "someoneelse@example.com"},
             priority=50,
         )
-        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [policy]
 
         engine = PolicyEngine(mock_db)
+        monkeypatch.setattr(engine, "_load_active_abac_policies", lambda: [policy])
         subject = Subject(email="user@example.com", is_admin=False, permissions=["tools.read"])
 
         decision = await engine.check_access(subject=subject, permission="tools.read", resource=Resource(type="tool", id="t1"))

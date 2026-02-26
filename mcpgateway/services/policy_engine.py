@@ -18,8 +18,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-# First-Party
-from mcpgateway.db import AccessPolicy
 from mcpgateway.services.policy_conditions import evaluate_policy_condition
 
 logger = logging.getLogger(__name__)
@@ -254,12 +252,7 @@ class PolicyEngine:
             AccessDecision when a policy matches, otherwise None.
         """
         try:
-            policies = (
-                self.db.query(AccessPolicy)
-                .filter(AccessPolicy.is_active.is_(True))
-                .order_by(AccessPolicy.priority.desc(), AccessPolicy.created_at.asc())
-                .all()
-            )
+            policies = self._load_active_abac_policies()
         except Exception as exc:
             logger.warning("Failed to load ABAC policies, continuing without policy evaluation: %s", exc)
             return None
@@ -300,6 +293,29 @@ class PolicyEngine:
             logger.warning("Skipping policy %s with unsupported effect: %s", policy.id, policy.effect)
 
         return None
+
+    def _load_active_abac_policies(self) -> list[Any]:
+        """Load active ABAC policies from DB when model exists.
+
+        The AccessPolicy ORM model is not available on newer mainline builds.
+        In that case we gracefully skip DB-backed ABAC evaluation.
+        """
+        try:
+            # First-Party
+            import mcpgateway.db as db_module
+
+            access_policy_model = getattr(db_module, "AccessPolicy", None)
+            if access_policy_model is None:
+                logger.info("AccessPolicy model not present; skipping DB-backed ABAC evaluation")
+                return []
+
+            query = self.db.query(access_policy_model).filter(access_policy_model.is_active.is_(True))
+            if hasattr(access_policy_model, "priority") and hasattr(access_policy_model, "created_at"):
+                query = query.order_by(access_policy_model.priority.desc(), access_policy_model.created_at.asc())
+            return query.all()
+        except Exception as exc:
+            logger.warning("Error loading AccessPolicy models: %s", exc)
+            return []
 
     async def _check_resource_access(self, subject: Subject, permission: str, resource: Resource) -> AccessDecision:
         """
