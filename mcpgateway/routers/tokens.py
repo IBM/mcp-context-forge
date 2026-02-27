@@ -178,13 +178,14 @@ async def create_token(
         # Match the specific name constraint: PostgreSQL reports the constraint name
         # (either the db.py name or the Alembic migration name); SQLite reports column paths.
         if (
-            "uq_email_api_tokens_user_name" in err_str
+            "uq_email_api_tokens_user_name_team" in err_str
+            or "uq_email_api_tokens_user_name" in err_str
             or "uq_email_api_tokens_user_email_name" in err_str
             or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A token with this name already exists for this user. Token names must be unique per user across all teams. Please choose a different name.",
+                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
             )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
 
@@ -705,13 +706,14 @@ async def create_team_token(
         # Match the specific name constraint: PostgreSQL reports the constraint name
         # (either the db.py name or the Alembic migration name); SQLite reports column paths.
         if (
-            "uq_email_api_tokens_user_name" in err_str
+            "uq_email_api_tokens_user_name_team" in err_str
+            or "uq_email_api_tokens_user_name" in err_str
             or "uq_email_api_tokens_user_email_name" in err_str
             or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A token with this name already exists for this user. Token names must be unique per user across all teams. Please choose a different name.",
+                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
             )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
 

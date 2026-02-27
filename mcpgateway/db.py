@@ -4990,9 +4990,9 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name combination
+    # Unique constraint for user+name+team_id combination (per-team scope)
     __table_args__ = (
-        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
+        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
