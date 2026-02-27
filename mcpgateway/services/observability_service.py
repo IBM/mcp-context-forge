@@ -1056,7 +1056,7 @@ class ObservabilityService:
     # ==============================
 
     # pylint: disable=too-many-positional-arguments,too-many-arguments,too-many-locals
-    def query_traces(
+    def query_traces(  # noqa: PLR0917
         self,
         db: Session,
         start_time: Optional[datetime] = None,
@@ -1230,7 +1230,7 @@ class ObservabilityService:
         return query.all()
 
     # pylint: disable=too-many-positional-arguments,too-many-arguments,too-many-locals
-    def query_spans(
+    def query_spans(  # noqa: PLR0917
         self,
         db: Session,
         trace_id: Optional[str] = None,

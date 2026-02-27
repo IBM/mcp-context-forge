@@ -407,9 +407,29 @@ target-version = "py311"
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
 # Also "D1" for docstring present checks.
+# "PL" enables Pylint rules natively in ruff (replaces pylint for these checks).
 # TODO: Enable "I" for import sorting as a separate PR.
-select = ["E3", "E4", "E7", "E9", "F", "D1"]
-ignore = []
+select = ["E3", "E4", "E7", "E9", "F", "D1", "PL"]
+ignore = [
+    # ---- Rules already disabled in .pylintrc (intentionally relaxed) ----
+    "PLR0904",  # too-many-public-methods  (pylint R0904)
+    "PLR0912",  # too-many-branches        (pylint R0912)
+    "PLR0913",  # too-many-arguments       (pylint R0913)
+    "PLR0914",  # too-many-locals          (pylint R0914)
+    "PLR0915",  # too-many-statements      (pylint R0915)
+    # ---- Accepted codebase patterns (high violation count, tolerated by pylint scoring) ----
+    "PLC0415",  # import-outside-top-level (pylint C0415) — FastAPI/lazy-import patterns
+    "PLW0603",  # global-statement         (pylint W0603) — config/singleton patterns
+    # ---- Ruff-only PL rules with no pylint equivalent (out of migration scope) ----
+    "PLC1901",  # compare-to-empty-string  (deprecated in pylint)
+    "PLC2701",  # import-private-name      (ruff-only)
+    "PLR2004",  # magic-value-comparison   (ruff-only)
+    "PLR5501",  # collapsible-else-if      (ruff-only)
+    "PLR6104",  # non-augmented-assignment (ruff-only)
+    "PLR6201",  # literal-membership       (ruff-only)
+    "PLR6301",  # no-self-use              (ruff-only)
+    "PLW2901",  # redefined-loop-name      (ruff-only)
+]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -429,6 +449,18 @@ preview = true
 "migration_add_annotations.py" = ["D1"]
 "playwright.config.py" = ["D1"]
 "run_mutmut.py" = ["D1"]
+
+[tool.ruff.lint.pylint]
+# Match thresholds from .pylintrc [DESIGN] and [REFACTORING] sections
+max-args = 12               # .pylintrc max-args
+max-positional-args = 16    # .pylintrc max-positional-arguments
+max-returns = 16            # .pylintrc max-returns
+max-bool-expr = 6           # .pylintrc max-bool-expr
+max-branches = 12           # .pylintrc max-branches (ignored; PLR0912 disabled)
+max-statements = 50         # .pylintrc max-statements (ignored; PLR0915 disabled)
+max-locals = 15             # .pylintrc max-locals (ignored; PLR0914 disabled)
+max-public-methods = 20     # .pylintrc max-public-methods (ignored; PLR0904 disabled)
+max-nested-blocks = 18      # .pylintrc max-nested-blocks
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
@@ -747,6 +779,113 @@ ignore_errors = true
 [tool.pylint.main]
 # C extension modules that pylint cannot introspect - trust their members
 extension-pkg-allow-list = ["orjson"]
+
+[tool.pylint."messages control"]
+# Rules migrated to ruff PL — see [tool.ruff.lint] select and .pylintrc for full list
+disable = [
+    # Convention (C) → ruff PLC
+    "typevar-name-incorrect-variance",  # C0105 → PLC0105
+    "typevar-double-variance",          # C0131 → PLC0131
+    "typevar-name-mismatch",            # C0132 → PLC0132
+    "single-string-used-for-slots",     # C0205 → PLC0205
+    "consider-using-dict-items",        # C0206 → PLC0206
+    "use-maxsplit-arg",                 # C0207 → PLC0207
+    "use-sequence-for-iteration",       # C0208 → PLC0208
+    "useless-import-alias",             # C0414 → PLC0414
+    "import-outside-toplevel",          # C0415 → PLC0415
+    "use-implicit-booleaness-not-len",  # C1802 → PLC1802
+    "non-ascii-name",                   # C2401 → PLC2401
+    "non-ascii-module-import",          # C2403 → PLC2403
+    "unnecessary-dunder-call",          # C2801 → PLC2801
+    "unnecessary-direct-lambda-call",   # C3002 → PLC3002
+    # Error (E) → ruff PLE
+    "init-is-generator",                # E0100 → PLE0100
+    "return-in-init",                   # E0101 → PLE0101
+    "nonlocal-and-global",              # E0115 → PLE0115
+    "continue-in-finally",              # E0116 → PLE0116
+    "nonlocal-without-binding",         # E0117 → PLE0117
+    "used-prior-global-declaration",    # E0118 → PLE0118
+    "assigning-non-slot",               # E0237 → PLE0237
+    "duplicate-bases",                  # E0241 → PLE0241
+    "unexpected-special-method-signature",  # E0302 → PLE0302
+    "invalid-length-returned",          # E0303 → PLE0303
+    "invalid-bool-returned",            # E0304 → PLE0304
+    "invalid-index-returned",           # E0305 → PLE0305
+    "invalid-str-returned",             # E0307 → PLE0307
+    "invalid-bytes-returned",           # E0308 → PLE0308
+    "invalid-hash-returned",            # E0309 → PLE0309
+    "invalid-all-object",               # E0604 → PLE0604
+    "invalid-all-format",               # E0605 → PLE0605
+    "potential-index-error",            # E0643 → PLE0643
+    "misplaced-bare-raise",             # E0704 → PLE0704
+    "repeated-keyword",                 # E1132 → PLE1132
+    "dict-iter-missing-items",          # E1141 → PLE1141
+    "await-outside-async",              # E1142 → PLE1142
+    "logging-too-many-args",            # E1205 → PLE1205
+    "logging-too-few-args",             # E1206 → PLE1206
+    "bad-format-character",             # E1300 → PLE1300
+    "bad-string-format-type",           # E1307 → PLE1307
+    "bad-str-strip-call",               # E1310 → PLE1310
+    "invalid-envvar-value",             # E1507 → PLE1507
+    "singledispatch-method",            # E1519 → PLE1519
+    "singledispatchmethod-function",    # E1520 → PLE1520
+    "yield-inside-async-function",      # E1700 → PLE1700
+    "bidirectional-unicode",            # E2502 → PLE2502
+    "invalid-character-backspace",      # E2510 → PLE2510
+    "invalid-character-sub",            # E2512 → PLE2512
+    "invalid-character-esc",            # E2513 → PLE2513
+    "invalid-character-nul",            # E2514 → PLE2514
+    "invalid-character-zero-width-space",  # E2515 → PLE2515
+    "modified-iterating-set",           # E4703 → PLE4703
+    # Refactor (R) → ruff PLR
+    "comparison-with-itself",           # R0124 → PLR0124
+    "comparison-of-constants",          # R0133 → PLR0133
+    "no-classmethod-decorator",         # R0202 → PLR0202
+    "no-staticmethod-decorator",        # R0203 → PLR0203
+    "property-with-parameters",         # R0206 → PLR0206
+    "consider-using-from-import",       # R0402 → PLR0402
+    "too-many-return-statements",       # R0911 → PLR0911
+    "too-many-boolean-expressions",     # R0916 → PLR0916
+    "too-many-positional-arguments",    # R0917 → PLR0917
+    "consider-merging-isinstance",      # R1701 → PLR1701
+    "too-many-nested-blocks",           # R1702 → PLR1702
+    "redefined-argument-from-local",    # R1704 → PLR1704
+    "consider-using-ternary",           # R1706 → PLR1706
+    "stop-iteration-return",            # R1708 → PLR1708
+    "useless-return",                   # R1711 → PLR1711
+    "consider-using-in",                # R1714 → PLR1714
+    "chained-comparison",               # R1716 → PLR1716
+    "consider-using-sys-exit",          # R1722 → PLR1722
+    "consider-using-min-builtin",       # R1730 → PLR1730
+    "unnecessary-dict-index-lookup",    # R1733 → PLR1733
+    "unnecessary-list-index-lookup",    # R1736 → PLR1736
+    # Warning (W) → ruff PLW
+    "unnecessary-lambda",               # W0108 → PLW0108
+    "useless-else-on-loop",             # W0120 → PLW0120
+    "self-assigning-variable",          # W0127 → PLW0127
+    "redeclared-assigned-name",         # W0128 → PLW0128
+    "assert-on-string-literal",         # W0129 → PLW0129
+    "named-expr-without-context",       # W0131 → PLW0131
+    "pointless-exception-statement",    # W0133 → PLW0133
+    "nan-comparison",                   # W0177 → PLW0177
+    "bad-staticmethod-argument",        # W0211 → PLW0211
+    "redefined-slots-in-subclass",      # W0244 → PLW0244
+    "super-without-brackets",           # W0245 → PLW0245
+    "import-self",                      # W0406 → PLW0406
+    "global-variable-not-assigned",     # W0602 → PLW0602
+    "global-statement",                 # W0603 → PLW0603
+    "global-at-module-level",           # W0604 → PLW0604
+    "self-cls-assignment",              # W0642 → PLW0642
+    "binary-op-exception",              # W0711 → PLW0711
+    "bad-open-mode",                    # W1501 → PLW1501
+    "shallow-copy-environ",             # W1507 → PLW1507
+    "invalid-envvar-default",           # W1508 → PLW1508
+    "subprocess-popen-preexec-fn",      # W1509 → PLW1509
+    "subprocess-run-check",             # W1510 → PLW1510
+    "unspecified-encoding",             # W1514 → PLW1514
+    "useless-with-lock",                # W2101 → PLW2101
+    "nested-min-max",                   # W3301 → PLW3301
+]
 
 # --------------------------------------------------------------------
 #  Interrogate - Documentation coverage tool
