@@ -10451,17 +10451,23 @@ function initGatewaySelect(
             });
 
             // Update "no results" message if it exists
-            const noMsg = document.getElementById("noGatewayMessage");
-            const searchQuerySpan =
-                document.getElementById("searchQueryServers");
+            // Use edit-modal message element when operating on the edit container
+            const noMsgId = selectId.includes("Edit") ? "noEditGatewayMessage" : "noGatewayMessage";
+            const noMsg = document.getElementById(noMsgId);
+            const searchQuerySpanId = selectId.includes("Edit") ? "searchQueryEditServers" : "searchQueryServers";
+            const searchQuerySpan = document.getElementById(searchQuerySpanId);
 
-            if (noMsg) {
-                if (query && visibleCount === 0) {
+            if (query && visibleCount === 0) {
+                container.style.display = "none";
+                if (noMsg) {
                     noMsg.style.display = "block";
                     if (searchQuerySpan) {
                         searchQuerySpan.textContent = query;
                     }
-                } else {
+                }
+            } else {
+                container.style.display = "";
+                if (noMsg) {
                     noMsg.style.display = "none";
                 }
             }
@@ -10961,6 +10967,15 @@ function reloadAssociatedItems() {
                         selectBtn,
                         clearBtn,
                     );
+                    // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                    const toolSearchInput = document.getElementById(useEditContainers ? "searchEditTools" : "searchTools");
+                    if (toolSearchInput && toolSearchInput.value.trim()) {
+                        if (useEditContainers) { serverSideEditToolSearch(toolSearchInput.value.trim()); }
+                        else { serverSideToolSearch(toolSearchInput.value.trim()); }
+                    } else if (toolSearchInput) {
+                        const toolContainer = document.getElementById(toolsContainerId);
+                        if (toolContainer) { toolContainer.style.display = ""; }
+                    }
                 })
                 .catch((err) => {
                     console.error(
@@ -11169,6 +11184,14 @@ function reloadAssociatedItems() {
                 } catch (e) {
                     console.warn("Error restoring associated resources:", e);
                 }
+                // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                const resSearchInput = document.getElementById(useEditContainers ? "searchEditResources" : "searchResources");
+                if (resSearchInput && resSearchInput.value.trim()) {
+                    if (useEditContainers) { serverSideEditResourcesSearch(resSearchInput.value.trim()); }
+                    else { serverSideResourceSearch(resSearchInput.value.trim()); }
+                } else if (resSearchInput) {
+                    if (resourcesContainer) { resourcesContainer.style.display = ""; }
+                }
                 console.log(
                     "[Filter Update DEBUG] Resources reloaded successfully via fetch",
                 );
@@ -11266,6 +11289,15 @@ function reloadAssociatedItems() {
                     pSelectBtn,
                     pClearBtn,
                 );
+                // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                const promptSearchInput = document.getElementById(useEditContainers ? "searchEditPrompts" : "searchPrompts");
+                if (promptSearchInput && promptSearchInput.value.trim()) {
+                    if (useEditContainers) { serverSideEditPromptsSearch(promptSearchInput.value.trim()); }
+                    else { serverSidePromptSearch(promptSearchInput.value.trim()); }
+                } else if (promptSearchInput) {
+                    const promptContainer = document.getElementById(promptsContainerId);
+                    if (promptContainer) { promptContainer.style.display = ""; }
+                }
             });
         }
     }
@@ -27211,6 +27243,9 @@ async function serverSideToolSearch(searchTerm) {
         return;
     }
 
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
+
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
         ? getSelectedGatewayIds()
@@ -27429,6 +27464,7 @@ async function serverSideToolSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27526,6 +27562,9 @@ async function serverSidePromptSearch(searchTerm) {
         console.error("associatedPrompts container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27732,6 +27771,7 @@ async function serverSidePromptSearch(searchTerm) {
             }
         } else {
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27761,6 +27801,9 @@ async function serverSideResourceSearch(searchTerm) {
         console.error("associatedResources container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27959,6 +28002,7 @@ async function serverSideResourceSearch(searchTerm) {
             }
         } else {
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27988,6 +28032,9 @@ async function serverSideEditToolSearch(searchTerm) {
         console.error("edit-server-tools container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -28292,6 +28339,7 @@ async function serverSideEditToolSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -28322,6 +28370,9 @@ async function serverSideEditPromptsSearch(searchTerm) {
         console.error("edit-server-prompts container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -28608,6 +28659,7 @@ async function serverSideEditPromptsSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -28637,6 +28689,9 @@ async function serverSideEditResourcesSearch(searchTerm) {
         console.error("edit-server-resources container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -28916,6 +28971,7 @@ async function serverSideEditResourcesSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
