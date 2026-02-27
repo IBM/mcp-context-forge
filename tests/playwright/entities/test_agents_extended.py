@@ -623,13 +623,13 @@ class TestA2AEditModal:
         _open_edit_modal(agents_page, 0)
 
         expect(
-            agents_page.page.locator("#a2a-visibility-public-edit")
+            agents_page.page.locator("#edit-a2a-visibility-public")
         ).to_be_attached()
         expect(
-            agents_page.page.locator("#a2a-visibility-team-edit")
+            agents_page.page.locator("#edit-a2a-visibility-team")
         ).to_be_attached()
         expect(
-            agents_page.page.locator("#a2a-visibility-private-edit")
+            agents_page.page.locator("#edit-a2a-visibility-private")
         ).to_be_attached()
 
         _close_edit_modal(agents_page)
