@@ -126,6 +126,13 @@ def _get_config(key: str, default: str = "") -> str:
     return default
 
 
+def _env_bool(value: str | None, default: bool = False) -> bool:
+    """Parse common truthy/falsey env strings into bool."""
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Load .env file once at module import
 _ENV_FILE_VARS = _load_env_file()
 
@@ -146,6 +153,27 @@ JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "
 # JTI (JWT ID) is automatically generated for each token for proper cache keying
 JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 
+# Strict validation defaults prioritize correctness (flag backend/API faults).
+# Set these env vars to relax behavior for degradation/stress benchmarking.
+LOADTEST_STRICT_VALIDATION = _env_bool(_get_config("LOADTEST_STRICT_VALIDATION", "true"), default=True)
+LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS = _env_bool(
+    _get_config("LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS", "false" if LOADTEST_STRICT_VALIDATION else "true"),
+    default=not LOADTEST_STRICT_VALIDATION,
+)
+LOADTEST_ALLOW_5XX = _env_bool(
+    _get_config("LOADTEST_ALLOW_5XX", "false" if LOADTEST_STRICT_VALIDATION else "true"),
+    default=not LOADTEST_STRICT_VALIDATION,
+)
+LOADTEST_FAIL_ON_SETUP_ERRORS = _env_bool(
+    _get_config("LOADTEST_FAIL_ON_SETUP_ERRORS", "true" if LOADTEST_STRICT_VALIDATION else "false"),
+    default=LOADTEST_STRICT_VALIDATION,
+)
+LOADTEST_FAIL_ON_EMPTY_POOLS = _env_bool(_get_config("LOADTEST_FAIL_ON_EMPTY_POOLS", "false"), default=False)
+LOADTEST_ALLOW_BASIC_AUTH_FALLBACK = _env_bool(
+    _get_config("LOADTEST_ALLOW_BASIC_AUTH_FALLBACK", "false" if LOADTEST_STRICT_VALIDATION else "true"),
+    default=not LOADTEST_STRICT_VALIDATION,
+)
+
 
 # Log loaded configuration (masking sensitive values)
 logger.info("Configuration loaded:")
@@ -155,6 +183,12 @@ logger.info(f"  JWT_AUDIENCE: {JWT_AUDIENCE}")
 logger.info(f"  JWT_ISSUER: {JWT_ISSUER}")
 logger.info(f"  JWT_SECRET_KEY: {'*' * len(JWT_SECRET_KEY) if JWT_SECRET_KEY else '(not set)'}")
 logger.info(f"  JWT_TOKEN_EXPIRY_HOURS: {JWT_TOKEN_EXPIRY_HOURS}")
+logger.info(f"  LOADTEST_STRICT_VALIDATION: {LOADTEST_STRICT_VALIDATION}")
+logger.info(f"  LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS: {LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS}")
+logger.info(f"  LOADTEST_ALLOW_5XX: {LOADTEST_ALLOW_5XX}")
+logger.info(f"  LOADTEST_FAIL_ON_SETUP_ERRORS: {LOADTEST_FAIL_ON_SETUP_ERRORS}")
+logger.info(f"  LOADTEST_FAIL_ON_EMPTY_POOLS: {LOADTEST_FAIL_ON_EMPTY_POOLS}")
+logger.info(f"  LOADTEST_ALLOW_BASIC_AUTH_FALLBACK: {LOADTEST_ALLOW_BASIC_AUTH_FALLBACK}")
 
 # Test data pools (populated during test setup)
 # IDs for REST API calls (GET /tools/{id}, etc.)
@@ -168,7 +202,7 @@ A2A_IDS: list[str] = []
 # Feature flag: set to True when a real A2A agent endpoint is available for testing.
 # When False, all A2A CRUD/state/toggle/invoke tasks are skipped to avoid orphaned
 # test agents and cascading RPC tool call failures.
-A2A_TESTING_ENABLED: bool = False
+A2A_TESTING_ENABLED = _env_bool(_get_config("LOADTEST_A2A_TESTING_ENABLED", "false"), default=False)
 
 # Endpoint availability discovered from OpenAPI at test start.
 # Used to make feature-flagged endpoint checks conditional.
@@ -197,11 +231,14 @@ VIRTUAL_TOOL_PREFIXES: tuple[str, ...] = (
 )
 
 # HTTP status codes from nginx/reverse-proxy when the upstream is overloaded.
-# Under high concurrency these are expected and should not count as test failures.
+# These can be tolerated for degradation benchmarking, but strict mode treats them
+# as failures to ensure API responsiveness issues are flagged.
 # 0 = connection dropped before response (upstream closed the connection)
 # 502 = Bad Gateway (upstream unavailable)
 # 504 = Gateway Timeout (upstream too slow)
-INFRASTRUCTURE_ERROR_CODES: set[int] = {0, 502, 504}
+ALL_INFRASTRUCTURE_ERROR_CODES: set[int] = {0, 502, 504}
+INFRASTRUCTURE_ERROR_CODES: set[int] = set(ALL_INFRASTRUCTURE_ERROR_CODES if LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS else set())
+SOFT_SERVER_ERROR_CODES: tuple[int, ...] = (500,) if LOADTEST_ALLOW_5XX else ()
 
 
 # =============================================================================
@@ -272,6 +309,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
 
     host = environment.host or "http://localhost:8080"
     headers = _get_auth_headers()
+    endpoint_failures: list[str] = []
 
     try:
         # Discover available endpoints once to align checks with feature flags.
@@ -291,6 +329,8 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             TOOL_IDS.extend([str(t.get("id")) for t in items[:50] if t.get("id")])
             TOOL_NAMES.extend([str(t.get("name")) for t in items[:50] if t.get("name")])
             logger.info(f"Loaded {len(TOOL_IDS)} tool IDs, {len(TOOL_NAMES)} tool names")
+        else:
+            endpoint_failures.append(f"/tools -> HTTP {status}")
 
         # Fetch servers
         # API returns {"servers": [...], "nextCursor": ...} or list for legacy
@@ -299,6 +339,8 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             items = data if isinstance(data, list) else data.get("servers", data.get("items", []))
             SERVER_IDS.extend([str(s.get("id")) for s in items[:50] if s.get("id")])
             logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
+        else:
+            endpoint_failures.append(f"/servers -> HTTP {status}")
 
         # Fetch gateways
         # API returns {"gateways": [...], "nextCursor": ...} or list for legacy
@@ -307,6 +349,8 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             items = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
             GATEWAY_IDS.extend([str(g.get("id")) for g in items[:50] if g.get("id")])
             logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
+        else:
+            endpoint_failures.append(f"/gateways -> HTTP {status}")
 
         # Fetch resources
         # API returns {"resources": [...], "nextCursor": ...} or list for legacy
@@ -316,6 +360,8 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             RESOURCE_IDS.extend([str(r.get("id")) for r in items[:50] if r.get("id")])
             RESOURCE_URIS.extend([str(r.get("uri")) for r in items[:50] if r.get("uri")])
             logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs, {len(RESOURCE_URIS)} resource URIs")
+        else:
+            endpoint_failures.append(f"/resources -> HTTP {status}")
 
         # Fetch prompts
         # API returns {"prompts": [...], "nextCursor": ...} or list for legacy
@@ -334,6 +380,8 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
                         if isinstance(arg_name, str) and arg_name:
                             PROMPT_ARGUMENT_NAMES[prompt_name] = arg_name
             logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs, {len(PROMPT_NAMES)} prompt names")
+        else:
+            endpoint_failures.append(f"/prompts -> HTTP {status}")
 
         # Fetch A2A agents (only when A2A testing is enabled)
         if A2A_TESTING_ENABLED:
@@ -342,6 +390,8 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
                 items = data if isinstance(data, list) else data.get("agents", data.get("items", []))
                 A2A_IDS.extend([str(a.get("id")) for a in items[:50] if a.get("id")])
                 logger.info(f"Loaded {len(A2A_IDS)} A2A agent IDs")
+            else:
+                endpoint_failures.append(f"/a2a -> HTTP {status}")
 
             # Seed a persistent A2A agent if none exist (unlike gateways/servers, A2A agents
             # are not pre-registered at compose startup)
@@ -363,8 +413,35 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
         else:
             logger.info("A2A testing disabled (A2A_TESTING_ENABLED=False)")
 
+        missing_pools: list[str] = []
+        required_pools = {
+            "TOOL_IDS": TOOL_IDS,
+            "SERVER_IDS": SERVER_IDS,
+            "GATEWAY_IDS": GATEWAY_IDS,
+            "RESOURCE_IDS": RESOURCE_IDS,
+            "PROMPT_IDS": PROMPT_IDS,
+        }
+        for pool_name, pool_data in required_pools.items():
+            if not pool_data:
+                missing_pools.append(pool_name)
+
+        if missing_pools:
+            msg = f"Missing pre-fetched entity pools: {', '.join(missing_pools)}"
+            if LOADTEST_FAIL_ON_EMPTY_POOLS:
+                raise RuntimeError(msg)
+            logger.warning(msg)
+        if endpoint_failures:
+            msg = f"Failed setup endpoint fetches: {', '.join(endpoint_failures)}"
+            if LOADTEST_FAIL_ON_SETUP_ERRORS:
+                raise RuntimeError(msg)
+            logger.warning(msg)
+
     except Exception as e:
         logger.warning(f"Failed to fetch entity IDs: {e}")
+        if isinstance(e, RuntimeError):
+            raise
+        if LOADTEST_FAIL_ON_SETUP_ERRORS:
+            raise RuntimeError("Load test setup failed while fetching entity IDs") from e
         logger.info("Tests will continue without pre-fetched IDs")
 
     # Note: All gateways (fast-time, fast-test, benchmark) are registered
@@ -565,6 +642,11 @@ def _get_auth_headers() -> dict[str, str]:
         if _CACHED_TOKEN:
             headers["Authorization"] = f"Bearer {_CACHED_TOKEN}"
         else:
+            if not LOADTEST_ALLOW_BASIC_AUTH_FALLBACK:
+                raise RuntimeError(
+                    "No bearer token available. Set MCPGATEWAY_BEARER_TOKEN or ensure PyJWT JWT generation works. "
+                    "Set LOADTEST_ALLOW_BASIC_AUTH_FALLBACK=true only if you intentionally want permissive fallback."
+                )
             # Fallback to basic auth (best-effort only; many deployments reject it)
             # Standard
             import base64  # pylint: disable=import-outside-toplevel
@@ -635,6 +717,16 @@ class BaseUser(FastHttpUser):
             "Accept": "text/html",
         }
 
+    @staticmethod
+    def _effective_allowed_codes(allowed_codes: list[int] | None) -> list[int]:
+        """Apply global strictness filters to per-endpoint allowed codes."""
+        allowed = set(allowed_codes or [200])
+        if not LOADTEST_ALLOW_5XX:
+            allowed = {code for code in allowed if not 500 <= code <= 599}
+        if not LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS:
+            allowed -= ALL_INFRASTRUCTURE_ERROR_CODES
+        return sorted(allowed)
+
     def _validate_json_response(self, response, allowed_codes: list[int] | None = None):
         """Validate response is successful and contains valid JSON.
 
@@ -642,17 +734,21 @@ class BaseUser(FastHttpUser):
             response: The response object from catch_response=True context
             allowed_codes: List of acceptable status codes (default: [200])
         """
-        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+        if response.status_code in ALL_INFRASTRUCTURE_ERROR_CODES and LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS:
             response.success()
             return True
-        allowed = allowed_codes or [200]
+        allowed = self._effective_allowed_codes(allowed_codes)
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
             return False
-        # Empty/truncated body is a load-induced connection interruption
-        # (headers arrived but body didn't) — treat as infrastructure error.
+        # Empty/truncated body is often a load-induced interruption.
+        # In strict mode we fail to surface correctness issues; in permissive mode
+        # we keep backward-compatible success behavior.
         content = getattr(response, "text", None) or ""
         if not content.strip():
+            if LOADTEST_STRICT_VALIDATION:
+                response.failure("Expected JSON body, got empty response body")
+                return False
             response.success()
             return True
         try:
@@ -673,10 +769,10 @@ class BaseUser(FastHttpUser):
             response: The response object from catch_response=True context
             allowed_codes: List of acceptable status codes (default: [200])
         """
-        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+        if response.status_code in ALL_INFRASTRUCTURE_ERROR_CODES and LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS:
             response.success()
             return True
-        allowed = allowed_codes or [200]
+        allowed = self._effective_allowed_codes(allowed_codes)
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
             return False
@@ -694,10 +790,10 @@ class BaseUser(FastHttpUser):
             response: The response object from catch_response=True context
             allowed_codes: List of acceptable status codes (default: [200])
         """
-        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+        if response.status_code in ALL_INFRASTRUCTURE_ERROR_CODES and LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS:
             response.success()
             return True
-        allowed = allowed_codes or [200]
+        allowed = self._effective_allowed_codes(allowed_codes)
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
             return False
@@ -717,10 +813,10 @@ class BaseUser(FastHttpUser):
         Returns:
             bool: True if response is valid JSON-RPC success, False otherwise
         """
-        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+        if response.status_code in ALL_INFRASTRUCTURE_ERROR_CODES and LOADTEST_ALLOW_INFRASTRUCTURE_ERRORS:
             response.success()
             return True
-        allowed = allowed_codes or [200]
+        allowed = self._effective_allowed_codes(allowed_codes)
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
             return False
@@ -1064,7 +1160,7 @@ class AdminUIUser(BaseUser):
     def admin_events(self):
         """Load admin events stream metadata."""
         with self.client.get("/admin/events", headers=self.auth_headers, name="/admin/events", catch_response=True) as response:
-            self._validate_json_response(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_json_response(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("admin", "config")
@@ -2064,8 +2160,7 @@ class A2AFullCRUDUser(BaseUser):
             name="/a2a [list for get]",
             catch_response=True,
         ) as response:
-            if response.status_code != 200:
-                response.success()
+            if not self._validate_json_response(response, allowed_codes=[200]):
                 return
             try:
                 data = response.json()
@@ -2073,14 +2168,15 @@ class A2AFullCRUDUser(BaseUser):
                 if agents:
                     agent_id = random.choice(agents).get("id")
                     if agent_id:
-                        self.client.get(
+                        with self.client.get(
                             f"/a2a/{agent_id}",
                             headers=self.auth_headers,
                             name="/a2a/[id]",
-                        )
-                response.success()
-            except Exception:
-                response.success()
+                            catch_response=True,
+                        ) as detail_response:
+                            self._validate_json_response(detail_response, allowed_codes=[200, 404])
+            except Exception as e:
+                response.failure(f"Invalid A2A list JSON: {e}")
 
     @task(3)
     @tag("a2a", "write", "create")
@@ -2136,7 +2232,7 @@ class A2AEchoInvokeUser(BaseUser):
       a2a-echo-agent
     """
 
-    weight = 2
+    weight = 2 if A2A_TESTING_ENABLED else 0
     wait_time = between(0.5, 1.5)
 
     def __init__(self, *args, **kwargs):
@@ -2148,22 +2244,26 @@ class A2AEchoInvokeUser(BaseUser):
         self._discover_agent()
 
     def _discover_agent(self) -> None:
-        """Best-effort discovery. If not present, keep running without failing."""
-        try:
-            resp = self.client.get("/a2a", headers=self.auth_headers, name="/a2a [discover echo]", catch_response=True)
-            if resp.status_code != 200:
-                resp.success()
+        """Discover required echo agent and fail in strict mode when unavailable."""
+        self.agent_name = None
+        with self.client.get("/a2a", headers=self.auth_headers, name="/a2a [discover echo]", catch_response=True) as response:
+            if not self._validate_json_response(response, allowed_codes=[200]):
                 return
-            data = resp.json()
-            agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
-            for agent in agents:
-                if agent.get("name") == "a2a-echo-agent":
-                    self.agent_name = "a2a-echo-agent"
-                    break
-            resp.success()
-        except Exception:
-            # Discovery failures shouldn't stop other scenarios.
-            self.agent_name = None
+            try:
+                data = response.json()
+                agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
+                for agent in agents:
+                    if agent.get("name") == "a2a-echo-agent":
+                        self.agent_name = "a2a-echo-agent"
+                        break
+                if self.agent_name:
+                    response.success()
+                elif LOADTEST_STRICT_VALIDATION:
+                    response.failure("a2a-echo-agent not found")
+                else:
+                    response.success()
+            except Exception as e:
+                response.failure(f"Invalid A2A discovery JSON: {e}")
 
     @task(10)
     @tag("a2a", "invoke", "echo")
@@ -2853,6 +2953,7 @@ def on_test_start_batch1(environment, **_kwargs):
     """Fetch team and role IDs for batch 1 tests."""
     host = environment.host or "http://localhost:8080"
     headers = _get_auth_headers()
+    endpoint_failures: list[str] = []
 
     try:
         # Fetch teams
@@ -2861,6 +2962,8 @@ def on_test_start_batch1(environment, **_kwargs):
             items = data if isinstance(data, list) else data.get("teams", data.get("items", []))
             TEAM_IDS.extend([str(t.get("id")) for t in items[:20] if t.get("id")])
             logger.info(f"Loaded {len(TEAM_IDS)} team IDs")
+        else:
+            endpoint_failures.append(f"/teams/ -> HTTP {status}")
 
         # Fetch RBAC roles
         status, data = _fetch_json(f"{host}/rbac/roles", headers)
@@ -2869,9 +2972,31 @@ def on_test_start_batch1(environment, **_kwargs):
             non_system_roles = [r for r in items if r.get("id") and not r.get("is_system_role", False)]
             ROLE_IDS.extend([str(r.get("id")) for r in non_system_roles[:20]])
             logger.info(f"Loaded {len(ROLE_IDS)} role IDs")
+        else:
+            endpoint_failures.append(f"/rbac/roles -> HTTP {status}")
+
+        missing_pools: list[str] = []
+        if not TEAM_IDS:
+            missing_pools.append("TEAM_IDS")
+        if not ROLE_IDS:
+            missing_pools.append("ROLE_IDS")
+        if missing_pools:
+            msg = f"Missing batch1 entity pools: {', '.join(missing_pools)}"
+            if LOADTEST_FAIL_ON_EMPTY_POOLS:
+                raise RuntimeError(msg)
+            logger.warning(msg)
+        if endpoint_failures:
+            msg = f"Failed batch1 setup endpoint fetches: {', '.join(endpoint_failures)}"
+            if LOADTEST_FAIL_ON_SETUP_ERRORS:
+                raise RuntimeError(msg)
+            logger.warning(msg)
 
     except Exception as e:
         logger.warning(f"Failed to fetch batch1 IDs: {e}")
+        if isinstance(e, RuntimeError):
+            raise
+        if LOADTEST_FAIL_ON_SETUP_ERRORS:
+            raise RuntimeError("Load test setup failed while fetching batch1 IDs") from e
 
 
 @events.test_stop.add_listener
@@ -3041,7 +3166,7 @@ class TeamsCRUDUser(BaseUser):
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 # 403=Forbidden, 409=Conflict, 422=Validation error, 500=Server error, 502/504=Load
                 response.success()
 
@@ -3469,7 +3594,7 @@ class RootsExtendedUser(BaseUser):
                         name="/roots/export",
                         catch_response=True,
                     ) as export_response:
-                        self._validate_json_response(export_response, allowed_codes=[200, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_json_response(export_response, allowed_codes=[200, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                     update_data = {
                         "uri": root_uri,
@@ -3482,7 +3607,7 @@ class RootsExtendedUser(BaseUser):
                         name="/roots/[root_uri] [update]",
                         catch_response=True,
                     ) as update_response:
-                        self._validate_json_response(update_response, allowed_codes=[200, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_json_response(update_response, allowed_codes=[200, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                     # Delete may return 404 (already deleted) or 500 (server bug)
                     with self.client.delete(
@@ -3491,7 +3616,7 @@ class RootsExtendedUser(BaseUser):
                         name="/roots/[uri] [delete]",
                         catch_response=True,
                     ) as del_response:
-                        if del_response.status_code in (200, 204, 404, 500, *INFRASTRUCTURE_ERROR_CODES):
+                        if del_response.status_code in (200, 204, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                             del_response.success()
                         else:
                             del_response.failure(f"Unexpected status: {del_response.status_code}")
@@ -3530,7 +3655,7 @@ class TagsExtendedUser(BaseUser):
             catch_response=True,
         ) as response:
             # 200=Success, 404=Tag not found, 500=DB contention under load
-            self._validate_json_response(response, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_json_response(response, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class LogSearchExtendedUser(BaseUser):
@@ -3791,7 +3916,7 @@ class EntityUpdateUser(BaseUser):
                             name="/tools/[id] [update]",
                             catch_response=True,
                         ) as put_response:
-                            self._validate_json_response(put_response, allowed_codes=[0, 200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_json_response(put_response, allowed_codes=[0, 200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -3822,7 +3947,7 @@ class EntityUpdateUser(BaseUser):
                             name="/resources/[id] [update]",
                             catch_response=True,
                         ) as put_response:
-                            self._validate_json_response(put_response, allowed_codes=[0, 200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_json_response(put_response, allowed_codes=[0, 200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -5213,7 +5338,7 @@ class GatewayExtendedUser(BaseUser):
                 name="/gateways/[id]/tools/refresh",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 404, 409, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_json_response(response, allowed_codes=[200, 404, 409, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class ResourcesSubscribeUser(BaseUser):
@@ -5372,7 +5497,7 @@ class WellKnownExtendedUser(BaseUser):
             name="/sse",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AuthEmailExtendedUser(BaseUser):
@@ -5502,7 +5627,7 @@ class AdminLogsExtendedUser(BaseUser):
             name="/admin/logs/stream",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AdminLLMExtendedUser(BaseUser):
@@ -5777,8 +5902,13 @@ class A2AStateToggleUser(BaseUser):
                     data = response.json()
                     agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
                     self.a2a_ids = [a.get("id") for a in agents[:5] if a.get("id")]
-                except Exception:
-                    pass
+                except Exception as e:
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure(f"Invalid A2A setup JSON: {e}")
+                        return
+            elif LOADTEST_STRICT_VALIDATION:
+                response.failure(f"A2A setup failed: {response.status_code}")
+                return
             response.success()
 
     @task(3)
@@ -5794,7 +5924,7 @@ class A2AStateToggleUser(BaseUser):
                 name="/a2a/[id]/state",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 401, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_json_response(response, allowed_codes=[200, 401, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("a2a", "toggle")
@@ -5844,8 +5974,13 @@ class AdminTeamsMembershipUser(BaseUser):
                     data = response.json()
                     teams = data if isinstance(data, list) else data.get("teams", data.get("items", []))
                     self.team_ids = [t.get("id") or t.get("team_id") for t in teams[:5] if t.get("id") or t.get("team_id")]
-                except Exception:
-                    pass
+                except Exception as e:
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure(f"Invalid teams setup JSON: {e}")
+                        return
+            elif LOADTEST_STRICT_VALIDATION:
+                response.failure(f"Team setup failed: {response.status_code}")
+                return
             response.success()
 
     @task(3)
@@ -5990,7 +6125,7 @@ class ServerWellKnownUser(BaseUser):
             name="/servers/[id]/sse",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 401, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class ImportExtendedUser(BaseUser):
@@ -6088,7 +6223,7 @@ class OAuthExtendedUser(BaseUser):
             name="/oauth/authorize/[id]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 302, 303, 307, 400, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 302, 303, 307, 400, 401, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("oauth", "callback")
@@ -6102,7 +6237,7 @@ class OAuthExtendedUser(BaseUser):
             name="/oauth/callback",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 302, 303, 307, 400, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 302, 303, 307, 400, 401, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class LLMChatUser(BaseUser):
@@ -6234,7 +6369,7 @@ class EntityUpdateExtendedUser(BaseUser):
                             name="/servers/[id] [update]",
                             catch_response=True,
                         ) as put_resp:
-                            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -6265,7 +6400,7 @@ class EntityUpdateExtendedUser(BaseUser):
                             name="/prompts/[id] [update]",
                             catch_response=True,
                         ) as put_resp:
-                            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -6285,22 +6420,34 @@ class EntityUpdateExtendedUser(BaseUser):
             catch_response=True,
         ) as response:
             if response.status_code != 200:
-                response.success()
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Failed to list A2A agents for update: {response.status_code}")
+                else:
+                    response.success()
                 return
             try:
                 data = response.json()
                 agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
                 if not agents:
-                    response.success()
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure("No A2A agents available for update test")
+                    else:
+                        response.success()
                     return
                 agent = random.choice(agents)
                 agent_id = agent.get("id")
                 if not agent_id:
-                    response.success()
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure("Selected A2A agent has no id")
+                    else:
+                        response.success()
                     return
                 response.success()
-            except Exception:
-                response.success()
+            except Exception as e:
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Invalid A2A list JSON: {e}")
+                else:
+                    response.success()
                 return
 
         agent["description"] = f"Updated by load test at {time.time()}"
@@ -6311,7 +6458,7 @@ class EntityUpdateExtendedUser(BaseUser):
             name="/a2a/[id] [update]",
             catch_response=True,
         ) as put_resp:
-            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("teams", "update")
@@ -6337,7 +6484,7 @@ class EntityUpdateExtendedUser(BaseUser):
                             name="/teams/[id] [update]",
                             catch_response=True,
                         ) as put_resp:
-                            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -6355,22 +6502,34 @@ class EntityUpdateExtendedUser(BaseUser):
             catch_response=True,
         ) as response:
             if response.status_code != 200:
-                response.success()
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Failed to list tokens for update: {response.status_code}")
+                else:
+                    response.success()
                 return
             try:
                 data = response.json()
                 tokens = data if isinstance(data, list) else data.get("tokens", data.get("items", []))
                 if not tokens:
-                    response.success()
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure("No tokens available for update test")
+                    else:
+                        response.success()
                     return
                 token = random.choice(tokens)
                 token_id = token.get("id")
                 if not token_id:
-                    response.success()
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure("Selected token has no id")
+                    else:
+                        response.success()
                     return
                 response.success()
-            except Exception:
-                response.success()
+            except Exception as e:
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Invalid token list JSON: {e}")
+                else:
+                    response.success()
                 return
 
         update_data = {"name": token.get("name", "token"), "description": f"Updated by load test at {time.time()}"}
@@ -6381,7 +6540,7 @@ class EntityUpdateExtendedUser(BaseUser):
             name="/tokens/[id] [update]",
             catch_response=True,
         ) as put_resp:
-            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_json_response(put_resp, allowed_codes=[200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("rbac", "update")
@@ -6407,7 +6566,7 @@ class EntityUpdateExtendedUser(BaseUser):
                             name="/rbac/roles/[id] [update]",
                             catch_response=True,
                         ) as put_resp:
-                            self._validate_json_response(put_resp, allowed_codes=[200, 400, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_json_response(put_resp, allowed_codes=[200, 400, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -6498,7 +6657,7 @@ class LLMCRUDUser(BaseUser):
                         name="/llm/providers/[id] [patch]",
                         catch_response=True,
                     ) as patch_resp:
-                        self._validate_status(patch_resp, allowed_codes=[200, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(patch_resp, allowed_codes=[200, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Health check
                     time.sleep(0.05)
                     with self.client.post(
@@ -6516,14 +6675,14 @@ class LLMCRUDUser(BaseUser):
                         name="/llm/providers/[id]/state",
                         catch_response=True,
                     ) as state_resp:
-                        self._validate_status(state_resp, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(state_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Delete
                     time.sleep(0.05)
                     self.client.delete(f"/llm/providers/{provider_id}", headers=self.auth_headers, name="/llm/providers/[id] [delete]")
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(2)
@@ -6559,7 +6718,7 @@ class LLMCRUDUser(BaseUser):
                         name="/llm/models/[id] [patch]",
                         catch_response=True,
                     ) as patch_resp:
-                        self._validate_status(patch_resp, allowed_codes=[200, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(patch_resp, allowed_codes=[200, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Toggle state
                     time.sleep(0.05)
                     with self.client.post(
@@ -6568,14 +6727,14 @@ class LLMCRUDUser(BaseUser):
                         name="/llm/models/[id]/state",
                         catch_response=True,
                     ) as state_resp:
-                        self._validate_status(state_resp, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(state_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Delete
                     time.sleep(0.05)
                     self.client.delete(f"/llm/models/{model_id}", headers=self.auth_headers, name="/llm/models/[id] [delete]")
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(2)
@@ -6589,7 +6748,10 @@ class LLMCRUDUser(BaseUser):
             catch_response=True,
         ) as response:
             if response.status_code != 200:
-                response.success()
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Failed to list LLM providers for read: {response.status_code}")
+                else:
+                    response.success()
                 return
             try:
                 data = response.json()
@@ -6605,9 +6767,15 @@ class LLMCRUDUser(BaseUser):
                             catch_response=True,
                         ) as provider_get_resp:
                             self._validate_status(provider_get_resp, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
+                elif LOADTEST_STRICT_VALIDATION:
+                    response.failure("No LLM providers available for read test")
+                    return
                 response.success()
-            except Exception:
-                response.success()
+            except Exception as e:
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Invalid LLM providers JSON: {e}")
+                else:
+                    response.success()
 
     @task(2)
     @tag("llm", "models", "read")
@@ -6620,7 +6788,10 @@ class LLMCRUDUser(BaseUser):
             catch_response=True,
         ) as response:
             if response.status_code != 200:
-                response.success()
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Failed to list LLM models for read: {response.status_code}")
+                else:
+                    response.success()
                 return
             try:
                 data = response.json()
@@ -6629,10 +6800,22 @@ class LLMCRUDUser(BaseUser):
                     model = random.choice(models)
                     mid = model.get("id") or model.get("model_id")
                     if mid:
-                        self.client.get(f"/llm/models/{mid}", headers=self.auth_headers, name="/llm/models/[id]")
+                        with self.client.get(
+                            f"/llm/models/{mid}",
+                            headers=self.auth_headers,
+                            name="/llm/models/[id]",
+                            catch_response=True,
+                        ) as model_get_resp:
+                            self._validate_status(model_get_resp, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
+                elif LOADTEST_STRICT_VALIDATION:
+                    response.failure("No LLM models available for read test")
+                    return
                 response.success()
-            except Exception:
-                response.success()
+            except Exception as e:
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Invalid LLM models JSON: {e}")
+                else:
+                    response.success()
 
 
 class GatewayCRUDExtendedUser(BaseUser):
@@ -6697,14 +6880,14 @@ class GatewayCRUDExtendedUser(BaseUser):
                         name="/gateways/[id] [update]",
                         catch_response=True,
                     ) as put_resp:
-                        self._validate_status(put_resp, allowed_codes=[200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(put_resp, allowed_codes=[200, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Delete
                     time.sleep(0.1)
                     self.client.delete(f"/gateways/{gw_id}", headers=self.auth_headers, name="/gateways/[id] [delete]")
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
 
@@ -6763,7 +6946,7 @@ class AuthEmailCRUDUser(BaseUser):
                         name="/auth/email/admin/users/[email] [update]",
                         catch_response=True,
                     ) as put_resp:
-                        self._validate_status(put_resp, allowed_codes=[200, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(put_resp, allowed_codes=[200, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # DELETE
                     time.sleep(0.05)
                     self.client.delete(
@@ -6774,7 +6957,7 @@ class AuthEmailCRUDUser(BaseUser):
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(2)
@@ -6788,7 +6971,7 @@ class AuthEmailCRUDUser(BaseUser):
             name="/auth/email/login",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("auth", "email", "register")
@@ -6812,7 +6995,7 @@ class AuthEmailCRUDUser(BaseUser):
                     )
                 except Exception:
                     pass
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -6826,7 +7009,7 @@ class AuthEmailCRUDUser(BaseUser):
             name="/auth/email/change-password",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 # =============================================================================
@@ -6867,7 +7050,7 @@ class TeamsExtendedWriteUser(BaseUser):
                 name="/teams/[id]/join",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("teams", "leave")
@@ -6881,7 +7064,7 @@ class TeamsExtendedWriteUser(BaseUser):
                 name="/teams/[id]/leave",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("teams", "invitations")
@@ -6917,11 +7100,11 @@ class TeamsExtendedWriteUser(BaseUser):
                                 name="/teams/invitations/[token]/accept",
                                 catch_response=True,
                             ) as accept_resp:
-                                self._validate_status(accept_resp, allowed_codes=[200, 400, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                                self._validate_status(accept_resp, allowed_codes=[200, 400, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     except Exception:
                         pass
                     response.success()
-                elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+                elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                     response.success()
 
     @task(1)
@@ -6952,7 +7135,7 @@ class TeamsExtendedWriteUser(BaseUser):
                                         name="/teams/[id]/join-requests/[id]/approve",
                                         catch_response=True,
                                     ) as approve_resp:
-                                        self._validate_status(approve_resp, allowed_codes=[200, 403, 404, 409, 500, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(approve_resp, allowed_codes=[200, 403, 404, 409, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                                 else:
                                     with self.client.delete(
                                         f"/teams/{team_id}/join-requests/{req_id}",
@@ -6960,7 +7143,7 @@ class TeamsExtendedWriteUser(BaseUser):
                                         name="/teams/[id]/join-requests/[id] [delete]",
                                         catch_response=True,
                                     ) as del_resp:
-                                        self._validate_status(del_resp, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(del_resp, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     except Exception:
                         pass
                 response.success()
@@ -6992,7 +7175,7 @@ class TeamsExtendedWriteUser(BaseUser):
                                     name="/teams/[id]/members/[email] [update]",
                                     catch_response=True,
                                 ) as put_resp:
-                                    self._validate_status(put_resp, allowed_codes=[200, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                                    self._validate_status(put_resp, allowed_codes=[200, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     except Exception:
                         pass
                 response.success()
@@ -7011,7 +7194,7 @@ class TeamsExtendedWriteUser(BaseUser):
                 name="/teams/[id]/members/[email] [delete]",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 400, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class RBACExtendedWriteUser(BaseUser):
@@ -7040,7 +7223,7 @@ class RBACExtendedWriteUser(BaseUser):
                 name="/rbac/users/[email]/roles [assign]",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("rbac", "users", "roles", "remove")
@@ -7054,7 +7237,7 @@ class RBACExtendedWriteUser(BaseUser):
                 name="/rbac/users/[email]/roles/[id] [delete]",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class TokensExtendedWriteUser(BaseUser):
@@ -7081,7 +7264,7 @@ class TokensExtendedWriteUser(BaseUser):
             name="/tokens/admin/[id] [delete]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("tokens", "teams", "create")
@@ -7111,7 +7294,7 @@ class TokensExtendedWriteUser(BaseUser):
                     except Exception:
                         pass
                     response.success()
-                elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+                elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                     response.success()
 
 
@@ -7140,7 +7323,7 @@ class ReverseProxyExtendedUser(BaseUser):
             name="/reverse-proxy/sessions/[id] [delete]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 401, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 401, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("reverse-proxy", "sessions", "request")
@@ -7154,7 +7337,7 @@ class ReverseProxyExtendedUser(BaseUser):
             name="/reverse-proxy/sessions/[id]/request",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 401, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 401, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("reverse-proxy", "sessions", "sse")
@@ -7167,7 +7350,7 @@ class ReverseProxyExtendedUser(BaseUser):
             name="/reverse-proxy/sse/[id]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 401, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 # =============================================================================
@@ -7367,7 +7550,7 @@ class AdminGrpcCRUDUser(BaseUser):
                         name="/admin/grpc/[id] [update]",
                         catch_response=True,
                     ) as put_resp:
-                        self._validate_status(put_resp, allowed_codes=[200, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(put_resp, allowed_codes=[200, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Reflect
                     time.sleep(0.05)
                     with self.client.post(
@@ -7376,7 +7559,7 @@ class AdminGrpcCRUDUser(BaseUser):
                         name="/admin/grpc/[id]/reflect",
                         catch_response=True,
                     ) as reflect_resp:
-                        self._validate_status(reflect_resp, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(reflect_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Toggle state
                     time.sleep(0.05)
                     with self.client.post(
@@ -7385,7 +7568,7 @@ class AdminGrpcCRUDUser(BaseUser):
                         name="/admin/grpc/[id]/state",
                         catch_response=True,
                     ) as state_resp:
-                        self._validate_status(state_resp, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(state_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Delete
                     time.sleep(0.05)
                     with self.client.post(
@@ -7394,11 +7577,11 @@ class AdminGrpcCRUDUser(BaseUser):
                         name="/admin/grpc/[id]/delete",
                         catch_response=True,
                     ) as del_resp:
-                        self._validate_status(del_resp, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(del_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
 
@@ -7440,7 +7623,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
                 name="/admin/a2a/[id]/state",
                 catch_response=True,
             ) as r:
-                self._validate_status(r, allowed_codes=[200, 302, 303, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 302, 303, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "a2a", "test")
@@ -7466,7 +7649,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
         if GATEWAY_IDS:
             gw_id = random.choice(GATEWAY_IDS)
             with self.client.post(f"/admin/gateways/{gw_id}/state", headers=self.auth_headers, name="/admin/gateways/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "gateways", "test")
@@ -7488,7 +7671,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
         if SERVER_IDS:
             srv_id = random.choice(SERVER_IDS)
             with self.client.post(f"/admin/servers/{srv_id}/state", headers=self.auth_headers, name="/admin/servers/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "prompts", "state")
@@ -7497,7 +7680,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
         if PROMPT_IDS:
             pid = random.choice(PROMPT_IDS)
             with self.client.post(f"/admin/prompts/{pid}/state", headers=self.auth_headers, name="/admin/prompts/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "resources", "state")
@@ -7506,7 +7689,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
         if RESOURCE_IDS:
             rid = random.choice(RESOURCE_IDS)
             with self.client.post(f"/admin/resources/{rid}/state", headers=self.auth_headers, name="/admin/resources/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "tools", "state")
@@ -7515,7 +7698,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
         if TOOL_IDS:
             tid = random.choice(TOOL_IDS)
             with self.client.post(f"/admin/tools/{tid}/state", headers=self.auth_headers, name="/admin/tools/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "config")
@@ -7527,7 +7710,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
             name="/admin/change-password-required [toggle]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 403, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 403, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "config", "passthrough")
@@ -7540,7 +7723,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
             name="/admin/config/passthrough-headers [update]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AdminMCPRegistryOpsUser(BaseUser):
@@ -7568,7 +7751,7 @@ class AdminMCPRegistryOpsUser(BaseUser):
                 name="/admin/mcp-registry/[id]/register",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 400, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 400, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "mcp-registry", "bulk")
@@ -7581,7 +7764,7 @@ class AdminMCPRegistryOpsUser(BaseUser):
             name="/admin/mcp-registry/bulk-register",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AdminLLMOpsUser(BaseUser):
@@ -7620,38 +7803,56 @@ class AdminLLMOpsUser(BaseUser):
         """Fetch a random LLM provider ID."""
         with self.client.get("/llm/providers", headers=self.auth_headers, name="/llm/providers [list for admin ops]", catch_response=True) as response:
             if response.status_code != 200:
-                response.success()
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Failed to list LLM providers: {response.status_code}")
+                else:
+                    response.success()
                 return None
             try:
                 data = response.json()
                 providers = data if isinstance(data, list) else data.get("providers", data.get("items", []))
                 if not providers:
-                    response.success()
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure("No LLM providers available for admin ops")
+                    else:
+                        response.success()
                     return None
                 pid = random.choice(providers).get("id")
                 response.success()
                 return pid
-            except Exception:
-                response.success()
+            except Exception as e:
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Invalid LLM providers JSON: {e}")
+                else:
+                    response.success()
                 return None
 
     def _get_random_model_id(self):
         """Fetch a random LLM model ID."""
         with self.client.get("/llm/models", headers=self.auth_headers, name="/llm/models [list for admin ops]", catch_response=True) as response:
             if response.status_code != 200:
-                response.success()
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Failed to list LLM models: {response.status_code}")
+                else:
+                    response.success()
                 return None
             try:
                 data = response.json()
                 models = data if isinstance(data, list) else data.get("models", data.get("items", []))
                 if not models:
-                    response.success()
+                    if LOADTEST_STRICT_VALIDATION:
+                        response.failure("No LLM models available for admin ops")
+                    else:
+                        response.success()
                     return None
                 mid = random.choice(models).get("id") or random.choice(models).get("model_id")
                 response.success()
                 return mid
-            except Exception:
-                response.success()
+            except Exception as e:
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Invalid LLM models JSON: {e}")
+                else:
+                    response.success()
                 return None
 
     @task(1)
@@ -7679,7 +7880,7 @@ class AdminLLMOpsUser(BaseUser):
         pid = self._get_random_provider_id()
         if pid:
             with self.client.post(f"/admin/llm/providers/{pid}/state", headers=self.auth_headers, name="/admin/llm/providers/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "providers", "sync-models")
@@ -7696,7 +7897,7 @@ class AdminLLMOpsUser(BaseUser):
         """DELETE /admin/llm/providers/{id} - Delete provider (test with fake ID)."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.delete(f"/admin/llm/providers/{fake_id}", headers=self.auth_headers, name="/admin/llm/providers/[id] [delete]", catch_response=True) as r:
-            self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "models", "state")
@@ -7705,7 +7906,7 @@ class AdminLLMOpsUser(BaseUser):
         mid = self._get_random_model_id()
         if mid:
             with self.client.post(f"/admin/llm/models/{mid}/state", headers=self.auth_headers, name="/admin/llm/models/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "models", "delete")
@@ -7713,7 +7914,7 @@ class AdminLLMOpsUser(BaseUser):
         """DELETE /admin/llm/models/{id} - Delete model (test with fake ID)."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.delete(f"/admin/llm/models/{fake_id}", headers=self.auth_headers, name="/admin/llm/models/[id] [delete]", catch_response=True) as r:
-            self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AdminObservabilityQueriesUser(BaseUser):
@@ -7766,7 +7967,7 @@ class AdminObservabilityQueriesUser(BaseUser):
                             name="/admin/observability/queries/[id] [update]",
                             catch_response=True,
                         ) as put_resp:
-                            self._validate_status(put_resp, allowed_codes=[200, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_status(put_resp, allowed_codes=[200, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         # Use
                         time.sleep(0.05)
                         with self.client.post(
@@ -7775,7 +7976,7 @@ class AdminObservabilityQueriesUser(BaseUser):
                             name="/admin/observability/queries/[id]/use",
                             catch_response=True,
                         ) as use_resp:
-                            self._validate_status(use_resp, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_status(use_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         # DELETE
                         time.sleep(0.05)
                         with self.client.delete(
@@ -7784,11 +7985,11 @@ class AdminObservabilityQueriesUser(BaseUser):
                             name="/admin/observability/queries/[id] [delete]",
                             catch_response=True,
                         ) as del_resp:
-                            self._validate_status(del_resp, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                            self._validate_status(del_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
 
@@ -7825,7 +8026,10 @@ class MiscEndpointsUser(BaseUser):
             return
         with self.client.get("/a2a", headers=self.auth_headers, name="/a2a [list for invoke]", catch_response=True) as response:
             if response.status_code != 200:
-                response.success()
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Failed to list A2A agents for invoke: {response.status_code}")
+                else:
+                    response.success()
                 return
             try:
                 data = response.json()
@@ -7842,9 +8046,15 @@ class MiscEndpointsUser(BaseUser):
                             catch_response=True,
                         ) as r:
                             self._validate_status(r, allowed_codes=[200, 400, 404, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
+                elif LOADTEST_STRICT_VALIDATION:
+                    response.failure("No A2A agents available for invoke test")
+                    return
                 response.success()
-            except Exception:
-                response.success()
+            except Exception as e:
+                if LOADTEST_STRICT_VALIDATION:
+                    response.failure(f"Invalid A2A list JSON: {e}")
+                else:
+                    response.success()
 
     @task(1)
     @tag("export", "selective")
@@ -7857,7 +8067,7 @@ class MiscEndpointsUser(BaseUser):
             name="/export/selective",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("import")
@@ -7870,7 +8080,7 @@ class MiscEndpointsUser(BaseUser):
             name="/import",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "import")
@@ -7883,7 +8093,7 @@ class MiscEndpointsUser(BaseUser):
             name="/admin/import/preview",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "import", "config")
@@ -7896,7 +8106,7 @@ class MiscEndpointsUser(BaseUser):
             name="/admin/import/configuration",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "export", "selective")
@@ -7909,7 +8119,7 @@ class MiscEndpointsUser(BaseUser):
             name="/admin/export/selective",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("prompts", "update")
@@ -7924,7 +8134,7 @@ class MiscEndpointsUser(BaseUser):
                 name="/prompts/[id] [post update]",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 403, 404, 405, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 403, 404, 405, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("llmchat", "chat")
@@ -7937,7 +8147,7 @@ class MiscEndpointsUser(BaseUser):
             name="/llmchat/chat",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("llmchat", "connect")
@@ -7950,7 +8160,7 @@ class MiscEndpointsUser(BaseUser):
             name="/llmchat/connect",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 400, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 400, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("oauth", "fetch-tools")
@@ -7964,7 +8174,7 @@ class MiscEndpointsUser(BaseUser):
                 name="/oauth/fetch-tools/[id]",
                 catch_response=True,
             ) as response:
-                self._validate_status(response, allowed_codes=[200, 400, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(response, allowed_codes=[200, 400, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("oauth", "clients", "delete")
@@ -7977,7 +8187,7 @@ class MiscEndpointsUser(BaseUser):
             name="/oauth/registered-clients/[id] [delete]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "login")
@@ -8072,7 +8282,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                         name="/admin/tools/[id]/edit",
                         catch_response=True,
                     ) as edit_resp:
-                        self._validate_status(edit_resp, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(edit_resp, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Delete
                     time.sleep(0.05)
                     with self.client.post(
@@ -8081,9 +8291,9 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                         name="/admin/tools/[id]/delete",
                         catch_response=True,
                     ) as del_resp:
-                        self._validate_status(del_resp, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(del_resp, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -8097,7 +8307,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
             name="/admin/tools/import",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 302, 400, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 302, 400, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "servers", "htmx", "crud")
@@ -8127,7 +8337,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                         name="/admin/servers/[id]/edit",
                         catch_response=True,
                     ) as edit_resp:
-                        self._validate_status(edit_resp, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(edit_resp, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(
                         f"/admin/servers/{srv_id}/delete",
@@ -8135,9 +8345,9 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                         name="/admin/servers/[id]/delete",
                         catch_response=True,
                     ) as del_resp:
-                        self._validate_status(del_resp, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(del_resp, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -8162,12 +8372,12 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if pid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/prompts/{pid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/prompts/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/prompts/{pid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/prompts/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -8192,12 +8402,12 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if rid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/resources/{rid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/resources/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/resources/{rid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/resources/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -8217,7 +8427,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
         ) as response:
             if response.status_code in (200, 201, 302):
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -8245,10 +8455,10 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if aid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/a2a/{aid}/edit", data=f"name={name}&endpoint_url=http://localhost:1&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/a2a/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/a2a/{aid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/a2a/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (409, 422, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
@@ -8275,12 +8485,12 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if gid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/gateways/{gid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/gateways/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/gateways/{gid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/gateways/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -8305,7 +8515,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     name="/admin/roots/[uri]",
                     catch_response=True,
                 ) as get_resp:
-                    self._validate_status(get_resp, allowed_codes=[200, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(get_resp, allowed_codes=[200, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                 time.sleep(0.05)
                 with self.client.post(
@@ -8315,7 +8525,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     name="/admin/roots/[uri]/update",
                     catch_response=True,
                 ) as upd_resp:
-                    self._validate_status(upd_resp, allowed_codes=[200, 302, 303, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(upd_resp, allowed_codes=[200, 302, 303, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                 time.sleep(0.05)
                 with self.client.get(
@@ -8324,7 +8534,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     name="/admin/roots/export",
                     catch_response=True,
                 ) as export_resp:
-                    self._validate_status(export_resp, allowed_codes=[200, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(export_resp, allowed_codes=[200, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                 time.sleep(0.05)
                 with self.client.post(
@@ -8333,9 +8543,9 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     name="/admin/roots/[uri]/delete",
                     catch_response=True,
                 ) as del_resp:
-                    self._validate_status(del_resp, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(del_resp, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
 
@@ -8373,25 +8583,25 @@ class AdminUsersOpsUser(BaseUser):
                 # Activate
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/activate", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/activate", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Deactivate
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/deactivate", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/deactivate", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Force password change
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/force-password-change", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/force-password-change", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Update
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/update", data="full_name=Updated+Load+Test", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/users/[email]/update", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Delete
                 time.sleep(0.05)
                 with self.client.delete(f"/admin/users/{email}", headers=self.admin_headers, name="/admin/users/[email] [delete]", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
 
@@ -8440,33 +8650,33 @@ class AdminTeamsHTMXOpsUser(BaseUser):
                 # Update
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/update", data=f"name={name}&description=Updated", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/update", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Add member
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/add-member", data="email=admin@example.com&role=viewer", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/add-member", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Update member role
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/update-member-role", data="email=admin@example.com&role=admin", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/update-member-role", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Remove member
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/remove-member", data="email=admin@example.com", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/remove-member", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Join request
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/join-request", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-request", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Leave
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/leave", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/leave", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Delete
                 time.sleep(0.1)
                 with self.client.delete(f"/admin/teams/{tid}", headers=self.admin_headers, name="/admin/teams/[id] [delete]", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
-            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+            elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)
@@ -8487,13 +8697,13 @@ class AdminTeamsHTMXOpsUser(BaseUser):
                                 action = random.choice(["approve", "reject", "delete"])
                                 if action == "approve":
                                     with self.client.post(f"/admin/teams/{tid}/join-requests/{rid}/approve", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-requests/[id]/approve", catch_response=True) as r:
-                                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                                 elif action == "reject":
                                     with self.client.post(f"/admin/teams/{tid}/join-requests/{rid}/reject", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-requests/[id]/reject", catch_response=True) as r:
-                                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                                 else:
                                     with self.client.delete(f"/admin/teams/{tid}/join-request/{rid}", headers=self.admin_headers, name="/admin/teams/[id]/join-request/[id] [delete]", catch_response=True) as r:
-                                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     except Exception:
                         pass
                 response.success()
