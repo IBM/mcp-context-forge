@@ -1915,3 +1915,562 @@ describe("initToolSelect Select All populates in-memory store (#3257)", () => {
         expect(editSel.has("tool-c")).toBe(true);
     });
 });
+
+// ---------------------------------------------------------------------------
+// ensureNoResultsElement — dynamic "no results" message (#3314)
+// ---------------------------------------------------------------------------
+describe("ensureNoResultsElement", () => {
+    test("returns existing element when already in the DOM", () => {
+        const container = makeContainer("myContainer");
+        const msg = doc.createElement("p");
+        msg.id = "noMyMessage";
+        const span = doc.createElement("span");
+        span.id = "myQuerySpan";
+        msg.appendChild(span);
+        container.parentNode.insertBefore(msg, container.nextSibling);
+
+        const result = win.ensureNoResultsElement(
+            "myContainer",
+            "noMyMessage",
+            "myQuerySpan",
+            "item",
+        );
+
+        expect(result.msg).toBe(msg);
+        expect(result.span).toBe(span);
+    });
+
+    test("falls back to querySelector when span id is missing", () => {
+        const container = makeContainer("ctr2");
+        const msg = doc.createElement("p");
+        msg.id = "noMsg2";
+        const span = doc.createElement("span");
+        // No id on span — ensureNoResultsElement should find it via querySelector
+        msg.appendChild(span);
+        container.parentNode.insertBefore(msg, container.nextSibling);
+
+        const result = win.ensureNoResultsElement(
+            "ctr2",
+            "noMsg2",
+            "spanId2",
+            "widget",
+        );
+
+        expect(result.msg).toBe(msg);
+        expect(result.span).toBe(span);
+    });
+
+    test("creates element dynamically when missing from DOM", () => {
+        const container = makeContainer("dynContainer");
+
+        const result = win.ensureNoResultsElement(
+            "dynContainer",
+            "noDynMessage",
+            "dynQuerySpan",
+            "tool",
+        );
+
+        expect(result.msg).not.toBeNull();
+        expect(result.msg.id).toBe("noDynMessage");
+        expect(result.msg.style.display).toBe("none");
+        expect(result.msg.className).toBe(
+            "text-gray-700 dark:text-gray-300 mt-2",
+        );
+        expect(result.span).not.toBeNull();
+        expect(result.span.id).toBe("dynQuerySpan");
+        expect(result.msg.textContent).toContain("No tool found containing");
+        // Verify it's inserted after the container
+        expect(container.nextSibling).toBe(result.msg);
+    });
+
+    test("returns nulls when container does not exist", () => {
+        const result = win.ensureNoResultsElement(
+            "nonexistentContainer",
+            "noMsg",
+            "spanId",
+            "item",
+        );
+
+        expect(result.msg).toBeNull();
+        expect(result.span).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideToolSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideToolSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("associatedTools");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tools: [] },
+            }),
+        );
+
+        await win.serverSideToolSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noToolsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+        const span = doc.getElementById("searchQueryTools");
+        expect(span.textContent).toBe("zzzzz");
+    });
+
+    test("shows container and hides message when search returns results", async () => {
+        const container = makeContainer("associatedTools");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tools: [{ id: "t1", name: "Tool One" }] },
+            }),
+        );
+
+        await win.serverSideToolSearch("tool");
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+
+    test("resets container visibility at start of search after previous no-results", async () => {
+        const container = makeContainer("associatedTools");
+        container.style.display = "none"; // simulate previous no-results state
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: '<input type="checkbox" name="associatedTools" value="t1">',
+            }),
+        );
+
+        await win.serverSideToolSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSidePromptSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSidePromptSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initPromptSelect = vi.fn();
+        win.updatePromptMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("associatedPrompts");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { prompts: [] },
+            }),
+        );
+
+        await win.serverSidePromptSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noPromptsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("associatedPrompts");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSidePromptSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideResourceSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideResourceSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initResourceSelect = vi.fn();
+        win.updateResourceMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("associatedResources");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { resources: [] },
+            }),
+        );
+
+        await win.serverSideResourceSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noResourcesMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("associatedResources");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideResourceSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditToolSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditToolSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("edit-server-tools");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tools: [] },
+            }),
+        );
+
+        await win.serverSideEditToolSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noEditToolsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("edit-server-tools");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideEditToolSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditPromptsSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditPromptsSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initPromptSelect = vi.fn();
+        win.updatePromptMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("edit-server-prompts");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { prompts: [] },
+            }),
+        );
+
+        await win.serverSideEditPromptsSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noEditPromptsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("edit-server-prompts");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideEditPromptsSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditResourcesSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditResourcesSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initResourceSelect = vi.fn();
+        win.updateResourceMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("edit-server-resources");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { resources: [] },
+            }),
+        );
+
+        await win.serverSideEditResourcesSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noEditResourcesMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("edit-server-resources");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideEditResourcesSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// initGatewaySelect — applySearch container visibility (#3314)
+// ---------------------------------------------------------------------------
+describe("initGatewaySelect — applySearch visibility (#3314)", () => {
+    function setupGatewaySelect(items = [], selectId = "associatedGateways") {
+        const container = doc.createElement("div");
+        container.id = selectId;
+        doc.body.appendChild(container);
+
+        items.forEach((text) => {
+            const item = doc.createElement("div");
+            item.className = "tool-item";
+            item.textContent = text;
+            const cb = doc.createElement("input");
+            cb.type = "checkbox";
+            cb.name = selectId;
+            cb.value = text;
+            item.appendChild(cb);
+            container.appendChild(item);
+        });
+
+        const pills = doc.createElement("div");
+        pills.id =
+            selectId === "associatedEditGateways"
+                ? "selectedEditGatewayPills"
+                : "selectedGatewayPills";
+        doc.body.appendChild(pills);
+
+        const warn = doc.createElement("div");
+        warn.id =
+            selectId === "associatedEditGateways"
+                ? "selectedEditGatewayWarning"
+                : "selectedGatewayWarning";
+        doc.body.appendChild(warn);
+
+        const searchInput = doc.createElement("input");
+        searchInput.id =
+            selectId === "associatedEditGateways"
+                ? "searchEditGateways"
+                : "searchGateways";
+        doc.body.appendChild(searchInput);
+
+        return { container, searchInput };
+    }
+
+    test("hides container and shows message when search matches nothing", () => {
+        const { container, searchInput } = setupGatewaySelect([
+            "fast_time",
+            "rest_a2a",
+        ]);
+
+        win.initGatewaySelect(
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
+            12,
+            null,
+            null,
+            "searchGateways",
+        );
+
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noGatewayMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("shows container and hides message when search matches items", () => {
+        const { container, searchInput } = setupGatewaySelect([
+            "fast_time",
+            "rest_a2a",
+        ]);
+
+        win.initGatewaySelect(
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
+            12,
+            null,
+            null,
+            "searchGateways",
+        );
+
+        // First trigger no-results to create the message element
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+        expect(container.style.display).toBe("none");
+
+        // Now search for something that matches
+        searchInput.value = "fast";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noGatewayMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+
+    test("uses Edit message IDs for edit container", () => {
+        const { searchInput } = setupGatewaySelect(
+            ["fast_time"],
+            "associatedEditGateways",
+        );
+
+        win.initGatewaySelect(
+            "associatedEditGateways",
+            "selectedEditGatewayPills",
+            "selectedEditGatewayWarning",
+            12,
+            null,
+            null,
+            "searchEditGateways",
+        );
+
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        const noMsg = doc.getElementById("noEditGatewayMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+        // Add-modal message should NOT be created
+        expect(doc.getElementById("noGatewayMessage")).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideToolSearch — error catch keeps container visible (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideToolSearch — error catch visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("container stays visible and message hidden on fetch error", async () => {
+        const container = makeContainer("associatedTools");
+        container.style.display = "none"; // simulate previous no-results state
+
+        win.fetch = vi.fn().mockRejectedValue(new Error("Network failure"));
+
+        await win.serverSideToolSearch("test");
+
+        // Container should be visible (reset at top of function)
+        expect(container.style.display).toBe("");
+        // Message should be hidden in catch block
+        const noMsg = doc.getElementById("noToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditToolSearch — error catch keeps container visible (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditToolSearch — error catch visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("container stays visible and message hidden on fetch error", async () => {
+        const container = makeContainer("edit-server-tools");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockRejectedValue(new Error("Network failure"));
+
+        await win.serverSideEditToolSearch("test");
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noEditToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+});
