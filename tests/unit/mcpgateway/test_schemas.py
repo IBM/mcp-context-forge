@@ -457,6 +457,18 @@ class TestMCPTypes:
         assert minimal.logging is None
         assert minimal.experimental is None
 
+    def test_server_capabilities_non_boolean_values(self):
+        """Test ServerCapabilities accepts non-boolean values (MCP SDK extra='allow')."""
+        caps = ServerCapabilities(
+            prompts={"listChanged": True, "customField": "string_value"},
+            resources={"subscribe": True, "listChanged": True, "maxSize": 1024},
+            tools={"listChanged": True, "parallelism": 4, "metadata": {"key": "val"}},
+        )
+        assert caps.prompts == {"listChanged": True, "customField": "string_value"}
+        assert caps.resources["maxSize"] == 1024
+        assert caps.tools["parallelism"] == 4
+        assert caps.tools["metadata"] == {"key": "val"}
+
     def test_initialize_request(self):
         """Test InitializeRequest model."""
         request = InitializeRequest(

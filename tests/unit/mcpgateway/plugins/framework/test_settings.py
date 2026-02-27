@@ -376,6 +376,16 @@ class TestPluginsHttpClientSettings:
 class TestPluginsCliSettings:
     """Test the lightweight PluginsCliSettings model."""
 
+    @pytest.fixture(autouse=True)
+    def _clean_cli_env(self, monkeypatch):
+        """Remove PLUGINS_CLI_ env vars and .env file so tests verify true defaults."""
+        for key in list(os.environ):
+            if key.startswith("PLUGINS_CLI_"):
+                monkeypatch.delenv(key, raising=False)
+        from mcpgateway.plugins.framework.settings import PluginsCliSettings
+
+        monkeypatch.setattr(PluginsCliSettings, "model_config", {**PluginsCliSettings.model_config, "env_file": None})
+
     def test_defaults(self):
         from mcpgateway.plugins.framework.settings import PluginsCliSettings
 

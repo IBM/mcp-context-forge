@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import LLMModel, LLMProvider, LLMProviderType
 from mcpgateway.llm_schemas import (
@@ -431,6 +432,12 @@ class LLMProxyService:
         # Ensure non-streaming
         body["stream"] = False
 
+        # Validate the constructed URL to prevent SSRF attacks
+        try:
+            SecurityValidator.validate_url(url, "LLM provider URL")
+        except ValueError as url_err:
+            raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
+
         try:
             response = await self._client.post(url, headers=headers, json=body)
             response.raise_for_status()
@@ -467,6 +474,9 @@ class LLMProxyService:
 
         Yields:
             SSE-formatted string chunks.
+
+        Raises:
+            LLMProxyRequestError: If request fails.
         """
         if not self._client:
             await self.initialize()
@@ -485,6 +495,12 @@ class LLMProxyService:
 
         # Ensure streaming
         body["stream"] = True
+
+        # Validate the constructed URL to prevent SSRF attacks
+        try:
+            SecurityValidator.validate_url(url, "LLM provider URL")
+        except ValueError as url_err:
+            raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
 
         response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         created = int(time.time())
