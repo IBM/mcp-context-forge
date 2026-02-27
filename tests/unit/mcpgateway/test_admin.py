@@ -16275,11 +16275,13 @@ class TestTemplateButtonGating:
         assert r"\u003c" in decoded_html
 
     def test_admin_js_toggle_submit_injects_csrf_token(self):
-        """Form submit helpers should inject CSRF token before programmatic submit()."""
+        """handleToggleSubmit should inject CSRF token into the FormData before fetch()."""
         admin_js_path = settings.static_dir / "admin.js"
         admin_js = admin_js_path.read_text(encoding="utf-8")
-        assert "function injectCsrfTokenIntoForm(form)" in admin_js
-        assert "injectCsrfTokenIntoForm(form);" in admin_js
+        # handleToggleSubmit uses fetch() and injects the CSRF token directly
+        # into FormData via getCookie rather than via the old DOM helper.
+        assert 'getCookie("mcpgateway_csrf_token")' in admin_js
+        assert 'formData.set("csrf_token", csrfToken)' in admin_js
 
     def test_admin_modal_backdrops_disable_pointer_events(self):
         """Modal backdrop wrappers should not block interactions with modal buttons."""
