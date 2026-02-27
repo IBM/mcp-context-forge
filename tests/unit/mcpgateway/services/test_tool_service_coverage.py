@@ -5386,6 +5386,64 @@ class TestInvokeToolPluginPostInvokeSerialization:
         # Cleanup
         tool_service._plugin_manager = None
 
+    @pytest.mark.asyncio
+    async def test_plugin_post_invoke_unserializable_result_falls_back_to_str(self, tool_service):
+        """When plugin post-invoke returns an unserializable value (e.g. set), it should fall back to str() instead of crashing."""
+        # First-Party
+        from mcpgateway.plugins.framework import ToolHookType
+
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        # Plugin post-invoke returns an unserializable set
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        plugin_manager.invoke_hook = AsyncMock(
+            side_effect=[
+                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"})), {}),  # post-invoke
+            ]
+        )
+        tool_service._plugin_manager = plugin_manager
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        # Should not crash — falls back to str() representation
+        assert result.is_error is False
+        text = result.content[0].text
+        # str() on a set produces something like "{'unserializable', 'set', 'values'}"
+        assert isinstance(text, str)
+        assert len(text) > 0
+
+        # Cleanup
+        tool_service._plugin_manager = None
+
 
 class TestInvokeToolPluginMetadataFromPayload:
     @pytest.mark.asyncio

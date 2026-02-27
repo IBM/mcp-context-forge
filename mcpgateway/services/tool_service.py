@@ -3983,7 +3983,10 @@ class ToolService(BaseService):
                             tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
                         else:
                             # If result is not in expected format, convert it to text content
-                            tool_result = ToolResult(content=[TextContent(type="text", text=modified_result if isinstance(modified_result, str) else orjson.dumps(modified_result).decode())])
+                            try:
+                                tool_result = ToolResult(content=[TextContent(type="text", text=modified_result if isinstance(modified_result, str) else orjson.dumps(modified_result).decode())])
+                            except Exception:
+                                tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
 
                 return tool_result
             except (PluginError, PluginViolationError):
