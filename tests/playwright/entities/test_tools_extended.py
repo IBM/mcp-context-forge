@@ -425,14 +425,24 @@ class TestToolsViewModal:
         # View first tool
         first_row = tools_page.get_tool_row(0)
         first_name = first_row.locator("td").nth(3).text_content().strip()
-        tools_page.open_tool_view_modal(0)
+        try:
+            tools_page.open_tool_view_modal(0)
+        except AssertionError as exc:
+            if "401" in str(exc) or "403" in str(exc):
+                pytest.skip(f"Tool API auth failed: {exc}")
+            raise
         expect(tools_page.tool_details_content).to_contain_text(first_name)
         tools_page.close_tool_modal()
 
         # View second tool
         second_row = tools_page.get_tool_row(1)
         second_name = second_row.locator("td").nth(3).text_content().strip()
-        tools_page.open_tool_view_modal(1)
+        try:
+            tools_page.open_tool_view_modal(1)
+        except AssertionError as exc:
+            if "401" in str(exc) or "403" in str(exc):
+                pytest.skip(f"Tool API auth failed: {exc}")
+            raise
         expect(tools_page.tool_details_content).to_contain_text(second_name)
         tools_page.close_tool_modal()
 

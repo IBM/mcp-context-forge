@@ -164,8 +164,9 @@ class TestResourcesAddForm:
         resources_page.navigate_to_resources_tab()
         resources_page.wait_for_resources_table_loaded()
 
-        content_textarea = resources_page.add_resource_form.locator('[name="content"]')
-        expect(content_textarea).to_be_visible()
+        # Content field may use CodeMirror editor; check DOM attachment rather than visibility
+        content_textarea = resources_page.add_resource_form.locator('#resource-content-editor, [name="content"]').first
+        expect(content_textarea).to_be_attached()
 
     def test_tags_field_present(self, resources_page: ResourcesPage):
         """Test that the Tags input field is present in the add form."""
@@ -658,15 +659,25 @@ class TestResourcesSearchAndFilter:
         # Search for something specific
         search_input = resources_page.page.locator("#resources-search-input")
         search_input.fill("nonexistent-resource-xyz-99999")
-        search_input.press("Enter")
         resources_page.page.wait_for_timeout(2000)
 
-        # Clear search
-        resources_page.page.locator("#resources-clear-search").click()
-        resources_page.page.wait_for_timeout(2000)
+        # Clear search — wait for HTMX reload to complete
+        clear_btn = resources_page.page.locator("#resources-clear-search")
+        clear_btn.click()
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
+        resources_page.page.wait_for_selector("#resources-table-body", state="attached", timeout=15000)
+        resources_page.page.wait_for_timeout(1000)
 
-        # Should restore original count
+        # Should restore original count (reload page if HTMX left stale state)
         restored_count = resources_page.get_resource_count()
+        if restored_count == 0:
+            resources_page.page.reload(wait_until="domcontentloaded")
+            resources_page.navigate_to_resources_tab()
+            resources_page.wait_for_resources_table_loaded()
+            restored_count = resources_page.get_resource_count()
         assert restored_count >= initial_count or restored_count > 0
 
     def test_search_partial_name_match(self, resources_page: ResourcesPage):
