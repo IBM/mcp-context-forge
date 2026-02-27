@@ -3485,14 +3485,27 @@ async function editTool(toolId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = tool.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = tool.visibility
+            ? tool.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-tool-visibility-public");
         const teamRadio = safeGetElement("edit-tool-visibility-team");
         const privateRadio = safeGetElement("edit-tool-visibility-private");
 
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
-            // coerce legacy-public records to team or private.
+            // coerce legacy-public records to team.
             const effectiveVisibility =
                 window.ALLOW_PUBLIC_VISIBILITY === false &&
                 visibility === "public" &&
@@ -6010,10 +6023,23 @@ async function editGateway(gatewayId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = gateway.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = gateway.visibility
+            ? gateway.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-gateway-visibility-public");
         const teamRadio = safeGetElement("edit-gateway-visibility-team");
         const privateRadio = safeGetElement("edit-gateway-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
 
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
@@ -6821,10 +6847,23 @@ async function editServer(serverId) {
         }
         hiddenField.value = isInactiveCheckedBool;
 
-        const visibility = server.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = server.visibility
+            ? server.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-server-visibility-public");
         const teamRadio = safeGetElement("edit-server-visibility-team");
         const privateRadio = safeGetElement("edit-server-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
 
         // Prepopulate visibility radio buttons based on the server data
         if (visibility) {
