@@ -16278,10 +16278,8 @@ class TestTemplateButtonGating:
         """handleToggleSubmit should inject CSRF token into the FormData before fetch()."""
         admin_js_path = settings.static_dir / "admin.js"
         admin_js = admin_js_path.read_text(encoding="utf-8")
-        # injectCsrfTokenIntoForm utility must still be defined (used elsewhere)
-        assert "function injectCsrfTokenIntoForm(form)" in admin_js
-        # handleToggleSubmit now uses fetch() and injects the CSRF token directly
-        # into FormData via getCookie rather than via the DOM helper.
+        # handleToggleSubmit uses fetch() and injects the CSRF token directly
+        # into FormData via getCookie rather than via the old DOM helper.
         assert 'getCookie("mcpgateway_csrf_token")' in admin_js
         assert 'formData.set("csrf_token", csrfToken)' in admin_js
 
