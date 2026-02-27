@@ -11445,30 +11445,52 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
-function handleToggleSubmit(event, type) {
+async function handleToggleSubmit(event, type) {
     event.preventDefault();
 
     const isInactiveCheckedBool = isInactiveChecked(type);
     const form = event.target;
-    const hiddenField = document.createElement("input");
-    hiddenField.type = "hidden";
-    hiddenField.name = "is_inactive_checked";
-    hiddenField.value = isInactiveCheckedBool;
-
-    form.appendChild(hiddenField);
-
-    // Inject team_id from URL so backend preserves team scope in redirect
     const teamId = new URL(window.location.href).searchParams.get("team_id");
-    if (teamId && !form.querySelector('input[name="team_id"]')) {
-        const teamField = document.createElement("input");
-        teamField.type = "hidden";
-        teamField.name = "team_id";
-        teamField.value = teamId;
-        form.appendChild(teamField);
+
+    // Build FormData from current form state (captures any fields already
+    // appended by handleDeleteSubmit such as purge_metrics).
+    const formData = new FormData(form);
+    formData.set("is_inactive_checked", String(isInactiveCheckedBool));
+    if (teamId && !formData.has("team_id")) {
+        formData.set("team_id", teamId);
+    }
+    const csrfToken =
+        typeof getCookie === "function"
+            ? getCookie("mcpgateway_csrf_token") || ""
+            : "";
+    if (csrfToken) {
+        formData.set("csrf_token", csrfToken);
     }
 
-    injectCsrfTokenIntoForm(form);
-    form.submit();
+    try {
+        // Use redirect:'manual' so the browser does not follow the 303
+        // redirect to the backend-direct URL (which bypasses the proxy).
+        await fetch(form.action, {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+            redirect: "manual",
+        });
+    } catch (e) {
+        // Network error — still navigate so the user sees refreshed state.
+        console.error("Toggle submit error:", e);
+    }
+
+    // Navigate using proxy-aware helper so proxy prefix is preserved.
+    const fragment = _TOGGLE_FRAGMENT_MAP[type] || type;
+    const params = new URLSearchParams();
+    if (isInactiveCheckedBool) {
+        params.set("include_inactive", "true");
+    }
+    if (teamId) {
+        params.set("team_id", teamId);
+    }
+    _navigateAdmin(fragment, params);
 }
 
 function handleSubmitWithConfirmation(event, type) {
