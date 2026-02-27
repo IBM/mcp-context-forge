@@ -734,15 +734,25 @@ class GatewaysPage(BasePage):
                 logger.info("Deleted gateway '%s' with URL '%s'", gateway_name, gateway_url)
                 deleted_any = True
 
-                # Reload to see updated table
-                self.page.reload()
-                self.navigate_to_gateways_tab()
-                self.wait_for_gateways_table_loaded()
+                # Reload to see updated table — use tolerant navigation
+                try:
+                    self.page.reload(wait_until="domcontentloaded")
+                except PlaywrightTimeoutError:
+                    self.page.goto("/admin#gateways", wait_until="domcontentloaded")
+                try:
+                    self.navigate_to_gateways_tab()
+                    self.wait_for_gateways_table_loaded()
+                except (PlaywrightTimeoutError, AssertionError):
+                    # If we can't reload cleanly, just return — the delete succeeded
+                    return deleted_any
                 self.page.wait_for_timeout(1000)
 
             except Exception as e:
                 logger.warning("Could not delete gateway '%s' with URL '%s': %s", gateway_name, gateway_url, e)
-                self.clear_search()
+                try:
+                    self.clear_search()
+                except Exception:
+                    pass
                 return deleted_any
 
     # ==================== Authentication Configuration Methods ====================

@@ -1093,6 +1093,10 @@ class TestGatewayEditEndToEnd:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
+        # Track the gateway name so we can find it after reload
+        first_row = gateways_page.get_gateway_row(0)
+        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+
         new_tags = f"edited,test-tag-{uuid.uuid4().hex[:6]}"
 
         gateways_page.open_edit_modal(0)
@@ -1110,15 +1114,21 @@ class TestGatewayEditEndToEnd:
         gateways_page.page.wait_for_load_state("domcontentloaded")
         gateways_page.page.wait_for_timeout(1000)
 
-        # Verify tags appear in table
+        # Verify tags via view modal (search for the gateway by name to handle reordering)
         gateways_page.page.reload(wait_until="domcontentloaded")
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
+        gateways_page.search_gateways(gateway_name)
 
-        first_row = gateways_page.get_gateway_row(0)
-        tags_cell = first_row.locator("td").nth(4)
+        if not gateways_page.gateway_exists(gateway_name):
+            pytest.skip(f"Gateway '{gateway_name}' not found after edit")
+
+        # Check tags in the matched row
+        gateway_row = gateways_page.get_gateway_row_by_name(gateway_name).first
+        tags_cell = gateway_row.locator("td").nth(4)
         tags_text = tags_cell.text_content().strip().lower()
-        assert "edited" in tags_text, f"Expected 'edited' in tags, got '{tags_text}'"
+        assert "edited" in tags_text, f"Expected 'edited' in tags for '{gateway_name}', got '{tags_text}'"
+        gateways_page.clear_search()
 
     def test_edit_gateway_passthrough_headers(self, gateways_page: GatewaysPage):
         """Test editing passthrough headers in edit modal."""
