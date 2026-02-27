@@ -235,13 +235,32 @@ class TestRPCServerIdScoping:
                         "/rpc",
                         json={"jsonrpc": "2.0", "method": "tools/list", "params": {"server_id": "xyz"}, "id": 1},
                     )
-                    mock_validate.assert_called_once()
+                    mock_validate.assert_called_once_with({}, "xyz")
 
         assert response.status_code == 403
         body = response.json()
         assert body["jsonrpc"] == "2.0"
         assert body["error"]["code"] == -32600
         assert "xyz" in body["error"]["message"]
+
+    def test_rpc_proceeds_when_server_access_is_allowed(self, client, mock_db):
+        """When validate_server_access returns True, the request must proceed to the handler."""
+        with patch("mcpgateway.config.settings.auth_required", False):
+            with patch("mcpgateway.main.get_current_user_with_permissions", return_value={"sub": "user@example.com"}):
+                with patch("mcpgateway.main.validate_server_access", return_value=True) as mock_validate:
+                    with patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock) as mock_list:
+                        mock_list.return_value = []
+                        response = client.post(
+                            "/rpc",
+                            json={"jsonrpc": "2.0", "method": "tools/list", "params": {"server_id": "abc"}, "id": 3},
+                        )
+                        mock_validate.assert_called_once_with({}, "abc")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["jsonrpc"] == "2.0"
+        assert "result" in body
+        assert "tools" in body["result"]
 
     def test_rpc_skips_server_id_check_when_no_server_id_in_params(self, client, mock_db):
         """When params contains no server_id, validate_server_access must not be called."""
