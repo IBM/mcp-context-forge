@@ -240,7 +240,7 @@ class TestRPCServerIdScoping:
         assert response.status_code == 403
         body = response.json()
         assert body["jsonrpc"] == "2.0"
-        assert body["error"]["code"] == -32600
+        assert body["error"]["code"] == -32003
         assert "xyz" in body["error"]["message"]
 
     def test_rpc_proceeds_when_server_access_is_allowed(self, client, mock_db):
@@ -262,18 +262,89 @@ class TestRPCServerIdScoping:
         assert "result" in body
         assert "tools" in body["result"]
 
-    def test_rpc_skips_server_id_check_when_no_server_id_in_params(self, client, mock_db):
-        """When params contains no server_id, validate_server_access must not be called."""
+    def test_rpc_skips_validation_for_unscoped_token_without_server_id(self, client, mock_db):
+        """Global token (no scopes.server_id) without server_id in params → proceeds to global list."""
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_current_user_with_permissions", return_value={"sub": "user@example.com"}):
                 with patch("mcpgateway.main.validate_server_access") as mock_validate:
                     with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock) as mock_list:
                         mock_list.return_value = ([], None)
-                        client.post(
+                        response = client.post(
                             "/rpc",
                             json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
                         )
                         mock_validate.assert_not_called()
+
+        assert response.status_code == 200
+
+    # ------------------------------------------------------------------
+    # Auto-injection: server-scoped token + missing server_id
+    # ------------------------------------------------------------------
+
+    def test_auto_injection_sets_server_id_from_scoped_token(self):
+        """When request omits server_id but token is server-scoped, server_id must be auto-injected.
+
+        This tests the extraction + auto-injection logic that runs at the top
+        of handle_rpc().  The HTTP-level dispatch (server_id → list_server_tools)
+        is already covered by test_rpc_proceeds_when_server_access_is_allowed.
+        """
+        from types import SimpleNamespace  # noqa: PLC0415
+        from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
+
+        # Simulate: token scoped to srv-abc, request has no server_id
+        state = SimpleNamespace(_jwt_verified_payload=("tok", {"sub": "u@ex.com", "scopes": {"server_id": "srv-abc"}}))
+        server_id = None  # Request did not supply server_id
+
+        # Reproduce the handle_rpc extraction logic
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+
+        if server_id:
+            assert validate_server_access(_token_scopes, server_id)
+        elif _token_server_id is not None:
+            server_id = _token_server_id  # Auto-inject
+
+        assert server_id == "srv-abc", "server_id must be auto-injected from token scope"
+
+    def test_auto_injection_skipped_for_global_token(self):
+        """Global token (scopes.server_id=None) must NOT auto-inject a server_id."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=("tok", {"sub": "u@ex.com", "scopes": {"server_id": None, "permissions": ["*"]}}))
+        server_id = None
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+
+        if server_id:
+            pass
+        elif _token_server_id is not None:
+            server_id = _token_server_id
+
+        assert server_id is None, "Global token must not auto-inject server_id"
+
+    def test_auto_injection_skipped_when_no_jwt(self):
+        """No JWT payload (basic auth) must NOT auto-inject a server_id."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=None)
+        server_id = None
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+
+        if server_id:
+            pass
+        elif _token_server_id is not None:
+            server_id = _token_server_id
+
+        assert server_id is None, "No JWT must not auto-inject server_id"
 
     # ------------------------------------------------------------------
     # _jwt_verified_payload tuple-extraction logic
@@ -286,7 +357,7 @@ class TestRPCServerIdScoping:
         state = SimpleNamespace(_jwt_verified_payload=("eyJhbGci...", {"sub": "u@ex.com", "scopes": {"server_id": "srv-abc"}}))
 
         _cached = getattr(state, "_jwt_verified_payload", None)
-        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2) else None
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
         _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
 
         assert _token_scopes == {"server_id": "srv-abc"}
@@ -304,7 +375,7 @@ class TestRPCServerIdScoping:
         state = SimpleNamespace(_jwt_verified_payload=None)
 
         _cached = getattr(state, "_jwt_verified_payload", None)
-        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2) else None
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
         _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
 
         assert _token_scopes == {}
@@ -319,10 +390,27 @@ class TestRPCServerIdScoping:
         state = SimpleNamespace(_jwt_verified_payload=("token", {"sub": "u@ex.com", "is_admin": True}))
 
         _cached = getattr(state, "_jwt_verified_payload", None)
-        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2) else None
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
         _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
 
         assert _token_scopes == {}
+        from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
+
+        assert validate_server_access(_token_scopes, "any-server") is True
+
+    def test_scopes_extraction_handles_non_dict_payload(self):
+        """Non-dict payload in tuple (e.g. string) must be treated as missing → full access."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=("token", "not-a-dict"))
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+
+        assert _jwt_payload is None
+        assert _token_scopes == {}
+
         from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
 
         assert validate_server_access(_token_scopes, "any-server") is True

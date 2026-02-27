@@ -5934,22 +5934,29 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
-        # RBAC: Enforce server_id scoping for server-scoped tokens
-        # A token with scopes.server_id set must only access the server it was scoped to.
-        # Tokens without scopes.server_id (global tokens) pass through unchanged.
+        # RBAC: Enforce server_id scoping for server-scoped tokens.
+        # Extract token scopes once, then:
+        #   1. If request supplies server_id, validate it matches the token scope.
+        #   2. If request omits server_id but token is server-scoped, auto-inject the
+        #      token's server_id so list operations stay properly scoped (parity with
+        #      the REST middleware which denies /tools for server-scoped tokens).
+        _cached = getattr(request.state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+
         if server_id:
-            _cached = getattr(request.state, "_jwt_verified_payload", None)
-            _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2) else None
-            _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
             if not validate_server_access(_token_scopes, server_id):
                 return ORJSONResponse(
                     status_code=403,
                     content={
                         "jsonrpc": "2.0",
-                        "error": {"code": -32600, "message": f"Token not authorized for server: {server_id}"},
+                        "error": {"code": -32003, "message": f"Token not authorized for server: {server_id}"},
                         "id": req_id,
                     },
                 )
+        elif _token_server_id is not None:
+            server_id = _token_server_id
 
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
