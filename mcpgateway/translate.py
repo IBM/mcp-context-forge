@@ -2136,7 +2136,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     # If we have a streamable manager, start its context so it can accept ASGI /mcp
     if streamable_manager:
         streamable_context = streamable_manager.run()
-        await streamable_context.__aenter__()  # pylint: disable=unnecessary-dunder-call,no-member
+        await streamable_context.__aenter__()  # noqa: PLC2801  # pylint: disable=unnecessary-dunder-call,no-member
 
     # Log available endpoints
     endpoints = []

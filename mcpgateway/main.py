@@ -6924,7 +6924,6 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
     body = await _read_request_json(request)
     level = LogLevel(body["level"])
     await logging_service.set_level(level)
-    return None
 
 
 ####################
