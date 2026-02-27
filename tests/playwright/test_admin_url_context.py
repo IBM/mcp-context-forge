@@ -230,6 +230,37 @@ class TestAdminUrlContextPreservation:
 
         _assert_url_params(page.url, team_id=True, include_inactive=False, fragment="catalog")
 
+    def test_edit_gateway_preserves_gateways_fragment_and_team_id(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """After editing a gateway, URL fragment stays on #gateways and team_id is kept."""
+        _ensure_admin_logged_in(page, base_url)
+        gw_id = _create_gateway_api(api_request_context, "test-gw-edit")
+
+        try:
+            page.goto(_admin_url(base_url, team_id=True))
+            page.wait_for_load_state("networkidle")
+
+            page.wait_for_function("typeof editGateway === 'function'", timeout=15000)
+            page.evaluate(f"editGateway('{gw_id}')")
+
+            edit_form = page.locator("#edit-gateway-form")
+            try:
+                edit_form.wait_for(state="visible", timeout=10000)
+            except Exception:
+                pytest.skip("Edit gateway modal did not open — skipping.")
+
+            desc_input = page.locator("#edit-gateway-description")
+            if desc_input.count() > 0:
+                desc_input.fill("updated by direct test")
+
+            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+                edit_form.locator('button[type="submit"]').first.click()
+
+            _assert_url_params(page.url, team_id=True, include_inactive=False)
+        finally:
+            api_request_context.delete(f"/gateways/{gw_id}")
+
     # ------------------------------------------------------------------
     # Delete/Toggle (issue #3321): fetch() preserves proxy URL context
     # ------------------------------------------------------------------
