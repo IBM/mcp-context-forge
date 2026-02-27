@@ -31,7 +31,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "mcp>=1.26.0",
     "numpy>=2.4.2",
-    "openai>=2.23.0",
+    "openai>=2.24.0",
     "orjson>=3.11.7",
     "psutil>=7.2.2",
     "pydantic>=2.12.5",
@@ -58,7 +58,7 @@ dev = [
 ]
 docs = [
     "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.2",
+    "mkdocs-material>=9.7.3",
     "mkdocstrings[python]>=1.0.3",
 ]
 benchmark = [
@@ -66,31 +66,31 @@ benchmark = [
     "memory-profiler>=0.61.0",
 ]
 anthropic = [
-    "anthropic>=0.83.0",
+    "anthropic>=0.84.0",
 ]
 aws = [
-    "boto3>=1.42.55",
-    "botocore>=1.42.55",
+    "boto3>=1.42.58",
+    "botocore>=1.42.58",
 ]
 ollama = []
 gemini = [
     "google-generativeai>=0.8.6",
 ]
 watsonx = [
-    "ibm-watsonx-ai>=1.5.2",
+    "ibm-watsonx-ai>=1.5.3",
 ]
 rest = [
-    "fastapi>=0.133.0",
+    "fastapi>=0.133.1",
     "python-multipart>=0.0.22",
     "uvicorn[standard]>=0.41.0",
 ]
 all = [
-    "anthropic>=0.83.0",
-    "boto3>=1.42.55",
-    "botocore>=1.42.55",
-    "fastapi>=0.133.0",
+    "anthropic>=0.84.0",
+    "boto3>=1.42.58",
+    "botocore>=1.42.58",
+    "fastapi>=0.133.1",
     "google-generativeai>=0.8.6",
-    "ibm-watsonx-ai>=1.5.2",
+    "ibm-watsonx-ai>=1.5.3",
     "python-multipart>=0.0.22",
     "uvicorn[standard]>=0.41.0",
 ]
