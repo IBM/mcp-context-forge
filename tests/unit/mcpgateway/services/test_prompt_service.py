@@ -176,6 +176,10 @@ class TestPromptServiceInit:
     def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
         """Cover env-override parsing in PromptService.__init__ (PLUGINS_ENABLED)."""
         monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        monkeypatch.setattr(
+            "mcpgateway.services.prompt_service.get_plugin_manager",
+            lambda *a, **kw: None
+        )
         svc = PromptService()
         assert svc._plugin_manager is None
 

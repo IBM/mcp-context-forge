@@ -28,6 +28,7 @@ from mcpgateway.services.metrics_rollup_service import (
 )
 
 
+@pytest.mark.usefixtures("reset_metrics_settings")
 class TestMetricsRollupService:
     """Tests for MetricsRollupService."""
 

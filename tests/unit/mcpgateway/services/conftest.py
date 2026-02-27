@@ -7,7 +7,7 @@ Ensures settings are in a known state for tests regardless of local .env overrid
 import pytest
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def reset_metrics_settings():
     """Ensure metrics settings are True for tests that expect default behaviour."""
     from mcpgateway.config import settings
@@ -18,3 +18,10 @@ def reset_metrics_settings():
     yield
     settings.db_metrics_recording_enabled = original_recording
     settings.metrics_rollup_enabled = original_rollup
+
+
+@pytest.fixture(autouse=True)
+def patch_is_postgresql(monkeypatch):
+    """Patch _is_postgresql to return False (SQLite) for all service tests by default."""
+    import mcpgateway.services.log_aggregator as log_agg_mod
+    monkeypatch.setattr(log_agg_mod, "_is_postgresql", lambda: False)

@@ -18,6 +18,7 @@ import pytest
 from mcpgateway.services.metrics_buffer_service import MetricsBufferService
 
 
+@pytest.mark.usefixtures("reset_metrics_settings")
 class TestMetricsBufferServiceInit:
     """Tests for MetricsBufferService initialization."""
 
@@ -43,6 +44,7 @@ class TestMetricsBufferServiceInit:
         assert service.max_buffer_size == 500
 
 
+@pytest.mark.usefixtures("reset_metrics_settings")
 class TestDbMetricsRecordingEnabled:
     """Tests for DB_METRICS_RECORDING_ENABLED switch."""
 
@@ -183,6 +185,7 @@ class TestDbMetricsRecordingEnabled:
         assert service._flush_task is None
 
 
+@pytest.mark.usefixtures("reset_metrics_settings")
 class TestImmediateWritesWhenDisabled:
     """Tests for immediate write fallbacks when buffering is disabled."""
 
@@ -282,6 +285,7 @@ class TestImmediateWritesWhenDisabled:
         )
 
 
+@pytest.mark.usefixtures("reset_metrics_settings")
 class TestMetricsBufferServiceRecording:
     """Tests for normal metrics recording."""
 
@@ -478,6 +482,7 @@ async def test_flush_loop_error_sleeps_and_continues(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("reset_metrics_settings")
 async def test_flush_all_batches_metrics(monkeypatch):
     service = MetricsBufferService(enabled=True)
 
