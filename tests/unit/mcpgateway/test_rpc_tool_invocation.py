@@ -281,32 +281,37 @@ class TestRPCServerIdScoping:
     # Auto-injection: server-scoped token + missing server_id
     # ------------------------------------------------------------------
 
-    def test_auto_injection_sets_server_id_from_scoped_token(self):
+    @pytest.mark.asyncio
+    async def test_auto_injection_sets_server_id_from_scoped_token(self, mock_db):
         """When request omits server_id but token is server-scoped, server_id must be auto-injected.
 
-        This tests the extraction + auto-injection logic that runs at the top
-        of handle_rpc().  The HTTP-level dispatch (server_id → list_server_tools)
-        is already covered by test_rpc_proceeds_when_server_access_is_allowed.
+        Calls handle_rpc() directly with a mock request carrying a server-scoped
+        _jwt_verified_payload, bypassing the middleware stack so that the actual
+        auto-injection line in main.py is exercised.
         """
         from types import SimpleNamespace  # noqa: PLC0415
-        from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
+        from mcpgateway.main import handle_rpc  # noqa: PLC0415
 
-        # Simulate: token scoped to srv-abc, request has no server_id
-        state = SimpleNamespace(_jwt_verified_payload=("tok", {"sub": "u@ex.com", "scopes": {"server_id": "srv-abc"}}))
-        server_id = None  # Request did not supply server_id
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        mock_request.state = SimpleNamespace(
+            _jwt_verified_payload=("tok", {"sub": "u@ex.com", "scopes": {"server_id": "srv-abc"}, "is_admin": True, "teams": None}),
+            token_teams=None,
+        )
 
-        # Reproduce the handle_rpc extraction logic
-        _cached = getattr(state, "_jwt_verified_payload", None)
-        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
-        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
-        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+        async def mock_body():
+            import orjson  # noqa: PLC0415
+            return orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 10})
 
-        if server_id:
-            assert validate_server_access(_token_scopes, server_id)
-        elif _token_server_id is not None:
-            server_id = _token_server_id  # Auto-inject
+        mock_request.body = mock_body
 
-        assert server_id == "srv-abc", "server_id must be auto-injected from token scope"
+        with patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock) as mock_list:
+            mock_list.return_value = []
+            await handle_rpc(mock_request, db=mock_db, user={"sub": "u@ex.com"})
+
+            # Auto-injected server_id must route to list_server_tools with "srv-abc"
+            mock_list.assert_called_once()
+            assert mock_list.call_args[0][1] == "srv-abc"
 
     def test_auto_injection_skipped_for_global_token(self):
         """Global token (scopes.server_id=None) must NOT auto-inject a server_id."""
