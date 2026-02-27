@@ -268,7 +268,7 @@ grpc = [
     "grpcio>=1.78.0",
     "grpcio-reflection>=1.78.0",
     "grpcio-tools>=1.78.0",
-    "protobuf>=7.34.0",
+    "protobuf>=6.31.1",  # grpcio-reflection 1.78.x caps at <7.0.0; bump when grpcio ecosystem supports protobuf 7.x
 ]
 
 # UI Testing
