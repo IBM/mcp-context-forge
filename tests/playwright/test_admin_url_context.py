@@ -29,6 +29,49 @@ from .conftest import _ensure_admin_logged_in
 # mutations.  In a real team-scoped deployment this would be a valid UUID.
 _TEAM_PARAM = "test-team-placeholder"
 
+_PROXY_PREFIX = "/proxy/mcp"
+
+_ADD_GATEWAY_BTN_SELECTOR = (
+    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
+    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
+)
+
+
+# ===================================================================
+# SHARED HELPERS
+# ===================================================================
+
+
+def _admin_url(base_url: str, *, prefix: str = "", team_id: bool = False, include_inactive: bool = False, fragment: str = "gateways") -> str:
+    """Build an admin URL with optional proxy prefix, query params, and fragment."""
+    params = []
+    if team_id:
+        params.append(f"team_id={_TEAM_PARAM}")
+    if include_inactive:
+        params.append("include_inactive=true")
+    qs = f"?{'&'.join(params)}" if params else ""
+    return f"{base_url}{prefix}/admin{qs}#{fragment}"
+
+
+def _create_gateway_api(api_request_context: APIRequestContext, name_prefix: str) -> str:
+    """Create a test gateway via API. Returns the gateway ID. Skips on failure."""
+    create_resp = api_request_context.post(
+        "/gateways",
+        headers={"Content-Type": "application/json"},
+        data={
+            "name": f"{name_prefix}-{uuid.uuid4().hex[:6]}",
+            "url": "http://127.0.0.1:19999",
+            "transport": "HTTP",
+        },
+    )
+    if not create_resp.ok:
+        pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
+
+    gw_id = create_resp.json().get("id", "")
+    if not gw_id:
+        pytest.skip("Gateway created but ID missing — skipping.")
+    return gw_id
+
 
 def _cleanup_gateway_by_name(api_request_context: APIRequestContext, name: str) -> None:
     """Best-effort cleanup: find and delete any gateway with the given name."""
@@ -43,7 +86,71 @@ def _cleanup_gateway_by_name(api_request_context: APIRequestContext, name: str) 
         pass  # Best-effort only — never fail a test on cleanup
 
 
-_PROXY_PREFIX = "/proxy/mcp"
+def _fill_add_gateway_form(root, unique_name: str) -> None:
+    """Fill the add-gateway form fields. Skips if inputs are not found.
+
+    ``root`` can be a Page or FrameLocator — both support ``.locator()``.
+    """
+    name_input = root.locator("#gateway-name, input[name='name'][id*='gateway']").first
+    url_input = root.locator("#gateway-url, input[name='url'][id*='gateway']").first
+
+    if name_input.count() == 0 or url_input.count() == 0:
+        pytest.skip("Add-gateway form inputs not found — skipping.")
+
+    name_input.fill(unique_name)
+    url_input.fill("http://127.0.0.1:19999")
+
+
+def _click_add_gateway_btn(root) -> None:
+    """Click the add-gateway submit button. ``root`` is a Page or FrameLocator."""
+    root.locator(_ADD_GATEWAY_BTN_SELECTOR).first.click()
+
+
+def _get_delete_gateway_btn(root, gw_id: str):
+    """Locate and return the delete button for a gateway. Skips if not found."""
+    delete_form = root.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
+    if delete_form.count() == 0:
+        pytest.skip("Delete form for created gateway not visible in UI — skipping.")
+    return delete_form.locator('button[type="submit"]').first
+
+
+def _accept_dialog(page: Page) -> list:
+    """Register a one-shot dialog handler that accepts. Returns the confirmed list."""
+    confirmed: list = []
+
+    def _handler(dialog):
+        confirmed.append(dialog.message)
+        dialog.accept()
+
+    page.once("dialog", _handler)
+    return confirmed
+
+
+def _assert_url_params(
+    url: str,
+    *,
+    proxy_prefix: bool = False,
+    team_id: bool = True,
+    include_inactive: bool = True,
+    fragment: str = "gateways",
+) -> None:
+    """Assert URL contains/excludes expected params, prefix, and fragment."""
+    if proxy_prefix:
+        assert f"{_PROXY_PREFIX}/admin" in url, f"Expected proxy prefix in URL; got: {url}"
+    if team_id:
+        assert f"team_id={_TEAM_PARAM}" in url, f"Expected team_id in URL; got: {url}"
+    else:
+        assert "team_id" not in url, f"team_id must be absent from URL; got: {url}"
+    if include_inactive:
+        assert "include_inactive=true" in url, f"Expected include_inactive in URL; got: {url}"
+    else:
+        assert "include_inactive" not in url, f"include_inactive must be absent from URL; got: {url}"
+    assert f"#{fragment}" in url, f"Expected #{fragment} in URL; got: {url}"
+
+
+# ===================================================================
+# TEST CLASS 1: Direct (non-proxy) mode
+# ===================================================================
 
 
 @pytest.mark.ui
@@ -85,49 +192,28 @@ class TestAdminUrlContextPreservation:
     def test_add_gateway_success_preserves_gateways_fragment(
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
-        """After adding a gateway, URL fragment stays on #gateways and team_id is kept.
-
-        Creates and immediately deletes a minimal gateway via API so there is no
-        leftover data.  The UI mutation is submitted via the add-gateway form.
-        """
+        """After adding a gateway, URL fragment stays on #gateways and team_id is kept."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-urlctx-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}#gateways")
+        page.goto(_admin_url(base_url, team_id=True))
         page.wait_for_load_state("networkidle")
 
-        # Locate add-gateway form fields
-        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
+        _fill_add_gateway_form(page, unique_name)
 
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
-
-        # Submit and wait for _navigateAdmin() to trigger navigation
         with page.expect_navigation(wait_until="networkidle", timeout=15000):
-            page.locator(
-                "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-            ).first.click()
+            _click_add_gateway_btn(page)
 
-        # Core assertion: fragment preserved, team_id preserved
-        expect(page).to_have_url(re.compile(r"#gateways"))
-        expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+        _assert_url_params(page.url, team_id=True, include_inactive=False)
 
     def test_add_server_success_preserves_catalog_fragment(
         self, page: Page, base_url: str
     ):
-        """After adding a virtual server, URL fragment stays on #catalog and team_id is kept.
-
-        Uses a minimal server payload and skips if the form cannot be located.
-        """
+        """After adding a virtual server, URL fragment stays on #catalog and team_id is kept."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-srv-urlctx-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}#catalog")
+        page.goto(_admin_url(base_url, team_id=True, fragment="catalog"))
         page.wait_for_load_state("networkidle")
 
         name_input = page.locator("#server-name, input[name='name'][id*='server']").first
@@ -142,8 +228,7 @@ class TestAdminUrlContextPreservation:
                 "button[type='submit'][form*='server'], button:has-text('Add Server')"
             ).first.click()
 
-        expect(page).to_have_url(re.compile(r"#catalog"))
-        expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+        _assert_url_params(page.url, team_id=True, include_inactive=False, fragment="catalog")
 
     # ------------------------------------------------------------------
     # Delete/Toggle (issue #3321): fetch() preserves proxy URL context
@@ -152,121 +237,59 @@ class TestAdminUrlContextPreservation:
     def test_toggle_server_preserves_catalog_tab_and_team_id(
         self, page: Page, base_url: str
     ):
-        """After toggling a server's active state, URL stays on #catalog and team_id survives.
-
-        Skips when no servers are registered in the system.
-        """
+        """After toggling a server's active state, URL stays on #catalog and team_id survives."""
         _ensure_admin_logged_in(page, base_url)
-        page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}#catalog")
+        page.goto(_admin_url(base_url, team_id=True, fragment="catalog"))
         page.wait_for_load_state("networkidle")
 
-        # Find any activate/deactivate toggle form targeting a server state endpoint
         toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
-        toggle_btn = toggle_form.locator('button[type="submit"]').first
-
-        # Click and wait for _navigateAdmin() navigation
         with page.expect_navigation(wait_until="networkidle", timeout=15000):
-            toggle_btn.click()
+            toggle_form.locator('button[type="submit"]').first.click()
 
-        # After fetch + _navigateAdmin(): must remain on #catalog with team_id
-        expect(page).to_have_url(re.compile(r"#catalog"))
-        expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+        _assert_url_params(page.url, team_id=True, include_inactive=False, fragment="catalog")
 
     def test_delete_gateway_preserves_gateways_tab_and_team_id(
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
-        """After deleting a gateway via the UI, URL stays on #gateways and team_id survives.
-
-        Creates a test gateway via API, deletes via UI, then verifies URL context.
-        Cleans up gateway even if assertions fail.
-        """
+        """After deleting a gateway via the UI, URL stays on #gateways and team_id survives."""
         _ensure_admin_logged_in(page, base_url)
-
-        # Create a gateway to delete
-        create_resp = api_request_context.post(
-            "/gateways",
-            headers={"Content-Type": "application/json"},
-            data={
-                "name": f"test-gw-del-{uuid.uuid4().hex[:6]}",
-                "url": "http://127.0.0.1:19999",
-                "transport": "HTTP",
-            },
-        )
-        if not create_resp.ok:
-            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
-
-        gw_id = create_resp.json().get("id", "")
-        if not gw_id:
-            pytest.skip("Gateway created but ID missing — skipping.")
+        gw_id = _create_gateway_api(api_request_context, "test-gw-del")
 
         try:
-            page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}#gateways")
+            page.goto(_admin_url(base_url, team_id=True))
             page.wait_for_load_state("networkidle")
 
-            delete_form = page.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
-            if delete_form.count() == 0:
-                pytest.skip("Delete form for created gateway not visible in UI — skipping.")
+            delete_btn = _get_delete_gateway_btn(page, gw_id)
+            confirmed = _accept_dialog(page)
 
-            delete_btn = delete_form.locator('button[type="submit"]').first
-
-            confirmed: list = []
-
-            def _handle_dialog(dialog):
-                confirmed.append(dialog.message)
-                dialog.accept()
-
-            page.once("dialog", _handle_dialog)
-
-            # Click delete and wait for _navigateAdmin() to fire
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
                 delete_btn.click()
 
-            # After fetch + _navigateAdmin(): must remain on #gateways with team_id
-            expect(page).to_have_url(re.compile(r"#gateways"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+            _assert_url_params(page.url, team_id=True, include_inactive=False)
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
         finally:
-            # Best-effort cleanup — gateway may already be deleted
-            api_request_context.delete(
-                f"/gateways/{gw_id}",
-            )
+            api_request_context.delete(f"/gateways/{gw_id}")
 
     def test_add_gateway_preserves_both_params(
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
-        """After adding a gateway, both team_id AND include_inactive survive in URL.
-
-        Navigates with both params; the JS checkbox-init logic checks the
-        show-inactive checkbox, so isInactiveChecked() returns True, and
-        _navigateAdmin() carries include_inactive=true forward.
-        """
+        """After adding a gateway, both team_id AND include_inactive survive in URL."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-both-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}&include_inactive=true#gateways")
+        page.goto(_admin_url(base_url, team_id=True, include_inactive=True))
         page.wait_for_load_state("networkidle")
 
-        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(page, unique_name)
 
         try:
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                page.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(page)
 
-            expect(page).to_have_url(re.compile(r"#gateways"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-            expect(page).to_have_url(re.compile(r"include_inactive=true"))
+            _assert_url_params(page.url, team_id=True, include_inactive=True)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
@@ -275,118 +298,63 @@ class TestAdminUrlContextPreservation:
     ):
         """After deleting a gateway, both team_id AND include_inactive survive in URL."""
         _ensure_admin_logged_in(page, base_url)
-
-        create_resp = api_request_context.post(
-            "/gateways",
-            headers={"Content-Type": "application/json"},
-            data={
-                "name": f"test-gw-delboth-{uuid.uuid4().hex[:6]}",
-                "url": "http://127.0.0.1:19999",
-                "transport": "HTTP",
-            },
-        )
-        if not create_resp.ok:
-            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
-
-        gw_id = create_resp.json().get("id", "")
-        if not gw_id:
-            pytest.skip("Gateway created but ID missing.")
+        gw_id = _create_gateway_api(api_request_context, "test-gw-delboth")
 
         try:
-            page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}&include_inactive=true#gateways")
+            page.goto(_admin_url(base_url, team_id=True, include_inactive=True))
             page.wait_for_load_state("networkidle")
 
-            delete_form = page.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
-            if delete_form.count() == 0:
-                pytest.skip("Delete form for created gateway not visible in UI — skipping.")
-
-            delete_btn = delete_form.locator('button[type="submit"]').first
-            confirmed: list = []
-
-            def _handle_dialog_both(dialog):
-                confirmed.append(dialog.message)
-                dialog.accept()
-
-            page.once("dialog", _handle_dialog_both)
+            delete_btn = _get_delete_gateway_btn(page, gw_id)
+            confirmed = _accept_dialog(page)
 
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
                 delete_btn.click()
 
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
-            expect(page).to_have_url(re.compile(r"#gateways"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-            expect(page).to_have_url(re.compile(r"include_inactive=true"))
+            _assert_url_params(page.url, team_id=True, include_inactive=True)
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
     def test_add_preserves_team_id_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
-        """Starting with only team_id: include_inactive must NOT appear post-mutation.
-
-        Verifies _navigateAdmin() does not inject include_inactive when the
-        show-inactive checkbox is unchecked (URL has no include_inactive param).
-        """
+        """Starting with only team_id: include_inactive must NOT appear post-mutation."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-tidonly-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}#gateways")
+        page.goto(_admin_url(base_url, team_id=True))
         page.wait_for_load_state("networkidle")
 
-        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(page, unique_name)
 
         try:
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                page.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(page)
 
-            expect(page).to_have_url(re.compile(r"#gateways"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-            assert "include_inactive" not in page.url, (
-                f"include_inactive must not appear when starting URL had none; got: {page.url}"
-            )
+            _assert_url_params(page.url, team_id=True, include_inactive=False)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
     def test_add_preserves_include_inactive_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
-        """Starting with only include_inactive: team_id must NOT appear post-mutation.
-
-        Verifies _navigateAdmin() does not inject team_id when the URL had none.
-        """
+        """Starting with only include_inactive: team_id must NOT appear post-mutation."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-inaconly-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}/admin?include_inactive=true#gateways")
+        page.goto(_admin_url(base_url, include_inactive=True))
         page.wait_for_load_state("networkidle")
 
-        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(page, unique_name)
 
         try:
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                page.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(page)
 
-            expect(page).to_have_url(re.compile(r"include_inactive=true"))
-            expect(page).to_have_url(re.compile(r"#gateways"))
-            assert "team_id" not in page.url, (
-                f"team_id must not appear when starting URL had none; got: {page.url}"
-            )
+            _assert_url_params(page.url, team_id=False, include_inactive=True)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
+
+
+# ===================================================================
+# TEST CLASS 2: Proxy-prefix mode
+# ===================================================================
 
 
 @pytest.mark.ui
@@ -429,61 +397,30 @@ class TestAdminProxyUrlContext:
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-prxadd-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}{_PROXY_PREFIX}/admin?team_id={_TEAM_PARAM}&include_inactive=true#gateways")
+        page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
         page.wait_for_load_state("networkidle")
 
-        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(page, unique_name)
 
         try:
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                page.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(page)
 
-            expect(page).to_have_url(re.compile(r"/proxy/mcp/admin"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-            expect(page).to_have_url(re.compile(r"include_inactive=true"))
-            expect(page).to_have_url(re.compile(r"#gateways"))
+            _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
     def test_proxy_edit_gateway_preserves_fragment_and_params(
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
-        """After editing a gateway via proxy URL, fragment + both params survive.
-
-        Creates a gateway via API, opens its edit modal via JS, submits, asserts URL.
-        """
+        """After editing a gateway via proxy URL, fragment + both params survive."""
         _ensure_admin_logged_in(page, base_url)
-
-        create_resp = api_request_context.post(
-            "/gateways",
-            headers={"Content-Type": "application/json"},
-            data={
-                "name": f"test-gw-prxedit-{uuid.uuid4().hex[:6]}",
-                "url": "http://127.0.0.1:19999",
-                "transport": "HTTP",
-            },
-        )
-        if not create_resp.ok:
-            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
-
-        gw_id = create_resp.json().get("id", "")
-        if not gw_id:
-            pytest.skip("Gateway created but ID missing.")
+        gw_id = _create_gateway_api(api_request_context, "test-gw-prxedit")
 
         try:
-            page.goto(f"{base_url}{_PROXY_PREFIX}/admin?team_id={_TEAM_PARAM}&include_inactive=true#gateways")
+            page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
             page.wait_for_load_state("networkidle")
 
-            # editGateway() is a global JS function that populates and opens the edit modal
             page.evaluate(f"editGateway('{gw_id}')")
 
             edit_form = page.locator("#edit-gateway-form")
@@ -499,10 +436,7 @@ class TestAdminProxyUrlContext:
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
                 edit_form.locator('button[type="submit"]').first.click()
 
-            expect(page).to_have_url(re.compile(r"/proxy/mcp/admin"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-            expect(page).to_have_url(re.compile(r"include_inactive=true"))
-            expect(page).to_have_url(re.compile(r"#gateways"))
+            _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
@@ -511,71 +445,37 @@ class TestAdminProxyUrlContext:
     ):
         """After toggling a server state via proxy URL, #catalog + both params survive."""
         _ensure_admin_logged_in(page, base_url)
-        page.goto(f"{base_url}{_PROXY_PREFIX}/admin?team_id={_TEAM_PARAM}&include_inactive=true#catalog")
+        page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment="catalog"))
         page.wait_for_load_state("networkidle")
 
         toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
-        toggle_btn = toggle_form.locator('button[type="submit"]').first
-
         with page.expect_navigation(wait_until="networkidle", timeout=15000):
-            toggle_btn.click()
+            toggle_form.locator('button[type="submit"]').first.click()
 
-        expect(page).to_have_url(re.compile(r"/proxy/mcp/admin"))
-        expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-        expect(page).to_have_url(re.compile(r"include_inactive=true"))
-        expect(page).to_have_url(re.compile(r"#catalog"))
+        _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True, fragment="catalog")
 
     def test_proxy_delete_gateway_preserves_tab_and_params(
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
         """After deleting a gateway via proxy URL, fragment + both params survive."""
         _ensure_admin_logged_in(page, base_url)
-
-        create_resp = api_request_context.post(
-            "/gateways",
-            headers={"Content-Type": "application/json"},
-            data={
-                "name": f"test-gw-prxdel-{uuid.uuid4().hex[:6]}",
-                "url": "http://127.0.0.1:19999",
-                "transport": "HTTP",
-            },
-        )
-        if not create_resp.ok:
-            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
-
-        gw_id = create_resp.json().get("id", "")
-        if not gw_id:
-            pytest.skip("Gateway created but ID missing.")
+        gw_id = _create_gateway_api(api_request_context, "test-gw-prxdel")
 
         try:
-            page.goto(f"{base_url}{_PROXY_PREFIX}/admin?team_id={_TEAM_PARAM}&include_inactive=true#gateways")
+            page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
             page.wait_for_load_state("networkidle")
 
-            delete_form = page.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
-            if delete_form.count() == 0:
-                pytest.skip("Delete form for created gateway not visible in UI — skipping.")
-
-            delete_btn = delete_form.locator('button[type="submit"]').first
-
-            confirmed: list = []
-
-            def _handle_dialog_prx(dialog):
-                confirmed.append(dialog.message)
-                dialog.accept()
-
-            page.once("dialog", _handle_dialog_prx)
+            delete_btn = _get_delete_gateway_btn(page, gw_id)
+            confirmed = _accept_dialog(page)
 
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
                 delete_btn.click()
 
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
-            expect(page).to_have_url(re.compile(r"/proxy/mcp/admin"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-            expect(page).to_have_url(re.compile(r"include_inactive=true"))
-            expect(page).to_have_url(re.compile(r"#gateways"))
+            _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
@@ -590,30 +490,16 @@ class TestAdminProxyUrlContext:
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-prxtid-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}{_PROXY_PREFIX}/admin?team_id={_TEAM_PARAM}#gateways")
+        page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True))
         page.wait_for_load_state("networkidle")
 
-        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(page, unique_name)
 
         try:
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                page.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(page)
 
-            expect(page).to_have_url(re.compile(r"/proxy/mcp/admin"))
-            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
-            expect(page).to_have_url(re.compile(r"#gateways"))
-            assert "include_inactive" not in page.url, (
-                f"include_inactive must not appear when starting URL had none; got: {page.url}"
-            )
+            _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=False)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
@@ -624,32 +510,23 @@ class TestAdminProxyUrlContext:
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-prxinac-{uuid.uuid4().hex[:8]}"
 
-        page.goto(f"{base_url}{_PROXY_PREFIX}/admin?include_inactive=true#gateways")
+        page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, include_inactive=True))
         page.wait_for_load_state("networkidle")
 
-        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(page, unique_name)
 
         try:
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                page.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(page)
 
-            expect(page).to_have_url(re.compile(r"/proxy/mcp/admin"))
-            expect(page).to_have_url(re.compile(r"include_inactive=true"))
-            expect(page).to_have_url(re.compile(r"#gateways"))
-            assert "team_id" not in page.url, (
-                f"team_id must not appear when starting URL had none; got: {page.url}"
-            )
+            _assert_url_params(page.url, proxy_prefix=True, team_id=False, include_inactive=True)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
+
+
+# ===================================================================
+# TEST CLASS 3: Iframe-embedded mode
+# ===================================================================
 
 
 @pytest.mark.ui
@@ -700,10 +577,7 @@ class TestAdminIframeContext:
     def _iframe_host(self, page: Page, base_url: str, _proxy_routes):
         """Seed auth cookies then load a host page with the admin in an <iframe>."""
         _ensure_admin_logged_in(page, base_url)
-        proxy_admin_url = (
-            f"{base_url}{_PROXY_PREFIX}/admin"
-            f"?team_id={_TEAM_PARAM}&include_inactive=true#gateways"
-        )
+        proxy_admin_url = _admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True)
         page.set_content(
             f"""<!DOCTYPE html>
 <html><head><title>iframe host</title></head>
@@ -728,33 +602,14 @@ class TestAdminIframeContext:
         frames = page.frames
         return frames[-1] if len(frames) > 1 else frames[0]
 
-    def _assert_iframe_url(
-        self,
-        page: Page,
-        *,
-        has_proxy: bool = True,
-        has_team_id: bool = True,
-        has_include_inactive: bool = True,
-        fragment: str = "gateways",
-    ):
-        """Wait briefly then assert the iframe URL."""
+    def _assert_iframe_url(self, page: Page, *, proxy_prefix: bool = True, team_id: bool = True, include_inactive: bool = True, fragment: str = "gateways"):
+        """Wait briefly then assert the iframe URL using the shared helper."""
         frame_obj = self._frame(page)
         try:
             frame_obj.wait_for_load_state("networkidle", timeout=10000)
         except PlaywrightTimeoutError:
             pass
-        url = frame_obj.url
-        if has_proxy:
-            assert f"{_PROXY_PREFIX}/admin" in url, f"Expected proxy prefix in iframe URL; got: {url}"
-        if has_team_id:
-            assert f"team_id={_TEAM_PARAM}" in url, f"Expected team_id in iframe URL; got: {url}"
-        else:
-            assert "team_id" not in url, f"team_id must be absent from iframe URL; got: {url}"
-        if has_include_inactive:
-            assert "include_inactive=true" in url, f"Expected include_inactive in iframe URL; got: {url}"
-        else:
-            assert "include_inactive" not in url, f"include_inactive must be absent from iframe URL; got: {url}"
-        assert f"#{fragment}" in url, f"Expected #{fragment} in iframe URL; got: {url}"
+        _assert_url_params(frame_obj.url, proxy_prefix=proxy_prefix, team_id=team_id, include_inactive=include_inactive, fragment=fragment)
 
     # ------------------------------------------------------------------
     # Smoke
@@ -783,22 +638,13 @@ class TestAdminIframeContext:
         frame_obj = self._frame(page)
         unique_name = f"test-gw-iframeadd-{uuid.uuid4().hex[:8]}"
 
-        name_input = frame.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = frame.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found in iframe — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(frame, unique_name)
 
         try:
             with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
-                frame.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(frame)
 
-            self._assert_iframe_url(page, fragment="gateways")
+            self._assert_iframe_url(page)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
@@ -806,21 +652,7 @@ class TestAdminIframeContext:
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
         """Editing a gateway inside the iframe: proxy prefix + both params + fragment survive."""
-        create_resp = api_request_context.post(
-            "/gateways",
-            headers={"Content-Type": "application/json"},
-            data={
-                "name": f"test-gw-iframeedit-{uuid.uuid4().hex[:6]}",
-                "url": "http://127.0.0.1:19999",
-                "transport": "HTTP",
-            },
-        )
-        if not create_resp.ok:
-            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
-
-        gw_id = create_resp.json().get("id", "")
-        if not gw_id:
-            pytest.skip("Gateway created but ID missing.")
+        gw_id = _create_gateway_api(api_request_context, "test-gw-iframeedit")
 
         frame = page.frame_locator("#admin-frame")
         frame_obj = self._frame(page)
@@ -841,7 +673,7 @@ class TestAdminIframeContext:
             with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
                 edit_form.locator('button[type="submit"]').first.click()
 
-            self._assert_iframe_url(page, fragment="gateways")
+            self._assert_iframe_url(page)
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
@@ -851,8 +683,7 @@ class TestAdminIframeContext:
         """Toggling a server state inside the iframe: proxy prefix + params + #catalog survive."""
         frame_obj = self._frame(page)
         frame_obj.evaluate(
-            f"window.location.href = '{base_url}{_PROXY_PREFIX}/admin"
-            f"?team_id={_TEAM_PARAM}&include_inactive=true#catalog'"
+            f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment='catalog')}'"
         )
         try:
             frame_obj.wait_for_load_state("networkidle", timeout=10000)
@@ -873,36 +704,19 @@ class TestAdminIframeContext:
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
         """Deleting a gateway inside the iframe: proxy prefix + both params + fragment survive."""
-        create_resp = api_request_context.post(
-            "/gateways",
-            headers={"Content-Type": "application/json"},
-            data={
-                "name": f"test-gw-iframedel-{uuid.uuid4().hex[:6]}",
-                "url": "http://127.0.0.1:19999",
-                "transport": "HTTP",
-            },
-        )
-        if not create_resp.ok:
-            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
-
-        gw_id = create_resp.json().get("id", "")
-        if not gw_id:
-            pytest.skip("Gateway created but ID missing.")
+        gw_id = _create_gateway_api(api_request_context, "test-gw-iframedel")
 
         frame = page.frame_locator("#admin-frame")
         frame_obj = self._frame(page)
 
         try:
-            delete_form = frame.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
-            if delete_form.count() == 0:
-                pytest.skip("Delete form for created gateway not visible in iframe — skipping.")
-
+            delete_btn = _get_delete_gateway_btn(frame, gw_id)
             page.on("dialog", lambda d: d.accept())
 
             with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
-                delete_form.locator('button[type="submit"]').first.click()
+                delete_btn.click()
 
-            self._assert_iframe_url(page, fragment="gateways")
+            self._assert_iframe_url(page)
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
@@ -916,8 +730,7 @@ class TestAdminIframeContext:
         """Iframe + proxy: team_id only start — include_inactive must NOT appear post-mutation."""
         frame_obj = self._frame(page)
         frame_obj.evaluate(
-            f"window.location.href = '{base_url}{_PROXY_PREFIX}/admin"
-            f"?team_id={_TEAM_PARAM}#gateways'"
+            f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, fragment='gateways')}'"
         )
         try:
             frame_obj.wait_for_load_state("networkidle", timeout=10000)
@@ -927,26 +740,13 @@ class TestAdminIframeContext:
         frame = page.frame_locator("#admin-frame")
         unique_name = f"test-gw-ifrtid-{uuid.uuid4().hex[:8]}"
 
-        name_input = frame.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = frame.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found in iframe — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(frame, unique_name)
 
         try:
             with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
-                frame.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(frame)
 
-            self._assert_iframe_url(
-                page,
-                has_include_inactive=False,
-                fragment="gateways",
-            )
+            self._assert_iframe_url(page, include_inactive=False)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
@@ -956,8 +756,7 @@ class TestAdminIframeContext:
         """Iframe + proxy: include_inactive only start — team_id must NOT appear post-mutation."""
         frame_obj = self._frame(page)
         frame_obj.evaluate(
-            f"window.location.href = '{base_url}{_PROXY_PREFIX}/admin"
-            f"?include_inactive=true#gateways'"
+            f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, include_inactive=True, fragment='gateways')}'"
         )
         try:
             frame_obj.wait_for_load_state("networkidle", timeout=10000)
@@ -967,25 +766,12 @@ class TestAdminIframeContext:
         frame = page.frame_locator("#admin-frame")
         unique_name = f"test-gw-ifrinac-{uuid.uuid4().hex[:8]}"
 
-        name_input = frame.locator("#gateway-name, input[name='name'][id*='gateway']").first
-        url_input = frame.locator("#gateway-url, input[name='url'][id*='gateway']").first
-        if name_input.count() == 0 or url_input.count() == 0:
-            pytest.skip("Add-gateway form inputs not found in iframe — skipping.")
-
-        name_input.fill(unique_name)
-        url_input.fill("http://127.0.0.1:19999")
+        _fill_add_gateway_form(frame, unique_name)
 
         try:
             with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
-                frame.locator(
-                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-                ).first.click()
+                _click_add_gateway_btn(frame)
 
-            self._assert_iframe_url(
-                page,
-                has_team_id=False,
-                fragment="gateways",
-            )
+            self._assert_iframe_url(page, team_id=False)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
