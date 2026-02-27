@@ -19,7 +19,7 @@ import uuid
 
 # Third-Party
 import pytest
-from playwright.sync_api import APIRequestContext, expect, Page
+from playwright.sync_api import APIRequestContext, expect, Page, TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .conftest import _ensure_admin_logged_in
@@ -647,6 +647,345 @@ class TestAdminProxyUrlContext:
             expect(page).to_have_url(re.compile(r"#gateways"))
             assert "team_id" not in page.url, (
                 f"team_id must not appear when starting URL had none; got: {page.url}"
+            )
+        finally:
+            _cleanup_gateway_by_name(api_request_context, unique_name)
+
+
+@pytest.mark.ui
+@pytest.mark.regression
+@pytest.mark.iframe
+class TestAdminIframeContext:
+    """Admin UI works correctly when embedded in an <iframe> with a proxy-prefix src.
+
+    The host page is built with page.set_content() (no file on disk). The same
+    page.route() proxy fixture strips X-Frame-Options so the browser allows
+    embedding. After mutations, page.frames[-1].url carries the expected
+    /proxy/mcp/admin?...#fragment URL.
+
+    Regression guard for #3321 and #3324 in iframe-embedded deployments.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _proxy_routes(self, page: Page, base_url: str):
+        """Intercept /proxy/mcp/** and serve real content from /**.
+
+        Also strips X-Frame-Options and fixes CSP frame-ancestors so that
+        the admin page (default: X-Frame-Options: DENY) can be embedded.
+        """
+
+        def handle_route(route):
+            url = route.request.url.replace(
+                base_url.rstrip("/") + _PROXY_PREFIX, base_url.rstrip("/"), 1
+            )
+            response = route.fetch(url=url)
+            headers = dict(response.headers)
+            headers.pop("x-frame-options", None)
+            if "content-security-policy" in headers:
+                headers["content-security-policy"] = headers[
+                    "content-security-policy"
+                ].replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+            route.fulfill(
+                status=response.status,
+                headers=headers,
+                body=response.body(),
+            )
+
+        _pattern = re.compile(r".*/proxy/mcp/.*")
+        page.route(_pattern, handle_route)
+        yield
+        page.unroute(_pattern)
+
+    @pytest.fixture(autouse=True)
+    def _iframe_host(self, page: Page, base_url: str, _proxy_routes):
+        """Seed auth cookies then load a host page with the admin in an <iframe>."""
+        _ensure_admin_logged_in(page, base_url)
+        proxy_admin_url = (
+            f"{base_url}{_PROXY_PREFIX}/admin"
+            f"?team_id={_TEAM_PARAM}&include_inactive=true#gateways"
+        )
+        page.set_content(
+            f"""<!DOCTYPE html>
+<html><head><title>iframe host</title></head>
+<body style="margin:0;padding:0">
+<iframe id="admin-frame"
+        src="{proxy_admin_url}"
+        style="width:100%;height:100vh;border:none"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
+</iframe>
+</body></html>"""
+        )
+        frame = page.frame_locator("#admin-frame")
+        try:
+            frame.locator('[data-testid="servers-tab"]').wait_for(
+                state="visible", timeout=30000
+            )
+        except PlaywrightTimeoutError:
+            pass  # Continue — some CI setups load slower
+
+    def _frame(self, page: Page):
+        """Return the iframe Frame object (index 1, index 0 is the host page)."""
+        frames = page.frames
+        return frames[-1] if len(frames) > 1 else frames[0]
+
+    def _assert_iframe_url(
+        self,
+        page: Page,
+        *,
+        has_proxy: bool = True,
+        has_team_id: bool = True,
+        has_include_inactive: bool = True,
+        fragment: str = "gateways",
+    ):
+        """Wait briefly then assert the iframe URL."""
+        frame_obj = self._frame(page)
+        try:
+            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+        url = frame_obj.url
+        if has_proxy:
+            assert f"{_PROXY_PREFIX}/admin" in url, f"Expected proxy prefix in iframe URL; got: {url}"
+        if has_team_id:
+            assert f"team_id={_TEAM_PARAM}" in url, f"Expected team_id in iframe URL; got: {url}"
+        else:
+            assert "team_id" not in url, f"team_id must be absent from iframe URL; got: {url}"
+        if has_include_inactive:
+            assert "include_inactive=true" in url, f"Expected include_inactive in iframe URL; got: {url}"
+        else:
+            assert "include_inactive" not in url, f"include_inactive must be absent from iframe URL; got: {url}"
+        assert f"#{fragment}" in url, f"Expected #{fragment} in iframe URL; got: {url}"
+
+    # ------------------------------------------------------------------
+    # Smoke
+    # ------------------------------------------------------------------
+
+    def test_iframe_admin_loads_and_retains_fragment(self, page: Page, base_url: str):
+        """Admin UI loads in iframe and initial URL contains proxy prefix + fragment."""
+        frame_obj = self._frame(page)
+        try:
+            frame_obj.wait_for_load_state("networkidle", timeout=15000)
+        except PlaywrightTimeoutError:
+            pass
+        url = frame_obj.url
+        assert f"{_PROXY_PREFIX}/admin" in url, f"Proxy prefix missing from iframe URL; got: {url}"
+        assert "#gateways" in url, f"Fragment missing from iframe URL; got: {url}"
+
+    # ------------------------------------------------------------------
+    # Add / Edit / Toggle / Delete (both params)
+    # ------------------------------------------------------------------
+
+    def test_iframe_add_gateway_preserves_proxy_prefix(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """Adding a gateway inside the iframe: proxy prefix + both params + fragment survive."""
+        frame = page.frame_locator("#admin-frame")
+        frame_obj = self._frame(page)
+        unique_name = f"test-gw-iframeadd-{uuid.uuid4().hex[:8]}"
+
+        name_input = frame.locator("#gateway-name, input[name='name'][id*='gateway']").first
+        url_input = frame.locator("#gateway-url, input[name='url'][id*='gateway']").first
+        if name_input.count() == 0 or url_input.count() == 0:
+            pytest.skip("Add-gateway form inputs not found in iframe — skipping.")
+
+        name_input.fill(unique_name)
+        url_input.fill("http://127.0.0.1:19999")
+
+        try:
+            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+                frame.locator(
+                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
+                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
+                ).first.click()
+
+            self._assert_iframe_url(page, fragment="gateways")
+        finally:
+            _cleanup_gateway_by_name(api_request_context, unique_name)
+
+    def test_iframe_edit_gateway_preserves_proxy_prefix(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """Editing a gateway inside the iframe: proxy prefix + both params + fragment survive."""
+        create_resp = api_request_context.post(
+            "/gateways",
+            headers={"Content-Type": "application/json"},
+            data={
+                "name": f"test-gw-iframeedit-{uuid.uuid4().hex[:6]}",
+                "url": "http://127.0.0.1:19999",
+                "transport": "HTTP",
+            },
+        )
+        if not create_resp.ok:
+            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
+
+        gw_id = create_resp.json().get("id", "")
+        if not gw_id:
+            pytest.skip("Gateway created but ID missing.")
+
+        frame = page.frame_locator("#admin-frame")
+        frame_obj = self._frame(page)
+
+        try:
+            frame_obj.evaluate(f"editGateway('{gw_id}')")
+
+            edit_form = frame.locator("#edit-gateway-form")
+            try:
+                edit_form.wait_for(state="visible", timeout=10000)
+            except PlaywrightTimeoutError:
+                pytest.skip("Edit gateway modal did not open in iframe — skipping.")
+
+            desc_input = frame.locator("#edit-gateway-description")
+            if desc_input.count() > 0:
+                desc_input.fill("updated by iframe test")
+
+            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+                edit_form.locator('button[type="submit"]').first.click()
+
+            self._assert_iframe_url(page, fragment="gateways")
+        finally:
+            api_request_context.delete(f"/gateways/{gw_id}")
+
+    def test_iframe_toggle_server_preserves_proxy_prefix(
+        self, page: Page, base_url: str
+    ):
+        """Toggling a server state inside the iframe: proxy prefix + params + #catalog survive."""
+        frame_obj = self._frame(page)
+        frame_obj.evaluate(
+            f"window.location.href = '{base_url}{_PROXY_PREFIX}/admin"
+            f"?team_id={_TEAM_PARAM}&include_inactive=true#catalog'"
+        )
+        try:
+            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+        frame = page.frame_locator("#admin-frame")
+        toggle_form = frame.locator('form[action*="/servers/"][action*="/state"]').first
+        if toggle_form.count() == 0:
+            pytest.skip("No server toggle forms found in iframe — register a server first.")
+
+        with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+            toggle_form.locator('button[type="submit"]').first.click()
+
+        self._assert_iframe_url(page, fragment="catalog")
+
+    def test_iframe_delete_gateway_preserves_proxy_prefix(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """Deleting a gateway inside the iframe: proxy prefix + both params + fragment survive."""
+        create_resp = api_request_context.post(
+            "/gateways",
+            headers={"Content-Type": "application/json"},
+            data={
+                "name": f"test-gw-iframedel-{uuid.uuid4().hex[:6]}",
+                "url": "http://127.0.0.1:19999",
+                "transport": "HTTP",
+            },
+        )
+        if not create_resp.ok:
+            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
+
+        gw_id = create_resp.json().get("id", "")
+        if not gw_id:
+            pytest.skip("Gateway created but ID missing.")
+
+        frame = page.frame_locator("#admin-frame")
+        frame_obj = self._frame(page)
+
+        try:
+            delete_form = frame.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
+            if delete_form.count() == 0:
+                pytest.skip("Delete form for created gateway not visible in iframe — skipping.")
+
+            page.on("dialog", lambda d: d.accept())
+
+            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+                delete_form.locator('button[type="submit"]').first.click()
+
+            self._assert_iframe_url(page, fragment="gateways")
+        finally:
+            api_request_context.delete(f"/gateways/{gw_id}")
+
+    # ------------------------------------------------------------------
+    # Single-param (negative) tests
+    # ------------------------------------------------------------------
+
+    def test_iframe_add_preserves_team_id_only(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """Iframe + proxy: team_id only start — include_inactive must NOT appear post-mutation."""
+        frame_obj = self._frame(page)
+        frame_obj.evaluate(
+            f"window.location.href = '{base_url}{_PROXY_PREFIX}/admin"
+            f"?team_id={_TEAM_PARAM}#gateways'"
+        )
+        try:
+            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+        frame = page.frame_locator("#admin-frame")
+        unique_name = f"test-gw-ifrtid-{uuid.uuid4().hex[:8]}"
+
+        name_input = frame.locator("#gateway-name, input[name='name'][id*='gateway']").first
+        url_input = frame.locator("#gateway-url, input[name='url'][id*='gateway']").first
+        if name_input.count() == 0 or url_input.count() == 0:
+            pytest.skip("Add-gateway form inputs not found in iframe — skipping.")
+
+        name_input.fill(unique_name)
+        url_input.fill("http://127.0.0.1:19999")
+
+        try:
+            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+                frame.locator(
+                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
+                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
+                ).first.click()
+
+            self._assert_iframe_url(
+                page,
+                has_include_inactive=False,
+                fragment="gateways",
+            )
+        finally:
+            _cleanup_gateway_by_name(api_request_context, unique_name)
+
+    def test_iframe_add_preserves_include_inactive_only(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """Iframe + proxy: include_inactive only start — team_id must NOT appear post-mutation."""
+        frame_obj = self._frame(page)
+        frame_obj.evaluate(
+            f"window.location.href = '{base_url}{_PROXY_PREFIX}/admin"
+            f"?include_inactive=true#gateways'"
+        )
+        try:
+            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+        frame = page.frame_locator("#admin-frame")
+        unique_name = f"test-gw-ifrinac-{uuid.uuid4().hex[:8]}"
+
+        name_input = frame.locator("#gateway-name, input[name='name'][id*='gateway']").first
+        url_input = frame.locator("#gateway-url, input[name='url'][id*='gateway']").first
+        if name_input.count() == 0 or url_input.count() == 0:
+            pytest.skip("Add-gateway form inputs not found in iframe — skipping.")
+
+        name_input.fill(unique_name)
+        url_input.fill("http://127.0.0.1:19999")
+
+        try:
+            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+                frame.locator(
+                    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
+                    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
+                ).first.click()
+
+            self._assert_iframe_url(
+                page,
+                has_team_id=False,
+                fragment="gateways",
             )
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
