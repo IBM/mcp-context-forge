@@ -57,6 +57,7 @@ class TestCacheInvalidationSubscriber:
         assert cache_subscriber._stop_event is None
         assert cache_subscriber._pubsub is None
         assert cache_subscriber._channel == "mcpgw:cache:invalidate"
+        assert cache_subscriber._channels == ["mcpgw:cache:invalidate", "mcpgw:auth:invalidate"]
         assert cache_subscriber._started is False
 
     @pytest.mark.asyncio
@@ -187,10 +188,10 @@ class TestCacheInvalidationSubscriber:
                 self.unsubscribed = False
                 self.closed = False
 
-            async def subscribe(self, _channel):
+            async def subscribe(self, *_channels):
                 self.subscribed = True
 
-            async def unsubscribe(self, _channel):
+            async def unsubscribe(self, *_channels):
                 self.unsubscribed = True
 
             async def aclose(self):
@@ -419,7 +420,7 @@ class TestCacheInvalidationSubscriber:
         cache_subscriber._task = None
 
         class FakePubSub:
-            async def unsubscribe(self, _channel):
+            async def unsubscribe(self, *_channels):
                 raise asyncio.TimeoutError()
 
             async def close(self):
@@ -437,7 +438,7 @@ class TestCacheInvalidationSubscriber:
         cache_subscriber._task = None
 
         class FakePubSub:
-            async def unsubscribe(self, _channel):
+            async def unsubscribe(self, *_channels):
                 raise RuntimeError("unsubscribe boom")
 
             async def close(self):
@@ -529,3 +530,258 @@ class TestCrossWorkerCacheInvalidation:
             await subscriber._process_invalidation("unknown:type")
             await subscriber._process_invalidation("malformed")
             await subscriber._process_invalidation("")
+
+
+def create_mock_auth_cache(
+    user_cache=None,
+    team_cache=None,
+    context_cache=None,
+    role_cache=None,
+    teams_list_cache=None,
+    revocation_cache=None,
+    revoked_jtis=None,
+):
+    """Create a properly configured mock auth cache.
+
+    Returns:
+        MagicMock configured to behave like AuthCache
+    """
+    mock = MagicMock()
+    mock._user_cache = user_cache if user_cache is not None else {}
+    mock._team_cache = team_cache if team_cache is not None else {}
+    mock._context_cache = context_cache if context_cache is not None else {}
+    mock._role_cache = role_cache if role_cache is not None else {}
+    mock._teams_list_cache = teams_list_cache if teams_list_cache is not None else {}
+    mock._revocation_cache = revocation_cache if revocation_cache is not None else {}
+    mock._revoked_jtis = revoked_jtis if revoked_jtis is not None else set()
+    mock._lock = threading.Lock()
+    return mock
+
+
+class TestAuthCacheInvalidationSubscriber:
+    """Tests for auth cache invalidation via CacheInvalidationSubscriber.
+
+    Regression test for: auth_cache published invalidation messages to
+    mcpgw:auth:invalidate but CacheInvalidationSubscriber only listened
+    on mcpgw:cache:invalidate, so other replicas never cleared their
+    in-memory auth caches.
+    """
+
+    @pytest.mark.asyncio
+    async def test_subscriber_subscribes_to_both_channels(self):
+        """Test that subscriber subscribes to both cache and auth channels."""
+        subscriber = CacheInvalidationSubscriber()
+        assert "mcpgw:cache:invalidate" in subscriber._channels
+        assert "mcpgw:auth:invalidate" in subscriber._channels
+
+    @pytest.mark.asyncio
+    async def test_start_subscribes_to_both_channels(self, monkeypatch):
+        """Test that start() subscribes the pubsub to both channels."""
+        subscribed_channels = []
+
+        class FakePubSub:
+            async def subscribe(self, *channels):
+                subscribed_channels.extend(channels)
+
+        class FakeRedis:
+            def pubsub(self):
+                return FakePubSub()
+
+        class DummyTask:
+            def cancel(self):
+                pass
+
+            def __await__(self):
+                async def _noop():
+                    return None
+                return _noop().__await__()
+
+        def _create_task(coro):
+            coro.close()
+            return DummyTask()
+
+        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=FakeRedis()))
+        monkeypatch.setattr(asyncio, "create_task", _create_task)
+
+        subscriber = CacheInvalidationSubscriber()
+        await subscriber.start()
+        assert "mcpgw:cache:invalidate" in subscribed_channels
+        assert "mcpgw:auth:invalidate" in subscribed_channels
+        await subscriber.stop()
+
+    @pytest.mark.asyncio
+    async def test_process_user_invalidation(self):
+        """Test processing of user:{email} auth invalidation message."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            user_cache={"alice@test.com": "user-data", "bob@test.com": "user-data"},
+            context_cache={"alice@test.com:jti1": "ctx-data", "bob@test.com:jti2": "ctx-data"},
+            team_cache={"alice@test.com:team1": "team-data", "bob@test.com:team2": "team-data"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("user:alice@test.com")
+
+        assert "alice@test.com" not in mock_auth._user_cache
+        assert "bob@test.com" in mock_auth._user_cache
+        assert "alice@test.com:jti1" not in mock_auth._context_cache
+        assert "bob@test.com:jti2" in mock_auth._context_cache
+        assert "alice@test.com:team1" not in mock_auth._team_cache
+        assert "bob@test.com:team2" in mock_auth._team_cache
+
+    @pytest.mark.asyncio
+    async def test_process_revoke_invalidation(self):
+        """Test processing of revoke:{jti} auth invalidation message."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            revocation_cache={"jti-abc123": "cached", "jti-other": "cached"},
+            context_cache={"user@test.com:jti-abc123": "ctx-data", "user@test.com:jti-other": "ctx-data"},
+            revoked_jtis=set(),
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("revoke:jti-abc123")
+
+        assert "jti-abc123" in mock_auth._revoked_jtis
+        assert "jti-abc123" not in mock_auth._revocation_cache
+        assert "jti-other" in mock_auth._revocation_cache
+        assert "user@test.com:jti-abc123" not in mock_auth._context_cache
+        assert "user@test.com:jti-other" in mock_auth._context_cache
+
+    @pytest.mark.asyncio
+    async def test_process_team_invalidation(self):
+        """Test processing of team:{email} auth invalidation message."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            team_cache={"alice@test.com": "team-data", "bob@test.com": "team-data"},
+            context_cache={"alice@test.com:jti1": "ctx-data", "bob@test.com:jti2": "ctx-data"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("team:alice@test.com")
+
+        assert "alice@test.com" not in mock_auth._team_cache
+        assert "bob@test.com" in mock_auth._team_cache
+        assert "alice@test.com:jti1" not in mock_auth._context_cache
+        assert "bob@test.com:jti2" in mock_auth._context_cache
+
+    @pytest.mark.asyncio
+    async def test_process_role_invalidation(self):
+        """Test processing of role:{email}:{team_id} auth invalidation message."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            role_cache={
+                "alice@test.com:team-123": "developer",
+                "alice@test.com:team-456": "viewer",
+                "bob@test.com:team-123": "admin",
+            },
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("role:alice@test.com:team-123")
+
+        assert "alice@test.com:team-123" not in mock_auth._role_cache
+        assert "alice@test.com:team-456" in mock_auth._role_cache
+        assert "bob@test.com:team-123" in mock_auth._role_cache
+
+    @pytest.mark.asyncio
+    async def test_process_team_roles_invalidation(self):
+        """Test processing of team_roles:{team_id} auth invalidation message."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            role_cache={
+                "alice@test.com:team-123": "developer",
+                "bob@test.com:team-123": "admin",
+                "carol@test.com:team-456": "viewer",
+            },
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("team_roles:team-123")
+
+        assert "alice@test.com:team-123" not in mock_auth._role_cache
+        assert "bob@test.com:team-123" not in mock_auth._role_cache
+        assert "carol@test.com:team-456" in mock_auth._role_cache
+
+    @pytest.mark.asyncio
+    async def test_process_teams_list_invalidation(self):
+        """Test processing of teams:{email} auth invalidation message."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            teams_list_cache={
+                "alice@test.com:True": ["team-1", "team-2"],
+                "alice@test.com:False": ["team-1"],
+                "bob@test.com:True": ["team-3"],
+            },
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("teams:alice@test.com")
+
+        assert "alice@test.com:True" not in mock_auth._teams_list_cache
+        assert "alice@test.com:False" not in mock_auth._teams_list_cache
+        assert "bob@test.com:True" in mock_auth._teams_list_cache
+
+    @pytest.mark.asyncio
+    async def test_process_membership_invalidation(self):
+        """Test processing of membership:{email} auth invalidation message."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            team_cache={
+                "alice@test.com:team-1,team-2": True,
+                "alice@test.com:team-3": False,
+                "bob@test.com:team-1": True,
+            },
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("membership:alice@test.com")
+
+        assert "alice@test.com:team-1,team-2" not in mock_auth._team_cache
+        assert "alice@test.com:team-3" not in mock_auth._team_cache
+        assert "bob@test.com:team-1" in mock_auth._team_cache
+
+    @pytest.mark.asyncio
+    async def test_auth_invalidation_message_parsing(self):
+        """Test that all auth message formats are parsed correctly without errors."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache()
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            # All auth message types should not raise exceptions
+            await subscriber._process_invalidation("user:test@example.com")
+            await subscriber._process_invalidation("revoke:jti-12345678")
+            await subscriber._process_invalidation("team:test@example.com")
+            await subscriber._process_invalidation("role:test@example.com:team-123")
+            await subscriber._process_invalidation("team_roles:team-123")
+            await subscriber._process_invalidation("teams:test@example.com")
+            await subscriber._process_invalidation("membership:test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_cross_replica_auth_invalidation_end_to_end(self):
+        """End-to-end test: auth invalidation clears local cache on other replica.
+
+        This is the main regression test for the cross-replica auth cache
+        invalidation gap where auth_cache published to mcpgw:auth:invalidate
+        but CacheInvalidationSubscriber only listened on mcpgw:cache:invalidate.
+        """
+        subscriber = CacheInvalidationSubscriber()
+
+        # Simulate a replica with warm auth caches
+        mock_auth = create_mock_auth_cache(
+            user_cache={"admin@company.com": "user-data"},
+            context_cache={"admin@company.com:jti-xyz": "ctx-data"},
+            team_cache={"admin@company.com:team-a,team-b": True},
+            role_cache={"admin@company.com:team-a": "platform_admin"},
+            teams_list_cache={"admin@company.com:True": ["team-a", "team-b"]},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            # Simulate receiving invalidation from another replica
+            # (e.g., after user role change on replica 1, replica 2 gets this)
+            await subscriber._process_invalidation("user:admin@company.com")
+
+        # All caches for this user should be cleared
+        assert "admin@company.com" not in mock_auth._user_cache
+        assert "admin@company.com:jti-xyz" not in mock_auth._context_cache
+        assert "admin@company.com:team-a,team-b" not in mock_auth._team_cache
