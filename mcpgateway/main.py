@@ -34,7 +34,6 @@ from functools import lru_cache
 import hashlib
 import html
 import json
-import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
@@ -4132,7 +4131,6 @@ async def get_tool(
 
     try:
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
-<<<<<<< HEAD
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
         # Allow apijsonpath as a direct model (internal/tests) or as JSON string via query
         parsed_apijsonpath: Optional[JsonPathModifier] = None
@@ -4156,11 +4154,9 @@ async def get_tool(
             return ORJSONResponse(content=result)
         except Exception:
             logger.exception("JSONPath modifier failed while processing single tool")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")    
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
     except HTTPException:
         raise
-=======
->>>>>>> 7698ca1c3 (review)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
