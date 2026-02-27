@@ -2557,6 +2557,79 @@ class TestInvokeA2AToolCoverage:
         assert parsed["result"]["has_chart"] is False
         assert "False" not in text
 
+    def _make_agent_mock(self):
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_response_value_none_serialized_as_json_null(self, tool_service):
+        """When response value is None, it should serialize as 'null' (valid JSON)."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": None})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        assert result.content[0].text == "null"
+        assert json.loads(result.content[0].text) is None
+
+    @pytest.mark.asyncio
+    async def test_response_value_numeric_serialized_as_json(self, tool_service):
+        """When response value is a number, it should serialize as valid JSON."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": 42})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        assert result.content[0].text == "42"
+        assert json.loads(result.content[0].text) == 42
+
+    @pytest.mark.asyncio
+    async def test_response_value_list_serialized_as_json(self, tool_service):
+        """When response value is a list, it should serialize as valid JSON array."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": [1, "two", False]})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert parsed == [1, "two", False]
+        assert "False" not in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_root_list_response_serialized_as_json(self, tool_service):
+        """When entire response_data is a list (no 'response' key), it should serialize as JSON array."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value=[{"id": 1, "active": True}, {"id": 2, "active": False}])
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert len(parsed) == 2
+        assert parsed[0]["active"] is True
+        assert parsed[1]["active"] is False
+        assert "True" not in result.content[0].text
+        assert "False" not in result.content[0].text
+
     @pytest.mark.asyncio
     async def test_exception_returns_error_result(self, tool_service):
         tool = self._make_a2a_tool()
@@ -5704,6 +5777,72 @@ class TestInvokeToolA2A:
         assert result is not None
         assert result.is_error is False
         assert "Hello from A2A" in result.content[0].text
+
+    async def _invoke_a2a_tool_via_invoke_tool(self, tool_service, response_json):
+        """Helper: invoke an A2A tool through invoke_tool with a given HTTP 200 JSON response."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value=response_json)
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            return await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_response_value_none(self, tool_service):
+        """invoke_tool A2A path: response['response'] is None -> serialized as 'null'."""
+        result = await self._invoke_a2a_tool_via_invoke_tool(tool_service, {"response": None})
+        assert result.is_error is False
+        assert result.content[0].text == "null"
+        assert json.loads(result.content[0].text) is None
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_response_value_list(self, tool_service):
+        """invoke_tool A2A path: response['response'] is a list -> serialized as JSON array."""
+        result = await self._invoke_a2a_tool_via_invoke_tool(tool_service, {"response": [1, False, "x"]})
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert parsed == [1, False, "x"]
+        assert "False" not in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_root_list_response(self, tool_service):
+        """invoke_tool A2A path: response_data is a list (no 'response' key) -> serialized as JSON."""
+        result = await self._invoke_a2a_tool_via_invoke_tool(tool_service, [{"active": True}, {"active": False}])
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert parsed[0]["active"] is True
+        assert parsed[1]["active"] is False
+        assert "True" not in result.content[0].text
+        assert "False" not in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_a2a_jsonrpc_success_no_query(self, tool_service):
