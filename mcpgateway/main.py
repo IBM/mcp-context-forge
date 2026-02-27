@@ -33,11 +33,8 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import html
-<<<<<<< HEAD
-=======
 import json
 import os as _os  # local alias to avoid collisions
->>>>>>> 7698ca1c3 (review)
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
