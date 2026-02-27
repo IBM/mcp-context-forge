@@ -211,9 +211,12 @@ Key points:
 
 | Return Value | Meaning | Query Behavior |
 |--------------|---------|----------------|
-| `None` | Admin bypass | Skip ALL team filtering |
-| `[]` (empty list) | Public-only | Filter to `visibility='public'` ONLY |
-| `["t1", "t2"]` | Team-scoped | Filter to team resources + public |
+| `None` | Admin bypass | Skip ALL visibility filtering (requires `user_email=None` in the service layer) |
+| `[]` (empty list) | Public-only | Filter to `visibility='public'` ONLY — owner and team access are both suppressed |
+| `["t1", "t2"]` | Team-scoped | Filter to team resources + public + user's own private resources |
+
+!!! note "Owner Access is Scoped to Private Visibility"
+    Owner-based access (`owner_email` matching) grants visibility **only** for resources with `visibility='private'`. Resource owners cannot use ownership to bypass team scoping — a team-visibility resource is only visible if the user's `token_teams` includes that team.
 
 ### Security Design Principles
 

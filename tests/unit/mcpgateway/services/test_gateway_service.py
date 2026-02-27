@@ -114,10 +114,10 @@ def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
     # Clear SSL context cache before each test for isolation
     from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
+
     clear_ssl_context_cache()
 
-    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, \
-         patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger:
+    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -778,6 +778,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_list_gateways_team_filter_no_access(self, gateway_service, test_db, monkeypatch):
         """Team filter should return empty when user lacks access."""
+
         class DummyTeamService:
             def __init__(self, _db):
                 self.db = _db
@@ -785,14 +786,15 @@ class TestGatewayService:
             async def get_user_teams(self, _email):
                 return [SimpleNamespace(id="team-1")]
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.TeamManagementService", DummyTeamService)
+        monkeypatch.setattr("mcpgateway.services.base_service.TeamManagementService", DummyTeamService)
 
-        test_db.execute = Mock()
+        test_db.execute = Mock(return_value=_make_execute_result(scalars_list=[]))
         result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", team_id="team-2")
 
         assert result == []
         assert next_cursor is None
-        test_db.execute.assert_not_called()
+        # Query IS executed but returns empty due to WHERE FALSE condition
+        test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
@@ -1456,7 +1458,6 @@ class TestGatewayService:
     # REDIS/INITIALIZATION COVERAGE
     # ────────────────────────────────────────────────────────────────────
 
-
     @pytest.mark.asyncio
     async def test_init_with_redis_unavailable(self, monkeypatch):
         """Test initialization when Redis import fails."""
@@ -1920,6 +1921,7 @@ class TestGatewayService:
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
                 assert result == [mocked_gateway_read]
+
     @pytest.mark.asyncio
     async def test_register_gateway_with_cache_mode(self, gateway_service):
         """Test registering a gateway with explicit cache mode (default behavior)."""
@@ -2097,7 +2099,6 @@ class TestGatewayService:
         # Verify gateway_mode was updated
         assert existing_gateway.gateway_mode == "cache"
         session.commit.assert_called()
-
 
 
 class TestGatewayRefresh:
@@ -3097,7 +3098,7 @@ async def test_connect_to_sse_server_without_validation_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatch):
-    from mcpgateway.schemas import PromptCreate, ResourceCreate
+    from mcpgateway.schemas import ResourceCreate
 
     service = GatewayService()
     tool_obj = SimpleNamespace(request_type="GET")
@@ -3843,9 +3844,14 @@ class TestUpdateOrCreateTools:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []  # no existing
         tool = SimpleNamespace(
-            name="new-tool", description="A new tool", input_schema={"type": "object"},
-            output_schema=None, request_type="POST", headers={},
-            annotations=None, jsonpath_filter=None,
+            name="new-tool",
+            description="A new tool",
+            input_schema={"type": "object"},
+            output_schema=None,
+            request_type="POST",
+            headers={},
+            annotations=None,
+            jsonpath_filter=None,
         )
         mock_gateway.id = "gw-1"
         mock_gateway.auth_type = None
@@ -3879,9 +3885,14 @@ class TestUpdateOrCreateTools:
         db.execute.return_value.scalars.return_value.all.return_value = [existing]
 
         tool = SimpleNamespace(
-            name="my-tool", description="new desc", input_schema={},
-            output_schema=None, request_type="POST", headers={},
-            annotations=None, jsonpath_filter=None,
+            name="my-tool",
+            description="new desc",
+            input_schema={},
+            output_schema=None,
+            request_type="POST",
+            headers={},
+            annotations=None,
+            jsonpath_filter=None,
         )
         mock_gateway.url = "http://new-url.com"
         mock_gateway.auth_type = None
@@ -3896,9 +3907,14 @@ class TestUpdateOrCreateTools:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         tool = SimpleNamespace(
-            name="good-tool", description="ok", input_schema={},
-            output_schema=None, request_type="POST", headers={},
-            annotations=None, jsonpath_filter=None,
+            name="good-tool",
+            description="ok",
+            input_schema={},
+            output_schema=None,
+            request_type="POST",
+            headers={},
+            annotations=None,
+            jsonpath_filter=None,
         )
         mock_gateway.id = "gw-1"
         mock_gateway.auth_type = None
@@ -3915,9 +3931,14 @@ class TestUpdateOrCreateTools:
         db.execute.return_value.scalars.return_value.all.return_value = []
         bad_tool = SimpleNamespace(name="bad")  # will raise on _create_db_tool
         good_tool = SimpleNamespace(
-            name="good-tool", description="ok", input_schema={},
-            output_schema=None, request_type="POST", headers={},
-            annotations=None, jsonpath_filter=None,
+            name="good-tool",
+            description="ok",
+            input_schema={},
+            output_schema=None,
+            request_type="POST",
+            headers={},
+            annotations=None,
+            jsonpath_filter=None,
         )
         mock_gateway.id = "gw-1"
         mock_gateway.auth_type = None
@@ -3953,8 +3974,11 @@ class TestUpdateOrCreateResources:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(
-            uri="file:///new", name="new-res", description="A resource",
-            mime_type="text/plain", uri_template=None,
+            uri="file:///new",
+            name="new-res",
+            description="A resource",
+            mime_type="text/plain",
+            uri_template=None,
         )
         mock_gateway.id = "gw-1"
         mock_gateway.visibility = "public"
@@ -3972,8 +3996,11 @@ class TestUpdateOrCreateResources:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = [existing]
         resource = SimpleNamespace(
-            uri="file:///res", name="new-name", description="new",
-            mime_type="text/html", uri_template=None,
+            uri="file:///res",
+            name="new-name",
+            description="new",
+            mime_type="text/html",
+            uri_template=None,
         )
         mock_gateway.visibility = "public"
         result = gateway_service._update_or_create_resources(db, [resource], mock_gateway, "update")
@@ -3985,8 +4012,11 @@ class TestUpdateOrCreateResources:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(
-            uri="file:///good", name="good", description="ok",
-            mime_type="text/plain", uri_template=None,
+            uri="file:///good",
+            name="good",
+            description="ok",
+            mime_type="text/plain",
+            uri_template=None,
         )
         mock_gateway.id = "gw-1"
         mock_gateway.visibility = "public"
@@ -4089,15 +4119,24 @@ class TestSetGatewayState:
     @pytest.mark.asyncio
     async def test_activate_gateway(self, gateway_service, _mock_caches):
         gw = _make_gateway(
-            id="gw-1", name="test", url="http://example.com", enabled=False,
-            reachable=False, capabilities={}, tools=[], resources=[], prompts=[],
-            updated_at=datetime.now(timezone.utc), team_id=None, slug="test",
-            auth_type=None, auth_query_params=None, version=1,
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=False,
+            reachable=False,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
         )
         db = self._make_db_for_state(gw)
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
         gateway_service._event_service = AsyncMock()
 
         result = await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
@@ -4107,10 +4146,21 @@ class TestSetGatewayState:
     @pytest.mark.asyncio
     async def test_deactivate_gateway(self, gateway_service, _mock_caches):
         gw = _make_gateway(
-            id="gw-1", name="test", url="http://example.com", enabled=True,
-            reachable=True, capabilities={}, tools=[], resources=[], prompts=[],
-            updated_at=datetime.now(timezone.utc), team_id=None, slug="test",
-            auth_type=None, auth_query_params=None, version=1,
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
         )
         db = self._make_db_for_state(gw)
         gateway_service._event_service = AsyncMock()
@@ -4130,10 +4180,21 @@ class TestSetGatewayState:
     @pytest.mark.asyncio
     async def test_permission_error(self, gateway_service, _mock_caches, monkeypatch):
         gw = _make_gateway(
-            id="gw-1", name="test", url="http://example.com", enabled=True,
-            reachable=True, capabilities={}, tools=[], resources=[], prompts=[],
-            updated_at=datetime.now(timezone.utc), team_id=None, slug="test",
-            auth_type=None, auth_query_params=None, version=1,
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
         )
         db = self._make_db_for_state(gw)
         mock_perm = MagicMock()
@@ -4145,10 +4206,21 @@ class TestSetGatewayState:
     @pytest.mark.asyncio
     async def test_only_update_reachable(self, gateway_service, _mock_caches):
         gw = _make_gateway(
-            id="gw-1", name="test", url="http://example.com", enabled=True,
-            reachable=True, capabilities={}, tools=[], resources=[], prompts=[],
-            updated_at=datetime.now(timezone.utc), team_id=None, slug="test",
-            auth_type=None, auth_query_params=None, version=1,
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
         )
         db = self._make_db_for_state(gw)
         gateway_service._event_service = AsyncMock()
@@ -4159,10 +4231,21 @@ class TestSetGatewayState:
     @pytest.mark.asyncio
     async def test_no_state_change(self, gateway_service, _mock_caches):
         gw = _make_gateway(
-            id="gw-1", name="test", url="http://example.com", enabled=True,
-            reachable=True, capabilities={}, tools=[], resources=[], prompts=[],
-            updated_at=datetime.now(timezone.utc), team_id=None, slug="test",
-            auth_type=None, auth_query_params=None, version=1,
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
         )
         db = self._make_db_for_state(gw)
         # When state hasn't changed, should skip all the activation logic
@@ -4172,10 +4255,21 @@ class TestSetGatewayState:
     @pytest.mark.asyncio
     async def test_activation_with_init_failure(self, gateway_service, _mock_caches):
         gw = _make_gateway(
-            id="gw-1", name="test", url="http://example.com", enabled=False,
-            reachable=False, capabilities={}, tools=[], resources=[], prompts=[],
-            updated_at=datetime.now(timezone.utc), team_id=None, slug="test",
-            auth_type=None, auth_query_params=None, version=1,
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=False,
+            reachable=False,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
         )
         db = self._make_db_for_state(gw)
         gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("Connection refused"))
@@ -4196,9 +4290,18 @@ class TestSetGatewayState:
     @pytest.mark.asyncio
     async def test_activate_with_query_param_auth(self, gateway_service, _mock_caches, monkeypatch):
         gw = _make_gateway(
-            id="gw-1", name="test", url="http://example.com", enabled=False,
-            reachable=False, capabilities={}, tools=[], resources=[], prompts=[],
-            updated_at=datetime.now(timezone.utc), team_id=None, slug="test",
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=False,
+            reachable=False,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
             auth_type="query_param",
             auth_query_params={"api_key": "encrypted_value"},
             version=1,
@@ -4449,12 +4552,20 @@ class TestCheckSingleGatewayHealth:
     async def test_health_check_non_oauth_sse(self, gateway_service, monkeypatch):
         """Test SSE health check with non-OAuth auth."""
         gw = _make_gateway(
-            id="gw-1", name="sse-gw", url="http://example.com/sse",
-            enabled=True, reachable=True, transport="sse",
-            auth_type="bearer", auth_value={"Authorization": "Bearer tok"},
-            auth_query_params=None, ca_certificate=None,
-            ca_certificate_sig=None, oauth_config=None,
-            last_refresh_at=None, refresh_interval_seconds=None,
+            id="gw-1",
+            name="sse-gw",
+            url="http://example.com/sse",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type="bearer",
+            auth_value={"Authorization": "Bearer tok"},
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
         )
 
         # Mock the isolated HTTP client context manager
@@ -4473,14 +4584,17 @@ class TestCheckSingleGatewayHealth:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
         monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5,
-            auto_refresh_servers=False, httpx_admin_read_timeout=5,
-            mcp_session_pool_enabled=False,
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         await gateway_service._check_single_gateway_health(gw)
 
@@ -4488,12 +4602,20 @@ class TestCheckSingleGatewayHealth:
     async def test_health_check_failure(self, gateway_service, monkeypatch):
         """Test health check failure triggers _handle_gateway_failure."""
         gw = _make_gateway(
-            id="gw-1", name="fail-gw", url="http://example.com",
-            enabled=True, reachable=True, transport="sse",
-            auth_type=None, auth_value=None,
-            auth_query_params=None, ca_certificate=None,
-            ca_certificate_sig=None, oauth_config=None,
-            last_refresh_at=None, refresh_interval_seconds=None,
+            id="gw-1",
+            name="fail-gw",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
         )
 
         mock_client = MagicMock()
@@ -4503,14 +4625,17 @@ class TestCheckSingleGatewayHealth:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5,
-            auto_refresh_servers=False, httpx_admin_read_timeout=5,
-            mcp_session_pool_enabled=False,
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
         gateway_service._handle_gateway_failure = AsyncMock()
 
         await gateway_service._check_single_gateway_health(gw)
@@ -4520,13 +4645,20 @@ class TestCheckSingleGatewayHealth:
     async def test_health_check_oauth_client_credentials(self, gateway_service, monkeypatch):
         """Test health check with OAuth client_credentials auth."""
         gw = _make_gateway(
-            id="gw-1", name="oauth-gw", url="http://example.com",
-            enabled=True, reachable=True, transport="sse",
-            auth_type="oauth", auth_value=None,
-            auth_query_params=None, ca_certificate=None,
+            id="gw-1",
+            name="oauth-gw",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type="oauth",
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
             ca_certificate_sig=None,
             oauth_config={"grant_type": "client_credentials", "token_url": "http://auth/token"},
-            last_refresh_at=None, refresh_interval_seconds=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
         )
 
         gateway_service.oauth_manager = AsyncMock()
@@ -4547,14 +4679,17 @@ class TestCheckSingleGatewayHealth:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
         monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5,
-            auto_refresh_servers=False, httpx_admin_read_timeout=5,
-            mcp_session_pool_enabled=False,
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service.oauth_manager.get_access_token.assert_awaited_once()
@@ -4563,13 +4698,20 @@ class TestCheckSingleGatewayHealth:
     async def test_health_check_oauth_client_creds_failure(self, gateway_service, monkeypatch):
         """Test health check with OAuth client_credentials token failure."""
         gw = _make_gateway(
-            id="gw-1", name="oauth-fail-gw", url="http://example.com",
-            enabled=True, reachable=True, transport="sse",
-            auth_type="oauth", auth_value=None,
-            auth_query_params=None, ca_certificate=None,
+            id="gw-1",
+            name="oauth-fail-gw",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type="oauth",
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
             ca_certificate_sig=None,
             oauth_config={"grant_type": "client_credentials"},
-            last_refresh_at=None, refresh_interval_seconds=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
         )
         gateway_service.oauth_manager = AsyncMock()
         gateway_service.oauth_manager.get_access_token = AsyncMock(side_effect=Exception("Token expired"))
@@ -4579,14 +4721,17 @@ class TestCheckSingleGatewayHealth:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5,
-            auto_refresh_servers=False, httpx_admin_read_timeout=5,
-            mcp_session_pool_enabled=False,
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
         gateway_service._handle_gateway_failure = AsyncMock()
 
         await gateway_service._check_single_gateway_health(gw)
@@ -4596,27 +4741,37 @@ class TestCheckSingleGatewayHealth:
     async def test_health_check_oauth_auth_code_no_user(self, gateway_service, monkeypatch):
         """Auth code OAuth without user_email → marks gateway unhealthy."""
         gw = _make_gateway(
-            id="gw-1", name="oauth-authcode-gw", url="http://example.com",
-            enabled=True, reachable=True, transport="sse",
-            auth_type="oauth", auth_value=None,
-            auth_query_params=None, ca_certificate=None,
+            id="gw-1",
+            name="oauth-authcode-gw",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type="oauth",
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
             ca_certificate_sig=None,
             oauth_config={"grant_type": "authorization_code"},
-            last_refresh_at=None, refresh_interval_seconds=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
         )
         mock_client = MagicMock()
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5,
-            auto_refresh_servers=False, httpx_admin_read_timeout=5,
-            mcp_session_pool_enabled=False,
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
         gateway_service._handle_gateway_failure = AsyncMock()
 
         await gateway_service._check_single_gateway_health(gw, user_email=None)
@@ -4626,12 +4781,20 @@ class TestCheckSingleGatewayHealth:
     async def test_health_check_query_param_auth(self, gateway_service, monkeypatch):
         """Test health check with query_param auth decryption."""
         gw = _make_gateway(
-            id="gw-1", name="qp-gw", url="http://example.com",
-            enabled=True, reachable=True, transport="sse",
-            auth_type="query_param", auth_value=None,
+            id="gw-1",
+            name="qp-gw",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type="query_param",
+            auth_value=None,
             auth_query_params={"api_key": "encrypted_val"},
-            ca_certificate=None, ca_certificate_sig=None, oauth_config=None,
-            last_refresh_at=None, refresh_interval_seconds=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
         )
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda x: {"api_key": "secret"})
@@ -4653,14 +4816,17 @@ class TestCheckSingleGatewayHealth:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
         monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5,
-            auto_refresh_servers=False, httpx_admin_read_timeout=5,
-            mcp_session_pool_enabled=False,
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         await gateway_service._check_single_gateway_health(gw)
 
@@ -4747,9 +4913,11 @@ class TestCreateSslContext:
     def test_create_ssl_context_passes_cert_through(self, gateway_service, monkeypatch):
         """Test SSL context creation passes the certificate to the cache function."""
         captured = {}
+
         def fake_cache(cert):
             captured["cert"] = cert
             return MagicMock()
+
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_cached_ssl_context", fake_cache)
         gateway_service.create_ssl_context("MY_CERT_DATA")
         assert captured["cert"] == "MY_CERT_DATA"
@@ -4780,9 +4948,7 @@ class TestInitializeGateway:
     async def test_oauth_client_credentials_success(self, gateway_service):
         gateway_service.oauth_manager = AsyncMock()
         gateway_service.oauth_manager.get_access_token = AsyncMock(return_value="access-tok")
-        gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [], [], [])
-        )
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         caps, tools, resources, prompts = await gateway_service._initialize_gateway(
             url="http://example.com",
             auth_type="oauth",
@@ -4805,23 +4971,15 @@ class TestInitializeGateway:
 
     @pytest.mark.asyncio
     async def test_sse_transport(self, gateway_service):
-        gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {}}, [SimpleNamespace(name="t1")], [], [])
-        )
-        caps, tools, resources, prompts = await gateway_service._initialize_gateway(
-            url="http://example.com", transport="SSE"
-        )
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({"tools": {}}, [SimpleNamespace(name="t1")], [], []))
+        caps, tools, resources, prompts = await gateway_service._initialize_gateway(url="http://example.com", transport="SSE")
         assert len(tools) == 1
         gateway_service.connect_to_sse_server.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_streamablehttp_transport(self, gateway_service):
-        gateway_service.connect_to_streamablehttp_server = AsyncMock(
-            return_value=({"tools": {}}, [SimpleNamespace(name="t1")], [], [])
-        )
-        caps, tools, resources, prompts = await gateway_service._initialize_gateway(
-            url="http://example.com", transport="StreamableHTTP"
-        )
+        gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [SimpleNamespace(name="t1")], [], []))
+        caps, tools, resources, prompts = await gateway_service._initialize_gateway(url="http://example.com", transport="StreamableHTTP")
         assert len(tools) == 1
         gateway_service.connect_to_streamablehttp_server.assert_awaited_once()
 
@@ -4862,18 +5020,14 @@ class TestInitializeGateway:
     @pytest.mark.asyncio
     async def test_none_authentication_defaults_to_empty_dict(self, gateway_service):
         gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, [], [], []))
-        await gateway_service._initialize_gateway(
-            url="http://example.com", authentication=None, transport="SSE"
-        )
+        await gateway_service._initialize_gateway(url="http://example.com", authentication=None, transport="SSE")
         call_args = gateway_service.connect_to_sse_server.call_args
         assert call_args[0][1] == {}
 
     @pytest.mark.asyncio
     async def test_oauth_auth_code_with_flag(self, gateway_service):
         """With oauth_auto_fetch_tool_flag=True, auth code gateway connects."""
-        gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {}}, [SimpleNamespace(name="t1")], [], [])
-        )
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({"tools": {}}, [SimpleNamespace(name="t1")], [], []))
         caps, tools, _, _ = await gateway_service._initialize_gateway(
             url="http://example.com",
             auth_type="oauth",
@@ -4894,7 +5048,9 @@ class TestRefreshGatewayToolsResourcesPrompts:
     @pytest.mark.asyncio
     async def test_disabled_gateway_returns_empty(self, gateway_service):
         gw = SimpleNamespace(
-            enabled=False, reachable=True, name="disabled-gw",
+            enabled=False,
+            reachable=True,
+            name="disabled-gw",
         )
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1", gateway=gw)
         assert result["tools_added"] == 0
@@ -4903,7 +5059,9 @@ class TestRefreshGatewayToolsResourcesPrompts:
     @pytest.mark.asyncio
     async def test_unreachable_gateway_returns_empty(self, gateway_service):
         gw = SimpleNamespace(
-            enabled=True, reachable=False, name="unreachable-gw",
+            enabled=True,
+            reachable=False,
+            name="unreachable-gw",
         )
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1", gateway=gw)
         assert result["tools_added"] == 0
@@ -4911,10 +5069,16 @@ class TestRefreshGatewayToolsResourcesPrompts:
     @pytest.mark.asyncio
     async def test_init_failure_returns_error(self, gateway_service):
         gw = SimpleNamespace(
-            enabled=True, reachable=True, name="fail-gw",
-            url="http://example.com", transport="sse",
-            auth_type=None, auth_value=None, oauth_config=None,
-            ca_certificate=None, auth_query_params=None,
+            enabled=True,
+            reachable=True,
+            name="fail-gw",
+            url="http://example.com",
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            oauth_config=None,
+            ca_certificate=None,
+            auth_query_params=None,
         )
         gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("connection refused"))
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1", gateway=gw)
@@ -4924,11 +5088,16 @@ class TestRefreshGatewayToolsResourcesPrompts:
     @pytest.mark.asyncio
     async def test_auth_code_empty_response_returns_early(self, gateway_service):
         gw = SimpleNamespace(
-            enabled=True, reachable=True, name="authcode-gw",
-            url="http://example.com", transport="sse",
-            auth_type="oauth", auth_value=None,
+            enabled=True,
+            reachable=True,
+            name="authcode-gw",
+            url="http://example.com",
+            transport="sse",
+            auth_type="oauth",
+            auth_value=None,
             oauth_config={"grant_type": "authorization_code"},
-            ca_certificate=None, auth_query_params=None,
+            ca_certificate=None,
+            auth_query_params=None,
         )
         gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1", gateway=gw)
@@ -4953,9 +5122,9 @@ class TestRefreshGatewayToolsResourcesPrompts:
         mock_db = MagicMock()
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gw
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False)))
+        )
         gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("fail"))
 
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1")
@@ -4967,9 +5136,9 @@ class TestRefreshGatewayToolsResourcesPrompts:
         mock_db = MagicMock()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False)))
+        )
 
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-missing")
         assert result["tools_added"] == 0
@@ -4979,10 +5148,15 @@ class TestRefreshGatewayToolsResourcesPrompts:
     async def test_query_param_auth_decryption(self, gateway_service, monkeypatch):
         """Test query param auth is decrypted for refresh."""
         gw = SimpleNamespace(
-            enabled=True, reachable=True, name="qp-gw",
-            url="http://example.com", transport="sse",
-            auth_type="query_param", auth_value=None,
-            oauth_config=None, ca_certificate=None,
+            enabled=True,
+            reachable=True,
+            name="qp-gw",
+            url="http://example.com",
+            transport="sse",
+            auth_type="query_param",
+            auth_value=None,
+            oauth_config=None,
+            ca_certificate=None,
             auth_query_params={"key": "encrypted_val"},
         )
         monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda x: {"key": "secret"})
@@ -5027,18 +5201,14 @@ class TestGetGateways:
     def test_get_all_gateways(self, gateway_service, monkeypatch):
         mock_db = MagicMock()
         mock_db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))))
         result = gateway_service._get_gateways(include_inactive=True)
         assert len(result) == 1
 
     def test_get_active_only(self, gateway_service, monkeypatch):
         mock_db = MagicMock()
         mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))))
         result = gateway_service._get_gateways(include_inactive=False)
         assert result == []
 
@@ -5118,9 +5288,7 @@ class TestListGatewaysTokenTeams:
             AsyncMock(return_value=([gw], None)),
         )
 
-        result, cursor = await gateway_service.list_gateways(
-            db, token_teams=["team-a"], user_email="user@test.com"
-        )
+        result, cursor = await gateway_service.list_gateways(db, token_teams=["team-a"], user_email="user@test.com")
         assert len(result) == 1
 
     @pytest.mark.asyncio
@@ -5138,10 +5306,31 @@ class TestListGatewaysTokenTeams:
             AsyncMock(return_value=([], None)),
         )
 
-        result, cursor = await gateway_service.list_gateways(
-            db, token_teams=["team-a"], visibility="team"
-        )
+        result, cursor = await gateway_service.list_gateways(db, token_teams=["team-a"], visibility="team")
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_scoped_token_owner_clause_is_private_only(self, gateway_service, monkeypatch):
+        """Scoped tokens must not use owner_email as a blanket bypass for non-private visibility."""
+        db = MagicMock()
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        mock_cache.hash_filters = MagicMock(return_value="h")
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: mock_cache)
+
+        mock_paginate = AsyncMock(return_value=([], None))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.unified_paginate", mock_paginate)
+
+        await gateway_service.list_gateways(
+            db,
+            token_teams=["team-a"],
+            user_email="user@test.com",
+        )
+
+        query_arg = mock_paginate.await_args.kwargs["query"]
+        compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+        assert "gateways.owner_email = 'user@test.com' AND gateways.visibility = 'private'" in compiled
 
     @pytest.mark.asyncio
     async def test_user_email_team_access_no_token_teams(self, gateway_service, monkeypatch):
@@ -5157,7 +5346,7 @@ class TestListGatewaysTokenTeams:
         mock_team_svc = MagicMock()
         mock_team_svc.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="t1")])
         monkeypatch.setattr(
-            "mcpgateway.services.gateway_service.TeamManagementService",
+            "mcpgateway.services.base_service.TeamManagementService",
             MagicMock(return_value=mock_team_svc),
         )
         monkeypatch.setattr(
@@ -5165,9 +5354,7 @@ class TestListGatewaysTokenTeams:
             AsyncMock(return_value=([], None)),
         )
 
-        result, cursor = await gateway_service.list_gateways(
-            db, user_email="user@test.com"
-        )
+        result, cursor = await gateway_service.list_gateways(db, user_email="user@test.com")
         assert result == []
 
     @pytest.mark.asyncio
@@ -5183,13 +5370,11 @@ class TestListGatewaysTokenTeams:
         mock_team_svc = MagicMock()
         mock_team_svc.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="t1")])
         monkeypatch.setattr(
-            "mcpgateway.services.gateway_service.TeamManagementService",
+            "mcpgateway.services.base_service.TeamManagementService",
             MagicMock(return_value=mock_team_svc),
         )
 
-        result = await gateway_service.list_gateways(
-            db, user_email="user@test.com", team_id="t-other"
-        )
+        result = await gateway_service.list_gateways(db, user_email="user@test.com", team_id="t-other")
         assert result == ([], None)
 
     @pytest.mark.asyncio
@@ -5205,7 +5390,7 @@ class TestListGatewaysTokenTeams:
         mock_team_svc = MagicMock()
         mock_team_svc.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-1")])
         monkeypatch.setattr(
-            "mcpgateway.services.gateway_service.TeamManagementService",
+            "mcpgateway.services.base_service.TeamManagementService",
             MagicMock(return_value=mock_team_svc),
         )
         monkeypatch.setattr(
@@ -5455,9 +5640,7 @@ class TestUpdateGatewayAdvanced:
 
         # _initialize_gateway returns a new tool with different name
         new_tool = SimpleNamespace(name="new_tool", description="new", inputSchema={"type": "object"})
-        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(
-            return_value=({"tools": {}}, [new_tool], [], [])
-        ))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [new_tool], [], [])))
         monkeypatch.setattr(gateway_service, "_create_db_tool", MagicMock(return_value=MagicMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
@@ -5619,7 +5802,9 @@ class TestUpdateGatewayAdvanced:
         monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
 
         result = await gateway_service.update_gateway(
-            db, mock_gateway.id, update_data,
+            db,
+            mock_gateway.id,
+            update_data,
             modified_by="admin@test.com",
             modified_from_ip="1.2.3.4",
             modified_via="api",
@@ -5762,9 +5947,7 @@ class TestCheckSingleHealthAuthCode:
         gw.ca_certificate = None
 
         gateway_service._handle_gateway_failure = AsyncMock()
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         await gateway_service._check_single_gateway_health(gw, user_email=None)
         gateway_service._handle_gateway_failure.assert_awaited_once()
@@ -5791,25 +5974,25 @@ class TestCheckSingleHealthAuthCode:
             "mcpgateway.services.token_storage_service.TokenStorageService",
             MagicMock(return_value=mock_token_svc),
         )
-        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
         client_mock = AsyncMock()
-        client_mock.stream = MagicMock(return_value=MagicMock(
-            __aenter__=AsyncMock(return_value=mock_response),
-            __aexit__=AsyncMock(return_value=False),
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", MagicMock(
-            return_value=MagicMock(__aenter__=AsyncMock(return_value=client_mock), __aexit__=AsyncMock(return_value=False))
-        ))
+        client_mock.stream = MagicMock(
+            return_value=MagicMock(
+                __aenter__=AsyncMock(return_value=mock_response),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.get_isolated_http_client", MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=client_mock), __aexit__=AsyncMock(return_value=False)))
+        )
 
         await gateway_service._check_single_gateway_health(gw, user_email="user@test.com")
 
@@ -5835,12 +6018,10 @@ class TestCheckSingleHealthAuthCode:
             "mcpgateway.services.token_storage_service.TokenStorageService",
             MagicMock(return_value=mock_token_svc),
         )
-        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         gateway_service._handle_gateway_failure = AsyncMock()
         await gateway_service._check_single_gateway_health(gw, user_email="user@test.com")
@@ -5862,12 +6043,10 @@ class TestCheckSingleHealthAuthCode:
         gw.auth_query_params = None
         gw.ca_certificate = None
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(side_effect=Exception("DB error")), __exit__=MagicMock(return_value=False))
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=MagicMock(__enter__=MagicMock(side_effect=Exception("DB error")), __exit__=MagicMock(return_value=False)))
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         gateway_service._handle_gateway_failure = AsyncMock()
         await gateway_service._check_single_gateway_health(gw, user_email="user@test.com")
@@ -5891,9 +6070,7 @@ class TestCheckSingleHealthAuthCode:
 
         gateway_service.oauth_manager = MagicMock()
         gateway_service.oauth_manager.get_access_token = AsyncMock(side_effect=Exception("token error"))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         gateway_service._handle_gateway_failure = AsyncMock()
         await gateway_service._check_single_gateway_health(gw, user_email=None)
@@ -5916,28 +6093,27 @@ class TestCheckSingleHealthAuthCode:
         gw.ca_certificate = None
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(return_value={"Authorization": "Bearer tok"}))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
         client_mock = AsyncMock()
-        client_mock.stream = MagicMock(return_value=MagicMock(
-            __aenter__=AsyncMock(return_value=mock_response),
-            __aexit__=AsyncMock(return_value=False),
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", MagicMock(
-            return_value=MagicMock(__aenter__=AsyncMock(return_value=client_mock), __aexit__=AsyncMock(return_value=False))
-        ))
+        client_mock.stream = MagicMock(
+            return_value=MagicMock(
+                __aenter__=AsyncMock(return_value=mock_response),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.get_isolated_http_client", MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=client_mock), __aexit__=AsyncMock(return_value=False)))
+        )
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(
-                execute=MagicMock(return_value=_make_execute_result(scalar=gw))
-            )), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.fresh_db_session",
+            MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(execute=MagicMock(return_value=_make_execute_result(scalar=gw)))), __exit__=MagicMock(return_value=False))),
+        )
 
         await gateway_service._check_single_gateway_health(gw)
 
@@ -5957,35 +6133,32 @@ class TestCheckSingleHealthAuthCode:
         gw.auth_query_params = None
         gw.ca_certificate = None
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
         client_mock = AsyncMock()
-        client_mock.stream = MagicMock(return_value=MagicMock(
-            __aenter__=AsyncMock(return_value=mock_response),
-            __aexit__=AsyncMock(return_value=False),
-        ))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", MagicMock(
-            return_value=MagicMock(__aenter__=AsyncMock(return_value=client_mock), __aexit__=AsyncMock(return_value=False))
-        ))
+        client_mock.stream = MagicMock(
+            return_value=MagicMock(
+                __aenter__=AsyncMock(return_value=mock_response),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.get_isolated_http_client", MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=client_mock), __aexit__=AsyncMock(return_value=False)))
+        )
 
         # Mock SessionLocal and set_gateway_state for reactivation
         mock_db = MagicMock()
-        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))))
         gateway_service.set_gateway_state = AsyncMock()
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(
-                execute=MagicMock(return_value=_make_execute_result(scalar=gw))
-            )), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.fresh_db_session",
+            MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(execute=MagicMock(return_value=_make_execute_result(scalar=gw)))), __exit__=MagicMock(return_value=False))),
+        )
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service.set_gateway_state.assert_awaited_once()
@@ -6040,9 +6213,7 @@ class TestCheckHealthOfGateways:
     @pytest.mark.asyncio
     async def test_empty_gateways_returns_true(self, gateway_service, monkeypatch):
         """Empty gateway list returns True immediately."""
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
         result = await gateway_service.check_health_of_gateways([])
         assert result is True
 
@@ -6054,9 +6225,7 @@ class TestCheckHealthOfGateways:
         gw.name = "test"
         gw.auth_type = "one_time_auth"
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         gateway_service._check_single_gateway_health = AsyncMock()
         result = await gateway_service.check_health_of_gateways([gw])
@@ -6072,9 +6241,7 @@ class TestCheckHealthOfGateways:
         gw.name = "test"
         gw.auth_type = "bearer"
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(
-            return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
-        ))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         gateway_service._check_single_gateway_health = AsyncMock()
         result = await gateway_service.check_health_of_gateways([gw])
@@ -6111,9 +6278,7 @@ class TestSetGatewayStateActivation:
         mock_gateway.prompts = []
 
         new_tool = SimpleNamespace(name="fresh_tool", description="d", inputSchema={"type": "object"})
-        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(
-            return_value=({"tools": {}}, [new_tool], [], [])
-        ))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [new_tool], [], [])))
         monkeypatch.setattr(gateway_service, "_create_db_tool", MagicMock(return_value=MagicMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
@@ -6143,9 +6308,7 @@ class TestSetGatewayStateActivation:
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(return_value={"api_key": "raw_key"}))
         monkeypatch.setattr("mcpgateway.services.gateway_service.apply_query_param_auth", MagicMock(return_value="http://example.com?api_key=raw_key"))
-        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
-        ))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
         monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
@@ -6170,9 +6333,7 @@ class TestSetGatewayStateActivation:
         mock_gateway.prompts = []
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(side_effect=Exception("decrypt error")))
-        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
-        ))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
         monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
@@ -6199,9 +6360,7 @@ class TestSetGatewayStateActivation:
         new_tool = SimpleNamespace(name="tool1", description="d", inputSchema={"type": "object"})
         new_resource = SimpleNamespace(uri="res://1", name="res1", description="d", mimeType="text/plain")
         new_prompt = SimpleNamespace(name="prompt1", description="d", arguments=[])
-        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(
-            return_value=({"tools": {}, "resources": {}, "prompts": {}}, [new_tool], [new_resource], [new_prompt])
-        ))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}, "resources": {}, "prompts": {}}, [new_tool], [new_resource], [new_prompt])))
         monkeypatch.setattr(gateway_service, "_create_db_tool", MagicMock(return_value=MagicMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
@@ -6228,9 +6387,7 @@ class TestSetGatewayStateActivation:
         gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
         gateway_service._publish_event = AsyncMock()
 
-        result = await gateway_service.set_gateway_state(
-            db, mock_gateway.id, activate=True, reachable=True, only_update_reachable=True
-        )
+        result = await gateway_service.set_gateway_state(db, mock_gateway.id, activate=True, reachable=True, only_update_reachable=True)
         assert mock_gateway.reachable is True
         # _initialize_gateway is still called even with only_update_reachable;
         # the flag only controls whether tool/resource/prompt bulk updates run.
@@ -6271,10 +6428,13 @@ class TestUpdateGatewayQueryParam:
         update_data.auth_query_param_value = "secret"
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            insecure_allow_queryparam_auth=False,
-            masked_auth_value="*****",
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                insecure_allow_queryparam_auth=False,
+                masked_auth_value="*****",
+            ),
+        )
 
         with pytest.raises(GatewayError, match="Query parameter authentication is disabled"):
             await gateway_service.update_gateway(db, mock_gateway.id, update_data)
@@ -6305,11 +6465,14 @@ class TestUpdateGatewayQueryParam:
         update_data.auth_query_param_value = "secret"
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            insecure_allow_queryparam_auth=True,
-            insecure_queryparam_auth_allowed_hosts=["allowed.host.com"],
-            masked_auth_value="*****",
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                insecure_allow_queryparam_auth=True,
+                insecure_queryparam_auth_allowed_hosts=["allowed.host.com"],
+                masked_auth_value="*****",
+            ),
+        )
 
         with pytest.raises(GatewayError, match="not in the allowed hosts"):
             await gateway_service.update_gateway(db, mock_gateway.id, update_data)
@@ -6340,13 +6503,16 @@ class TestUpdateGatewayQueryParam:
         update_data.auth_query_param_value = "my_secret_key"
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.settings", MagicMock(
-            insecure_allow_queryparam_auth=True,
-            insecure_queryparam_auth_allowed_hosts=None,
-            masked_auth_value="*****",
-            health_check_timeout=10,
-            httpx_admin_read_timeout=5,
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                insecure_allow_queryparam_auth=True,
+                insecure_queryparam_auth_allowed_hosts=None,
+                masked_auth_value="*****",
+                health_check_timeout=10,
+                httpx_admin_read_timeout=5,
+            ),
+        )
         monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", MagicMock(return_value="encrypted_val"))
         monkeypatch.setattr("mcpgateway.services.gateway_service.apply_query_param_auth", MagicMock(return_value="http://example.com?api_key=my_secret_key"))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))

@@ -885,11 +885,16 @@ class TestA2AAgentService:
         assert service._check_agent_access(agent, user_email=None, token_teams=["x"]) is True
 
         agent.visibility = "team"
-        assert service._check_agent_access(agent, user_email=None, token_teams=["team-1"]) is True
-        assert service._check_agent_access(agent, user_email=None, token_teams=["other"]) is False
+        # No user context (user_email=None) denies access to non-public agents
+        assert service._check_agent_access(agent, user_email=None, token_teams=["team-1"]) is False
+        # With user context, team membership grants access
+        assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["team-1"]) is True
+        assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["other"]) is False
 
         agent.visibility = "private"
+        # Public-only tokens (token_teams=[]) cannot access private agents even as owner
         assert service._check_agent_access(agent, user_email="owner@example.com", token_teams=[]) is False
+        # Team-scoped tokens: owner can access their own private agents
         assert service._check_agent_access(agent, user_email="owner@example.com", token_teams=["team-1"]) is True
         assert service._check_agent_access(agent, user_email="other@example.com", token_teams=["team-1"]) is False
 
@@ -1460,7 +1465,7 @@ class TestListAgentsAdvanced:
         mock_db.execute.return_value.scalars.return_value.all.return_value = [agent]
         mock_db.commit = MagicMock()
 
-        with patch("mcpgateway.services.a2a_service.TeamManagementService") as tm_cls:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as tm_cls:
             tm_cls.return_value.get_user_teams = AsyncMock(return_value=[])
             service.convert_agent_to_read = MagicMock(return_value=MagicMock())
 
