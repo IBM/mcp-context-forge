@@ -1160,6 +1160,52 @@ function safeGetElement(id, suppressWarning = false) {
     }
 }
 
+/**
+ * Ensure a "no results" message element exists in the DOM for a search container.
+ * If the element already exists, returns { msg, span }. Otherwise creates it
+ * dynamically and inserts it right after the container so the feature works
+ * regardless of template-caching state.
+ *
+ * @param {string} containerId  - The id of the items container (e.g. "associatedTools")
+ * @param {string} msgId        - The id for the <p> message element (e.g. "noToolsMessage")
+ * @param {string} spanId       - The id for the inner <span> that shows the query text
+ * @param {string} entityLabel  - Human-readable label (e.g. "tool", "MCP server")
+ * @returns {{ msg: HTMLElement|null, span: HTMLElement|null }}
+ */
+function ensureNoResultsElement(containerId, msgId, spanId, entityLabel) {
+    let msg = document.getElementById(msgId);
+    let span = document.getElementById(spanId);
+    if (msg) {
+        // Element already in the DOM – just return references
+        if (!span) {
+            span = msg.querySelector("span");
+        }
+        return { msg, span };
+    }
+    // Create the message element dynamically
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return { msg: null, span: null };
+    }
+    msg = document.createElement("p");
+    msg.id = msgId;
+    msg.className = "text-gray-700 dark:text-gray-300 mt-2";
+    msg.style.display = "none";
+    span = document.createElement("span");
+    span.id = spanId;
+    msg.innerHTML = "";
+    msg.appendChild(
+        document.createTextNode(
+            `No ${entityLabel} found containing \u201C`,
+        ),
+    );
+    msg.appendChild(span);
+    msg.appendChild(document.createTextNode("\u201D"));
+    // Insert right after the container
+    container.parentNode.insertBefore(msg, container.nextSibling);
+    return { msg, span };
+}
+
 // Enhanced error handler for fetch operations
 function handleFetchError(error, operation = "operation") {
     console.error(`Error during ${operation}:`, error);
@@ -10450,12 +10496,21 @@ function initGatewaySelect(
                 }
             });
 
-            // Update "no results" message if it exists
+            // Update "no results" message – ensure element exists even if template is cached
             // Use edit-modal message element when operating on the edit container
-            const noMsgId = selectId.includes("Edit") ? "noEditGatewayMessage" : "noGatewayMessage";
-            const noMsg = document.getElementById(noMsgId);
-            const searchQuerySpanId = selectId.includes("Edit") ? "searchQueryEditServers" : "searchQueryServers";
-            const searchQuerySpan = document.getElementById(searchQuerySpanId);
+            const noMsgId = selectId.includes("Edit")
+                ? "noEditGatewayMessage"
+                : "noGatewayMessage";
+            const searchQuerySpanId = selectId.includes("Edit")
+                ? "searchQueryEditServers"
+                : "searchQueryServers";
+            const { msg: noMsg, span: searchQuerySpan } =
+                ensureNoResultsElement(
+                    selectId,
+                    noMsgId,
+                    searchQuerySpanId,
+                    "MCP server",
+                );
 
             if (query && visibleCount === 0) {
                 container.style.display = "none";
@@ -10968,13 +11023,24 @@ function reloadAssociatedItems() {
                         clearBtn,
                     );
                     // Re-apply active search so a previously-hidden container is correctly shown/hidden
-                    const toolSearchInput = document.getElementById(useEditContainers ? "searchEditTools" : "searchTools");
+                    const toolSearchInput = document.getElementById(
+                        useEditContainers ? "searchEditTools" : "searchTools",
+                    );
                     if (toolSearchInput && toolSearchInput.value.trim()) {
-                        if (useEditContainers) { serverSideEditToolSearch(toolSearchInput.value.trim()); }
-                        else { serverSideToolSearch(toolSearchInput.value.trim()); }
+                        if (useEditContainers) {
+                            serverSideEditToolSearch(
+                                toolSearchInput.value.trim(),
+                            );
+                        } else {
+                            serverSideToolSearch(toolSearchInput.value.trim());
+                        }
                     } else if (toolSearchInput) {
-                        const toolContainer = document.getElementById(toolsContainerId);
-                        if (toolContainer) { toolContainer.style.display = ""; }
+                        const toolContainer = document.getElementById(
+                            toolsContainerId,
+                        );
+                        if (toolContainer) {
+                            toolContainer.style.display = "";
+                        }
                     }
                 })
                 .catch((err) => {
@@ -11185,12 +11251,23 @@ function reloadAssociatedItems() {
                     console.warn("Error restoring associated resources:", e);
                 }
                 // Re-apply active search so a previously-hidden container is correctly shown/hidden
-                const resSearchInput = document.getElementById(useEditContainers ? "searchEditResources" : "searchResources");
+                const resSearchInput = document.getElementById(
+                    useEditContainers
+                        ? "searchEditResources"
+                        : "searchResources",
+                );
                 if (resSearchInput && resSearchInput.value.trim()) {
-                    if (useEditContainers) { serverSideEditResourcesSearch(resSearchInput.value.trim()); }
-                    else { serverSideResourceSearch(resSearchInput.value.trim()); }
+                    if (useEditContainers) {
+                        serverSideEditResourcesSearch(
+                            resSearchInput.value.trim(),
+                        );
+                    } else {
+                        serverSideResourceSearch(resSearchInput.value.trim());
+                    }
                 } else if (resSearchInput) {
-                    if (resourcesContainer) { resourcesContainer.style.display = ""; }
+                    if (resourcesContainer) {
+                        resourcesContainer.style.display = "";
+                    }
                 }
                 console.log(
                     "[Filter Update DEBUG] Resources reloaded successfully via fetch",
@@ -11290,13 +11367,24 @@ function reloadAssociatedItems() {
                     pClearBtn,
                 );
                 // Re-apply active search so a previously-hidden container is correctly shown/hidden
-                const promptSearchInput = document.getElementById(useEditContainers ? "searchEditPrompts" : "searchPrompts");
+                const promptSearchInput = document.getElementById(
+                    useEditContainers ? "searchEditPrompts" : "searchPrompts",
+                );
                 if (promptSearchInput && promptSearchInput.value.trim()) {
-                    if (useEditContainers) { serverSideEditPromptsSearch(promptSearchInput.value.trim()); }
-                    else { serverSidePromptSearch(promptSearchInput.value.trim()); }
+                    if (useEditContainers) {
+                        serverSideEditPromptsSearch(
+                            promptSearchInput.value.trim(),
+                        );
+                    } else {
+                        serverSidePromptSearch(promptSearchInput.value.trim());
+                    }
                 } else if (promptSearchInput) {
-                    const promptContainer = document.getElementById(promptsContainerId);
-                    if (promptContainer) { promptContainer.style.display = ""; }
+                    const promptContainer = document.getElementById(
+                        promptsContainerId,
+                    );
+                    if (promptContainer) {
+                        promptContainer.style.display = "";
+                    }
                 }
             });
         }
@@ -27235,8 +27323,13 @@ function initializeChatInputResize() {
  */
 async function serverSideToolSearch(searchTerm) {
     const container = document.getElementById("associatedTools");
-    const noResultsMessage = safeGetElement("noToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryTools", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedTools",
+            "noToolsMessage",
+            "searchQueryTools",
+            "tool",
+        );
 
     if (!container) {
         console.error("associatedTools container not found");
@@ -27555,8 +27648,13 @@ function updateResourceMapping(container) {
  */
 async function serverSidePromptSearch(searchTerm) {
     const container = document.getElementById("associatedPrompts");
-    const noResultsMessage = safeGetElement("noPromptsMessage", true);
-    const searchQuerySpan = safeGetElement("searchPromptsQuery", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedPrompts",
+            "noPromptsMessage",
+            "searchPromptsQuery",
+            "prompt",
+        );
 
     if (!container) {
         console.error("associatedPrompts container not found");
@@ -27794,8 +27892,13 @@ async function serverSidePromptSearch(searchTerm) {
  */
 async function serverSideResourceSearch(searchTerm) {
     const container = document.getElementById("associatedResources");
-    const noResultsMessage = safeGetElement("noResourcesMessage", true);
-    const searchQuerySpan = safeGetElement("searchResourcesQuery", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedResources",
+            "noResourcesMessage",
+            "searchResourcesQuery",
+            "resource",
+        );
 
     if (!container) {
         console.error("associatedResources container not found");
@@ -28025,8 +28128,13 @@ async function serverSideResourceSearch(searchTerm) {
  */
 async function serverSideEditToolSearch(searchTerm) {
     const container = document.getElementById("edit-server-tools");
-    const noResultsMessage = safeGetElement("noEditToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditTools", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-tools",
+            "noEditToolsMessage",
+            "searchQueryEditTools",
+            "tool",
+        );
 
     if (!container) {
         console.error("edit-server-tools container not found");
@@ -28363,8 +28471,13 @@ async function serverSideEditToolSearch(searchTerm) {
  */
 async function serverSideEditPromptsSearch(searchTerm) {
     const container = document.getElementById("edit-server-prompts");
-    const noResultsMessage = safeGetElement("noEditPromptsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditPrompts", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-prompts",
+            "noEditPromptsMessage",
+            "searchQueryEditPrompts",
+            "prompt",
+        );
 
     if (!container) {
         console.error("edit-server-prompts container not found");
@@ -28682,8 +28795,13 @@ async function serverSideEditPromptsSearch(searchTerm) {
  */
 async function serverSideEditResourcesSearch(searchTerm) {
     const container = document.getElementById("edit-server-resources");
-    const noResultsMessage = safeGetElement("noEditResourcesMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditResources", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-resources",
+            "noEditResourcesMessage",
+            "searchQueryEditResources",
+            "resource",
+        );
 
     if (!container) {
         console.error("edit-server-resources container not found");
