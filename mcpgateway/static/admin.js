@@ -222,10 +222,13 @@ function applyVisibilityRestrictions(prefixes) {
         const publicBlocked =
             window.ALLOW_PUBLIC_VISIBILITY === false && hasTeam;
         publicRadios.forEach((radio) => {
-            radio.disabled = publicBlocked;
+            // Keep a checked public value enabled in edit forms so FormData
+            // includes visibility and we don't silently change saved state.
+            const shouldDisable = publicBlocked && !radio.checked;
+            radio.disabled = shouldDisable;
             const wrapper = radio.closest(".flex.items-center");
             if (wrapper) {
-                if (publicBlocked) {
+                if (shouldDisable) {
                     wrapper.classList.add("opacity-40", "cursor-not-allowed");
                     wrapper.title =
                         "Public visibility is disabled by platform configuration";

@@ -319,6 +319,40 @@ describe("updateSelectionCount", () => {
 });
 
 // ---------------------------------------------------------------------------
+// applyVisibilityRestrictions (edit modal regression)
+// ---------------------------------------------------------------------------
+describe("applyVisibilityRestrictions", () => {
+    const f = () => win.applyVisibilityRestrictions;
+
+    test("keeps checked public radio enabled in team-scoped edit forms so visibility is submitted", () => {
+        win.ALLOW_PUBLIC_VISIBILITY = false;
+        win.history.pushState({}, "", "http://localhost/?team_id=team-1");
+
+        const form = doc.createElement("form");
+
+        const wrapper = doc.createElement("div");
+        wrapper.className = "flex items-center";
+
+        const publicRadio = doc.createElement("input");
+        publicRadio.type = "radio";
+        publicRadio.id = "edit-tool-visibility-public";
+        publicRadio.name = "visibility";
+        publicRadio.value = "public";
+        publicRadio.checked = true;
+
+        wrapper.appendChild(publicRadio);
+        form.appendChild(wrapper);
+        doc.body.appendChild(form);
+
+        f()(["edit-tool-visibility"]);
+
+        expect(publicRadio.disabled).toBe(false);
+        const formData = new win.FormData(form);
+        expect(formData.get("visibility")).toBe("public");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // selectAllItems
 // ---------------------------------------------------------------------------
 describe("selectAllItems", () => {
