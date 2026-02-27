@@ -770,7 +770,8 @@ function _navigateAdmin(fragment, searchParams) {
     const currentPath = window.location.pathname;
     // Find /admin in current path and use everything before it as the base.
     // e.g. /api/proxy/mcp/admin → base is /api/proxy/mcp
-    const adminIdx = currentPath.indexOf("/admin");
+    // Use lastIndexOf so that path segments like /administrator don't match.
+    const adminIdx = currentPath.lastIndexOf("/admin");
     const base =
         adminIdx >= 0
             ? window.location.origin + currentPath.slice(0, adminIdx)

@@ -421,6 +421,8 @@ class TestAdminProxyUrlContext:
             page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
             page.wait_for_load_state("networkidle")
 
+            # Wait for admin.js (1.2 MB) to finish executing before calling globals.
+            page.wait_for_function("typeof editGateway === 'function'", timeout=15000)
             page.evaluate(f"editGateway('{gw_id}')")
 
             edit_form = page.locator("#edit-gateway-form")
@@ -552,21 +554,24 @@ class TestAdminIframeContext:
         """
 
         def handle_route(route):
-            url = route.request.url.replace(
-                base_url.rstrip("/") + _PROXY_PREFIX, base_url.rstrip("/"), 1
-            )
-            response = route.fetch(url=url)
-            headers = dict(response.headers)
-            headers.pop("x-frame-options", None)
-            if "content-security-policy" in headers:
-                headers["content-security-policy"] = headers[
-                    "content-security-policy"
-                ].replace("frame-ancestors 'none'", "frame-ancestors 'self'")
-            route.fulfill(
-                status=response.status,
-                headers=headers,
-                body=response.body(),
-            )
+            try:
+                url = route.request.url.replace(
+                    base_url.rstrip("/") + _PROXY_PREFIX, base_url.rstrip("/"), 1
+                )
+                response = route.fetch(url=url)
+                headers = dict(response.headers)
+                headers.pop("x-frame-options", None)
+                if "content-security-policy" in headers:
+                    headers["content-security-policy"] = headers[
+                        "content-security-policy"
+                    ].replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+                route.fulfill(
+                    status=response.status,
+                    headers=headers,
+                    body=response.body(),
+                )
+            except Exception:
+                pass  # Route may already be handled during teardown
 
         _pattern = re.compile(r".*/proxy/mcp/.*")
         page.route(_pattern, handle_route)
@@ -658,6 +663,8 @@ class TestAdminIframeContext:
         frame_obj = self._frame(page)
 
         try:
+            # Wait for admin.js (1.2 MB) to finish executing before calling globals.
+            frame_obj.wait_for_function("typeof editGateway === 'function'", timeout=15000)
             frame_obj.evaluate(f"editGateway('{gw_id}')")
 
             edit_form = frame.locator("#edit-gateway-form")
