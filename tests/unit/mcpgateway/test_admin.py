@@ -18,7 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from uuid import UUID, uuid4
 
 # Third-Party
-from fastapi import HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.testclient import TestClient
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
@@ -247,6 +248,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
+from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.schemas import (
     GatewayTestRequest,
@@ -473,6 +475,39 @@ class TestAdminServerRoutes:
         with pytest.raises(RuntimeError) as excinfo:
             await admin_get_server("error-id", mock_db, user={"email": "test-user", "db": mock_db})
         assert "Database connection lost" in str(excinfo.value)
+
+    def test_admin_add_server_form_submit_with_logging_enabled_does_not_stream_consume(self):
+        """Regression: admin-like form posts should remain readable with request logging enabled."""
+        app = FastAPI()
+        app.add_middleware(
+            RequestLoggingMiddleware,
+            enable_gateway_logging=False,
+            log_detailed_requests=True,
+            max_body_size=1024 * 1024,
+        )
+
+        @app.post("/admin/servers")
+        async def admin_servers_endpoint(request: Request):
+            form = await request.form()
+            associated_tools = form.getlist("associatedTools")
+            if form.get("selectAllTools") == "true":
+                associated_tools = json.loads(str(form.get("allToolIds", "[]")))
+            return {"name": form.get("name"), "tool_count": len(associated_tools)}
+
+        client = TestClient(app)
+        response = client.post(
+            "/admin/servers",
+            data={
+                "name": "srv-1",
+                "visibility": "private",
+                "associatedTools": ["1", "2", "3"],
+                "selectAllTools": "true",
+                "allToolIds": "[\"1\",\"2\",\"3\"]",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"name": "srv-1", "tool_count": 3}
 
     @patch.object(ServerService, "register_server")
     async def test_admin_add_server_with_validation_error(self, mock_register_server, mock_request, mock_db):
