@@ -1193,7 +1193,6 @@ function ensureNoResultsElement(containerId, msgId, spanId, entityLabel) {
     msg.style.display = "none";
     span = document.createElement("span");
     span.id = spanId;
-    msg.innerHTML = "";
     msg.appendChild(
         document.createTextNode(`No ${entityLabel} found containing \u201C`),
     );
