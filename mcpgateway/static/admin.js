@@ -740,6 +740,45 @@ async function safeParseJsonResponse(
     return await response.json();
 }
 
+// ===================================================================
+// PROXY-AWARE ADMIN NAVIGATION
+// Derives admin base from window.location so that proxy-embedded
+// deployments (where window.ROOT_PATH may be empty) preserve the
+// proxy prefix in the navigated URL. Fixes #3321 and #3324.
+// ===================================================================
+
+/**
+ * Fragment names differ from entity type names for some entities.
+ * e.g. the "servers" toggle navigates to the #catalog tab.
+ */
+const _TOGGLE_FRAGMENT_MAP = {
+    servers: "catalog",
+};
+
+/**
+ * Navigate to an admin tab while preserving the proxy prefix in the URL.
+ *
+ * Derives the admin base path from window.location.pathname rather than
+ * window.ROOT_PATH, so that proxy-embedded deployments (where ASGI
+ * root_path is not forwarded and ROOT_PATH is empty) still navigate to
+ * the correct proxy-scoped URL.
+ *
+ * @param {string} fragment - Hash fragment without '#' (e.g. "tools", "catalog").
+ * @param {URLSearchParams} [searchParams] - Query params to include (team_id, include_inactive, etc.).
+ */
+function _navigateAdmin(fragment, searchParams) {
+    const currentPath = window.location.pathname;
+    // Find /admin in current path and use everything before it as the base.
+    // e.g. /api/proxy/mcp/admin → base is /api/proxy/mcp
+    const adminIdx = currentPath.indexOf("/admin");
+    const base =
+        adminIdx >= 0
+            ? window.location.origin + currentPath.slice(0, adminIdx)
+            : window.ROOT_PATH || window.location.origin;
+    const qs = searchParams ? searchParams.toString() : "";
+    window.location.href = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+}
+
 /**
  * Header validation constants and functions
  */
