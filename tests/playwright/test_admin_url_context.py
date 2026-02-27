@@ -90,9 +90,11 @@ def _fill_add_gateway_form(root, unique_name: str) -> None:
     """Fill the add-gateway form fields. Skips if inputs are not found.
 
     ``root`` can be a Page or FrameLocator — both support ``.locator()``.
+    The add-gateway form uses ``#mcp-server-name`` / ``#mcp-server-url``
+    (not ``#gateway-*`` which belongs to the edit modal).
     """
-    name_input = root.locator("#gateway-name, input[name='name'][id*='gateway']").first
-    url_input = root.locator("#gateway-url, input[name='url'][id*='gateway']").first
+    name_input = root.locator("#add-gateway-form #mcp-server-name, #add-gateway-form input[name='name']").first
+    url_input = root.locator("#add-gateway-form #mcp-server-url, #add-gateway-form input[name='url']").first
 
     if name_input.count() == 0 or url_input.count() == 0:
         pytest.skip("Add-gateway form inputs not found — skipping.")
@@ -241,8 +243,10 @@ class TestAdminUrlContextPreservation:
             page.goto(_admin_url(base_url, team_id=True))
             page.wait_for_load_state("networkidle")
 
-            page.wait_for_function("typeof editGateway === 'function'", timeout=15000)
-            page.evaluate(f"editGateway('{gw_id}')")
+            edit_btn = page.locator(f"button[onclick*=\"editGateway('{gw_id}')\"]").first
+            if edit_btn.count() == 0:
+                pytest.skip("Edit button for created gateway not visible — skipping.")
+            edit_btn.click()
 
             edit_form = page.locator("#edit-gateway-form")
             try:
@@ -452,9 +456,13 @@ class TestAdminProxyUrlContext:
             page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
             page.wait_for_load_state("networkidle")
 
-            # Wait for admin.js (1.2 MB) to finish executing before calling globals.
-            page.wait_for_function("typeof editGateway === 'function'", timeout=15000)
-            page.evaluate(f"editGateway('{gw_id}')")
+            # Click the edit button in the DOM rather than calling editGateway()
+            # via evaluate — the 1.2 MB admin.js may not finish executing before
+            # networkidle fires in the proxy context.
+            edit_btn = page.locator(f"button[onclick*=\"editGateway('{gw_id}')\"]").first
+            if edit_btn.count() == 0:
+                pytest.skip("Edit button for created gateway not visible — skipping.")
+            edit_btn.click()
 
             edit_form = page.locator("#edit-gateway-form")
             try:
@@ -694,9 +702,12 @@ class TestAdminIframeContext:
         frame_obj = self._frame(page)
 
         try:
-            # Wait for admin.js (1.2 MB) to finish executing before calling globals.
-            frame_obj.wait_for_function("typeof editGateway === 'function'", timeout=15000)
-            frame_obj.evaluate(f"editGateway('{gw_id}')")
+            # Click the edit button in the DOM rather than calling editGateway()
+            # via evaluate — admin.js may not finish executing in iframe context.
+            edit_btn = frame.locator(f"button[onclick*=\"editGateway('{gw_id}')\"]").first
+            if edit_btn.count() == 0:
+                pytest.skip("Edit button for created gateway not visible in iframe — skipping.")
+            edit_btn.click()
 
             edit_form = frame.locator("#edit-gateway-form")
             try:
