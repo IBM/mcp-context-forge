@@ -2293,3 +2293,184 @@ describe("serverSideEditResourcesSearch — container visibility (#3314)", () =>
         expect(container.style.display).toBe("");
     });
 });
+
+// ---------------------------------------------------------------------------
+// initGatewaySelect — applySearch container visibility (#3314)
+// ---------------------------------------------------------------------------
+describe("initGatewaySelect — applySearch visibility (#3314)", () => {
+    function setupGatewaySelect(items = [], selectId = "associatedGateways") {
+        const container = doc.createElement("div");
+        container.id = selectId;
+        doc.body.appendChild(container);
+
+        items.forEach((text) => {
+            const item = doc.createElement("div");
+            item.className = "tool-item";
+            item.textContent = text;
+            const cb = doc.createElement("input");
+            cb.type = "checkbox";
+            cb.name = selectId;
+            cb.value = text;
+            item.appendChild(cb);
+            container.appendChild(item);
+        });
+
+        const pills = doc.createElement("div");
+        pills.id =
+            selectId === "associatedEditGateways"
+                ? "selectedEditGatewayPills"
+                : "selectedGatewayPills";
+        doc.body.appendChild(pills);
+
+        const warn = doc.createElement("div");
+        warn.id =
+            selectId === "associatedEditGateways"
+                ? "selectedEditGatewayWarning"
+                : "selectedGatewayWarning";
+        doc.body.appendChild(warn);
+
+        const searchInput = doc.createElement("input");
+        searchInput.id =
+            selectId === "associatedEditGateways"
+                ? "searchEditGateways"
+                : "searchGateways";
+        doc.body.appendChild(searchInput);
+
+        return { container, searchInput };
+    }
+
+    test("hides container and shows message when search matches nothing", () => {
+        const { container, searchInput } = setupGatewaySelect([
+            "fast_time",
+            "rest_a2a",
+        ]);
+
+        win.initGatewaySelect(
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
+            12,
+            null,
+            null,
+            "searchGateways",
+        );
+
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noGatewayMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("shows container and hides message when search matches items", () => {
+        const { container, searchInput } = setupGatewaySelect([
+            "fast_time",
+            "rest_a2a",
+        ]);
+
+        win.initGatewaySelect(
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
+            12,
+            null,
+            null,
+            "searchGateways",
+        );
+
+        // First trigger no-results to create the message element
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+        expect(container.style.display).toBe("none");
+
+        // Now search for something that matches
+        searchInput.value = "fast";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noGatewayMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+
+    test("uses Edit message IDs for edit container", () => {
+        const { searchInput } = setupGatewaySelect(
+            ["fast_time"],
+            "associatedEditGateways",
+        );
+
+        win.initGatewaySelect(
+            "associatedEditGateways",
+            "selectedEditGatewayPills",
+            "selectedEditGatewayWarning",
+            12,
+            null,
+            null,
+            "searchEditGateways",
+        );
+
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        const noMsg = doc.getElementById("noEditGatewayMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+        // Add-modal message should NOT be created
+        expect(doc.getElementById("noGatewayMessage")).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideToolSearch — error catch keeps container visible (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideToolSearch — error catch visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("container stays visible and message hidden on fetch error", async () => {
+        const container = makeContainer("associatedTools");
+        container.style.display = "none"; // simulate previous no-results state
+
+        win.fetch = vi.fn().mockRejectedValue(new Error("Network failure"));
+
+        await win.serverSideToolSearch("test");
+
+        // Container should be visible (reset at top of function)
+        expect(container.style.display).toBe("");
+        // Message should be hidden in catch block
+        const noMsg = doc.getElementById("noToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditToolSearch — error catch keeps container visible (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditToolSearch — error catch visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("container stays visible and message hidden on fetch error", async () => {
+        const container = makeContainer("edit-server-tools");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockRejectedValue(new Error("Network failure"));
+
+        await win.serverSideEditToolSearch("test");
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noEditToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+});
