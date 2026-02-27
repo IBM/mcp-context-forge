@@ -104,7 +104,7 @@ class SSEAwareCompressMiddleware:
         Returns:
             True if the path is an MCP endpoint, False otherwise.
         """
-        return path == "/mcp" or path == "/mcp/" or path.endswith("/mcp") or path.endswith("/mcp/")
+        return path in {"/mcp", "/mcp/"} or path.endswith("/mcp") or path.endswith("/mcp/")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """

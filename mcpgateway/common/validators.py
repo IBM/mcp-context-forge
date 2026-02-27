@@ -1085,7 +1085,7 @@ class SecurityValidator:
             raise ValueError(f"{field_name} contains line breaks which are not allowed")
 
         # Check for spaces in domain
-        if " " in value.split("?")[0]:  # Check only in the URL part, not query string
+        if " " in value.split("?", maxsplit=1)[0]:  # Check only in the URL part, not query string
             raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
 
         # Basic URL structure validation
@@ -1539,7 +1539,7 @@ class SecurityValidator:
         safe_mime_types = settings.validation_allowed_mime_types
         if value not in safe_mime_types:
             # Allow x- vendor types and + suffixes
-            base_type = value.split(";")[0].strip()
+            base_type = value.split(";", maxsplit=1)[0].strip()
             if not (base_type.startswith("application/x-") or base_type.startswith("text/x-") or "+" in base_type):
                 raise ValueError(f"MIME type '{value}' is not in the allowed list")
 

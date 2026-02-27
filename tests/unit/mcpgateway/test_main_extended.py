@@ -6167,7 +6167,7 @@ class TestRemainingCoverageGaps:
         }
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides)
 
-    async def test_module_level_email_auth_and_sso_success_and_error(self, monkeypatch):
+    async def test_module_level_email_auth_and_sso_success(self, monkeypatch):
         from types import ModuleType
 
         from fastapi import APIRouter
@@ -6187,6 +6187,24 @@ class TestRemainingCoverageGaps:
         overrides = {"email_auth_enabled": True, "sso_enabled": True}
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides)
 
+    async def test_module_level_email_auth_and_sso_import_error(self, monkeypatch):
+        from types import ModuleType
+
+        from fastapi import APIRouter
+
+        auth_mod = ModuleType("mcpgateway.routers.auth")
+        auth_mod.auth_router = APIRouter()
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.auth", auth_mod)
+
+        email_auth_mod = ModuleType("mcpgateway.routers.email_auth")
+        email_auth_mod.email_auth_router = APIRouter()
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.email_auth", email_auth_mod)
+
+        sso_mod = ModuleType("mcpgateway.routers.sso")
+        sso_mod.sso_router = APIRouter()
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.sso", sso_mod)
+
+        overrides = {"email_auth_enabled": True, "sso_enabled": True}
         # Force ImportError for SSO router to hit error logging branch.
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error={"mcpgateway.routers.sso"})
 
@@ -6200,7 +6218,7 @@ class TestRemainingCoverageGaps:
         }
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
 
-    async def test_module_level_reverse_proxy_router_success_and_import_error(self, monkeypatch):
+    async def test_module_level_reverse_proxy_router_success(self, monkeypatch):
         from types import ModuleType
 
         from fastapi import APIRouter
@@ -6211,6 +6229,7 @@ class TestRemainingCoverageGaps:
 
         _ = _import_fresh_main_module(monkeypatch, overrides={"mcpgateway_reverse_proxy_enabled": True})
 
+    async def test_module_level_reverse_proxy_router_import_error(self, monkeypatch):
         _ = _import_fresh_main_module(
             monkeypatch,
             overrides={"mcpgateway_reverse_proxy_enabled": True},

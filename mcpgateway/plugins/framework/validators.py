@@ -152,7 +152,7 @@ class SecurityValidator:
             raise ValueError(f"{field_name} contains line breaks which are not allowed")
 
         # Block spaces in domain (but allow in query string)
-        if " " in value.split("?")[0]:
+        if " " in value.split("?", maxsplit=1)[0]:
             raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
 
         try:

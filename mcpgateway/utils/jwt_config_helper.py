@@ -59,7 +59,7 @@ def _read_key_file_cached(path: Path) -> str:
             return _key_file_cache[cache_key]
 
         # Read file
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
         # Clear old entries for this path and cache new content
