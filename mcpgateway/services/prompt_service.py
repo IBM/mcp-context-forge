@@ -2112,7 +2112,6 @@ class PromptService(BaseService):
                         "arguments_provided": arguments_supplied,
                         "request_id": request_id,
                     },
-                    db=db,
                 )
 
                 structured_logger.log(
