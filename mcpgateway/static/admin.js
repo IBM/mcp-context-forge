@@ -269,9 +269,6 @@ function updateDefaultVisibility() {
         "a2a-visibility", // Agents (Create)
     ];
 
-    // Apply restrictions (disable/style public radio)
-    applyVisibilityRestrictions(visibilityPrefixes);
-
     // Set default checked state for add/create forms
     visibilityPrefixes.forEach((prefix) => {
         const publicId = `[id="${prefix}-public"]`;
@@ -320,6 +317,10 @@ function updateDefaultVisibility() {
             });
         }
     });
+
+    // Apply restrictions after defaults are set so initially checked public
+    // radios in create forms become disabled once switched to team/private.
+    applyVisibilityRestrictions(visibilityPrefixes);
 }
 
 /**
