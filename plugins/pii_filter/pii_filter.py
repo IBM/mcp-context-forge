@@ -355,7 +355,7 @@ class PIIDetector:
 
         return masked_text
 
-    def _apply_mask(self, value: str, pii_type: PIIType, strategy: MaskingStrategy) -> str:
+    def _apply_mask(self, value: str, pii_type: PIIType, strategy: MaskingStrategy) -> str:  # noqa: PLR0911
         """Apply masking strategy to a value.
 
         Args:
