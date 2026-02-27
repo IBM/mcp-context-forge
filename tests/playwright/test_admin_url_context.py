@@ -218,7 +218,7 @@ class TestAdminUrlContextPreservation:
                 confirmed.append(dialog.message)
                 dialog.accept()
 
-            page.on("dialog", _handle_dialog)
+            page.once("dialog", _handle_dialog)
 
             # Click delete and wait for _navigateAdmin() to fire
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
@@ -307,7 +307,7 @@ class TestAdminUrlContextPreservation:
                 confirmed.append(dialog.message)
                 dialog.accept()
 
-            page.on("dialog", _handle_dialog_both)
+            page.once("dialog", _handle_dialog_both)
 
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
                 delete_btn.click()
@@ -413,9 +413,10 @@ class TestAdminProxyUrlContext:
             response = route.fetch(url=url)
             route.fulfill(response=response)
 
-        page.route(re.compile(r".*/proxy/mcp/.*"), handle_route)
+        _pattern = re.compile(r".*/proxy/mcp/.*")
+        page.route(_pattern, handle_route)
         yield
-        page.unroute(re.compile(r".*/proxy/mcp/.*"))
+        page.unroute(_pattern)
 
     # ------------------------------------------------------------------
     # Both-params mutations
@@ -524,6 +525,7 @@ class TestAdminProxyUrlContext:
 
         expect(page).to_have_url(re.compile(r"/proxy/mcp/admin"))
         expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+        expect(page).to_have_url(re.compile(r"include_inactive=true"))
         expect(page).to_have_url(re.compile(r"#catalog"))
 
     def test_proxy_delete_gateway_preserves_tab_and_params(
@@ -564,7 +566,7 @@ class TestAdminProxyUrlContext:
                 confirmed.append(dialog.message)
                 dialog.accept()
 
-            page.on("dialog", _handle_dialog_prx)
+            page.once("dialog", _handle_dialog_prx)
 
             with page.expect_navigation(wait_until="networkidle", timeout=15000):
                 delete_btn.click()
