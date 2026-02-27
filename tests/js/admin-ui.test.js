@@ -350,6 +350,28 @@ describe("applyVisibilityRestrictions", () => {
         const formData = new win.FormData(form);
         expect(formData.get("visibility")).toBe("public");
     });
+
+    test("disables unchecked public radio in team-scoped edit forms when public visibility is blocked", () => {
+        win.ALLOW_PUBLIC_VISIBILITY = false;
+        win.history.pushState({}, "", "http://localhost/?team_id=team-1");
+
+        const wrapper = doc.createElement("div");
+        wrapper.className = "flex items-center";
+
+        const publicRadio = doc.createElement("input");
+        publicRadio.type = "radio";
+        publicRadio.id = "edit-tool-visibility-public";
+        publicRadio.name = "visibility";
+        publicRadio.value = "public";
+        publicRadio.checked = false;
+
+        wrapper.appendChild(publicRadio);
+        doc.body.appendChild(wrapper);
+
+        f()(["edit-tool-visibility"]);
+
+        expect(publicRadio.disabled).toBe(true);
+    });
 });
 
 // ---------------------------------------------------------------------------

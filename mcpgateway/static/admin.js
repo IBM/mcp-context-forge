@@ -204,15 +204,18 @@ function updateEditToolUrl() {
     }
 }
 
+function isTeamScopedView() {
+    const teamId = new URLSearchParams(window.location.search).get("team_id");
+    return Boolean(teamId && teamId.trim() !== "");
+}
+
 /**
  * Apply visibility restrictions (disable/style public radio) without changing checked state.
  * Use this for edit forms to preserve the entity's saved visibility.
  * @param {string[]} prefixes - Array of visibility ID prefixes to process
  */
 function applyVisibilityRestrictions(prefixes) {
-    const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("team_id");
-    const hasTeam = teamId && teamId.trim() !== "";
+    const hasTeam = isTeamScopedView();
 
     prefixes.forEach((prefix) => {
         const publicId = `[id="${prefix}-public"]`;
@@ -224,6 +227,8 @@ function applyVisibilityRestrictions(prefixes) {
         publicRadios.forEach((radio) => {
             // Keep a checked public value enabled in edit forms so FormData
             // includes visibility and we don't silently change saved state.
+            // This is intentionally one-way: once switched away from public in
+            // restricted team scope, public cannot be re-selected.
             const shouldDisable = publicBlocked && !radio.checked;
             radio.disabled = shouldDisable;
             const wrapper = radio.closest(".flex.items-center");
@@ -250,9 +255,7 @@ function applyVisibilityRestrictions(prefixes) {
 
 // Function to update default visibility based on team_id in URL
 function updateDefaultVisibility() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("team_id");
-    const hasTeam = teamId && teamId.trim() !== "";
+    const hasTeam = isTeamScopedView();
 
     // List of visibility prefixes to handle
     // These correspond to the "public", "team", "private" radio buttons
@@ -6818,9 +6821,9 @@ async function editServer(serverId) {
         hiddenField.value = isInactiveCheckedBool;
 
         const visibility = server.visibility; // Ensure visibility is either 'public', 'team', or 'private'
-        const publicRadio = safeGetElement("edit-visibility-public");
-        const teamRadio = safeGetElement("edit-visibility-team");
-        const privateRadio = safeGetElement("edit-visibility-private");
+        const publicRadio = safeGetElement("edit-server-visibility-public");
+        const teamRadio = safeGetElement("edit-server-visibility-team");
+        const privateRadio = safeGetElement("edit-server-visibility-private");
 
         // Prepopulate visibility radio buttons based on the server data
         if (visibility) {
@@ -7040,7 +7043,7 @@ async function editServer(serverId) {
         ensureEditStoreListeners();
 
         openModal("server-edit-modal");
-        applyVisibilityRestrictions(["edit-visibility"]); // Disable public radio if restricted, preserve checked state
+        applyVisibilityRestrictions(["edit-server-visibility"]); // Disable public radio if restricted, preserve checked state
         // Initialize the select handlers for gateways, resources and prompts in the edit modal
         // so that gateway changes will trigger filtering of associated items while editing.
         if (document.getElementById("associatedEditGateways")) {
