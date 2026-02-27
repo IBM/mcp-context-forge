@@ -25,6 +25,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """Replace global (user_email, name) unique constraint with per-team (user_email, name, team_id) constraint."""
     inspector = sa.inspect(op.get_bind())
 
     # Skip if the table doesn't exist yet (fresh DB is created directly from db.py models)
@@ -50,6 +51,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Restore the original global (user_email, name) unique constraint."""
     inspector = sa.inspect(op.get_bind())
 
     if "email_api_tokens" not in inspector.get_table_names():

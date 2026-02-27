@@ -399,22 +399,16 @@ class TestTokenCatalogService:
             mock_api_token,  # Token with same name exists
         ]
 
-        with pytest.raises(ValueError, match="Token with name 'Duplicate' already exists for user test@example.com. Token names must be unique per user across all teams."):
+        with pytest.raises(ValueError, match="Token with name 'Duplicate' already exists for user test@example.com in the global scope"):
             await token_service.create_token(user_email="test@example.com", name="Duplicate")
 
     @pytest.mark.asyncio
-    async def test_create_token_duplicate_name_cross_scope(self, token_service, mock_db, mock_user, mock_api_token):
-        """Regression test: duplicate name check is global per-user, not per team+user.
+    async def test_create_token_duplicate_name_same_team(self, token_service, mock_db, mock_user, mock_api_token):
+        """Regression test: duplicate name in the same team scope raises ValueError.
 
-        A token with name N created for team_id=None must block creation of a
-        token with the same name N for a specific team_id, because the DB
-        constraint uq_email_api_tokens_user_name enforces uniqueness on
-        (user_email, name) regardless of team_id.
+        With per-team uniqueness (uq_email_api_tokens_user_name_team), creating
+        the same name twice for the same team_id must be rejected by the pre-check.
         """
-        # First call: user lookup succeeds
-        # Second call: team lookup succeeds (for team-scoped creation path)
-        # Third call: membership lookup succeeds
-        # Fourth call: duplicate check — finds existing token (team_id=None from first creation)
         from unittest.mock import MagicMock
 
         mock_team = MagicMock()
@@ -423,13 +417,13 @@ class TestTokenCatalogService:
         mock_team_member.is_active = True
 
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
-            mock_user,       # User exists
-            mock_team,       # Team exists
+            mock_user,         # User exists
+            mock_team,         # Team exists
             mock_team_member,  # User is active team member
-            mock_api_token,  # Existing token with same name (originally created with team_id=None)
+            mock_api_token,    # Existing token with same name AND same team_id
         ]
 
-        with pytest.raises(ValueError, match="Token with name .* already exists for user test@example.com. Token names must be unique per user across all teams."):
+        with pytest.raises(ValueError, match="Token with name .* already exists for user test@example.com in team 'team-456'"):
             await token_service.create_token(user_email="test@example.com", name="Duplicate", team_id="team-456")
 
     @pytest.mark.asyncio

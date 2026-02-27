@@ -32887,7 +32887,7 @@ function performTeamSelectorSearch(searchTerm) {
         })
         .catch(function () {
             if (container) {
-                container.dataset.loaded = "false";
+                delete container.dataset.loaded;
                 container.innerHTML =
                     '<div class="px-4 py-2 text-sm text-red-600 dark:text-red-400">' +
                     "Failed to load teams. " +
