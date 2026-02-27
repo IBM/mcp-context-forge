@@ -66,6 +66,7 @@ import jwt
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
+from mcpgateway.utils.paths import resolve_root_path
 
 basic_security = HTTPBasic(auto_error=False)
 security = HTTPBearer(auto_error=False)
@@ -1153,7 +1154,7 @@ async def require_admin_auth(
                             accept_header = request.headers.get("accept", "")
                             if "text/html" in accept_header:
                                 # Redirect browser to login page with error
-                                root_path = request.scope.get("root_path", "")
+                                root_path = resolve_root_path(request)
                                 raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Admin privileges required", headers={"Location": f"{root_path}/admin/login?error=admin_required"})
                             else:
                                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
@@ -1170,7 +1171,7 @@ async def require_admin_auth(
             # For 401, check if we should redirect browser users
             accept_header = request.headers.get("accept", "")
             if "text/html" in accept_header:
-                root_path = request.scope.get("root_path", "")
+                root_path = resolve_root_path(request)
                 raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{root_path}/admin/login"})
             # If JWT auth fails, fall back to basic auth for backward compatibility
         except Exception:
@@ -1200,7 +1201,7 @@ async def require_admin_auth(
             accept_header = request.headers.get("accept", "")
             is_htmx = request.headers.get("hx-request") == "true"
             if "text/html" in accept_header or is_htmx:
-                root_path = request.scope.get("root_path", "")
+                root_path = resolve_root_path(request)
                 raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{root_path}/admin/login"})
             else:
                 raise HTTPException(

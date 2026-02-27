@@ -151,6 +151,7 @@ from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
@@ -1022,27 +1023,9 @@ ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
 
 
-def _resolve_root_path(request: Request) -> str:
-    """Resolve the application root path from the request scope with fallback.
-
-    Some embedded/proxy deployments do not populate ``scope["root_path"]``
-    consistently.  This helper checks the ASGI scope first and falls back
-    to ``settings.app_root_path`` when the scope value is empty.
-
-    Args:
-        request: Incoming request used to read ASGI ``root_path``.
-
-    Returns:
-        Normalized root path (leading ``/``, no trailing ``/``), or empty
-        string when no root path is configured.
-    """
-    root_path = request.scope.get("root_path", "") or ""
-    if not root_path or not str(root_path).strip():
-        root_path = settings.app_root_path or ""
-    root_path = str(root_path).strip()
-    if root_path:
-        root_path = "/" + root_path.lstrip("/")
-    return root_path.rstrip("/")
+# _resolve_root_path is imported from mcpgateway.utils.paths (see imports above).
+# The alias is kept so all existing call sites in this file continue to work
+# without modification.
 
 
 def _admin_cookie_path(request: Request) -> str:

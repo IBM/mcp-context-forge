@@ -24,6 +24,7 @@ from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import SSOService
+from mcpgateway.utils.paths import resolve_root_path
 
 # Initialize logging
 logging_service = LoggingService()
@@ -325,7 +326,7 @@ async def handle_sso_callback(
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
     # Get root path for URL construction
-    root_path = request.scope.get("root_path", "") if request else ""
+    root_path = resolve_root_path(request) if request else ""
 
     sso_service = SSOService(db)
 
