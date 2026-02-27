@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Copyright (c) 2025 ContextForge Contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for host header validation in demo_a2a_agent_auth.py.

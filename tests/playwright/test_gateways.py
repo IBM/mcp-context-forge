@@ -320,7 +320,8 @@ class TestGatewayCreation:
             lambda r: "/admin/gateways" in r.url and r.request.method == "POST",
             timeout=120000,
         ) as response_info:
-            gateways_page.click_locator(gateways_page.add_gateway_btn)
+            gateways_page.add_gateway_btn.scroll_into_view_if_needed()
+            gateways_page.add_gateway_btn.click(timeout=120000)
         response = response_info.value
         if response.status >= 400:
             pytest.skip(f"Gateway creation failed for '{gateway_name}' (HTTP {response.status} — external service or server error)")
