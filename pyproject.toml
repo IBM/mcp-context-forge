@@ -50,7 +50,7 @@ dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
     "cryptography>=46.0.5",
-    "fastapi>=0.133.0",
+    "fastapi>=0.133.1",
     "filelock>=3.24.3",
     "gunicorn>=25.1.0",
     "httpx>=0.28.1",
@@ -76,7 +76,7 @@ dependencies = [
     "sse-starlette>=3.2.0",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
-    "typer>=0.23.0",
+    "typer>=0.24.1",
     "uvicorn[standard]>=0.41.0",
 ]
 
@@ -177,12 +177,12 @@ dev = [
 # Redis with hiredis C parser for up to 83x faster response parsing
 # See ADR-026 for benchmarks and decision rationale
 redis = [
-    "redis[hiredis]>=7.2.0",
+    "redis[hiredis]>=7.2.1",
 ]
 
 # Pure-Python Redis parser fallback (for environments where hiredis wheels aren't available)
 redis-pure = [
-    "redis>=7.2.0",
+    "redis>=7.2.1",
 ]
 
 # PostgreSQL adapter with psycopg3
@@ -201,7 +201,7 @@ mariadb = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.15",
+    "langchain-core>=1.2.16",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.10",
@@ -265,10 +265,10 @@ templating = [
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
-    "grpcio>=1.78.1",
-    "grpcio-reflection>=1.78.1",
-    "grpcio-tools>=1.78.1",
-    "protobuf>=6.33.5",
+    "grpcio>=1.78.0",
+    "grpcio-reflection>=1.78.0",
+    "grpcio-tools>=1.78.0",
+    "protobuf>=6.31.1",  # grpcio-reflection 1.78.x caps at <7.0.0; bump when grpcio ecosystem supports protobuf 7.x
 ]
 
 # UI Testing
