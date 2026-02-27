@@ -808,6 +808,7 @@ export const handleAdminTeamAction = function (event) {
         ) {
           params.set("relationship", currentTeamRelationshipFilter);
         }
+        params.set("_t", Date.now());
         const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
         window.htmx.ajax("GET", url, {
           target: "#unified-teams-list",
