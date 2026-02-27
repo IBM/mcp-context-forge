@@ -590,6 +590,22 @@ async def test_receive_recreates_request_body_for_downstream(dummy_logger, mock_
 
 
 @pytest.mark.asyncio
+async def test_dispatch_uses_original_request_for_call_next(dummy_logger, mock_structured_logger):
+    """Regression guard: middleware must pass the original Request object to call_next."""
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    request = make_request(body=b"name=demo", headers={"content-type": "application/x-www-form-urlencoded"})
+
+    async def _call_next(req):
+        assert req is request
+        form = await req.form()
+        assert form.get("name") == "demo"
+        return Response(content="OK", status_code=200)
+
+    response = await middleware.dispatch(request, _call_next)
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_call_next_exception_structured_logging_failure_warns(
     dummy_logger, mock_structured_logger
 ):
