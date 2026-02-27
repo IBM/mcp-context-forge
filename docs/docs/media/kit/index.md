@@ -194,7 +194,7 @@ And is readily available as open source, published a container image and as a Py
 
 ## 🖼️ Logos & Images
 
-| Asset | 
+| Asset |
 |-------|
 | [Color horizontal logo](https://ibm.github.io/mcp-context-forge/images/contextforge-logo_horizontal_color.svg) |
 | [White horizontal logo](https://ibm.github.io/mcp-context-forge/images/contextforge-logo_horizontal_white.svg) |
