@@ -217,3 +217,141 @@ class TestAdminUrlContextPreservation:
             api_request_context.delete(
                 f"/gateways/{gw_id}",
             )
+
+    def test_add_gateway_preserves_both_params(
+        self, page: Page, base_url: str
+    ):
+        """After adding a gateway, both team_id AND include_inactive survive in URL.
+
+        Navigates with both params; the JS checkbox-init logic checks the
+        show-inactive checkbox, so isInactiveChecked() returns True, and
+        _navigateAdmin() carries include_inactive=true forward.
+        """
+        _ensure_admin_logged_in(page, base_url)
+        unique_name = f"test-gw-both-{uuid.uuid4().hex[:8]}"
+
+        page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}&include_inactive=true#gateways")
+        page.wait_for_load_state("networkidle")
+
+        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
+        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
+        if name_input.count() == 0 or url_input.count() == 0:
+            pytest.skip("Add-gateway form inputs not found — skipping.")
+
+        name_input.fill(unique_name)
+        url_input.fill("http://127.0.0.1:19999")
+
+        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            page.locator(
+                "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
+                "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
+            ).first.click()
+
+        expect(page).to_have_url(re.compile(r"#gateways"))
+        expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+        expect(page).to_have_url(re.compile(r"include_inactive=true"))
+
+    def test_delete_gateway_preserves_both_params(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """After deleting a gateway, both team_id AND include_inactive survive in URL."""
+        _ensure_admin_logged_in(page, base_url)
+
+        create_resp = api_request_context.post(
+            "/gateways",
+            headers={"Content-Type": "application/json"},
+            data={
+                "name": f"test-gw-delboth-{uuid.uuid4().hex[:6]}",
+                "url": "http://127.0.0.1:19999",
+                "transport": "HTTP",
+            },
+        )
+        if not create_resp.ok:
+            pytest.skip(f"Could not create test gateway (HTTP {create_resp.status}) — skipping.")
+
+        gw_id = create_resp.json().get("id", "")
+        if not gw_id:
+            pytest.skip("Gateway created but ID missing.")
+
+        try:
+            page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}&include_inactive=true#gateways")
+            page.wait_for_load_state("networkidle")
+
+            delete_form = page.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
+            if delete_form.count() == 0:
+                pytest.skip("Delete form for created gateway not visible in UI — skipping.")
+
+            delete_btn = delete_form.locator('button[type="submit"]').first
+            page.on("dialog", lambda d: d.accept())
+
+            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+                delete_btn.click()
+
+            expect(page).to_have_url(re.compile(r"#gateways"))
+            expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+            expect(page).to_have_url(re.compile(r"include_inactive=true"))
+        finally:
+            api_request_context.delete(f"/gateways/{gw_id}")
+
+    def test_add_preserves_team_id_only(self, page: Page, base_url: str):
+        """Starting with only team_id: include_inactive must NOT appear post-mutation.
+
+        Verifies _navigateAdmin() does not inject include_inactive when the
+        show-inactive checkbox is unchecked (URL has no include_inactive param).
+        """
+        _ensure_admin_logged_in(page, base_url)
+        unique_name = f"test-gw-tidonly-{uuid.uuid4().hex[:8]}"
+
+        page.goto(f"{base_url}/admin?team_id={_TEAM_PARAM}#gateways")
+        page.wait_for_load_state("networkidle")
+
+        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
+        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
+        if name_input.count() == 0 or url_input.count() == 0:
+            pytest.skip("Add-gateway form inputs not found — skipping.")
+
+        name_input.fill(unique_name)
+        url_input.fill("http://127.0.0.1:19999")
+
+        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            page.locator(
+                "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
+                "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
+            ).first.click()
+
+        expect(page).to_have_url(re.compile(r"#gateways"))
+        expect(page).to_have_url(re.compile(rf"team_id={_TEAM_PARAM}"))
+        assert "include_inactive" not in page.url, (
+            f"include_inactive must not appear when starting URL had none; got: {page.url}"
+        )
+
+    def test_add_preserves_include_inactive_only(self, page: Page, base_url: str):
+        """Starting with only include_inactive: team_id must NOT appear post-mutation.
+
+        Verifies _navigateAdmin() does not inject team_id when the URL had none.
+        """
+        _ensure_admin_logged_in(page, base_url)
+        unique_name = f"test-gw-inaconly-{uuid.uuid4().hex[:8]}"
+
+        page.goto(f"{base_url}/admin?include_inactive=true#gateways")
+        page.wait_for_load_state("networkidle")
+
+        name_input = page.locator("#gateway-name, input[name='name'][id*='gateway']").first
+        url_input = page.locator("#gateway-url, input[name='url'][id*='gateway']").first
+        if name_input.count() == 0 or url_input.count() == 0:
+            pytest.skip("Add-gateway form inputs not found — skipping.")
+
+        name_input.fill(unique_name)
+        url_input.fill("http://127.0.0.1:19999")
+
+        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            page.locator(
+                "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
+                "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
+            ).first.click()
+
+        expect(page).to_have_url(re.compile(r"include_inactive=true"))
+        expect(page).to_have_url(re.compile(r"#gateways"))
+        assert "team_id" not in page.url, (
+            f"team_id must not appear when starting URL had none; got: {page.url}"
+        )
