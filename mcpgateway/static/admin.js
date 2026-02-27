@@ -220,6 +220,12 @@ function updateDefaultVisibility() {
         "resource-visibility", // Resources (Create)
         "prompt-visibility", // Prompts (Create)
         "a2a-visibility", // Agents (Create)
+        "edit-gateway-visibility", // Gateways (Edit)
+        "edit-visibility", // Virtual Servers (Edit) - uses generic "edit-visibility" prefix
+        "edit-tool-visibility", // Tools (Edit)
+        "edit-resource-visibility", // Resources (Edit)
+        "edit-prompt-visibility", // Prompts (Edit)
+        "edit-a2a-visibility", // Agents (Edit)
     ];
 
     visibilityPrefixes.forEach((prefix) => {
@@ -3784,6 +3790,7 @@ async function editTool(toolId) {
         }
 
         openModal("tool-edit-modal");
+        updateDefaultVisibility(); // Apply visibility restrictions to edit form
 
         // Ensure editors are refreshed after modal display
         setTimeout(() => {
@@ -4135,9 +4142,9 @@ async function editA2AAgent(agentId) {
             ? agent.visibility.toLowerCase()
             : null;
 
-        const publicRadio = safeGetElement("a2a-visibility-public-edit");
-        const teamRadio = safeGetElement("a2a-visibility-team-edit");
-        const privateRadio = safeGetElement("a2a-visibility-private-edit");
+        const publicRadio = safeGetElement("edit-a2a-visibility-public");
+        const teamRadio = safeGetElement("edit-a2a-visibility-team");
+        const privateRadio = safeGetElement("edit-a2a-visibility-private");
 
         // Clear all first
         if (publicRadio) {
@@ -4368,6 +4375,7 @@ async function editA2AAgent(agentId) {
         }
 
         openModal("a2a-edit-modal");
+        updateDefaultVisibility(); // Apply visibility restrictions to edit form
         console.log("✓ A2A Agent edit modal loaded successfully");
     } catch (err) {
         console.error("Error loading A2A agent:", err);
@@ -5152,6 +5160,7 @@ async function editResource(resourceId) {
         // }
 
         openModal("resource-edit-modal");
+        updateDefaultVisibility(); // Apply visibility restrictions to edit form
 
         // Refresh editor after modal display
         setTimeout(() => {
@@ -5671,6 +5680,7 @@ async function editPrompt(promptId) {
         }
 
         openModal("prompt-edit-modal");
+        updateDefaultVisibility(); // Apply visibility restrictions to edit form
 
         // Refresh editors after modal display
         setTimeout(() => {
@@ -6244,6 +6254,7 @@ async function editGateway(gatewayId) {
         }
 
         openModal("gateway-edit-modal");
+        updateDefaultVisibility(); // Apply visibility restrictions to edit form
         console.log("✓ Gateway edit modal loaded successfully");
     } catch (error) {
         console.error("Error fetching gateway for editing:", error);
@@ -7013,6 +7024,7 @@ async function editServer(serverId) {
         ensureEditStoreListeners();
 
         openModal("server-edit-modal");
+        updateDefaultVisibility(); // Apply visibility restrictions to edit form
         // Initialize the select handlers for gateways, resources and prompts in the edit modal
         // so that gateway changes will trigger filtering of associated items while editing.
         if (document.getElementById("associatedEditGateways")) {
