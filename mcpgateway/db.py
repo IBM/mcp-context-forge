@@ -6388,7 +6388,10 @@ class JITGrant(Base):
 
     __tablename__ = "jit_grants"
 
+    # Primary key
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Request details
     requester_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False, index=True)
     requested_role: Mapped[str] = mapped_column(String(255), nullable=False)
     justification: Mapped[str] = mapped_column(Text, nullable=False)
@@ -6415,6 +6418,11 @@ class JITGrant(Base):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    requester: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[requester_email], backref="jit_grants_requested")
+    approver: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[approved_by], backref="jit_grants_approved")
+    revoker: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[revoked_by], backref="jit_grants_revoked")
 
     __table_args__ = (
         Index("idx_jit_requester_status", "requester_email", "status"),

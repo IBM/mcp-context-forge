@@ -945,6 +945,31 @@ class TestSetToolState:
         """set_tool_state should deactivate a tool and notify."""
         mock_tool.enabled = True
         mock_tool.reachable = True
+        mock_tool.created_by = "admin@example.com"
+        mock_tool.created_from_ip = "127.0.0.1"
+        mock_tool.created_via = "api"
+        mock_tool.created_user_agent = "test"
+        mock_tool.modified_by = None
+        mock_tool.modified_from_ip = None
+        mock_tool.modified_via = None
+        mock_tool.modified_user_agent = None
+        mock_tool.import_batch_id = None
+        mock_tool.federation_source = None
+        mock_tool.team_id = None
+        mock_tool.owner_email = "admin@example.com"
+        mock_tool.visibility = "public"
+        mock_tool.tags = []
+        mock_tool.team = None
+        mock_gateway.team_id = None
+        mock_gateway.owner_email = None
+        mock_gateway.visibility = "public"
+        mock_gateway.tags = []
+        mock_gateway.slug = "test-gw"
+        mock_gateway.description = "test"
+        mock_gateway.transport = "sse"
+        mock_gateway.capabilities = {}
+        mock_gateway.enabled = True
+        mock_gateway.reachable = True
         db = MagicMock()
 
         with (
@@ -4936,6 +4961,31 @@ class TestInvokeToolGatewayQueryParams:
         mock_tool.timeout_ms = None
         mock_tool.enabled = True
         mock_tool.reachable = True
+        mock_tool.created_by = "admin@example.com"
+        mock_tool.created_from_ip = "127.0.0.1"
+        mock_tool.created_via = "api"
+        mock_tool.created_user_agent = "test"
+        mock_tool.modified_by = None
+        mock_tool.modified_from_ip = None
+        mock_tool.modified_via = None
+        mock_tool.modified_user_agent = None
+        mock_tool.import_batch_id = None
+        mock_tool.federation_source = None
+        mock_tool.team_id = None
+        mock_tool.owner_email = "admin@example.com"
+        mock_tool.visibility = "public"
+        mock_tool.tags = []
+        mock_tool.team = None
+        mock_gateway.team_id = None
+        mock_gateway.owner_email = None
+        mock_gateway.visibility = "public"
+        mock_gateway.tags = []
+        mock_gateway.slug = "test-gw"
+        mock_gateway.description = "test"
+        mock_gateway.transport = "sse"
+        mock_gateway.capabilities = {}
+        mock_gateway.enabled = True
+        mock_gateway.reachable = True
 
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
@@ -4963,6 +5013,7 @@ class TestInvokeToolGatewayQueryParams:
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "runtime-secret"}),
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=runtime-secret") as mock_apply,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_plugin_manager", None),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)

@@ -213,6 +213,8 @@ def app():
     mp.setattr(struct_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(audit_trail_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(log_aggregator_mod, "SessionLocal", TestSessionLocal, raising=False)
+    import mcpgateway.middleware.token_scoping as token_scoping_mod
+    mp.setattr(token_scoping_mod, "SessionLocal", TestSessionLocal, raising=False)
 
     # 4) create schema
     db_mod.Base.metadata.create_all(bind=engine)
@@ -289,6 +291,8 @@ def app_with_temp_db():
     mp.setattr(struct_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(audit_trail_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(log_aggregator_mod, "SessionLocal", TestSessionLocal, raising=False)
+    import mcpgateway.middleware.token_scoping as token_scoping_mod
+    mp.setattr(token_scoping_mod, "SessionLocal", TestSessionLocal, raising=False)
 
     # 4) create schema
     db_mod.Base.metadata.create_all(bind=engine)
