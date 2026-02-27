@@ -655,6 +655,9 @@ markers = [
     "mcp_tasks: marks tasks capability checks",
     "mcp_auth: marks authorization discovery checks",
     "mcp_security: marks security compliance checks",
+    "regression: marks regression tests for previously-fixed bugs",
+    "proxy: marks tests that run through a simulated proxy prefix",
+    "iframe: marks tests that run inside an iframe host page",
 ]
 
 # Playwright-specific test discovery patterns

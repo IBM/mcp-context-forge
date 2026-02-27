@@ -740,6 +740,46 @@ async function safeParseJsonResponse(
     return await response.json();
 }
 
+// ===================================================================
+// PROXY-AWARE ADMIN NAVIGATION
+// Derives admin base from window.location so that proxy-embedded
+// deployments (where window.ROOT_PATH may be empty) preserve the
+// proxy prefix in the navigated URL. Fixes #3321 and #3324.
+// ===================================================================
+
+/**
+ * Fragment names differ from entity type names for some entities.
+ * e.g. the "servers" toggle navigates to the #catalog tab.
+ */
+const _TOGGLE_FRAGMENT_MAP = {
+    servers: "catalog",
+};
+
+/**
+ * Navigate to an admin tab while preserving the proxy prefix in the URL.
+ *
+ * Derives the admin base path from window.location.pathname rather than
+ * window.ROOT_PATH, so that proxy-embedded deployments (where ASGI
+ * root_path is not forwarded and ROOT_PATH is empty) still navigate to
+ * the correct proxy-scoped URL.
+ *
+ * @param {string} fragment - Hash fragment without '#' (e.g. "tools", "catalog").
+ * @param {URLSearchParams} [searchParams] - Query params to include (team_id, include_inactive, etc.).
+ */
+function _navigateAdmin(fragment, searchParams) {
+    const currentPath = window.location.pathname;
+    // Find /admin in current path and use everything before it as the base.
+    // e.g. /api/proxy/mcp/admin → base is /api/proxy/mcp
+    // Use lastIndexOf so that path segments like /administrator don't match.
+    const adminIdx = currentPath.lastIndexOf("/admin");
+    const base =
+        adminIdx >= 0
+            ? window.location.origin + currentPath.slice(0, adminIdx)
+            : window.ROOT_PATH || window.location.origin;
+    const qs = searchParams ? searchParams.toString() : "";
+    window.location.href = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+}
+
 /**
  * Header validation constants and functions
  */
@@ -11406,30 +11446,52 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
-function handleToggleSubmit(event, type) {
+async function handleToggleSubmit(event, type) {
     event.preventDefault();
 
     const isInactiveCheckedBool = isInactiveChecked(type);
     const form = event.target;
-    const hiddenField = document.createElement("input");
-    hiddenField.type = "hidden";
-    hiddenField.name = "is_inactive_checked";
-    hiddenField.value = isInactiveCheckedBool;
-
-    form.appendChild(hiddenField);
-
-    // Inject team_id from URL so backend preserves team scope in redirect
     const teamId = new URL(window.location.href).searchParams.get("team_id");
-    if (teamId && !form.querySelector('input[name="team_id"]')) {
-        const teamField = document.createElement("input");
-        teamField.type = "hidden";
-        teamField.name = "team_id";
-        teamField.value = teamId;
-        form.appendChild(teamField);
+
+    // Build FormData from current form state (captures any fields already
+    // appended by handleDeleteSubmit such as purge_metrics).
+    const formData = new FormData(form);
+    formData.set("is_inactive_checked", String(isInactiveCheckedBool));
+    if (teamId && !formData.has("team_id")) {
+        formData.set("team_id", teamId);
+    }
+    const csrfToken =
+        typeof getCookie === "function"
+            ? getCookie("mcpgateway_csrf_token") || ""
+            : "";
+    if (csrfToken) {
+        formData.set("csrf_token", csrfToken);
     }
 
-    injectCsrfTokenIntoForm(form);
-    form.submit();
+    try {
+        // Use redirect:'manual' so the browser does not follow the 303
+        // redirect to the backend-direct URL (which bypasses the proxy).
+        await fetch(form.action, {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+            redirect: "manual",
+        });
+    } catch (e) {
+        // Network error — still navigate so the user sees refreshed state.
+        console.error("Toggle submit error:", e);
+    }
+
+    // Navigate using proxy-aware helper so proxy prefix is preserved.
+    const fragment = _TOGGLE_FRAGMENT_MAP[type] || type;
+    const params = new URLSearchParams();
+    if (isInactiveCheckedBool) {
+        params.set("include_inactive", "true");
+    }
+    if (teamId) {
+        params.set("team_id", teamId);
+    }
+    _navigateAdmin(fragment, params);
 }
 
 function handleSubmitWithConfirmation(event, type) {
@@ -11468,29 +11530,6 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
 
     const toggleType = inactiveType || type;
     return handleToggleSubmit(event, toggleType);
-}
-
-function injectCsrfTokenIntoForm(form) {
-    if (!(form instanceof HTMLFormElement)) {
-        return;
-    }
-
-    let csrfToken = "";
-    if (typeof getCookie === "function") {
-        csrfToken = getCookie("mcpgateway_csrf_token") || "";
-    }
-    if (!csrfToken) {
-        return;
-    }
-
-    let tokenInput = form.querySelector('input[name="csrf_token"]');
-    if (!tokenInput) {
-        tokenInput = document.createElement("input");
-        tokenInput.type = "hidden";
-        tokenInput.name = "csrf_token";
-        form.appendChild(tokenInput);
-    }
-    tokenInput.value = csrfToken;
 }
 
 // ===================================================================
@@ -15323,9 +15362,7 @@ async function handleGatewayFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("gateways", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -15408,9 +15445,7 @@ async function handleResourceFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -15477,9 +15512,7 @@ async function handlePromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         if (status) {
@@ -15551,9 +15584,7 @@ async function handleEditPromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -15671,9 +15702,7 @@ async function handleServerFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Add Server Error:", error);
@@ -15800,9 +15829,7 @@ async function handleA2AFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("a2a-agents", searchParams);
         }
     } catch (error) {
         console.error("Add A2A Agent Error:", error);
@@ -15900,9 +15927,7 @@ async function handleToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -15970,9 +15995,7 @@ async function handleEditToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -16065,9 +16088,7 @@ async function handleEditGatewayFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("gateways", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -16166,9 +16187,7 @@ async function handleEditA2AAgentFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("a2a-agents", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -16261,9 +16280,7 @@ async function handleEditServerFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -16336,9 +16353,7 @@ async function handleEditResFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -16432,9 +16447,7 @@ async function handleGrpcServiceFormSubmit(e) {
             searchParams.set("team_id", teamId);
         }
 
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("grpc-services", searchParams);
     } catch (error) {
         console.error("Add gRPC Service Error:", error);
         if (status) {
