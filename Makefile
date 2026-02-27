@@ -645,7 +645,8 @@ test:
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
 		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
-			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py"
+			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
+			--ignore=tests/e2e/test_mcp_cli_protocol.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."

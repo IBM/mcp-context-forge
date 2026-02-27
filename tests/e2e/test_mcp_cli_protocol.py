@@ -75,7 +75,7 @@ def _gateway_reachable() -> bool:
 skip_no_mcp_cli = pytest.mark.skipif(not _mcp_cli_available(), reason="mcp-cli not installed (pip install 'mcp-cli[cli]')")
 skip_no_gateway = pytest.mark.skipif(not _gateway_reachable(), reason=f"ContextForge not reachable at {BASE_URL}")
 
-pytestmark = [skip_no_mcp_cli, skip_no_gateway]
+pytestmark = [pytest.mark.e2e, skip_no_mcp_cli, skip_no_gateway]
 
 
 # ---------------------------------------------------------------------------

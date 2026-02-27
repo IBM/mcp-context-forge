@@ -194,11 +194,6 @@ repos:
         description: Removes UTF-8 byte order marker.
         types: [text]
 
-      - id: fix-encoding-pragma
-        name: 🧹 Fix Python Encoding Pragma
-        description: "Adds # -*- coding: utf-8 -*- to the top of python files."
-        types: [python]
-
       - id: mixed-line-ending
         name: 🧹 Mixed Line Ending
         description: Replaces or checks mixed line ending.
