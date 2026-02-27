@@ -4152,6 +4152,9 @@ async def get_tool(
             result = jsonpath_modifier(data_dict, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
             # Return ORJSONResponse to bypass FastAPI's response_model validation
             return ORJSONResponse(content=result)
+        except HTTPException:
+            # Re-raise HTTPException as-is (preserves 400 from apijsonpath parsing)
+            raise
         except Exception:
             logger.exception("JSONPath modifier failed while processing single tool")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
@@ -4159,24 +4162,6 @@ async def get_tool(
         raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-
-    # Allow apijsonpath as a direct model (internal/tests) or as JSON string via query
-    parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
-
-    if parsed_apijsonpath is None:
-        return data
-
-    data_dict = data.to_dict(use_alias=True)
-    try:
-        result = jsonpath_modifier(data_dict, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
-        # Return ORJSONResponse to bypass FastAPI's response_model validation
-        return ORJSONResponse(content=result)
-    except HTTPException:
-        # Re-raise HTTPException as-is (preserves 400 from apijsonpath parsing)
-        raise
-    except Exception:
-        logger.exception("JSONPath modifier failed while processing single tool")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
 
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
