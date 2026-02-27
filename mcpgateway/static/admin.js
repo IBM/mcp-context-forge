@@ -1195,9 +1195,7 @@ function ensureNoResultsElement(containerId, msgId, spanId, entityLabel) {
     span.id = spanId;
     msg.innerHTML = "";
     msg.appendChild(
-        document.createTextNode(
-            `No ${entityLabel} found containing \u201C`,
-        ),
+        document.createTextNode(`No ${entityLabel} found containing \u201C`),
     );
     msg.appendChild(span);
     msg.appendChild(document.createTextNode("\u201D"));
@@ -11035,9 +11033,8 @@ function reloadAssociatedItems() {
                             serverSideToolSearch(toolSearchInput.value.trim());
                         }
                     } else if (toolSearchInput) {
-                        const toolContainer = document.getElementById(
-                            toolsContainerId,
-                        );
+                        const toolContainer =
+                            document.getElementById(toolsContainerId);
                         if (toolContainer) {
                             toolContainer.style.display = "";
                         }
@@ -11379,9 +11376,8 @@ function reloadAssociatedItems() {
                         serverSidePromptSearch(promptSearchInput.value.trim());
                     }
                 } else if (promptSearchInput) {
-                    const promptContainer = document.getElementById(
-                        promptsContainerId,
-                    );
+                    const promptContainer =
+                        document.getElementById(promptsContainerId);
                     if (promptContainer) {
                         promptContainer.style.display = "";
                     }
