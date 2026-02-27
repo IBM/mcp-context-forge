@@ -15362,9 +15362,7 @@ async function handleGatewayFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("gateways", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -15447,9 +15445,7 @@ async function handleResourceFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -15516,9 +15512,7 @@ async function handlePromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         if (status) {
@@ -15590,9 +15584,7 @@ async function handleEditPromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -15710,9 +15702,7 @@ async function handleServerFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Add Server Error:", error);
@@ -15839,9 +15829,7 @@ async function handleA2AFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("a2a-agents", searchParams);
         }
     } catch (error) {
         console.error("Add A2A Agent Error:", error);
@@ -15939,9 +15927,7 @@ async function handleToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -16009,9 +15995,7 @@ async function handleEditToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -16104,9 +16088,7 @@ async function handleEditGatewayFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("gateways", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -16205,9 +16187,7 @@ async function handleEditA2AAgentFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("a2a-agents", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -16300,9 +16280,7 @@ async function handleEditServerFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -16375,9 +16353,7 @@ async function handleEditResFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -16471,9 +16447,7 @@ async function handleGrpcServiceFormSubmit(e) {
             searchParams.set("team_id", teamId);
         }
 
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("grpc-services", searchParams);
     } catch (error) {
         console.error("Add gRPC Service Error:", error);
         if (status) {
