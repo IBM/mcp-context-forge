@@ -20816,3 +20816,158 @@ class TestAdminPersonalTeamFiltering:
             call_kwargs = mock_team_service.list_teams.call_args[1]
             assert call_kwargs["search_query"] == "nomatch"
             assert call_kwargs["personal_owner_email"] == "admin@example.com"
+def test_render_user_card_html_edit_button_has_modal_attributes():
+    """Edit button must carry hx-on::before-request, hx-swap and hx-on::config-request
+    so the modal is shown before HTMX fires the request (fixes htmx:targetError after
+    activate/deactivate replaces the card via outerHTML swap)."""
+    user_obj = SimpleNamespace(
+        email="user@test.com",
+        full_name="Test User",
+        auth_provider="local",
+        created_at=datetime(2025, 1, 1),
+        is_admin=False,
+        is_active=True,
+        password_change_required=False,
+    )
+    html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=2, root_path="")
+    assert "hx-on::before-request" in html_output, "Edit button must open modal before HTMX request"
+    assert "hx-swap" in html_output, "Edit button must specify hx-swap"
+    assert "hx-on::config-request" in html_output, "Edit button must include cache-busting config-request handler"
+    assert "user-edit-modal" in html_output, "Edit button must reference user-edit-modal"
+
+
+def test_render_user_card_html_edit_button_has_modal_attributes_with_root_path():
+    """Edit button HTMX attributes are present even when root_path is non-empty."""
+    user_obj = SimpleNamespace(
+        email="user@test.com",
+        full_name="Test User",
+        auth_provider="local",
+        created_at=datetime(2025, 1, 1),
+        is_admin=False,
+        is_active=True,
+        password_change_required=False,
+    )
+    html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=2, root_path="/myroot")
+    assert "hx-on::before-request" in html_output
+    assert "/myroot/admin/users/" in html_output
+
+
+@pytest.mark.asyncio
+async def test_admin_activate_user_response_edit_button_has_modal_attrs(monkeypatch, mock_request, mock_db, allow_permission):
+    """After activation the returned HTML card must have the modal-opening Edit button
+    so that clicking Edit immediately after activate does not trigger htmx:targetError."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.activate_user = AsyncMock(
+        return_value=SimpleNamespace(
+            email="a@example.com",
+            full_name="A",
+            is_active=True,
+            is_admin=False,
+            auth_provider="local",
+            created_at=datetime.now(timezone.utc),
+            password_change_required=False,
+        )
+    )
+    auth_service.count_active_admin_users = AsyncMock(return_value=2)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_activate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    body = response.body.decode()
+    assert "hx-on::before-request" in body, "Activated card Edit button must open modal before HTMX request"
+    assert "hx-swap" in body
+    assert "hx-on::config-request" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_deactivate_user_response_edit_button_has_modal_attrs(monkeypatch, mock_request, mock_db, allow_permission):
+    """After deactivation the returned HTML card must have the modal-opening Edit button
+    so that clicking Edit immediately after deactivate does not trigger htmx:targetError."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.is_last_active_admin = AsyncMock(return_value=False)
+    auth_service.deactivate_user = AsyncMock(
+        return_value=SimpleNamespace(
+            email="a@example.com",
+            full_name="A",
+            is_active=False,
+            is_admin=False,
+            auth_provider="local",
+            created_at=datetime.now(timezone.utc),
+            password_change_required=False,
+        )
+    )
+    auth_service.count_active_admin_users = AsyncMock(return_value=2)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_deactivate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    body = response.body.decode()
+    assert "hx-on::before-request" in body, "Deactivated card Edit button must open modal before HTMX request"
+    assert "hx-swap" in body
+    assert "hx-on::config-request" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_user_edit_returns_no_cache_headers(monkeypatch, mock_request, mock_db, allow_permission):
+    """User edit form response must carry no-cache headers to prevent nginx from serving
+    stale modal content after a user card has been updated."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(
+        return_value=SimpleNamespace(
+            email="a@example.com",
+            full_name="A",
+            is_active=True,
+            is_admin=False,
+            auth_provider="local",
+            created_at=datetime.now(timezone.utc),
+            password_change_required=False,
+        )
+    )
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response.headers.get("cache-control") == "no-cache, no-store, must-revalidate"
+    assert response.headers.get("pragma") == "no-cache"
+    assert response.headers.get("expires") == "0"
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_user_success_has_hx_trigger(monkeypatch, mock_request, mock_db, allow_permission):
+    """Successful user deletion must include HX-Trigger header so the users list
+    refreshes automatically without a full page reload."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.is_last_active_admin = AsyncMock(return_value=False)
+    auth_service.delete_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_delete_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    hx_trigger = response.headers.get("hx-trigger")
+    assert hx_trigger is not None, "HX-Trigger header must be present after user deletion"
+    assert "adminUserAction" in hx_trigger
+    assert "refreshUsersList" in hx_trigger
+
+
+@pytest.mark.asyncio
+async def test_admin_create_team_success_has_hx_trigger(monkeypatch, mock_db, allow_permission):
+    """Successful team creation must include HX-Trigger header so the teams list
+    refreshes automatically without a full page reload."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.form = AsyncMock(return_value=FakeForm({"name": "New Team", "slug": "new-team", "description": "", "visibility": "private"}))
+    team = SimpleNamespace(id="team-2", name="New Team", slug="new-team", visibility="private", description="", is_personal=False)
+    team_service = MagicMock()
+    team_service.create_team = AsyncMock(return_value=team)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 201
+    hx_trigger = response.headers.get("hx-trigger")
+    assert hx_trigger is not None, "HX-Trigger header must be present after team creation"
+    assert "adminTeamAction" in hx_trigger
+    assert "refreshUnifiedTeamsList" in hx_trigger

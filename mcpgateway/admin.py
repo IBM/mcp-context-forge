@@ -5224,6 +5224,7 @@ async def admin_create_team(
         await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, skip_limits=bool(is_admin))
 
         response = HTMLResponse(content="", status_code=201)
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
     except (ValidationError, CoreValidationError) as e:
@@ -5637,7 +5638,12 @@ async def admin_get_team_edit(
             </form>
         </div>
         """
-        return HTMLResponse(content=edit_form)
+        response = HTMLResponse(content=edit_form)
+        # Prevent nginx caching for real-time team member updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
@@ -6655,7 +6661,9 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
         f"dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 "
         f"dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
         f'focus:ring-blue-500" hx-get="{root_path}/admin/users/{encoded_email}/edit" '
-        f'hx-target="#user-edit-modal-content">Edit</button>'
+        f"hx-on::config-request=\"event.detail.path += (event.detail.path.includes('?') ? '&' : '?') + '_t=' + Date.now()\" "
+        f'hx-target="#user-edit-modal-content" hx-swap="innerHTML show:top" '
+        f"hx-on::before-request=\"const modal = document.getElementById('user-edit-modal'); if (modal) {{ modal.style.display = 'block'; modal.classList.remove('hidden'); void modal.offsetHeight; }}\">Edit</button>"
     ]
 
     if not is_current_user and not is_last_admin:
@@ -7403,7 +7411,12 @@ async def admin_get_user_edit(
             </form>
         </div>
         """
-        return HTMLResponse(content=edit_form)
+        response = HTMLResponse(content=edit_form)
+        # Prevent nginx caching for real-time team member updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error getting user edit form for {user_email}: {e}")
@@ -7639,8 +7652,9 @@ async def admin_delete_user(
 
         await auth_service.delete_user(decoded_email)
 
-        # Return empty content to remove the user from the list
-        return HTMLResponse(content="", status_code=200)
+        response = HTMLResponse(content="", status_code=200)
+        response.headers["HX-Trigger"] = orjson.dumps({"adminUserAction": {"refreshUsersList": True, "delayMs": 1000}}).decode()
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
