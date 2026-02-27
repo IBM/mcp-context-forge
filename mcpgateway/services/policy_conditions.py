@@ -16,7 +16,14 @@ from typing import Any, Dict, Mapping, Optional
 
 
 def _to_mapping(value: Any) -> Mapping[str, Any]:
-    """Normalize objects/dataclasses/dicts into a mapping."""
+    """Normalize objects/dataclasses/dicts into a mapping.
+
+    Args:
+        value: Input object that may be a mapping, dataclass, or object instance.
+
+    Returns:
+        A mapping view of the input value, or an empty mapping when unsupported.
+    """
     if value is None:
         return {}
     if isinstance(value, Mapping):
@@ -29,7 +36,17 @@ def _to_mapping(value: Any) -> Mapping[str, Any]:
 
 
 def _resolve_path(path: str, subject: Any, resource: Any, context: Any) -> Any:
-    """Resolve dotted paths like subject.email or resource.visibility."""
+    """Resolve dotted paths like subject.email or resource.visibility.
+
+    Args:
+        path: Dotted variable path to resolve.
+        subject: Subject object or mapping.
+        resource: Resource object or mapping.
+        context: Context object or mapping.
+
+    Returns:
+        The resolved value when found, otherwise ``None``.
+    """
     roots = {
         "subject": _to_mapping(subject),
         "resource": _to_mapping(resource),
@@ -61,7 +78,17 @@ def _resolve_path(path: str, subject: Any, resource: Any, context: Any) -> Any:
 
 
 def _resolve_value(value: Any, subject: Any, resource: Any, context: Any) -> Any:
-    """Resolve a value literal or variable reference."""
+    """Resolve a value literal or variable reference.
+
+    Args:
+        value: Literal value or variable expression.
+        subject: Subject object or mapping.
+        resource: Resource object or mapping.
+        context: Context object or mapping.
+
+    Returns:
+        The resolved value or the original literal.
+    """
     if isinstance(value, Mapping) and "var" in value:
         return _resolve_path(str(value["var"]), subject, resource, context)
     if isinstance(value, str):
@@ -71,7 +98,14 @@ def _resolve_value(value: Any, subject: Any, resource: Any, context: Any) -> Any
 
 
 def _to_datetime(value: Any) -> Optional[datetime]:
-    """Convert value to datetime if possible."""
+    """Convert value to datetime if possible.
+
+    Args:
+        value: Candidate datetime value (datetime or ISO-8601 string).
+
+    Returns:
+        A datetime object when conversion succeeds, otherwise ``None``.
+    """
     if isinstance(value, datetime):
         return value
     if isinstance(value, str):
@@ -83,7 +117,19 @@ def _to_datetime(value: Any) -> Optional[datetime]:
 
 
 def _evaluate_operator(op: str, left: Any, right: Any) -> bool:
-    """Evaluate atomic condition operator."""
+    """Evaluate atomic condition operator.
+
+    Args:
+        op: Operator name such as ``eq`` or ``ip_in_cidr``.
+        left: Left operand value.
+        right: Right operand value.
+
+    Returns:
+        ``True`` when the condition evaluates as satisfied, otherwise ``False``.
+
+    Raises:
+        ValueError: If the operator is unsupported.
+    """
     if op == "eq":
         return left == right
     if op == "ne":
@@ -118,7 +164,20 @@ def _evaluate_operator(op: str, left: Any, right: Any) -> bool:
 
 
 def evaluate_policy_condition(condition: Dict[str, Any], subject: Any, resource: Any, context: Any) -> bool:
-    """Evaluate a JSON policy expression against subject/resource/context."""
+    """Evaluate a JSON policy expression against subject/resource/context.
+
+    Args:
+        condition: Condition tree in JSON-like dictionary form.
+        subject: Subject object or mapping used by variable lookups.
+        resource: Resource object or mapping used by variable lookups.
+        context: Context object or mapping used by variable lookups.
+
+    Returns:
+        ``True`` if the condition matches, otherwise ``False``.
+
+    Raises:
+        ValueError: If the condition node format or operator is invalid.
+    """
     if not condition:
         return True
 

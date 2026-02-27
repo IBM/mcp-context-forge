@@ -18,6 +18,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+# First-Party
 from mcpgateway.services.policy_conditions import evaluate_policy_condition
 
 logger = logging.getLogger(__name__)
@@ -248,6 +249,12 @@ class PolicyEngine:
     async def _evaluate_abac_policies(self, subject: Subject, permission: str, resource: Optional[Resource], context: Context) -> Optional[AccessDecision]:
         """Evaluate active ABAC policies in priority order.
 
+        Args:
+            subject: Request subject used for condition evaluation.
+            permission: Permission currently being checked.
+            resource: Optional target resource.
+            context: Request context used by policy conditions.
+
         Returns:
             AccessDecision when a policy matches, otherwise None.
         """
@@ -299,6 +306,9 @@ class PolicyEngine:
 
         The AccessPolicy ORM model is not available on newer mainline builds.
         In that case we gracefully skip DB-backed ABAC evaluation.
+
+        Returns:
+            A list of active policy records, or an empty list when unavailable.
         """
         try:
             # First-Party
