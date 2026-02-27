@@ -204,39 +204,19 @@ function updateEditToolUrl() {
     }
 }
 
-// Function to update default visibility based on team_id in URL
-function updateDefaultVisibility() {
+/**
+ * Apply visibility restrictions (disable/style public radio) without changing checked state.
+ * Use this for edit forms to preserve the entity's saved visibility.
+ * @param {string[]} prefixes - Array of visibility ID prefixes to process
+ */
+function applyVisibilityRestrictions(prefixes) {
     const urlParams = new URLSearchParams(window.location.search);
     const teamId = urlParams.get("team_id");
     const hasTeam = teamId && teamId.trim() !== "";
 
-    // List of visibility prefixes to handle
-    // These correspond to the "public", "team", "private" radio buttons
-    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
-    const visibilityPrefixes = [
-        "gateway-visibility", // Gateways (Create)
-        "server-visibility", // Virtual Servers (Create)
-        "tool-visibility", // Tools (Create)
-        "resource-visibility", // Resources (Create)
-        "prompt-visibility", // Prompts (Create)
-        "a2a-visibility", // Agents (Create)
-        "edit-gateway-visibility", // Gateways (Edit)
-        "edit-visibility", // Virtual Servers (Edit) - uses generic "edit-visibility" prefix
-        "edit-tool-visibility", // Tools (Edit)
-        "edit-resource-visibility", // Resources (Edit)
-        "edit-prompt-visibility", // Prompts (Edit)
-        "edit-a2a-visibility", // Agents (Edit)
-    ];
-
-    visibilityPrefixes.forEach((prefix) => {
+    prefixes.forEach((prefix) => {
         const publicId = `[id="${prefix}-public"]`;
-        const teamIdStr = `[id="${prefix}-team"]`;
-        const privateIdStr = `[id="${prefix}-private"]`;
-
-        // Handle potential duplicate IDs using querySelectorAll
         const publicRadios = document.querySelectorAll(publicId);
-        const teamRadios = document.querySelectorAll(teamIdStr);
-        const privateRadios = document.querySelectorAll(privateIdStr);
 
         // Disable public radio when flag is false AND we're in a team-scoped view.
         const publicBlocked =
@@ -262,6 +242,39 @@ function updateDefaultVisibility() {
                 }
             }
         });
+    });
+}
+
+// Function to update default visibility based on team_id in URL
+function updateDefaultVisibility() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const teamId = urlParams.get("team_id");
+    const hasTeam = teamId && teamId.trim() !== "";
+
+    // List of visibility prefixes to handle
+    // These correspond to the "public", "team", "private" radio buttons
+    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
+    const visibilityPrefixes = [
+        "gateway-visibility", // Gateways (Create)
+        "server-visibility", // Virtual Servers (Create)
+        "tool-visibility", // Tools (Create)
+        "resource-visibility", // Resources (Create)
+        "prompt-visibility", // Prompts (Create)
+        "a2a-visibility", // Agents (Create)
+    ];
+
+    // Apply restrictions (disable/style public radio)
+    applyVisibilityRestrictions(visibilityPrefixes);
+
+    // Set default checked state for add/create forms
+    visibilityPrefixes.forEach((prefix) => {
+        const publicId = `[id="${prefix}-public"]`;
+        const teamIdStr = `[id="${prefix}-team"]`;
+        const privateIdStr = `[id="${prefix}-private"]`;
+
+        const publicRadios = document.querySelectorAll(publicId);
+        const teamRadios = document.querySelectorAll(teamIdStr);
+        const privateRadios = document.querySelectorAll(privateIdStr);
 
         if (hasTeam) {
             // Default to Team
@@ -3790,7 +3803,7 @@ async function editTool(toolId) {
         }
 
         openModal("tool-edit-modal");
-        updateDefaultVisibility(); // Apply visibility restrictions to edit form
+        applyVisibilityRestrictions(["edit-tool-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Ensure editors are refreshed after modal display
         setTimeout(() => {
@@ -4375,7 +4388,7 @@ async function editA2AAgent(agentId) {
         }
 
         openModal("a2a-edit-modal");
-        updateDefaultVisibility(); // Apply visibility restrictions to edit form
+        applyVisibilityRestrictions(["edit-a2a-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ A2A Agent edit modal loaded successfully");
     } catch (err) {
         console.error("Error loading A2A agent:", err);
@@ -5160,7 +5173,7 @@ async function editResource(resourceId) {
         // }
 
         openModal("resource-edit-modal");
-        updateDefaultVisibility(); // Apply visibility restrictions to edit form
+        applyVisibilityRestrictions(["edit-resource-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editor after modal display
         setTimeout(() => {
@@ -5680,7 +5693,7 @@ async function editPrompt(promptId) {
         }
 
         openModal("prompt-edit-modal");
-        updateDefaultVisibility(); // Apply visibility restrictions to edit form
+        applyVisibilityRestrictions(["edit-prompt-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editors after modal display
         setTimeout(() => {
@@ -6254,7 +6267,7 @@ async function editGateway(gatewayId) {
         }
 
         openModal("gateway-edit-modal");
-        updateDefaultVisibility(); // Apply visibility restrictions to edit form
+        applyVisibilityRestrictions(["edit-gateway-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ Gateway edit modal loaded successfully");
     } catch (error) {
         console.error("Error fetching gateway for editing:", error);
@@ -7024,7 +7037,7 @@ async function editServer(serverId) {
         ensureEditStoreListeners();
 
         openModal("server-edit-modal");
-        updateDefaultVisibility(); // Apply visibility restrictions to edit form
+        applyVisibilityRestrictions(["edit-visibility"]); // Disable public radio if restricted, preserve checked state
         // Initialize the select handlers for gateways, resources and prompts in the edit modal
         // so that gateway changes will trigger filtering of associated items while editing.
         if (document.getElementById("associatedEditGateways")) {
