@@ -2546,6 +2546,8 @@ scc-report:
 # =============================================================================
 # help: 📚 DOCUMENTATION & SBOM
 # help: docs                 - Build docs (graphviz + handsdown + images + SBOM)
+# help: docs-assets           - Sync logo/icon SVGs from mcpgateway/static to docs
+# help: docs-serve            - Sync assets and serve docs locally with mkdocs
 # help: images               - Generate architecture & dependency diagrams
 
 # Pick the right "in-place" flag for sed (BSD vs GNU)
@@ -2555,8 +2557,30 @@ else
   SED_INPLACE := -i
 endif
 
+.PHONY: docs-assets
+docs-assets:
+	@echo "🖼️   Syncing logo assets to docs..."
+	@mkdir -p $(DOCS_DIR)/docs/images
+	@cp mcpgateway/static/contextforge-logo_horizontal_color.svg \
+	    mcpgateway/static/contextforge-logo_horizontal_white.svg \
+	    mcpgateway/static/contextforge-logo_horizontal_black.svg \
+	    mcpgateway/static/contextforge-logo_vertical_white.svg \
+	    mcpgateway/static/contextforge-logo_vertical_black.svg \
+	    mcpgateway/static/contextforge-icon_white.svg \
+	    mcpgateway/static/contextforge-icon_black.svg \
+	    $(DOCS_DIR)/docs/images/
+	@echo "✅  Logo assets synced"
+
+.PHONY: docs-serve
+docs-serve: docs-assets
+ifeq ($(shell uname),Darwin)
+	@cd $(DOCS_DIR) && DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib mkdocs serve
+else
+	@cd $(DOCS_DIR) && mkdocs serve
+endif
+
 .PHONY: docs
-docs: images sbom
+docs: docs-assets images sbom
 	@echo "📚  Generating documentation with handsdown..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \

@@ -26,7 +26,7 @@ version: 1.0.0-RC-1
 appVersion: "1.0.0-RC-1"
 
 # Icon shown by registries / dashboards (must be an http(s) URL).
-icon: https://raw.githubusercontent.com/IBM/mcp-context-forge/main/docs/theme/logo.png
+icon: https://ibm.github.io/mcp-context-forge/images/contextforge-icon_black.svg
 
 # Optional but useful metadata
 keywords:

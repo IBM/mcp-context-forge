@@ -20,7 +20,7 @@ async def test_health_and_static_paths_skipped(monkeypatch):
     middleware = AuthContextMiddleware(app=AsyncMock())
     call_next = AsyncMock(return_value=Response("ok"))
 
-    for path in ["/health", "/healthz", "/ready", "/metrics", "/static/logo.png"]:
+    for path in ["/health", "/healthz", "/ready", "/metrics", "/static/admin.css"]:
         request = MagicMock(spec=Request)
         request.url.path = path
         response = await middleware.dispatch(request, call_next)
