@@ -1090,7 +1090,7 @@ class TestToolService:
         test_db.commit = Mock()
 
         mock_team = MagicMock(id="team-1", is_personal=True)
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             tool_service.convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
 
@@ -1103,16 +1103,19 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_list_tools_denies_unknown_team(self, tool_service, test_db):
         """Test list_tools returns empty when user lacks team membership."""
-        test_db.execute = Mock()
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        # Returns empty list because query has WHERE FALSE condition
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))))
         mock_team = MagicMock(id="other-team", is_personal=True)
 
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             result, next_cursor = await tool_service.list_tools(test_db, user_email="user@example.com", team_id="team-1")
 
         assert result == []
         assert next_cursor is None
-        test_db.execute.assert_not_called()
+        # Query IS executed but returns empty due to WHERE FALSE condition
+        test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_list_tools_with_limit(self, tool_service, test_db, monkeypatch):
@@ -3881,7 +3884,7 @@ class TestToolServiceTokenTeamsFiltering:
         mock_team = MagicMock(id="team_a", is_personal=False)
 
         # When token_teams is None, TeamManagementService SHOULD be called
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=None)
 
@@ -4205,7 +4208,8 @@ class TestToolListingGracefulErrorHandling:
     @pytest.mark.asyncio
     async def test_list_tools_for_user_team_no_access(self, tool_service, test_db):
         """Team filter should return empty when user lacks access."""
-        test_db.execute = Mock()
+        # Mock DB execute - should NOT be called due to early return
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))))
         mock_team = MagicMock(id="team-1", is_personal=True)
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
@@ -4214,6 +4218,7 @@ class TestToolListingGracefulErrorHandling:
 
         assert result == []
         assert next_cursor is None
+        # Early return when user lacks team access - no DB query executed
         test_db.execute.assert_not_called()
 
 

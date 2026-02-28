@@ -176,7 +176,7 @@ class AuthEmailNotificationService:
         Returns:
             bool: True when message is sent successfully.
         """
-        display_name = full_name or to_email.split("@")[0]
+        display_name = full_name or to_email.split("@", maxsplit=1)[0]
         subject = "Reset your ContextForge password"
         body = self._render_template(
             template_name="password_reset_email.html",
@@ -196,7 +196,7 @@ class AuthEmailNotificationService:
         Returns:
             bool: True when message is sent successfully.
         """
-        display_name = full_name or to_email.split("@")[0]
+        display_name = full_name or to_email.split("@", maxsplit=1)[0]
         subject = "Your ContextForge password was changed"
         body = self._render_template(
             template_name="password_reset_confirmation_email.html",
@@ -218,7 +218,7 @@ class AuthEmailNotificationService:
         Returns:
             bool: True when message is sent successfully.
         """
-        display_name = full_name or to_email.split("@")[0]
+        display_name = full_name or to_email.split("@", maxsplit=1)[0]
         subject = "Your ContextForge account was temporarily locked"
         body = self._render_template(
             template_name="account_lockout_email.html",

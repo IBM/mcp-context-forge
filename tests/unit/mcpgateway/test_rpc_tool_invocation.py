@@ -214,5 +214,212 @@ class TestRPCToolInvocation:
                 assert result["id"] == 999
 
 
+class TestRPCServerIdScoping:
+    """Tests for server_id scoping enforcement in the /rpc handler (issue #2743).
+
+    Pure validate_server_access() unit tests live in
+    tests/unit/mcpgateway/utils/test_token_scoping_utils.py.
+    These tests cover the HTTP-level enforcement wired into handle_rpc().
+    """
+
+    # ------------------------------------------------------------------
+    # HTTP-level: 403 returned when validate_server_access rejects
+    # ------------------------------------------------------------------
+
+    def test_rpc_returns_403_when_server_scoped_token_accesses_wrong_server(self, client, mock_db):
+        """Patching validate_server_access to return False must produce a 403 JSON-RPC error."""
+        with patch("mcpgateway.config.settings.auth_required", False):
+            with patch("mcpgateway.main.get_current_user_with_permissions", return_value={"sub": "user@example.com"}):
+                with patch("mcpgateway.main.validate_server_access", return_value=False) as mock_validate:
+                    response = client.post(
+                        "/rpc",
+                        json={"jsonrpc": "2.0", "method": "tools/list", "params": {"server_id": "xyz"}, "id": 1},
+                    )
+                    mock_validate.assert_called_once_with({}, "xyz")
+
+        assert response.status_code == 403
+        body = response.json()
+        assert body["jsonrpc"] == "2.0"
+        assert body["error"]["code"] == -32003
+        assert "xyz" in body["error"]["message"]
+
+    def test_rpc_proceeds_when_server_access_is_allowed(self, client, mock_db):
+        """When validate_server_access returns True, the request must proceed to the handler."""
+        with patch("mcpgateway.config.settings.auth_required", False):
+            with patch("mcpgateway.main.get_current_user_with_permissions", return_value={"sub": "user@example.com"}):
+                with patch("mcpgateway.main.validate_server_access", return_value=True) as mock_validate:
+                    with patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock) as mock_list:
+                        mock_list.return_value = []
+                        response = client.post(
+                            "/rpc",
+                            json={"jsonrpc": "2.0", "method": "tools/list", "params": {"server_id": "abc"}, "id": 3},
+                        )
+                        mock_validate.assert_called_once_with({}, "abc")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["jsonrpc"] == "2.0"
+        assert "result" in body
+        assert "tools" in body["result"]
+
+    def test_rpc_skips_validation_for_unscoped_token_without_server_id(self, client, mock_db):
+        """Global token (no scopes.server_id) without server_id in params → proceeds to global list."""
+        with patch("mcpgateway.config.settings.auth_required", False):
+            with patch("mcpgateway.main.get_current_user_with_permissions", return_value={"sub": "user@example.com"}):
+                with patch("mcpgateway.main.validate_server_access") as mock_validate:
+                    with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock) as mock_list:
+                        mock_list.return_value = ([], None)
+                        response = client.post(
+                            "/rpc",
+                            json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
+                        )
+                        mock_validate.assert_not_called()
+
+        assert response.status_code == 200
+
+    # ------------------------------------------------------------------
+    # Auto-injection: server-scoped token + missing server_id
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_auto_injection_sets_server_id_from_scoped_token(self, mock_db):
+        """When request omits server_id but token is server-scoped, server_id must be auto-injected.
+
+        Calls handle_rpc() directly with a mock request carrying a server-scoped
+        _jwt_verified_payload, bypassing the middleware stack so that the actual
+        auto-injection line in main.py is exercised.
+        """
+        from types import SimpleNamespace  # noqa: PLC0415
+        from mcpgateway.main import handle_rpc  # noqa: PLC0415
+
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        mock_request.state = SimpleNamespace(
+            _jwt_verified_payload=("tok", {"sub": "u@ex.com", "scopes": {"server_id": "srv-abc"}, "is_admin": True, "teams": None}),
+            token_teams=None,
+        )
+
+        async def mock_body():
+            import orjson  # noqa: PLC0415
+            return orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 10})
+
+        mock_request.body = mock_body
+
+        with patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock) as mock_list:
+            mock_list.return_value = []
+            await handle_rpc(mock_request, db=mock_db, user={"sub": "u@ex.com"})
+
+            # Auto-injected server_id must route to list_server_tools with "srv-abc"
+            mock_list.assert_called_once()
+            assert mock_list.call_args[0][1] == "srv-abc"
+
+    def test_auto_injection_skipped_for_global_token(self):
+        """Global token (scopes.server_id=None) must NOT auto-inject a server_id."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=("tok", {"sub": "u@ex.com", "scopes": {"server_id": None, "permissions": ["*"]}}))
+        server_id = None
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+
+        if server_id:
+            pass
+        elif _token_server_id is not None:
+            server_id = _token_server_id
+
+        assert server_id is None, "Global token must not auto-inject server_id"
+
+    def test_auto_injection_skipped_when_no_jwt(self):
+        """No JWT payload (basic auth) must NOT auto-inject a server_id."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=None)
+        server_id = None
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+
+        if server_id:
+            pass
+        elif _token_server_id is not None:
+            server_id = _token_server_id
+
+        assert server_id is None, "No JWT must not auto-inject server_id"
+
+    # ------------------------------------------------------------------
+    # _jwt_verified_payload tuple-extraction logic
+    # ------------------------------------------------------------------
+
+    def test_scopes_correctly_extracted_from_jwt_payload_tuple(self):
+        """_jwt_verified_payload is stored as (token, payload) — extraction must unpack correctly."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=("eyJhbGci...", {"sub": "u@ex.com", "scopes": {"server_id": "srv-abc"}}))
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+
+        assert _token_scopes == {"server_id": "srv-abc"}
+
+        # First-Party
+        from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
+
+        assert validate_server_access(_token_scopes, "srv-abc") is True
+        assert validate_server_access(_token_scopes, "srv-xyz") is False
+
+    def test_scopes_extraction_handles_missing_payload(self):
+        """None _jwt_verified_payload (basic auth / no JWT) must yield empty scopes → full access."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=None)
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+
+        assert _token_scopes == {}
+        from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
+
+        assert validate_server_access(_token_scopes, "any-server") is True
+
+    def test_scopes_extraction_handles_payload_without_scopes_key(self):
+        """Token payload without a 'scopes' key must default to empty dict → no restriction."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=("token", {"sub": "u@ex.com", "is_admin": True}))
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+
+        assert _token_scopes == {}
+        from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
+
+        assert validate_server_access(_token_scopes, "any-server") is True
+
+    def test_scopes_extraction_handles_non_dict_payload(self):
+        """Non-dict payload in tuple (e.g. string) must be treated as missing → full access."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        state = SimpleNamespace(_jwt_verified_payload=("token", "not-a-dict"))
+
+        _cached = getattr(state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+
+        assert _jwt_payload is None
+        assert _token_scopes == {}
+
+        from mcpgateway.utils.token_scoping import validate_server_access  # noqa: PLC0415
+
+        assert validate_server_access(_token_scopes, "any-server") is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

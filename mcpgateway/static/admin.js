@@ -204,42 +204,36 @@ function updateEditToolUrl() {
     }
 }
 
-// Function to update default visibility based on team_id in URL
-function updateDefaultVisibility() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("team_id");
-    const hasTeam = teamId && teamId.trim() !== "";
+function isTeamScopedView() {
+    const teamId = new URLSearchParams(window.location.search).get("team_id");
+    return Boolean(teamId && teamId.trim() !== "");
+}
 
-    // List of visibility prefixes to handle
-    // These correspond to the "public", "team", "private" radio buttons
-    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
-    const visibilityPrefixes = [
-        "gateway-visibility", // Gateways (Create)
-        "server-visibility", // Virtual Servers (Create)
-        "tool-visibility", // Tools (Create)
-        "resource-visibility", // Resources (Create)
-        "prompt-visibility", // Prompts (Create)
-        "a2a-visibility", // Agents (Create)
-    ];
+/**
+ * Apply visibility restrictions (disable/style public radio) without changing checked state.
+ * Use this for edit forms to preserve the entity's saved visibility.
+ * @param {string[]} prefixes - Array of visibility ID prefixes to process
+ */
+function applyVisibilityRestrictions(prefixes) {
+    const hasTeam = isTeamScopedView();
 
-    visibilityPrefixes.forEach((prefix) => {
+    prefixes.forEach((prefix) => {
         const publicId = `[id="${prefix}-public"]`;
-        const teamIdStr = `[id="${prefix}-team"]`;
-        const privateIdStr = `[id="${prefix}-private"]`;
-
-        // Handle potential duplicate IDs using querySelectorAll
         const publicRadios = document.querySelectorAll(publicId);
-        const teamRadios = document.querySelectorAll(teamIdStr);
-        const privateRadios = document.querySelectorAll(privateIdStr);
 
         // Disable public radio when flag is false AND we're in a team-scoped view.
         const publicBlocked =
             window.ALLOW_PUBLIC_VISIBILITY === false && hasTeam;
         publicRadios.forEach((radio) => {
-            radio.disabled = publicBlocked;
+            // Keep a checked public value enabled in edit forms so FormData
+            // includes visibility and we don't silently change saved state.
+            // This is intentionally one-way: once switched away from public in
+            // restricted team scope, public cannot be re-selected.
+            const shouldDisable = publicBlocked && !radio.checked;
+            radio.disabled = shouldDisable;
             const wrapper = radio.closest(".flex.items-center");
             if (wrapper) {
-                if (publicBlocked) {
+                if (shouldDisable) {
                     wrapper.classList.add("opacity-40", "cursor-not-allowed");
                     wrapper.title =
                         "Public visibility is disabled by platform configuration";
@@ -256,6 +250,34 @@ function updateDefaultVisibility() {
                 }
             }
         });
+    });
+}
+
+// Function to update default visibility based on team_id in URL
+function updateDefaultVisibility() {
+    const hasTeam = isTeamScopedView();
+
+    // List of visibility prefixes to handle
+    // These correspond to the "public", "team", "private" radio buttons
+    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
+    const visibilityPrefixes = [
+        "gateway-visibility", // Gateways (Create)
+        "server-visibility", // Virtual Servers (Create)
+        "tool-visibility", // Tools (Create)
+        "resource-visibility", // Resources (Create)
+        "prompt-visibility", // Prompts (Create)
+        "a2a-visibility", // Agents (Create)
+    ];
+
+    // Set default checked state for add/create forms
+    visibilityPrefixes.forEach((prefix) => {
+        const publicId = `[id="${prefix}-public"]`;
+        const teamIdStr = `[id="${prefix}-team"]`;
+        const privateIdStr = `[id="${prefix}-private"]`;
+
+        const publicRadios = document.querySelectorAll(publicId);
+        const teamRadios = document.querySelectorAll(teamIdStr);
+        const privateRadios = document.querySelectorAll(privateIdStr);
 
         if (hasTeam) {
             // Default to Team
@@ -295,6 +317,10 @@ function updateDefaultVisibility() {
             });
         }
     });
+
+    // Apply restrictions after defaults are set so initially checked public
+    // radios in create forms become disabled once switched to team/private.
+    applyVisibilityRestrictions(visibilityPrefixes);
 }
 
 /**
@@ -740,6 +766,46 @@ async function safeParseJsonResponse(
     return await response.json();
 }
 
+// ===================================================================
+// PROXY-AWARE ADMIN NAVIGATION
+// Derives admin base from window.location so that proxy-embedded
+// deployments (where window.ROOT_PATH may be empty) preserve the
+// proxy prefix in the navigated URL. Fixes #3321 and #3324.
+// ===================================================================
+
+/**
+ * Fragment names differ from entity type names for some entities.
+ * e.g. the "servers" toggle navigates to the #catalog tab.
+ */
+const _TOGGLE_FRAGMENT_MAP = {
+    servers: "catalog",
+};
+
+/**
+ * Navigate to an admin tab while preserving the proxy prefix in the URL.
+ *
+ * Derives the admin base path from window.location.pathname rather than
+ * window.ROOT_PATH, so that proxy-embedded deployments (where ASGI
+ * root_path is not forwarded and ROOT_PATH is empty) still navigate to
+ * the correct proxy-scoped URL.
+ *
+ * @param {string} fragment - Hash fragment without '#' (e.g. "tools", "catalog").
+ * @param {URLSearchParams} [searchParams] - Query params to include (team_id, include_inactive, etc.).
+ */
+function _navigateAdmin(fragment, searchParams) {
+    const currentPath = window.location.pathname;
+    // Find /admin in current path and use everything before it as the base.
+    // e.g. /api/proxy/mcp/admin → base is /api/proxy/mcp
+    // Use lastIndexOf so that path segments like /administrator don't match.
+    const adminIdx = currentPath.lastIndexOf("/admin");
+    const base =
+        adminIdx >= 0
+            ? window.location.origin + currentPath.slice(0, adminIdx)
+            : window.ROOT_PATH || window.location.origin;
+    const qs = searchParams ? searchParams.toString() : "";
+    window.location.href = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+}
+
 /**
  * Header validation constants and functions
  */
@@ -1160,6 +1226,49 @@ function safeGetElement(id, suppressWarning = false) {
     }
 }
 
+/**
+ * Ensure a "no results" message element exists in the DOM for a search container.
+ * If the element already exists, returns { msg, span }. Otherwise creates it
+ * dynamically and inserts it right after the container so the feature works
+ * regardless of template-caching state.
+ *
+ * @param {string} containerId  - The id of the items container (e.g. "associatedTools")
+ * @param {string} msgId        - The id for the <p> message element (e.g. "noToolsMessage")
+ * @param {string} spanId       - The id for the inner <span> that shows the query text
+ * @param {string} entityLabel  - Human-readable label (e.g. "tool", "MCP server")
+ * @returns {{ msg: HTMLElement|null, span: HTMLElement|null }}
+ */
+function ensureNoResultsElement(containerId, msgId, spanId, entityLabel) {
+    let msg = document.getElementById(msgId);
+    let span = document.getElementById(spanId);
+    if (msg) {
+        // Element already in the DOM – just return references
+        if (!span) {
+            span = msg.querySelector("span");
+        }
+        return { msg, span };
+    }
+    // Create the message element dynamically
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return { msg: null, span: null };
+    }
+    msg = document.createElement("p");
+    msg.id = msgId;
+    msg.className = "text-gray-700 dark:text-gray-300 mt-2";
+    msg.style.display = "none";
+    span = document.createElement("span");
+    span.id = spanId;
+    msg.appendChild(
+        document.createTextNode(`No ${entityLabel} found containing \u201C`),
+    );
+    msg.appendChild(span);
+    msg.appendChild(document.createTextNode("\u201D"));
+    // Insert right after the container
+    container.parentNode.insertBefore(msg, container.nextSibling);
+    return { msg, span };
+}
+
 // Enhanced error handler for fetch operations
 function handleFetchError(error, operation = "operation") {
     console.error(`Error during ${operation}:`, error);
@@ -1372,21 +1481,26 @@ function closeModal(modalId, clearId = null) {
             }
         }
 
-        // Clean up specific modal types
-        if (modalId === "gateway-test-modal") {
-            cleanupGatewayTestModal();
-        } else if (modalId === "tool-test-modal") {
-            cleanupToolTestModal();
-        } else if (modalId === "prompt-test-modal") {
-            cleanupPromptTestModal();
-        } else if (modalId === "resource-test-modal") {
-            cleanupResourceTestModal();
-        } else if (modalId === "a2a-test-modal") {
-            cleanupA2ATestModal();
-        } else if (modalId === "server-edit-modal") {
-            resetEditSelections();
+        // Type-specific cleanup — isolated so failures don't block modal close
+        try {
+            if (modalId === "gateway-test-modal") {
+                cleanupGatewayTestModal();
+            } else if (modalId === "tool-test-modal") {
+                cleanupToolTestModal();
+            } else if (modalId === "prompt-test-modal") {
+                cleanupPromptTestModal();
+            } else if (modalId === "resource-test-modal") {
+                cleanupResourceTestModal();
+            } else if (modalId === "a2a-test-modal") {
+                cleanupA2ATestModal();
+            } else if (modalId === "server-edit-modal") {
+                resetEditSelections();
+            }
+        } catch (cleanupError) {
+            console.error(`Error during ${modalId} cleanup:`, cleanupError);
         }
 
+        // Always executes — modal hides even if cleanup failed
         modal.classList.add("hidden");
         AppState.setModalInactive(modalId);
 
@@ -3371,14 +3485,27 @@ async function editTool(toolId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = tool.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = tool.visibility
+            ? tool.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-tool-visibility-public");
         const teamRadio = safeGetElement("edit-tool-visibility-team");
         const privateRadio = safeGetElement("edit-tool-visibility-private");
 
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
-            // coerce legacy-public records to team or private.
+            // coerce legacy-public records to team.
             const effectiveVisibility =
                 window.ALLOW_PUBLIC_VISIBILITY === false &&
                 visibility === "public" &&
@@ -3696,6 +3823,7 @@ async function editTool(toolId) {
         }
 
         openModal("tool-edit-modal");
+        applyVisibilityRestrictions(["edit-tool-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Ensure editors are refreshed after modal display
         setTimeout(() => {
@@ -4047,9 +4175,9 @@ async function editA2AAgent(agentId) {
             ? agent.visibility.toLowerCase()
             : null;
 
-        const publicRadio = safeGetElement("a2a-visibility-public-edit");
-        const teamRadio = safeGetElement("a2a-visibility-team-edit");
-        const privateRadio = safeGetElement("a2a-visibility-private-edit");
+        const publicRadio = safeGetElement("edit-a2a-visibility-public");
+        const teamRadio = safeGetElement("edit-a2a-visibility-team");
+        const privateRadio = safeGetElement("edit-a2a-visibility-private");
 
         // Clear all first
         if (publicRadio) {
@@ -4280,6 +4408,7 @@ async function editA2AAgent(agentId) {
         }
 
         openModal("a2a-edit-modal");
+        applyVisibilityRestrictions(["edit-a2a-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ A2A Agent edit modal loaded successfully");
     } catch (err) {
         console.error("Error loading A2A agent:", err);
@@ -5064,6 +5193,7 @@ async function editResource(resourceId) {
         // }
 
         openModal("resource-edit-modal");
+        applyVisibilityRestrictions(["edit-resource-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editor after modal display
         setTimeout(() => {
@@ -5583,6 +5713,7 @@ async function editPrompt(promptId) {
         }
 
         openModal("prompt-edit-modal");
+        applyVisibilityRestrictions(["edit-prompt-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editors after modal display
         setTimeout(() => {
@@ -5892,10 +6023,23 @@ async function editGateway(gatewayId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = gateway.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = gateway.visibility
+            ? gateway.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-gateway-visibility-public");
         const teamRadio = safeGetElement("edit-gateway-visibility-team");
         const privateRadio = safeGetElement("edit-gateway-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
 
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
@@ -6156,6 +6300,7 @@ async function editGateway(gatewayId) {
         }
 
         openModal("gateway-edit-modal");
+        applyVisibilityRestrictions(["edit-gateway-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ Gateway edit modal loaded successfully");
     } catch (error) {
         console.error("Error fetching gateway for editing:", error);
@@ -6702,10 +6847,23 @@ async function editServer(serverId) {
         }
         hiddenField.value = isInactiveCheckedBool;
 
-        const visibility = server.visibility; // Ensure visibility is either 'public', 'team', or 'private'
-        const publicRadio = safeGetElement("edit-visibility-public");
-        const teamRadio = safeGetElement("edit-visibility-team");
-        const privateRadio = safeGetElement("edit-visibility-private");
+        const visibility = server.visibility
+            ? server.visibility.toLowerCase()
+            : null;
+        const publicRadio = safeGetElement("edit-server-visibility-public");
+        const teamRadio = safeGetElement("edit-server-visibility-team");
+        const privateRadio = safeGetElement("edit-server-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
 
         // Prepopulate visibility radio buttons based on the server data
         if (visibility) {
@@ -6925,6 +7083,7 @@ async function editServer(serverId) {
         ensureEditStoreListeners();
 
         openModal("server-edit-modal");
+        applyVisibilityRestrictions(["edit-server-visibility"]); // Disable public radio if restricted, preserve checked state
         // Initialize the select handlers for gateways, resources and prompts in the edit modal
         // so that gateway changes will trigger filtering of associated items while editing.
         if (document.getElementById("associatedEditGateways")) {
@@ -9432,6 +9591,10 @@ function initToolSelect(
                 }
                 allIdsInput.value = JSON.stringify(allToolIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allToolIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
@@ -9856,6 +10019,10 @@ function initResourceSelect(
                 }
                 allIdsInput.value = JSON.stringify(allIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
@@ -10266,6 +10433,10 @@ function initPromptSelect(
                 }
                 allIdsInput.value = JSON.stringify(allIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allIds.length} prompts selected`;
@@ -10433,18 +10604,33 @@ function initGatewaySelect(
                 }
             });
 
-            // Update "no results" message if it exists
-            const noMsg = document.getElementById("noGatewayMessage");
-            const searchQuerySpan =
-                document.getElementById("searchQueryServers");
+            // Update "no results" message – ensure element exists even if template is cached
+            // Use edit-modal message element when operating on the edit container
+            const noMsgId = selectId.includes("Edit")
+                ? "noEditGatewayMessage"
+                : "noGatewayMessage";
+            const searchQuerySpanId = selectId.includes("Edit")
+                ? "searchQueryEditServers"
+                : "searchQueryServers";
+            const { msg: noMsg, span: searchQuerySpan } =
+                ensureNoResultsElement(
+                    selectId,
+                    noMsgId,
+                    searchQuerySpanId,
+                    "MCP server",
+                );
 
-            if (noMsg) {
-                if (query && visibleCount === 0) {
+            if (query && visibleCount === 0) {
+                container.style.display = "none";
+                if (noMsg) {
                     noMsg.style.display = "block";
                     if (searchQuerySpan) {
                         searchQuerySpan.textContent = query;
                     }
-                } else {
+                }
+            } else {
+                container.style.display = "";
+                if (noMsg) {
                     noMsg.style.display = "none";
                 }
             }
@@ -10944,6 +11130,25 @@ function reloadAssociatedItems() {
                         selectBtn,
                         clearBtn,
                     );
+                    // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                    const toolSearchInput = document.getElementById(
+                        useEditContainers ? "searchEditTools" : "searchTools",
+                    );
+                    if (toolSearchInput && toolSearchInput.value.trim()) {
+                        if (useEditContainers) {
+                            serverSideEditToolSearch(
+                                toolSearchInput.value.trim(),
+                            );
+                        } else {
+                            serverSideToolSearch(toolSearchInput.value.trim());
+                        }
+                    } else if (toolSearchInput) {
+                        const toolContainer =
+                            document.getElementById(toolsContainerId);
+                        if (toolContainer) {
+                            toolContainer.style.display = "";
+                        }
+                    }
                 })
                 .catch((err) => {
                     console.error(
@@ -11152,6 +11357,25 @@ function reloadAssociatedItems() {
                 } catch (e) {
                     console.warn("Error restoring associated resources:", e);
                 }
+                // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                const resSearchInput = document.getElementById(
+                    useEditContainers
+                        ? "searchEditResources"
+                        : "searchResources",
+                );
+                if (resSearchInput && resSearchInput.value.trim()) {
+                    if (useEditContainers) {
+                        serverSideEditResourcesSearch(
+                            resSearchInput.value.trim(),
+                        );
+                    } else {
+                        serverSideResourceSearch(resSearchInput.value.trim());
+                    }
+                } else if (resSearchInput) {
+                    if (resourcesContainer) {
+                        resourcesContainer.style.display = "";
+                    }
+                }
                 console.log(
                     "[Filter Update DEBUG] Resources reloaded successfully via fetch",
                 );
@@ -11249,6 +11473,25 @@ function reloadAssociatedItems() {
                     pSelectBtn,
                     pClearBtn,
                 );
+                // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                const promptSearchInput = document.getElementById(
+                    useEditContainers ? "searchEditPrompts" : "searchPrompts",
+                );
+                if (promptSearchInput && promptSearchInput.value.trim()) {
+                    if (useEditContainers) {
+                        serverSideEditPromptsSearch(
+                            promptSearchInput.value.trim(),
+                        );
+                    } else {
+                        serverSidePromptSearch(promptSearchInput.value.trim());
+                    }
+                } else if (promptSearchInput) {
+                    const promptContainer =
+                        document.getElementById(promptsContainerId);
+                    if (promptContainer) {
+                        promptContainer.style.display = "";
+                    }
+                }
             });
         }
     }
@@ -11274,30 +11517,52 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
-function handleToggleSubmit(event, type) {
+async function handleToggleSubmit(event, type) {
     event.preventDefault();
 
     const isInactiveCheckedBool = isInactiveChecked(type);
     const form = event.target;
-    const hiddenField = document.createElement("input");
-    hiddenField.type = "hidden";
-    hiddenField.name = "is_inactive_checked";
-    hiddenField.value = isInactiveCheckedBool;
-
-    form.appendChild(hiddenField);
-
-    // Inject team_id from URL so backend preserves team scope in redirect
     const teamId = new URL(window.location.href).searchParams.get("team_id");
-    if (teamId && !form.querySelector('input[name="team_id"]')) {
-        const teamField = document.createElement("input");
-        teamField.type = "hidden";
-        teamField.name = "team_id";
-        teamField.value = teamId;
-        form.appendChild(teamField);
+
+    // Build FormData from current form state (captures any fields already
+    // appended by handleDeleteSubmit such as purge_metrics).
+    const formData = new FormData(form);
+    formData.set("is_inactive_checked", String(isInactiveCheckedBool));
+    if (teamId && !formData.has("team_id")) {
+        formData.set("team_id", teamId);
+    }
+    const csrfToken =
+        typeof getCookie === "function"
+            ? getCookie("mcpgateway_csrf_token") || ""
+            : "";
+    if (csrfToken) {
+        formData.set("csrf_token", csrfToken);
     }
 
-    injectCsrfTokenIntoForm(form);
-    form.submit();
+    try {
+        // Use redirect:'manual' so the browser does not follow the 303
+        // redirect to the backend-direct URL (which bypasses the proxy).
+        await fetch(form.action, {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+            redirect: "manual",
+        });
+    } catch (e) {
+        // Network error — still navigate so the user sees refreshed state.
+        console.error("Toggle submit error:", e);
+    }
+
+    // Navigate using proxy-aware helper so proxy prefix is preserved.
+    const fragment = _TOGGLE_FRAGMENT_MAP[type] || type;
+    const params = new URLSearchParams();
+    if (isInactiveCheckedBool) {
+        params.set("include_inactive", "true");
+    }
+    if (teamId) {
+        params.set("team_id", teamId);
+    }
+    _navigateAdmin(fragment, params);
 }
 
 function handleSubmitWithConfirmation(event, type) {
@@ -11336,29 +11601,6 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
 
     const toggleType = inactiveType || type;
     return handleToggleSubmit(event, toggleType);
-}
-
-function injectCsrfTokenIntoForm(form) {
-    if (!(form instanceof HTMLFormElement)) {
-        return;
-    }
-
-    let csrfToken = "";
-    if (typeof getCookie === "function") {
-        csrfToken = getCookie("mcpgateway_csrf_token") || "";
-    }
-    if (!csrfToken) {
-        return;
-    }
-
-    let tokenInput = form.querySelector('input[name="csrf_token"]');
-    if (!tokenInput) {
-        tokenInput = document.createElement("input");
-        tokenInput.type = "hidden";
-        tokenInput.name = "csrf_token";
-        form.appendChild(tokenInput);
-    }
-    tokenInput.value = csrfToken;
 }
 
 // ===================================================================
@@ -15191,9 +15433,7 @@ async function handleGatewayFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("gateways", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -15276,9 +15516,7 @@ async function handleResourceFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -15345,9 +15583,7 @@ async function handlePromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         if (status) {
@@ -15419,9 +15655,7 @@ async function handleEditPromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -15539,9 +15773,7 @@ async function handleServerFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Add Server Error:", error);
@@ -15668,9 +15900,7 @@ async function handleA2AFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("a2a-agents", searchParams);
         }
     } catch (error) {
         console.error("Add A2A Agent Error:", error);
@@ -15768,9 +15998,7 @@ async function handleToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -15838,9 +16066,7 @@ async function handleEditToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -15933,9 +16159,7 @@ async function handleEditGatewayFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("gateways", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -16034,9 +16258,7 @@ async function handleEditA2AAgentFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("a2a-agents", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -16129,9 +16351,7 @@ async function handleEditServerFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -16204,9 +16424,7 @@ async function handleEditResFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -16300,9 +16518,7 @@ async function handleGrpcServiceFormSubmit(e) {
             searchParams.set("team_id", teamId);
         }
 
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("grpc-services", searchParams);
     } catch (error) {
         console.error("Add gRPC Service Error:", error);
         if (status) {
@@ -27186,13 +27402,21 @@ function initializeChatInputResize() {
  */
 async function serverSideToolSearch(searchTerm) {
     const container = document.getElementById("associatedTools");
-    const noResultsMessage = safeGetElement("noToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryTools", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedTools",
+            "noToolsMessage",
+            "searchQueryTools",
+            "tool",
+        );
 
     if (!container) {
         console.error("associatedTools container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27412,6 +27636,7 @@ async function serverSideToolSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27502,13 +27727,21 @@ function updateResourceMapping(container) {
  */
 async function serverSidePromptSearch(searchTerm) {
     const container = document.getElementById("associatedPrompts");
-    const noResultsMessage = safeGetElement("noPromptsMessage", true);
-    const searchQuerySpan = safeGetElement("searchPromptsQuery", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedPrompts",
+            "noPromptsMessage",
+            "searchPromptsQuery",
+            "prompt",
+        );
 
     if (!container) {
         console.error("associatedPrompts container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27715,6 +27948,7 @@ async function serverSidePromptSearch(searchTerm) {
             }
         } else {
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27737,13 +27971,21 @@ async function serverSidePromptSearch(searchTerm) {
  */
 async function serverSideResourceSearch(searchTerm) {
     const container = document.getElementById("associatedResources");
-    const noResultsMessage = safeGetElement("noResourcesMessage", true);
-    const searchQuerySpan = safeGetElement("searchResourcesQuery", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedResources",
+            "noResourcesMessage",
+            "searchResourcesQuery",
+            "resource",
+        );
 
     if (!container) {
         console.error("associatedResources container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27942,6 +28184,7 @@ async function serverSideResourceSearch(searchTerm) {
             }
         } else {
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27964,13 +28207,21 @@ async function serverSideResourceSearch(searchTerm) {
  */
 async function serverSideEditToolSearch(searchTerm) {
     const container = document.getElementById("edit-server-tools");
-    const noResultsMessage = safeGetElement("noEditToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditTools", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-tools",
+            "noEditToolsMessage",
+            "searchQueryEditTools",
+            "tool",
+        );
 
     if (!container) {
         console.error("edit-server-tools container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27989,16 +28240,14 @@ async function serverSideEditToolSearch(searchTerm) {
             serverToolsData = dataAttr;
         }
 
-        // Flush DOM state into the persistent store
+        // Flush DOM state into the persistent store (add-only — unchecks are
+        // handled by ensureEditStoreListeners() event delegation)
         const toolSel = getEditSelections("edit-server-tools");
         container
             .querySelectorAll('input[name="associatedTools"]')
             .forEach((cb) => {
-                const value = String(cb.value);
                 if (cb.checked) {
-                    toolSel.add(value);
-                } else {
-                    toolSel.delete(value);
+                    toolSel.add(String(cb.value));
                 }
             });
 
@@ -28277,6 +28526,7 @@ async function serverSideEditToolSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -28300,13 +28550,21 @@ async function serverSideEditToolSearch(searchTerm) {
  */
 async function serverSideEditPromptsSearch(searchTerm) {
     const container = document.getElementById("edit-server-prompts");
-    const noResultsMessage = safeGetElement("noEditPromptsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditPrompts", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-prompts",
+            "noEditPromptsMessage",
+            "searchQueryEditPrompts",
+            "prompt",
+        );
 
     if (!container) {
         console.error("edit-server-prompts container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -28320,15 +28578,13 @@ async function serverSideEditPromptsSearch(searchTerm) {
     );
 
     // Flush DOM state into persistent store BEFORE clearing the container
+    // (add-only — unchecks are handled by ensureEditStoreListeners() event delegation)
     const promptSel = getEditSelections("edit-server-prompts");
     container
         .querySelectorAll('input[name="associatedPrompts"]')
         .forEach((cb) => {
-            const value = String(cb.value);
             if (cb.checked) {
-                promptSel.add(value);
-            } else {
-                promptSel.delete(value);
+                promptSel.add(String(cb.value));
             }
         });
 
@@ -28595,6 +28851,7 @@ async function serverSideEditPromptsSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -28617,13 +28874,21 @@ async function serverSideEditPromptsSearch(searchTerm) {
  */
 async function serverSideEditResourcesSearch(searchTerm) {
     const container = document.getElementById("edit-server-resources");
-    const noResultsMessage = safeGetElement("noEditResourcesMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditResources", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-resources",
+            "noEditResourcesMessage",
+            "searchQueryEditResources",
+            "resource",
+        );
 
     if (!container) {
         console.error("edit-server-resources container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -28637,15 +28902,13 @@ async function serverSideEditResourcesSearch(searchTerm) {
     );
 
     // Flush DOM state into persistent store BEFORE clearing the container
+    // (add-only — unchecks are handled by ensureEditStoreListeners() event delegation)
     const resSel = getEditSelections("edit-server-resources");
     container
         .querySelectorAll('input[name="associatedResources"]')
         .forEach((cb) => {
-            const value = String(cb.value);
             if (cb.checked) {
-                resSel.add(value);
-            } else {
-                resSel.delete(value);
+                resSel.add(String(cb.value));
             }
         });
 
@@ -28905,6 +29168,7 @@ async function serverSideEditResourcesSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;

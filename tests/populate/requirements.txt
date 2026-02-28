@@ -1,6 +1,6 @@
 # REST API population framework dependencies
 # These are already included in the project's dev dependencies
-faker>=40.4.0
+faker>=40.5.1
 httpx>=0.28.1
 pyyaml>=6.0.3
-rich>=14.3.2
+rich>=14.3.3

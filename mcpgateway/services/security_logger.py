@@ -491,7 +491,7 @@ class SecurityLogger:
             if should_close:
                 db.close()
 
-    def _create_audit_trail(  # pylint: disable=too-many-positional-arguments
+    def _create_audit_trail(  # noqa: PLR0917  # pylint: disable=too-many-positional-arguments
         self,
         action: str,
         resource_type: str,

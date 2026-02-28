@@ -11,5 +11,5 @@ requests>=2.32.5
 scikit-learn>=1.8.0
 scipy>=1.17.1
 seaborn>=0.13.2
-sqlalchemy>=2.0.46
+sqlalchemy>=2.0.47
 statsmodels>=0.14.6

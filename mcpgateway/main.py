@@ -42,6 +42,7 @@ import warnings
 # Third-Party
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
+from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -150,6 +151,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
@@ -5945,6 +5947,30 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
+        # RBAC: Enforce server_id scoping for server-scoped tokens.
+        # Extract token scopes once, then:
+        #   1. If request supplies server_id, validate it matches the token scope.
+        #   2. If request omits server_id but token is server-scoped, auto-inject the
+        #      token's server_id so list operations stay properly scoped (parity with
+        #      the REST middleware which denies /tools for server-scoped tokens).
+        _cached = getattr(request.state, "_jwt_verified_payload", None)
+        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
+        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
+
+        if server_id:
+            if not validate_server_access(_token_scopes, server_id):
+                return ORJSONResponse(
+                    status_code=403,
+                    content={
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32003, "message": f"Token not authorized for server: {server_id}"},
+                        "id": req_id,
+                    },
+                )
+        elif _token_server_id is not None:
+            server_id = _token_server_id
+
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         # Multi-worker session affinity: check if we should forward to another worker
@@ -6929,15 +6955,11 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
     Args:
         request: HTTP request with log level JSON body.
         user: Authenticated user.
-
-    Returns:
-        None
     """
     logger.debug(f"User {user} requested to set log level")
     body = await _read_request_json(request)
     level = LogLevel(body["level"])
     await logging_service.set_level(level)
-    return None
 
 
 ####################
@@ -6974,7 +6996,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         a2a_metrics = await a2a_service.aggregate_metrics(db)
         metrics_result["a2a_agents"] = a2a_metrics
 
-    return metrics_result
+    return jsonable_encoder(metrics_result)
 
 
 @metrics_router.post("/reset", response_model=dict)
