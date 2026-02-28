@@ -3173,7 +3173,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
 
         # CRITICAL: Create and register respond task BEFORE create_sse_response (Finding 1 fix)
         # This ensures the task exists when disconnect callback runs, preventing orphaned tasks
-        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
         try:
@@ -6939,7 +6939,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Create respond task and register for cancellation on disconnect
-        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
         try:

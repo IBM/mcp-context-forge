@@ -27,6 +27,7 @@ import time
 import pytest
 
 from mcpgateway.cache.session_registry import SessionRegistry
+from mcpgateway.config import settings
 
 try:
     from aiohttp import web
@@ -97,28 +98,29 @@ async def test_redis_broadcast_integration():
             pytest.skip("Redis did not start in time")
 
     redis_url = f"redis://{redis_host}:{redis_port}"
-    # Start a minimal HTTP RPC server to satisfy generate_response RPC calls
-    rpc_server = None
-    rpc_runner = None
-    rpc_site = None
-    rpc_url = "http://127.0.0.1:8000"
-    if web is not None:
-        async def rpc_handler(request):
-            try:
-                data = await request.json()
-            except Exception:
-                data = {}
-            # Return a minimal JSON-RPC response
-            return web.json_response({"result": {}})
+    # Start a minimal HTTP RPC server to satisfy generate_response loopback RPC calls.
+    # generate_response uses http://127.0.0.1:{settings.port}/rpc, so we start
+    # the mock server on port 8000 and patch settings.port to match.
+    rpc_port = 8000
+    original_port = settings.port
+    if web is None:
+        pytest.skip("aiohttp not installed; required for mock RPC server")
 
-        app = web.Application()
-        app.router.add_post("/rpc", rpc_handler)
-        rpc_runner = web.AppRunner(app)
-        await rpc_runner.setup()
-        rpc_site = web.TCPSite(rpc_runner, "127.0.0.1", 8000)
-        await rpc_site.start()
-    else:
-        rpc_url = "http://localhost"
+    async def rpc_handler(request):
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        # Return a minimal JSON-RPC response
+        return web.json_response({"result": {}})
+
+    app = web.Application()
+    app.router.add_post("/rpc", rpc_handler)
+    rpc_runner = web.AppRunner(app)
+    await rpc_runner.setup()
+    rpc_site = web.TCPSite(rpc_runner, "127.0.0.1", rpc_port)
+    await rpc_site.start()
+    settings.port = rpc_port
 
     reg_a = SessionRegistry(backend="redis", redis_url=redis_url)
     reg_b = SessionRegistry(backend="redis", redis_url=redis_url)
@@ -141,40 +143,34 @@ async def test_redis_broadcast_integration():
 
     transport = DummyTransport()
 
-    await reg_a.add_session("sid-integ", transport)
-
-    # Start respond listener on reg_a
-    task = asyncio.create_task(reg_a.respond(None, {"token": "t"}, "sid-integ", rpc_url))
-
-    # allow subscription to be established
-    await asyncio.sleep(0.1)
-
-    await reg_b.broadcast("sid-integ", {"method": "ping", "id": 99})
-
+    task = None
     try:
-        await asyncio.wait_for(msg_event.wait(), timeout=5.0)
-    except asyncio.TimeoutError:
-        # cleanup
-        task.cancel()
+        await reg_a.add_session("sid-integ", transport)
+
+        # Start respond listener on reg_a
+        task = asyncio.create_task(reg_a.respond(None, {"token": "t"}, "sid-integ"))
+
+        # allow subscription to be established
+        await asyncio.sleep(0.1)
+
+        await reg_b.broadcast("sid-integ", {"method": "ping", "id": 99})
+
+        try:
+            await asyncio.wait_for(msg_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pytest.fail("Did not receive message via Redis pubsub in time")
+
+        # Basic assertions
+        assert messages, "No messages received"
+        assert isinstance(messages[0], dict)
+    finally:
+        if task is not None:
+            task.cancel()
         await reg_a.remove_session("sid-integ")
         await reg_a.shutdown()
         await reg_b.shutdown()
+        settings.port = original_port
+        if rpc_runner is not None:
+            await rpc_runner.cleanup()
         if container_id:
             subprocess.run(["docker", "stop", container_id], check=False)
-        pytest.fail("Did not receive message via Redis pubsub in time")
-
-    # Basic assertions
-    assert messages, "No messages received"
-    assert isinstance(messages[0], dict)
-
-    # Cleanup
-    task.cancel()
-    await reg_a.remove_session("sid-integ")
-    await reg_a.shutdown()
-    await reg_b.shutdown()
-
-    if rpc_runner is not None:
-        await rpc_runner.cleanup()
-
-    if container_id:
-        subprocess.run(["docker", "stop", container_id], check=False)
