@@ -728,6 +728,12 @@ def _has_version_admin_access(user: Any) -> bool:
     """Return True when diagnostics access is permitted for the authenticated user.
 
     Admin diagnostics access requires unrestricted admin scope when the caller is a JWT payload.
+
+    Args:
+        user: Authenticated user payload from the auth dependency.
+
+    Returns:
+        bool: ``True`` when unrestricted admin diagnostics access is allowed.
     """
     if not isinstance(user, dict):
         return False
@@ -770,6 +776,9 @@ async def version_endpoint(
     Returns:
         Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.
 
+    Raises:
+        HTTPException: If the caller does not have required admin diagnostics access.
+
     Examples:
         >>> import asyncio
         >>> from unittest.mock import Mock, AsyncMock, patch
@@ -780,12 +789,14 @@ async def version_endpoint(
         >>> mock_request = Mock(spec=Request)
         >>> mock_request.headers = {"accept": "application/json"}
         >>>
+        >>> admin_user = {"email": "admin@example.com", "is_admin": True, "teams": None}
+        >>>
         >>> # Test JSON response (default)
         >>> async def test_json():
         ...     with patch('mcpgateway.version.REDIS_AVAILABLE', False):
         ...         with patch('mcpgateway.version._build_payload') as mock_build:
         ...             mock_build.return_value = {"test": "data"}
-        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, _user="testuser")
+        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, _user=admin_user)
         ...             return response
         >>>
         >>> response = asyncio.run(test_json())
@@ -799,7 +810,7 @@ async def version_endpoint(
         ...             with patch('mcpgateway.version._render_html') as mock_render:
         ...                 mock_build.return_value = {"test": "data"}
         ...                 mock_render.return_value = "<html>test</html>"
-        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, _user="testuser")
+        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, _user=admin_user)
         ...                 return response
         >>>
         >>> response = asyncio.run(test_html_fmt())
@@ -827,7 +838,7 @@ async def version_endpoint(
         ...                 with patch('mcpgateway.version.get_redis_client', mock_get_redis_client):
         ...                     with patch('mcpgateway.version._build_payload') as mock_build:
         ...                         mock_build.return_value = {"redis": {"version": "7.0.5"}}
-        ...                         response = await version_endpoint(mock_request, _user="testuser")
+        ...                         response = await version_endpoint(mock_request, _user=admin_user)
         ...                         # Verify Redis info was retrieved
         ...                         mock_redis.info.assert_called_once()
         ...                         # Verify payload was built with Redis info

@@ -2648,6 +2648,9 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
 
     Returns:
         The result of the completion process.
+
+    Raises:
+        HTTPException: If completion request validation fails.
     """
     body = await _read_request_json(request)
     logger.debug(f"User {user['email']} sent a completion request")
@@ -2674,6 +2677,9 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 
     Returns:
         The result of the message creation process.
+
+    Raises:
+        HTTPException: If sampling request validation fails.
     """
     logger.debug(f"User {user['email']} sent a sampling request")
     body = await _read_request_json(request)
