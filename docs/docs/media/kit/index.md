@@ -192,13 +192,19 @@ And is readily available as open source, published a container image and as a Py
     Try it yourself-and don't forget to ⭐ the project at [ContextForge](https://github.com/IBM/mcp-context-forge)!
 
 
-## 🖼️ Logo & Images
+## 🖼️ Logos & Images
 
-| Asset | URL |
-|-------|-----|
-| Transparent PNG logo  | `https://ibm.github.io/mcp-context-forge/logo.png` |
-| Hero demo GIF         | `https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif` |
-| Architecture overview | [SVG](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg) |
+| Asset |
+|-------|
+| [Color horizontal logo](https://ibm.github.io/mcp-context-forge/images/contextforge-logo_horizontal_color.svg) |
+| [White horizontal logo](https://ibm.github.io/mcp-context-forge/images/contextforge-logo_horizontal_white.svg) |
+| [Black horizontal logo](https://ibm.github.io/mcp-context-forge/images/contextforge-logo_horizontal_black.svg) |
+| [White vertical logo](https://ibm.github.io/mcp-context-forge/images/contextforge-logo_vertical_white.svg) |
+| [Black vertical logo](https://ibm.github.io/mcp-context-forge/images/contextforge-logo_vertical_black.svg) |
+| [White icon](https://ibm.github.io/mcp-context-forge/images/contextforge-icon_white.svg) |
+| [Black icon](https://ibm.github.io/mcp-context-forge/images/contextforge-icon_black.svg) |
+| [Hero demo GIF](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif) |
+| [Architecture overview](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg) |
 
 ---
 
