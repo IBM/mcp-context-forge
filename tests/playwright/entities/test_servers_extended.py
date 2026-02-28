@@ -322,6 +322,7 @@ class TestServersExtended:
         # Search for a non-matching term — this triggers server-side search
         # with a 300ms debounce, so wait for the HTMX swap to complete
         servers_page.fill_locator(servers_page.search_tools_input, "xyznonexistent999")
+        # 300ms debounce + fetch; wait for full cycle to complete
         servers_page.page.wait_for_timeout(2000)
 
         # Verify filtering occurred: a non-matching search should return fewer tools.
@@ -597,7 +598,10 @@ class TestServersExtended:
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
         pagination_select.select_option("100")
         # Pagination change triggers an HTMX swap; wait for table to re-stabilize
-        servers_page.page.wait_for_timeout(2000)
+        servers_page.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
         servers_page.wait_for_servers_table_loaded()
 
         # Find the server row - should now be visible with 100 items per page
@@ -711,7 +715,10 @@ class TestEditServerSelectionBugs:
         # Set pagination to 100 so the new server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
         pagination_select.select_option("100")
-        servers_page.page.wait_for_timeout(2000)
+        servers_page.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
         servers_page.wait_for_servers_table_loaded()
 
         return server_name
@@ -773,11 +780,11 @@ class TestEditServerSelectionBugs:
 
             # Search for a non-matching term (triggers serverSideEditToolSearch)
             servers_page.fill_locator(servers_page.edit_tools_search_input, "xyznonexistent999")
-            servers_page.page.wait_for_timeout(2000)  # debounce + fetch
+            servers_page.page.wait_for_timeout(2000)
 
             # Clear the search (triggers reload of default tool list)
             servers_page.fill_locator(servers_page.edit_tools_search_input, "")
-            servers_page.page.wait_for_timeout(2000)  # debounce + fetch
+            servers_page.page.wait_for_timeout(2000)
 
             # Verify selections survived the search cycle
             restored_checked = servers_page.get_edit_checked_tools()
@@ -809,9 +816,9 @@ class TestEditServerSelectionBugs:
             # Wait for edit tools to load
             servers_page.page.wait_for_selector('#edit-server-tools input[name="associatedTools"]', state="attached", timeout=10000)
 
-            # Click Select All
+            # Click Select All (async JS fetch for all IDs)
             servers_page.edit_select_all_tools_btn.evaluate("el => el.click()")
-            servers_page.page.wait_for_timeout(3000)  # async fetch for all IDs
+            servers_page.page.wait_for_timeout(3000)
 
             # Capture count of selected tools after Select All
             select_all_count = servers_page.get_edit_tool_store_size()
@@ -860,7 +867,7 @@ class TestEditServerSelectionBugs:
             if res_count == 0:
                 pytest.skip("No resources available to test Select All")
 
-            # Click Select All resources
+            # Click Select All resources (async JS fetch for all IDs)
             servers_page.edit_select_all_resources_btn.evaluate("el => el.click()")
             servers_page.page.wait_for_timeout(3000)
 
@@ -902,7 +909,7 @@ class TestEditServerSelectionBugs:
             if prompt_count == 0:
                 pytest.skip("No prompts available to test Select All")
 
-            # Click Select All prompts
+            # Click Select All prompts (async JS fetch for all IDs)
             servers_page.edit_select_all_prompts_btn.evaluate("el => el.click()")
             servers_page.page.wait_for_timeout(3000)
 

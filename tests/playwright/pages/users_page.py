@@ -10,6 +10,7 @@ Authors: Marek Dano
 # Third-Party
 from playwright.sync_api import Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect as pw_expect
 
 # Local
 from .base_page import BasePage
@@ -119,8 +120,8 @@ class UsersPage(BasePage):
         if is_admin:
             if not self.user_is_admin_checkbox.is_checked():
                 self.click_locator(self.user_is_admin_checkbox)
-        # Wait briefly for password validation JS to enable submit button
-        self.page.wait_for_timeout(500)
+        # Wait for password validation JS to enable submit button
+        pw_expect(self.create_user_submit_btn).to_be_enabled(timeout=5000)
         self.click_locator(self.create_user_submit_btn)
 
     # ==================== User List Operations ====================
@@ -180,7 +181,6 @@ class UsersPage(BasePage):
         we wait for any pending JS navigation, then load admin directly
         on the users hash to force a fresh users-partial fetch.
         """
-        self.page.wait_for_timeout(4000)
         self.page.wait_for_load_state("domcontentloaded")
         self.page.goto("/admin#users", wait_until="domcontentloaded")
         self.wait_for_users_loaded()

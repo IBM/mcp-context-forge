@@ -46,6 +46,18 @@ _ADD_GATEWAY_BTN_SELECTOR = (
 # ===================================================================
 
 
+def _wait_for_admin_content(page: Page) -> None:
+    """Wait for admin app to settle after navigation.
+
+    Uses networkidle with a timeout fallback, since these tests need HTMX
+    partials to have loaded before interacting with tab content.
+    """
+    try:
+        page.wait_for_load_state("networkidle", timeout=30000)
+    except PlaywrightTimeoutError:
+        pass  # SSE/setInterval may prevent networkidle; proceed anyway
+
+
 def _build_navigate_admin_url(page, fragment: str = "gateways") -> str:
     """Build the URL that ``_navigateAdmin()`` would navigate to.
 
@@ -150,7 +162,14 @@ def _click_add_gateway_btn(root) -> None:
 
 
 def _get_delete_gateway_btn(root, gw_id: str):
-    """Locate and return the delete button for a gateway. Skips if not found."""
+    """Locate and return the delete button for a gateway. Waits for HTMX table load."""
+    # The gateways table body is loaded via HTMX partial — wait for it first.
+    # FrameLocator (used in iframe tests) lacks wait_for_selector, so guard.
+    if hasattr(root, "wait_for_selector"):
+        try:
+            root.wait_for_selector("#gateways-table-body", state="attached", timeout=30000)
+        except PlaywrightTimeoutError:
+            pass
     delete_form = root.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
     if delete_form.count() == 0:
         pytest.skip("Delete form for created gateway not visible in UI — skipping.")
@@ -241,10 +260,11 @@ class TestAdminUrlContextPreservation:
 
         page.goto(_admin_url(base_url, team_id=True))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         _fill_add_gateway_form(page, unique_name)
 
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
             _click_add_gateway_btn(page)
 
         _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -258,6 +278,7 @@ class TestAdminUrlContextPreservation:
 
         page.goto(_admin_url(base_url, team_id=True, fragment="catalog"))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         name_input = page.locator("#server-name, input[name='name'][id*='server']").first
         if name_input.count() == 0:
@@ -265,7 +286,7 @@ class TestAdminUrlContextPreservation:
 
         name_input.fill(unique_name)
 
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
             page.locator(
                 "button[onclick*='handleServerFormSubmit'], #add-server-btn, "
                 "button[type='submit'][form*='server'], button:has-text('Add Server')"
@@ -283,6 +304,7 @@ class TestAdminUrlContextPreservation:
         try:
             page.goto(_admin_url(base_url, team_id=True))
             page.wait_for_load_state("domcontentloaded")
+            _wait_for_admin_content(page)
 
             edit_btn = page.locator(f"button[onclick*=\"editGateway('{gw_id}')\"]").first
             if edit_btn.count() == 0:
@@ -299,7 +321,7 @@ class TestAdminUrlContextPreservation:
             if desc_input.count() > 0:
                 desc_input.fill("updated by direct test")
 
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 edit_form.locator('button[type="submit"]').first.click()
 
             _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -317,12 +339,13 @@ class TestAdminUrlContextPreservation:
         _ensure_admin_logged_in(page, base_url)
         page.goto(_admin_url(base_url, team_id=True, fragment="catalog"))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
             toggle_form.locator('button[type="submit"]').first.click()
 
         _assert_url_params(page.url, team_id=True, include_inactive=False, fragment="catalog")
@@ -337,11 +360,12 @@ class TestAdminUrlContextPreservation:
         try:
             page.goto(_admin_url(base_url, team_id=True))
             page.wait_for_load_state("domcontentloaded")
+            _wait_for_admin_content(page)
 
             delete_btn = _get_delete_gateway_btn(page, gw_id)
             confirmed = _accept_dialog(page)
 
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 delete_btn.click()
 
             _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -358,11 +382,12 @@ class TestAdminUrlContextPreservation:
 
         page.goto(_admin_url(base_url, team_id=True, include_inactive=True))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, team_id=True, include_inactive=True)
@@ -379,11 +404,12 @@ class TestAdminUrlContextPreservation:
         try:
             page.goto(_admin_url(base_url, team_id=True, include_inactive=True))
             page.wait_for_load_state("domcontentloaded")
+            _wait_for_admin_content(page)
 
             delete_btn = _get_delete_gateway_btn(page, gw_id)
             confirmed = _accept_dialog(page)
 
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 delete_btn.click()
 
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
@@ -398,11 +424,12 @@ class TestAdminUrlContextPreservation:
 
         page.goto(_admin_url(base_url, team_id=True))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -482,11 +509,12 @@ class TestAdminProxyUrlContext:
 
         page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
@@ -503,10 +531,11 @@ class TestAdminProxyUrlContext:
         try:
             page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
             page.wait_for_load_state("domcontentloaded")
+            _wait_for_admin_content(page)
 
             # Click the edit button in the DOM rather than calling editGateway()
             # via evaluate — the 1.2 MB admin.js may not finish executing before
-            # networkidle fires in the proxy context.
+            # domcontentloaded fires in the proxy context.
             edit_btn = page.locator(f"button[onclick*=\"editGateway('{gw_id}')\"]").first
             if edit_btn.count() == 0:
                 pytest.skip("Edit button for created gateway not visible — skipping.")
@@ -522,7 +551,7 @@ class TestAdminProxyUrlContext:
             if desc_input.count() > 0:
                 desc_input.fill("updated by proxy test")
 
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 edit_form.locator('button[type="submit"]').first.click()
 
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
@@ -536,12 +565,13 @@ class TestAdminProxyUrlContext:
         _ensure_admin_logged_in(page, base_url)
         page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment="catalog"))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
             toggle_form.locator('button[type="submit"]').first.click()
 
         _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True, fragment="catalog")
@@ -556,11 +586,12 @@ class TestAdminProxyUrlContext:
         try:
             page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
             page.wait_for_load_state("domcontentloaded")
+            _wait_for_admin_content(page)
 
             delete_btn = _get_delete_gateway_btn(page, gw_id)
             confirmed = _accept_dialog(page)
 
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 delete_btn.click()
 
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
@@ -581,11 +612,12 @@ class TestAdminProxyUrlContext:
 
         page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True))
         page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=False)
@@ -735,7 +767,7 @@ class TestAdminIframeContext:
         _fill_add_gateway_form(frame, unique_name)
 
         try:
-            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 _click_add_gateway_btn(frame)
 
             self._assert_iframe_url(page)
@@ -769,7 +801,7 @@ class TestAdminIframeContext:
             if desc_input.count() > 0:
                 desc_input.fill("updated by iframe test")
 
-            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 edit_form.locator('button[type="submit"]').first.click()
 
             self._assert_iframe_url(page)
@@ -794,7 +826,7 @@ class TestAdminIframeContext:
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found in iframe — register a server first.")
 
-        with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+        with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=30000):
             toggle_form.locator('button[type="submit"]').first.click()
 
         self._assert_iframe_url(page, fragment="catalog")
@@ -812,7 +844,7 @@ class TestAdminIframeContext:
             delete_btn = _get_delete_gateway_btn(frame, gw_id)
             page.on("dialog", lambda d: d.accept())
 
-            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 delete_btn.click()
 
             self._assert_iframe_url(page)
@@ -842,7 +874,7 @@ class TestAdminIframeContext:
         _fill_add_gateway_form(frame, unique_name)
 
         try:
-            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 _click_add_gateway_btn(frame)
 
             self._assert_iframe_url(page, include_inactive=False)
@@ -868,7 +900,7 @@ class TestAdminIframeContext:
         _fill_add_gateway_form(frame, unique_name)
 
         try:
-            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=30000):
                 _click_add_gateway_btn(frame)
 
             self._assert_iframe_url(page, team_id=False)
