@@ -232,7 +232,6 @@ class MCPRegistryPage(BasePage):
             query: Search query string
         """
         self.search_input.fill(query)
-        # Wait for HTMX debounced search (500ms delay)
         self.page.wait_for_timeout(1000)
 
     def clear_filters(self) -> None:
@@ -366,7 +365,7 @@ class MCPRegistryPage(BasePage):
         self.open_add_server_modal(server_name)
         self.fill_api_key_form(api_key, custom_name)
         self.submit_api_key_form()
-        # Wait for registration to complete
+        # Wait for registration to complete and server grid to refresh
         self.page.wait_for_timeout(2000)
 
     # ==================== High-Level Verification Methods ====================

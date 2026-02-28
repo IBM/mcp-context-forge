@@ -638,14 +638,20 @@ class TestResourcesSearchAndFilter:
         search_input.fill(resource_name)
         # Trigger the search (HTMX may use debounce)
         search_input.press("Enter")
-        resources_page.page.wait_for_timeout(2000)
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Should still find at least one result
         assert resources_page.get_resource_count() > 0
 
         # Clear search
         resources_page.page.locator("#resources-clear-search").click()
-        resources_page.page.wait_for_timeout(1000)
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
 
     def test_clear_search_restores_results(self, resources_page: ResourcesPage):
         """Test that clearing search restores all results."""
@@ -659,7 +665,10 @@ class TestResourcesSearchAndFilter:
         # Search for something specific
         search_input = resources_page.page.locator("#resources-search-input")
         search_input.fill("nonexistent-resource-xyz-99999")
-        resources_page.page.wait_for_timeout(2000)
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Clear search — wait for HTMX reload to complete
         clear_btn = resources_page.page.locator("#resources-clear-search")
@@ -669,7 +678,6 @@ class TestResourcesSearchAndFilter:
             timeout=15000,
         )
         resources_page.page.wait_for_selector("#resources-table-body", state="attached", timeout=15000)
-        resources_page.page.wait_for_timeout(1000)
 
         # Should restore original count (reload page if HTMX left stale state)
         restored_count = resources_page.get_resource_count()
@@ -698,14 +706,20 @@ class TestResourcesSearchAndFilter:
         search_input = resources_page.page.locator("#resources-search-input")
         search_input.fill(partial)
         search_input.press("Enter")
-        resources_page.page.wait_for_timeout(2000)
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Should find at least one result
         assert resources_page.get_resource_count() > 0
 
         # Clear search
         resources_page.page.locator("#resources-clear-search").click()
-        resources_page.page.wait_for_timeout(1000)
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
 
     def test_search_with_no_results(self, resources_page: ResourcesPage):
         """Test searching for a resource that does not exist."""
@@ -715,7 +729,10 @@ class TestResourcesSearchAndFilter:
         search_input = resources_page.page.locator("#resources-search-input")
         search_input.fill("nonexistent-resource-xyz-99999-abcdef")
         search_input.press("Enter")
-        resources_page.page.wait_for_timeout(2000)
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Table should show no results or a minimal count
         count = resources_page.get_resource_count()
@@ -723,7 +740,10 @@ class TestResourcesSearchAndFilter:
 
         # Clear search to restore
         resources_page.page.locator("#resources-clear-search").click()
-        resources_page.page.wait_for_timeout(1000)
+        resources_page.page.wait_for_function(
+            "() => !document.querySelector('#resources-loading.htmx-request')",
+            timeout=15000,
+        )
 
     def test_clear_button_present(self, resources_page: ResourcesPage):
         """Test that the Clear search button is present."""

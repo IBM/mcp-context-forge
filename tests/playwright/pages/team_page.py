@@ -134,10 +134,12 @@ class TeamPage(BasePage):
         # Click delete button
         self.click_locator(self.get_team_delete_btn(team_name))
 
-        # Wait for DELETE request to complete and HX-Trigger to fire
-        # Then wait for the subsequent GET /admin/teams/partial refresh
-        # Total: DELETE + 1000ms delay + GET + DOM update
-        self.page.wait_for_timeout(5000)
+        # Wait for HTMX request cycle to complete (DELETE → HX-Trigger → GET refresh)
+        self.page.wait_for_function(
+            "() => !document.querySelector('#teams-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#unified-teams-list", state="attached", timeout=10000)
 
     def team_exists(self, team_name: str) -> bool:
         """Check if a team with the given name exists.
