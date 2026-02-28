@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_tool_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-19 11:33 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
+            created at 2026-02-28 08:40 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -86,7 +86,7 @@
     <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">SPDX-License-Identifier: Apache-2.0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">Authors: Mihai Criveti</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">OAuth Token Storage Service for MCP Gateway.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">OAuth Token Storage Service for ContextForge.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="str">This module handles the storage, retrieval, and management of OAuth access and refresh tokens</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="str">for Authorization Code flow implementations.</span>&nbsp;</span><span class="r"></span></p>
@@ -161,7 +161,7 @@
     <p class="pln"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t"><span class="str">            gateway_id: ID of the gateway</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t"><span class="str">            user_id: OAuth provider user ID</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t"><span class="str">            app_user_email: MCP Gateway user email (required)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t"><span class="str">            app_user_email: ContextForge user email (required)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t"><span class="str">            access_token: Access token from OAuth provider</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t"><span class="str">            refresh_token: Refresh token from OAuth provider (optional)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t"><span class="str">            expires_in: Token expiration time in seconds</span>&nbsp;</span><span class="r"></span></p>
@@ -214,11 +214,11 @@
     <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">            <span class="key">raise</span> <span class="nam">OAuthError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Token storage failed: </span><span class="op">{</span><span class="nam">str</span><span class="op">(</span><span class="nam">e</span><span class="op">)</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">get_user_token</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">gateway_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">app_user_email</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">threshold_seconds</span><span class="op">:</span> <span class="nam">int</span> <span class="op">=</span> <span class="num">300</span><span class="op">)</span> <span class="op">-></span> <span class="nam">Optional</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">        <span class="str">"""Get a valid access token for a specific MCP Gateway user, refreshing if necessary.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">        <span class="str">"""Get a valid access token for a specific ContextForge user, refreshing if necessary.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t"><span class="str">            gateway_id: ID of the gateway</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t"><span class="str">            app_user_email: MCP Gateway user email (required)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t"><span class="str">            app_user_email: ContextForge user email (required)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t"><span class="str">            threshold_seconds: Seconds before expiry to consider token expired</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
@@ -422,7 +422,7 @@
     <p class="pln"><span class="n"><a id="t340" href="#t340">340</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t341" href="#t341">341</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t342" href="#t342">342</a></span><span class="t"><span class="str">            gateway_id: ID of the gateway</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t343" href="#t343">343</a></span><span class="t"><span class="str">            app_user_email: MCP Gateway user email</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t343" href="#t343">343</a></span><span class="t"><span class="str">            app_user_email: ContextForge user email</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t344" href="#t344">344</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t345" href="#t345">345</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t346" href="#t346">346</a></span><span class="t"><span class="str">            Token information dictionary or None if not found</span>&nbsp;</span><span class="r"></span></p>
@@ -456,7 +456,7 @@
     <p class="pln"><span class="n"><a id="t374" href="#t374">374</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t375" href="#t375">375</a></span><span class="t">            <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t376" href="#t376">376</a></span><span class="t">                <span class="str">"user_id"</span><span class="op">:</span> <span class="nam">token_record</span><span class="op">.</span><span class="nam">user_id</span><span class="op">,</span>  <span class="com"># OAuth provider user ID</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t377" href="#t377">377</a></span><span class="t">                <span class="str">"app_user_email"</span><span class="op">:</span> <span class="nam">token_record</span><span class="op">.</span><span class="nam">app_user_email</span><span class="op">,</span>  <span class="com"># MCP Gateway user</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t377" href="#t377">377</a></span><span class="t">                <span class="str">"app_user_email"</span><span class="op">:</span> <span class="nam">token_record</span><span class="op">.</span><span class="nam">app_user_email</span><span class="op">,</span>  <span class="com"># ContextForge user</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t378" href="#t378">378</a></span><span class="t">                <span class="str">"token_type"</span><span class="op">:</span> <span class="nam">token_record</span><span class="op">.</span><span class="nam">token_type</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t379" href="#t379">379</a></span><span class="t">                <span class="str">"expires_at"</span><span class="op">:</span> <span class="nam">token_record</span><span class="op">.</span><span class="nam">expires_at</span><span class="op">.</span><span class="nam">isoformat</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">token_record</span><span class="op">.</span><span class="nam">expires_at</span> <span class="key">else</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t380" href="#t380">380</a></span><span class="t">                <span class="str">"scopes"</span><span class="op">:</span> <span class="nam">token_record</span><span class="op">.</span><span class="nam">scopes</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -474,7 +474,7 @@
     <p class="pln"><span class="n"><a id="t392" href="#t392">392</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t393" href="#t393">393</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t394" href="#t394">394</a></span><span class="t"><span class="str">            gateway_id: ID of the gateway</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t395" href="#t395">395</a></span><span class="t"><span class="str">            app_user_email: MCP Gateway user email</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t395" href="#t395">395</a></span><span class="t"><span class="str">            app_user_email: ContextForge user email</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t396" href="#t396">396</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t397" href="#t397">397</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t398" href="#t398">398</a></span><span class="t"><span class="str">            True if tokens were revoked successfully</span>&nbsp;</span><span class="r"></span></p>
@@ -558,8 +558,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_5321ecc6bb7a9b79_tool_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-19 11:33 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
+            created at 2026-02-28 08:40 +0000
         </p>
     </div>
 </footer>

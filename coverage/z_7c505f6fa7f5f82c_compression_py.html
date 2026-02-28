@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_correlation_id_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-19 11:33 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
+            created at 2026-02-28 08:40 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -86,7 +86,7 @@
     <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">SPDX-License-Identifier: Apache-2.0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">Authors: Mihai Criveti</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">SSE-Aware Compression Middleware for MCP Gateway.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">SSE-Aware Compression Middleware for ContextForge.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="str">This module wraps starlette-compress to skip compression for Server-Sent Events (SSE)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="str">responses, which should not be compressed as it can break streaming behavior.</span>&nbsp;</span><span class="r"></span></p>
@@ -186,7 +186,7 @@
     <p class="pln"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t"><span class="str">            True if the path is an MCP endpoint, False otherwise.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">        <span class="key">return</span> <span class="nam">path</span> <span class="op">==</span> <span class="str">"/mcp"</span> <span class="key">or</span> <span class="nam">path</span> <span class="op">==</span> <span class="str">"/mcp/"</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp"</span><span class="op">)</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp/"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">        <span class="key">return</span> <span class="nam">path</span> <span class="key">in</span> <span class="op">{</span><span class="str">"/mcp"</span><span class="op">,</span> <span class="str">"/mcp/"</span><span class="op">}</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp"</span><span class="op">)</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp/"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">__call__</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">scope</span><span class="op">:</span> <span class="nam">Scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">:</span> <span class="nam">Receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">:</span> <span class="nam">Send</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">        <span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
@@ -233,8 +233,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_7c505f6fa7f5f82c_correlation_id_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-19 11:33 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
+            created at 2026-02-28 08:40 +0000
         </p>
     </div>
 </footer>

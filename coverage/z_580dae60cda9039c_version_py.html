@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_wrapper_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-19 11:33 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
+            created at 2026-02-28 08:40 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -208,7 +208,7 @@
     <p class="pln"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t"><span class="str">        >>> _is_secret("PASS_PHRASE")</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t"><span class="str">        >>> # Specific MCP Gateway secrets</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t"><span class="str">        >>> # Specific ContextForge secrets</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t"><span class="str">        >>> _is_secret("BASIC_AUTH_USER")</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t"><span class="str">        >>> _is_secret("BASIC_AUTH_PASSWORD")</span>&nbsp;</span><span class="r"></span></p>
@@ -714,7 +714,7 @@
     <p class="pln"><span class="n"><a id="t632" href="#t632">632</a></span><span class="t"><span class="str">        >>> html = _render_html(payload)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t633" href="#t633">633</a></span><span class="t"><span class="str">        >>> '&lt;!doctype html>' in html</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t634" href="#t634">634</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t635" href="#t635">635</a></span><span class="t"><span class="str">        >>> '&lt;h1>MCP Gateway diagnostics&lt;/h1>' in html</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t635" href="#t635">635</a></span><span class="t"><span class="str">        >>> '&lt;h1>ContextForge diagnostics&lt;/h1>' in html</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t636" href="#t636">636</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t637" href="#t637">637</a></span><span class="t"><span class="str">        >>> 'test-server' in html</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t638" href="#t638">638</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
@@ -737,7 +737,7 @@
     <p class="run run2"><span class="n"><a id="t655" href="#t655">655</a></span><span class="t">        <span class="str">"th{background:#f7f7f7;width:25%;}"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t656" href="#t656">656</a></span><span class="t">        <span class="str">"&lt;/style>"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t657" href="#t657">657</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t658" href="#t658">658</a></span><span class="t">    <span class="nam">header</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">&lt;h1>MCP Gateway diagnostics&lt;/h1>&lt;p>Generated </span><span class="op">{</span><span class="nam">payload</span><span class="op">[</span><span class="str">'timestamp'</span><span class="op">]</span><span class="op">}</span><span class="fst"> - Host </span><span class="op">{</span><span class="nam">payload</span><span class="op">[</span><span class="str">'host'</span><span class="op">]</span><span class="op">}</span><span class="fst"> - Uptime </span><span class="op">{</span><span class="nam">payload</span><span class="op">[</span><span class="str">'uptime_seconds'</span><span class="op">]</span><span class="op">}</span><span class="fst">s&lt;/p></span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t658" href="#t658">658</a></span><span class="t">    <span class="nam">header</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">&lt;h1>ContextForge diagnostics&lt;/h1>&lt;p>Generated </span><span class="op">{</span><span class="nam">payload</span><span class="op">[</span><span class="str">'timestamp'</span><span class="op">]</span><span class="op">}</span><span class="fst"> - Host </span><span class="op">{</span><span class="nam">payload</span><span class="op">[</span><span class="str">'host'</span><span class="op">]</span><span class="op">}</span><span class="fst"> - Uptime </span><span class="op">{</span><span class="nam">payload</span><span class="op">[</span><span class="str">'uptime_seconds'</span><span class="op">]</span><span class="op">}</span><span class="fst">s&lt;/p></span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t659" href="#t659">659</a></span><span class="t">    <span class="nam">sections</span> <span class="op">=</span> <span class="str">""</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t660" href="#t660">660</a></span><span class="t">    <span class="key">for</span> <span class="nam">title</span><span class="op">,</span> <span class="nam">key</span> <span class="key">in</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t661" href="#t661">661</a></span><span class="t">        <span class="op">(</span><span class="str">"App"</span><span class="op">,</span> <span class="str">"app"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -786,7 +786,7 @@
     <p class="pln"><span class="n"><a id="t704" href="#t704">704</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t705" href="#t705">705</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t706" href="#t706">706</a></span><span class="t">    <span class="key">return</span> <span class="fst">f"""</span><span class="fst">&lt;!doctype html></span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t707" href="#t707">707</a></span><span class="t"><span class="fst">&lt;html>&lt;head>&lt;meta charset='utf-8'>&lt;title>Login - MCP Gateway&lt;/title></span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t707" href="#t707">707</a></span><span class="t"><span class="fst">&lt;html>&lt;head>&lt;meta charset='utf-8'>&lt;title>Login - ContextForge&lt;/title></span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t708" href="#t708">708</a></span><span class="t"><span class="fst">&lt;style></span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t709" href="#t709">709</a></span><span class="t"><span class="fst">body{{</span><span class="fst">font-family:system-ui,sans-serif;margin:2rem;}}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t710" href="#t710">710</a></span><span class="t"><span class="fst">form{{</span><span class="fst">max-width:320px;margin:auto;}}</span>&nbsp;</span><span class="r"></span></p>
@@ -945,8 +945,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_580dae60cda9039c_wrapper_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-19 11:33 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
+            created at 2026-02-28 08:40 +0000
         </p>
     </div>
 </footer>
