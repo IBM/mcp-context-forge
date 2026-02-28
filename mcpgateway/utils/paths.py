@@ -74,6 +74,3 @@ def resolve_root_path(request: Request, *, fallback: str | None = None) -> str:
     if root_path:
         root_path = "/" + root_path.lstrip("/")
     return root_path.rstrip("/")
-
-
-# Made with Bob
