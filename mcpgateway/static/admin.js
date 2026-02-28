@@ -21755,6 +21755,38 @@ function setupCreateTokenForm() {
         // User can create public-only tokens in that context
         await createToken(form);
     });
+
+    // Attach HTMX error handlers to the tokens panel so that a transient backend
+    // failure (e.g. DB pool exhaustion / idle transaction timeout) shows an
+    // actionable error with a retry button instead of leaving the table stale.
+    const tokensPanel = document.getElementById("tokens-panel");
+    if (tokensPanel && !tokensPanel.dataset.htmxErrorHandlerAttached) {
+        tokensPanel.dataset.htmxErrorHandlerAttached = "true";
+        tokensPanel.addEventListener("htmx:responseError", function (evt) {
+            const tokensTable = document.getElementById("tokens-table");
+            if (tokensTable) {
+                const status =
+                    evt.detail && evt.detail.xhr
+                        ? evt.detail.xhr.status
+                        : "error";
+                tokensTable.innerHTML =
+                    '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                    "<strong>Failed to load tokens.</strong> The backend may be temporarily unavailable (HTTP " +
+                    status +
+                    "). " +
+                    '<button type="button" onclick="loadTokensList(true);" class="underline font-medium">Retry</button></div>';
+            }
+        });
+        tokensPanel.addEventListener("htmx:sendError", function () {
+            const tokensTable = document.getElementById("tokens-table");
+            if (tokensTable) {
+                tokensTable.innerHTML =
+                    '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                    "<strong>Failed to load tokens.</strong> Network error — check your connection and " +
+                    '<button type="button" onclick="loadTokensList(true);" class="underline font-medium">retry</button>.</div>';
+            }
+        });
+    }
 }
 
 /**
@@ -21949,12 +21981,34 @@ async function createToken(form) {
         showTokenCreatedModal(result);
         form.reset();
 
+        // Clear any lingering inline error
+        const inlineMessagesSuccess = document.getElementById(
+            "token-creation-messages",
+        );
+        if (inlineMessagesSuccess) {
+            inlineMessagesSuccess.innerHTML = "";
+        }
+
         // Show appropriate success message
         const tokenType = currentTeamId ? "team-scoped" : "public-only";
         showNotification(`${tokenType} token created successfully!`, "success");
     } catch (error) {
         console.error("Error creating token:", error);
         showNotification(`Error creating token: ${error.message}`, "error");
+        // Also show inline near the form — the toast may be missed if the user scrolled
+        const inlineMessages = document.getElementById(
+            "token-creation-messages",
+        );
+        if (inlineMessages) {
+            inlineMessages.innerHTML =
+                '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                "<strong>Failed to create token:</strong> " +
+                escapeHtml(error.message) +
+                "</div>";
+            setTimeout(function () {
+                inlineMessages.innerHTML = "";
+            }, 15000);
+        }
     } finally {
         submitButton.textContent = originalText;
         submitButton.disabled = false;
@@ -32809,13 +32863,39 @@ function performTeamSelectorSearch(searchTerm) {
 
     const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
 
-    // Use HTMX to load results
-    if (window.htmx) {
-        window.htmx.ajax("GET", url, {
-            target: "#team-selector-items",
-            swap: "innerHTML",
-        });
+    // Load results via fetch for reliable error handling; htmx.ajax() does not
+    // reject on HTTP 5xx so we cannot detect backend failures with it.
+    if (container) {
+        container.innerHTML =
+            '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading\u2026</div>';
     }
+    fetch(url, { credentials: "same-origin" })
+        .then(function (resp) {
+            if (!resp.ok) {
+                throw new Error("HTTP " + resp.status);
+            }
+            return resp.text();
+        })
+        .then(function (html) {
+            if (container) {
+                container.innerHTML = html;
+                container.dataset.loaded = "true";
+                if (window.htmx) {
+                    window.htmx.process(container);
+                }
+            }
+        })
+        .catch(function () {
+            if (container) {
+                delete container.dataset.loaded;
+                container.innerHTML =
+                    '<div class="px-4 py-2 text-sm text-red-600 dark:text-red-400">' +
+                    "Failed to load teams. " +
+                    '<button type="button" ' +
+                    "onclick=\"delete document.getElementById('team-selector-items').dataset.loaded; searchTeamSelector('');\" " +
+                    'class="underline font-medium">Retry</button></div>';
+            }
+        });
 }
 
 /**
