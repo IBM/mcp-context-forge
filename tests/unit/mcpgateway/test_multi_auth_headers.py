@@ -393,3 +393,45 @@ class TestMultiAuthHeaders:
         assert masked_bearer.auth_token == settings.masked_auth_value
         # SECURITY: After masking, unmasked fields must be None to prevent credential leakage
         assert masked_bearer.auth_token_unmasked is None
+
+    def test_masked_preserve_unmasked_retains_credentials(self, monkeypatch):
+        """Verify masked(preserve_unmasked=True) keeps _unmasked fields for admin UI reveal."""
+        monkeypatch.setattr(settings, "auth_encryption_secret", "unit-test-secret")
+
+        # Basic auth — auth_password_unmasked should be preserved
+        creds = base64.b64encode(b"user:secret-pass").decode("utf-8")
+        basic_gateway = GatewayRead(
+            name="Basic Gateway",
+            url="http://example.com",
+            auth_type="basic",
+            auth_value=encode_auth({"Authorization": f"Basic {creds}"}),
+        )
+        masked_basic = basic_gateway.masked(preserve_unmasked=True)
+        assert masked_basic.auth_password == settings.masked_auth_value
+        assert masked_basic.auth_password_unmasked == "secret-pass"
+
+        # Bearer auth — auth_token_unmasked should be preserved
+        bearer_gateway = GatewayRead(
+            name="Bearer Gateway",
+            url="http://example.com",
+            auth_type="bearer",
+            auth_value=encode_auth({"Authorization": "Bearer token-123"}),
+        )
+        masked_bearer = bearer_gateway.masked(preserve_unmasked=True)
+        assert masked_bearer.auth_token == settings.masked_auth_value
+        assert masked_bearer.auth_token_unmasked == "token-123"
+
+        # Auth headers — auth_headers_unmasked should be preserved
+        auth_map = {"X-API-Key": "secret123", "X-Trace": "trace-value"}
+        headers_gateway = GatewayRead(
+            name="Headers Gateway",
+            url="http://example.com",
+            auth_type="authheaders",
+            auth_value=encode_auth(auth_map),
+        )
+        original_unmasked = headers_gateway.auth_headers_unmasked
+        masked_headers = headers_gateway.masked(preserve_unmasked=True)
+        for header in masked_headers.auth_headers:
+            if header["value"]:
+                assert header["value"] == settings.masked_auth_value
+        assert masked_headers.auth_headers_unmasked == original_unmasked
