@@ -235,7 +235,7 @@ class TestCacheInvalidationSubscriber:
     @pytest.mark.asyncio
     async def test_start_cleanup_on_exception(self, cache_subscriber, monkeypatch):
         class FakePubSub:
-            async def subscribe(self, _channel):
+            async def subscribe(self, *_channels):
                 raise RuntimeError("subscribe failed")
 
             async def aclose(self):
@@ -256,7 +256,7 @@ class TestCacheInvalidationSubscriber:
     @pytest.mark.asyncio
     async def test_start_cleanup_on_exception_handles_cleanup_error(self, cache_subscriber, monkeypatch):
         class FakePubSub:
-            async def subscribe(self, _channel):
+            async def subscribe(self, *_channels):
                 raise RuntimeError("subscribe failed")
 
             async def aclose(self):
@@ -795,3 +795,124 @@ class TestAuthCacheInvalidationSubscriber:
         assert "admin@company.com" not in mock_auth._user_cache
         assert "admin@company.com:jti-xyz" not in mock_auth._context_cache
         assert "admin@company.com:team-a,team-b" not in mock_auth._team_cache
+
+    @pytest.mark.asyncio
+    async def test_revoke_skips_add_when_revoked_jtis_at_cap(self):
+        """Test that revoke handler respects _MAX_REVOKED_JTIS cap."""
+        # First-Party
+        from mcpgateway.cache.registry_cache import _MAX_REVOKED_JTIS
+
+        subscriber = CacheInvalidationSubscriber()
+        # Pre-fill _revoked_jtis to the cap
+        existing_jtis = {f"old-jti-{i}" for i in range(_MAX_REVOKED_JTIS)}
+        mock_auth = create_mock_auth_cache(
+            revoked_jtis=existing_jtis,
+            revocation_cache={"new-jti": "cached"},
+            context_cache={"user@test.com:new-jti": "ctx-data"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("revoke:new-jti")
+
+        # JTI should NOT be added to the set (cap reached)
+        assert "new-jti" not in mock_auth._revoked_jtis
+        assert len(mock_auth._revoked_jtis) == _MAX_REVOKED_JTIS
+        # But cache eviction should still happen
+        assert "new-jti" not in mock_auth._revocation_cache
+        assert "user@test.com:new-jti" not in mock_auth._context_cache
+
+    @pytest.mark.asyncio
+    async def test_revoke_adds_jti_when_below_cap(self):
+        """Test that revoke handler adds JTI when below _MAX_REVOKED_JTIS cap."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            revoked_jtis={"existing-jti"},
+            revocation_cache={"new-jti": "cached"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("revoke:new-jti")
+
+        assert "new-jti" in mock_auth._revoked_jtis
+
+    @pytest.mark.asyncio
+    async def test_prefix_collision_teams_does_not_match_team(self):
+        """Regression: 'teams:' must not fall through to 'team:' handler."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            team_cache={"alice@test.com": "should-remain"},
+            teams_list_cache={"alice@test.com:True": ["team-1"]},
+            context_cache={"alice@test.com:jti1": "should-remain"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("teams:alice@test.com")
+
+        # teams: should only clear _teams_list_cache, not _team_cache or _context_cache
+        assert "alice@test.com:True" not in mock_auth._teams_list_cache
+        assert "alice@test.com" in mock_auth._team_cache
+        assert "alice@test.com:jti1" in mock_auth._context_cache
+
+    @pytest.mark.asyncio
+    async def test_prefix_collision_team_roles_does_not_match_team(self):
+        """Regression: 'team_roles:' must not fall through to 'team:' handler."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            team_cache={"alice@test.com": "should-remain"},
+            role_cache={"alice@test.com:team-99": "developer", "bob@test.com:team-99": "admin"},
+            context_cache={"alice@test.com:jti1": "should-remain"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("team_roles:team-99")
+
+        # team_roles: should only clear _role_cache, not _team_cache or _context_cache
+        assert "alice@test.com:team-99" not in mock_auth._role_cache
+        assert "bob@test.com:team-99" not in mock_auth._role_cache
+        assert "alice@test.com" in mock_auth._team_cache
+        assert "alice@test.com:jti1" in mock_auth._context_cache
+
+    @pytest.mark.asyncio
+    async def test_empty_identifier_after_prefix(self):
+        """Edge case: messages with empty identifier after prefix don't crash."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache()
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("user:")
+            await subscriber._process_invalidation("revoke:")
+            await subscriber._process_invalidation("team:")
+            await subscriber._process_invalidation("role:")
+            await subscriber._process_invalidation("team_roles:")
+            await subscriber._process_invalidation("teams:")
+            await subscriber._process_invalidation("membership:")
+
+    @pytest.mark.asyncio
+    async def test_identifier_containing_colons(self):
+        """Edge case: identifiers with extra colons are handled correctly."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            role_cache={"user@co:with:extra": "developer", "clean@co:team-1": "viewer"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            # role: strips only the "role:" prefix; remainder is the full cache key
+            await subscriber._process_invalidation("role:user@co:with:extra")
+
+        assert "user@co:with:extra" not in mock_auth._role_cache
+        assert "clean@co:team-1" in mock_auth._role_cache
+
+    @pytest.mark.asyncio
+    async def test_membership_identifier_with_colon_in_email(self):
+        """Edge case: email-like identifiers with unusual chars."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            team_cache={"odd:user@test.com:team-1": True, "normal@test.com:team-2": True},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("membership:odd:user@test.com")
+
+        # Should evict keys starting with "odd:user@test.com:"
+        assert "odd:user@test.com:team-1" not in mock_auth._team_cache
+        assert "normal@test.com:team-2" in mock_auth._team_cache

@@ -531,6 +531,17 @@ def get_registry_cache() -> RegistryCache:
 registry_cache = get_registry_cache()
 
 
+_MAX_REVOKED_JTIS = 100_000
+"""Upper bound on the in-memory revoked-JTI set.
+
+Prevents unbounded memory growth if a compromised Redis channel floods
+``revoke:`` messages.  When the cap is reached new JTIs are still
+processed (cache eviction) but are not added to the local set; the
+next ``load_revoked_from_redis`` call will reconcile from the
+authoritative Redis set.
+"""
+
+
 class CacheInvalidationSubscriber:
     """Redis pubsub subscriber for cross-worker cache invalidation.
 
@@ -812,7 +823,10 @@ class CacheInvalidationSubscriber:
         elif message.startswith("revoke:"):
             jti = message[len("revoke:") :]
             with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                auth_cache._revoked_jtis.add(jti)  # pyright: ignore[reportPrivateUsage]
+                if len(auth_cache._revoked_jtis) < _MAX_REVOKED_JTIS:  # pyright: ignore[reportPrivateUsage]
+                    auth_cache._revoked_jtis.add(jti)  # pyright: ignore[reportPrivateUsage]
+                else:
+                    logger.warning("CacheInvalidationSubscriber: _revoked_jtis at cap (%d), skipping add for jti=%s", _MAX_REVOKED_JTIS, jti[:8])
                 auth_cache._revocation_cache.pop(jti, None)  # pyright: ignore[reportPrivateUsage]
                 self._evict_keys(auth_cache._context_cache, lambda k: k.endswith(f":{jti}"))  # pyright: ignore[reportPrivateUsage]
             logger.debug("CacheInvalidationSubscriber: Cleared local auth revocation cache for jti=%s", jti[:8])
