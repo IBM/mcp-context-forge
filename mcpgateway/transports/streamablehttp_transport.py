@@ -1188,7 +1188,13 @@ def _build_paginated_params(meta: Optional[Any]) -> Optional[PaginatedRequestPar
 
 
 async def _send_streamable_http_json_response(send: Send, *, status_code: int, payload: dict[str, Any]) -> None:
-    """Send a JSON response for Streamable HTTP request handling paths."""
+    """Send a JSON response for Streamable HTTP request handling paths.
+
+    Args:
+        send: ASGI send callable.
+        status_code: HTTP status code for the response.
+        payload: JSON-serializable response payload.
+    """
     body = orjson.dumps(payload)
     await send(
         {
@@ -1206,6 +1212,10 @@ async def _close_streamable_http_session(
     user_context: Optional[dict[str, Any]],
 ) -> tuple[int, dict[str, Any]]:
     """Close a stateful Streamable HTTP session deterministically.
+
+    Args:
+        mcp_session_id: Stateful MCP session identifier to close.
+        user_context: Authenticated requester context used for ownership checks.
 
     Returns:
         Tuple ``(status_code, payload)``.
