@@ -775,6 +775,10 @@ class CacheInvalidationSubscriber:
 
         Must be called while holding the owning cache's ``_lock``.
 
+        Args:
+            cache_dict: The dictionary to evict keys from.
+            predicate: A callable that returns True for keys to remove.
+
         Returns:
             Number of keys removed.
         """
