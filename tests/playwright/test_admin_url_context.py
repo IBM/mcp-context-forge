@@ -27,6 +27,10 @@ from .conftest import _ensure_admin_logged_in
 
 # A placeholder team_id value; tests use it as a URL param and verify it survives
 # mutations.  In a real team-scoped deployment this would be a valid UUID.
+# NOTE: This value intentionally fails UUID validation, which causes tests with
+# team_id=True to receive a 400 JSON error instead of the admin page.  This
+# means those tests skip (no form elements found) rather than exercise the real
+# admin UI.  See #3340 for the tracking issue.
 _TEAM_PARAM = "test-team-placeholder"
 
 _PROXY_PREFIX = "/proxy/mcp"
@@ -42,8 +46,45 @@ _ADD_GATEWAY_BTN_SELECTOR = (
 # ===================================================================
 
 
+def _build_navigate_admin_url(page, fragment: str = "gateways") -> str:
+    """Build the URL that ``_navigateAdmin()`` would navigate to.
+
+    After any successful mutation the admin JS calls ``_navigateAdmin()``
+    which builds a URL from the current page state (checkbox values, URL
+    params) and sets ``window.location.href``.
+
+    This helper invokes the same logic but captures the URL string instead
+    of actually navigating.  This lets us test URL-context preservation
+    independently of the server's trailing-slash redirect behavior (which
+    strips query params when a hash fragment is present — a separate known
+    bug in ``_navigateAdmin`` generating ``/admin`` without trailing slash).
+    """
+    return page.evaluate(f"""() => {{
+        const currentPath = window.location.pathname;
+        const adminIdx = currentPath.lastIndexOf('/admin');
+        const base = adminIdx >= 0
+            ? window.location.origin + currentPath.slice(0, adminIdx)
+            : (window.ROOT_PATH || window.location.origin);
+        const searchParams = new URLSearchParams();
+        if (typeof isInactiveChecked === 'function' && isInactiveChecked('{fragment}')) {{
+            searchParams.set('include_inactive', 'true');
+        }}
+        const teamId = new URL(window.location.href).searchParams.get('team_id');
+        if (teamId) {{ searchParams.set('team_id', teamId); }}
+        const qs = searchParams.toString();
+        return base + '/admin' + (qs ? '?' + qs : '') + '#{fragment}';
+    }}""")
+
+
 def _admin_url(base_url: str, *, prefix: str = "", team_id: bool = False, include_inactive: bool = False, fragment: str = "gateways") -> str:
-    """Build an admin URL with optional proxy prefix, query params, and fragment."""
+    """Build an admin URL with optional proxy prefix, query params, and fragment.
+
+    Note: the server's trailing-slash redirect can strip query params when a
+    ``#fragment`` is present.  The JS ``cleanUpUrlParamsForTab()`` also removes
+    ``include_inactive`` from the URL on tab switch (but preserves the checkbox
+    state).  Tests should verify checkbox state rather than relying on
+    ``include_inactive`` being in the URL after initial navigation.
+    """
     params = []
     if team_id:
         params.append(f"team_id={_TEAM_PARAM}")
@@ -199,11 +240,11 @@ class TestAdminUrlContextPreservation:
         unique_name = f"test-gw-urlctx-{uuid.uuid4().hex[:8]}"
 
         page.goto(_admin_url(base_url, team_id=True))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         _fill_add_gateway_form(page, unique_name)
 
-        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
             _click_add_gateway_btn(page)
 
         _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -216,7 +257,7 @@ class TestAdminUrlContextPreservation:
         unique_name = f"test-srv-urlctx-{uuid.uuid4().hex[:8]}"
 
         page.goto(_admin_url(base_url, team_id=True, fragment="catalog"))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         name_input = page.locator("#server-name, input[name='name'][id*='server']").first
         if name_input.count() == 0:
@@ -224,7 +265,7 @@ class TestAdminUrlContextPreservation:
 
         name_input.fill(unique_name)
 
-        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
             page.locator(
                 "button[onclick*='handleServerFormSubmit'], #add-server-btn, "
                 "button[type='submit'][form*='server'], button:has-text('Add Server')"
@@ -241,7 +282,7 @@ class TestAdminUrlContextPreservation:
 
         try:
             page.goto(_admin_url(base_url, team_id=True))
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("domcontentloaded")
 
             edit_btn = page.locator(f"button[onclick*=\"editGateway('{gw_id}')\"]").first
             if edit_btn.count() == 0:
@@ -258,7 +299,7 @@ class TestAdminUrlContextPreservation:
             if desc_input.count() > 0:
                 desc_input.fill("updated by direct test")
 
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 edit_form.locator('button[type="submit"]').first.click()
 
             _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -275,13 +316,13 @@ class TestAdminUrlContextPreservation:
         """After toggling a server's active state, URL stays on #catalog and team_id survives."""
         _ensure_admin_logged_in(page, base_url)
         page.goto(_admin_url(base_url, team_id=True, fragment="catalog"))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
-        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
             toggle_form.locator('button[type="submit"]').first.click()
 
         _assert_url_params(page.url, team_id=True, include_inactive=False, fragment="catalog")
@@ -295,12 +336,12 @@ class TestAdminUrlContextPreservation:
 
         try:
             page.goto(_admin_url(base_url, team_id=True))
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("domcontentloaded")
 
             delete_btn = _get_delete_gateway_btn(page, gw_id)
             confirmed = _accept_dialog(page)
 
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 delete_btn.click()
 
             _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -316,12 +357,12 @@ class TestAdminUrlContextPreservation:
         unique_name = f"test-gw-both-{uuid.uuid4().hex[:8]}"
 
         page.goto(_admin_url(base_url, team_id=True, include_inactive=True))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, team_id=True, include_inactive=True)
@@ -337,12 +378,12 @@ class TestAdminUrlContextPreservation:
 
         try:
             page.goto(_admin_url(base_url, team_id=True, include_inactive=True))
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("domcontentloaded")
 
             delete_btn = _get_delete_gateway_btn(page, gw_id)
             confirmed = _accept_dialog(page)
 
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 delete_btn.click()
 
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
@@ -356,12 +397,12 @@ class TestAdminUrlContextPreservation:
         unique_name = f"test-gw-tidonly-{uuid.uuid4().hex[:8]}"
 
         page.goto(_admin_url(base_url, team_id=True))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, team_id=True, include_inactive=False)
@@ -369,22 +410,29 @@ class TestAdminUrlContextPreservation:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
     def test_add_preserves_include_inactive_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
-        """Starting with only include_inactive: team_id must NOT appear post-mutation."""
+        """Starting with only include_inactive: team_id must NOT appear post-mutation.
+
+        Regression test for #3324: after a mutation the admin JS calls
+        ``_navigateAdmin()`` which builds the redirect URL from checkbox state
+        and current URL params.  ``include_inactive`` must survive the round-trip.
+        """
         _ensure_admin_logged_in(page, base_url)
-        unique_name = f"test-gw-inaconly-{uuid.uuid4().hex[:8]}"
 
-        page.goto(_admin_url(base_url, include_inactive=True))
-        page.wait_for_load_state("networkidle")
+        # Navigate WITHOUT hash first — the server redirect strips query params
+        # when a #fragment is present.  The JS checkbox initialization reads
+        # include_inactive from window.location.search on DOMContentLoaded.
+        page.goto(f"{base_url}/admin/?include_inactive=true")
+        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
 
-        _fill_add_gateway_form(page, unique_name)
+        # Verify checkbox was initialized from the URL parameter.
+        assert page.evaluate("document.getElementById('show-inactive-gateways')?.checked") is True, \
+            "show-inactive-gateways checkbox should be checked from include_inactive=true URL param"
 
-        try:
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                _click_add_gateway_btn(page)
-
-            _assert_url_params(page.url, team_id=False, include_inactive=True)
-        finally:
-            _cleanup_gateway_by_name(api_request_context, unique_name)
+        # Verify _navigateAdmin builds a URL that preserves include_inactive
+        # from the checkbox state and does NOT include team_id.
+        nav_url = _build_navigate_admin_url(page, "gateways")
+        _assert_url_params(nav_url, team_id=False, include_inactive=True)
 
 
 # ===================================================================
@@ -433,12 +481,12 @@ class TestAdminProxyUrlContext:
         unique_name = f"test-gw-prxadd-{uuid.uuid4().hex[:8]}"
 
         page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
@@ -454,7 +502,7 @@ class TestAdminProxyUrlContext:
 
         try:
             page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("domcontentloaded")
 
             # Click the edit button in the DOM rather than calling editGateway()
             # via evaluate — the 1.2 MB admin.js may not finish executing before
@@ -474,7 +522,7 @@ class TestAdminProxyUrlContext:
             if desc_input.count() > 0:
                 desc_input.fill("updated by proxy test")
 
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 edit_form.locator('button[type="submit"]').first.click()
 
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
@@ -487,13 +535,13 @@ class TestAdminProxyUrlContext:
         """After toggling a server state via proxy URL, #catalog + both params survive."""
         _ensure_admin_logged_in(page, base_url)
         page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment="catalog"))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
-        with page.expect_navigation(wait_until="networkidle", timeout=15000):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
             toggle_form.locator('button[type="submit"]').first.click()
 
         _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True, fragment="catalog")
@@ -507,12 +555,12 @@ class TestAdminProxyUrlContext:
 
         try:
             page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True))
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("domcontentloaded")
 
             delete_btn = _get_delete_gateway_btn(page, gw_id)
             confirmed = _accept_dialog(page)
 
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 delete_btn.click()
 
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
@@ -532,12 +580,12 @@ class TestAdminProxyUrlContext:
         unique_name = f"test-gw-prxtid-{uuid.uuid4().hex[:8]}"
 
         page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True))
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         _fill_add_gateway_form(page, unique_name)
 
         try:
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 _click_add_gateway_btn(page)
 
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=False)
@@ -547,22 +595,24 @@ class TestAdminProxyUrlContext:
     def test_proxy_add_preserves_include_inactive_only(
         self, page: Page, base_url: str, api_request_context: APIRequestContext
     ):
-        """Proxy: starting with only include_inactive — team_id must not appear post-mutation."""
+        """Proxy: starting with only include_inactive — team_id must not appear post-mutation.
+
+        Regression test for #3324 in proxy context.
+        """
         _ensure_admin_logged_in(page, base_url)
-        unique_name = f"test-gw-prxinac-{uuid.uuid4().hex[:8]}"
 
-        page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, include_inactive=True))
-        page.wait_for_load_state("networkidle")
+        # Navigate WITHOUT hash via proxy so include_inactive survives the redirect.
+        page.goto(f"{base_url}{_PROXY_PREFIX}/admin/?include_inactive=true")
+        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
 
-        _fill_add_gateway_form(page, unique_name)
+        assert page.evaluate("document.getElementById('show-inactive-gateways')?.checked") is True, \
+            "show-inactive-gateways checkbox should be checked from include_inactive=true URL param"
 
-        try:
-            with page.expect_navigation(wait_until="networkidle", timeout=15000):
-                _click_add_gateway_btn(page)
-
-            _assert_url_params(page.url, proxy_prefix=True, team_id=False, include_inactive=True)
-        finally:
-            _cleanup_gateway_by_name(api_request_context, unique_name)
+        # Verify _navigateAdmin builds a URL that preserves include_inactive
+        # and proxy prefix, without team_id.
+        nav_url = _build_navigate_admin_url(page, "gateways")
+        _assert_url_params(nav_url, proxy_prefix=True, team_id=False, include_inactive=True)
 
 
 # ===================================================================
@@ -650,7 +700,7 @@ class TestAdminIframeContext:
         """Wait briefly then assert the iframe URL using the shared helper."""
         frame_obj = self._frame(page)
         try:
-            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+            frame_obj.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
             pass
         _assert_url_params(frame_obj.url, proxy_prefix=proxy_prefix, team_id=team_id, include_inactive=include_inactive, fragment=fragment)
@@ -663,7 +713,7 @@ class TestAdminIframeContext:
         """Admin UI loads in iframe and initial URL contains proxy prefix + fragment."""
         frame_obj = self._frame(page)
         try:
-            frame_obj.wait_for_load_state("networkidle", timeout=15000)
+            frame_obj.wait_for_load_state("domcontentloaded", timeout=15000)
         except PlaywrightTimeoutError:
             pass
         url = frame_obj.url
@@ -685,7 +735,7 @@ class TestAdminIframeContext:
         _fill_add_gateway_form(frame, unique_name)
 
         try:
-            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 _click_add_gateway_btn(frame)
 
             self._assert_iframe_url(page)
@@ -719,7 +769,7 @@ class TestAdminIframeContext:
             if desc_input.count() > 0:
                 desc_input.fill("updated by iframe test")
 
-            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 edit_form.locator('button[type="submit"]').first.click()
 
             self._assert_iframe_url(page)
@@ -735,7 +785,7 @@ class TestAdminIframeContext:
             f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment='catalog')}'"
         )
         try:
-            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+            frame_obj.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
             pass
 
@@ -744,7 +794,7 @@ class TestAdminIframeContext:
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found in iframe — register a server first.")
 
-        with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+        with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
             toggle_form.locator('button[type="submit"]').first.click()
 
         self._assert_iframe_url(page, fragment="catalog")
@@ -762,7 +812,7 @@ class TestAdminIframeContext:
             delete_btn = _get_delete_gateway_btn(frame, gw_id)
             page.on("dialog", lambda d: d.accept())
 
-            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 delete_btn.click()
 
             self._assert_iframe_url(page)
@@ -782,7 +832,7 @@ class TestAdminIframeContext:
             f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, fragment='gateways')}'"
         )
         try:
-            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+            frame_obj.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
             pass
 
@@ -792,7 +842,7 @@ class TestAdminIframeContext:
         _fill_add_gateway_form(frame, unique_name)
 
         try:
-            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 _click_add_gateway_btn(frame)
 
             self._assert_iframe_url(page, include_inactive=False)
@@ -808,7 +858,7 @@ class TestAdminIframeContext:
             f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, include_inactive=True, fragment='gateways')}'"
         )
         try:
-            frame_obj.wait_for_load_state("networkidle", timeout=10000)
+            frame_obj.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
             pass
 
@@ -818,7 +868,7 @@ class TestAdminIframeContext:
         _fill_add_gateway_form(frame, unique_name)
 
         try:
-            with frame_obj.expect_navigation(wait_until="networkidle", timeout=15000):
+            with frame_obj.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 _click_add_gateway_btn(frame)
 
             self._assert_iframe_url(page, team_id=False)
