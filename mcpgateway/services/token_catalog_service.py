@@ -453,13 +453,18 @@ class TokenCatalogService:
             if not membership:
                 raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
-        # Check for duplicate active token name for this user+team
-        existing_token = self.db.execute(
-            select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True)))
-        ).scalar_one_or_none()
+        # Check for duplicate active token name for this user within the same team scope,
+        # matching DB constraint uq_email_api_tokens_user_name_team (user_email, name, team_id).
+        # team_id=None tokens are scoped to the global (no-team) bucket.
+        if team_id:
+            name_check = and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True))
+        else:
+            name_check = and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id.is_(None), EmailApiToken.is_active.is_(True))
+        existing_token = self.db.execute(select(EmailApiToken).where(name_check)).scalar_one_or_none()
 
         if existing_token:
-            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in team {team_id}. Please choose a different name.")
+            scope_label = f"team '{team_id}'" if team_id else "the global scope (no team)"
+            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in {scope_label}. Token names must be unique per user per team. Please choose a different name.")
 
         # CALCULATE EXPIRATION DATE
         expires_at = None

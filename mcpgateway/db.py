@@ -4990,9 +4990,13 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name combination
+    # Unique constraint for user+name+team_id combination (per-team scope).
+    # The composite UniqueConstraint handles non-NULL team_id rows.  SQL NULL != NULL
+    # semantics mean it cannot protect global-scope tokens (team_id IS NULL), so we add
+    # a partial unique index for that case — matching the pattern used by resources/prompts.
     __table_args__ = (
-        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
+        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
+        Index("uq_email_api_tokens_user_name_global", "user_email", "name", unique=True, postgresql_where=text("team_id IS NULL"), sqlite_where=text("team_id IS NULL")),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
