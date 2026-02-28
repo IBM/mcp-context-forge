@@ -99,9 +99,8 @@ async def test_redis_broadcast_integration():
 
     redis_url = f"redis://{redis_host}:{redis_port}"
     # Start a minimal HTTP RPC server to satisfy generate_response loopback RPC calls.
-    # generate_response uses http://127.0.0.1:{settings.port}/rpc, so we start
-    # the mock server on port 8000 and patch settings.port to match.
-    rpc_port = 8000
+    # generate_response uses http://127.0.0.1:{settings.port}/rpc, so we bind to
+    # an ephemeral port (0) and patch settings.port to the actual bound port.
     original_port = settings.port
     if web is None:
         pytest.skip("aiohttp not installed; required for mock RPC server")
@@ -118,8 +117,10 @@ async def test_redis_broadcast_integration():
     app.router.add_post("/rpc", rpc_handler)
     rpc_runner = web.AppRunner(app)
     await rpc_runner.setup()
-    rpc_site = web.TCPSite(rpc_runner, "127.0.0.1", rpc_port)
+    rpc_site = web.TCPSite(rpc_runner, "127.0.0.1", 0)
     await rpc_site.start()
+    # Retrieve the actual ephemeral port the OS assigned
+    rpc_port = rpc_site._server.sockets[0].getsockname()[1]
     settings.port = rpc_port
 
     reg_a = SessionRegistry(backend="redis", redis_url=redis_url)
@@ -166,6 +167,10 @@ async def test_redis_broadcast_integration():
     finally:
         if task is not None:
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await reg_a.remove_session("sid-integ")
         await reg_a.shutdown()
         await reg_b.shutdown()
