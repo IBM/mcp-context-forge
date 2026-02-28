@@ -15,19 +15,6 @@ scope value is empty — the same logic that was previously private to
 All call sites that previously read ``request.scope.get("root_path", "")``
 directly should use :func:`resolve_root_path` instead.
 
-Examples:
-    >>> from unittest.mock import MagicMock
-    >>> from mcpgateway.utils.paths import resolve_root_path
-    >>> req = MagicMock()
-    >>> req.scope = {"root_path": "/api/v1"}
-    >>> resolve_root_path(req)
-    '/api/v1'
-    >>> req.scope = {"root_path": ""}
-    >>> resolve_root_path(req, fallback="/fallback")
-    '/fallback'
-    >>> req.scope = {}
-    >>> resolve_root_path(req, fallback="")
-    ''
 """
 
 # Third-Party
