@@ -241,6 +241,7 @@ class TestCreateToken:
     @pytest.mark.parametrize(
         "constraint_fragment",
         [
+            "uq_email_api_tokens_user_name_team",
             "uq_email_api_tokens_user_name",
             "uq_email_api_tokens_user_email_name",
             "email_api_tokens.user_email, email_api_tokens.name",
@@ -696,6 +697,7 @@ class TestTeamTokens:
     @pytest.mark.parametrize(
         "constraint_fragment",
         [
+            "uq_email_api_tokens_user_name_team",
             "uq_email_api_tokens_user_name",
             "uq_email_api_tokens_user_email_name",
             "email_api_tokens.user_email, email_api_tokens.name",
