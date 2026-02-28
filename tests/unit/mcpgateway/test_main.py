@@ -3602,3 +3602,156 @@ class TestGetRpcFilterContext:
         assert email == "plugin_user@example.com"
         assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False
+
+
+# --------------------------------------------------------------------------- #
+# ASGI middleware helper for injecting request.state in tests                  #
+# --------------------------------------------------------------------------- #
+class _InjectRequestState:
+    """ASGI middleware that injects attributes into request.state.
+
+    Used by tests to simulate token_teams and team_id without running auth middleware.
+    """
+
+    def __init__(self, app, **state_attrs):
+        self.app = app
+        self.state_attrs = state_attrs
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            state = scope.setdefault("state", {})
+            state.update(self.state_attrs)
+        await self.app(scope, receive, send)
+
+
+def _make_team_scoped_client(app_fixture, token_teams, team_id):
+    """Create a TestClient with injected token_teams and team_id on request.state."""
+    # Standard
+    from unittest.mock import patch
+
+    # First-Party
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.db import EmailUser
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.services.permission_service import PermissionService
+    from mcpgateway.utils.verify_credentials import require_auth
+
+    mock_user = EmailUser(
+        email="team-user@example.com",
+        full_name="Team User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="test",
+    )
+
+    app_fixture.dependency_overrides[require_auth] = lambda: "team-user@example.com"
+    app_fixture.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
+    app_fixture.dependency_overrides[get_current_user_with_permissions] = lambda request=None, credentials=None, jwt_token=None: {
+        "email": "team-user@example.com",
+        "full_name": "Team User",
+        "is_admin": False,
+        "ip_address": "127.0.0.1",
+        "user_agent": "test",
+    }
+
+    if not hasattr(PermissionService, "_original_check_permission"):
+        PermissionService._original_check_permission = PermissionService.check_permission
+
+    async def mock_check_permission(self, user_email, permission, **_kwargs):
+        return True
+
+    PermissionService.check_permission = mock_check_permission
+
+    wrapped = _InjectRequestState(app_fixture, token_teams=token_teams, team_id=team_id)
+    return TestClient(wrapped)
+
+
+class TestTeamScopedListVisibility:
+    """Regression tests for #3332: team-scoped tokens must see public + team resources.
+
+    Verifies that list endpoints do NOT auto-narrow team_id from token state,
+    allowing _apply_visibility_filter to use the global listing path (public + team).
+    """
+
+    @patch("mcpgateway.main.server_service.list_servers")
+    def test_list_servers_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /servers with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/servers/", headers=auth_headers)
+        assert response.status_code == 200
+        mock_list.assert_called_once()
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None, "team_id must be None (global listing) not auto-narrowed from token"
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.server_service.list_servers")
+    def test_list_servers_explicit_team_id_preserved(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /servers?team_id=team-1 with matching token should pass team_id through."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/servers/?team_id=team-1", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] == "team-1"
+
+    def test_list_servers_team_id_mismatch_returns_403(self, app_with_temp_db, auth_headers):
+        """GET /servers?team_id=other with team-scoped token must return 403."""
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/servers/?team_id=other-team", headers=auth_headers)
+        assert response.status_code == 403
+
+    @patch("mcpgateway.main.tool_service.list_tools")
+    def test_list_tools_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /tools with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/tools/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.resource_service.list_resources")
+    def test_list_resources_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /resources with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/resources/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.prompt_service.list_prompts")
+    def test_list_prompts_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /prompts with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/prompts/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.gateway_service.list_gateways")
+    def test_list_gateways_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /gateways with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/gateways/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_list_a2a_agents_no_auto_narrow(self, mock_service, app_with_temp_db, auth_headers):
+        """GET /a2a with team-scoped token must NOT auto-narrow team_id."""
+        mock_service.list_agents = AsyncMock(return_value=([], None))
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/a2a", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_service.list_agents.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
