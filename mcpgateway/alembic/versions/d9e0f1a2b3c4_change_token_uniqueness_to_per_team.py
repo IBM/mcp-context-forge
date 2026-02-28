@@ -1,3 +1,4 @@
+# pylint: disable=no-member
 """change token uniqueness constraint to per-team scope
 
 Revision ID: d9e0f1a2b3c4
@@ -8,14 +9,21 @@ Replaces the global (user_email, name) unique constraint on email_api_tokens
 with a per-team (user_email, name, team_id) constraint so that the same token
 name can be reused across different teams (e.g. agent studio workflows).
 
+Because SQL NULL != NULL semantics mean the composite constraint cannot protect
+global-scope tokens (team_id IS NULL), we also add a partial unique index for
+that case.
+
 Old constraint: uq_email_api_tokens_user_name        -> (user_email, name)
 New constraint: uq_email_api_tokens_user_name_team   -> (user_email, name, team_id)
+New index:      uq_email_api_tokens_user_name_global  -> (user_email, name) WHERE team_id IS NULL
 """
 
+# Standard
 from typing import Sequence, Union
 
-import sqlalchemy as sa
+# Third-Party
 from alembic import op
+import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "d9e0f1a2b3c4"
@@ -33,6 +41,7 @@ def upgrade() -> None:
         return
 
     existing_constraints = {c["name"] for c in inspector.get_unique_constraints("email_api_tokens")}
+    existing_indexes = {idx["name"] for idx in inspector.get_indexes("email_api_tokens")}
 
     # batch_alter_table is required for SQLite compatibility (SQLite cannot DROP CONSTRAINT
     # directly; Alembic reconstructs the table internally under a batch context).
@@ -49,6 +58,18 @@ def upgrade() -> None:
                 ["user_email", "name", "team_id"],
             )
 
+    # Partial unique index for global-scope tokens (team_id IS NULL).
+    # SQL NULL != NULL means the composite constraint above cannot protect this case.
+    if "uq_email_api_tokens_user_name_global" not in existing_indexes:
+        op.create_index(
+            "uq_email_api_tokens_user_name_global",
+            "email_api_tokens",
+            ["user_email", "name"],
+            unique=True,
+            postgresql_where=sa.text("team_id IS NULL"),
+            sqlite_where=sa.text("team_id IS NULL"),
+        )
+
 
 def downgrade() -> None:
     """Restore the original global (user_email, name) unique constraint."""
@@ -58,6 +79,11 @@ def downgrade() -> None:
         return
 
     existing_constraints = {c["name"] for c in inspector.get_unique_constraints("email_api_tokens")}
+    existing_indexes = {idx["name"] for idx in inspector.get_indexes("email_api_tokens")}
+
+    # Drop the partial unique index for global-scope tokens
+    if "uq_email_api_tokens_user_name_global" in existing_indexes:
+        op.drop_index("uq_email_api_tokens_user_name_global", table_name="email_api_tokens")
 
     with op.batch_alter_table("email_api_tokens") as batch_op:
         # Remove the per-team constraint
