@@ -80,7 +80,7 @@ class MetricsPage(BasePage):
         """Click the refresh metrics button to reload metrics data."""
         if self.refresh_metrics_btn.count() > 0:
             self.click_locator(self.refresh_metrics_btn)
-            # Wait for metrics to potentially update
+            # Wait for metrics to reload
             self.page.wait_for_timeout(1000)
 
     def expand_metric_section(self, section_name: str) -> None:

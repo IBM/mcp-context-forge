@@ -58,7 +58,7 @@ def _close_view_modal(agents_page: AgentsPage) -> None:
     """Close the agent view modal."""
     close_btn = agents_page.page.locator('#agent-modal button:has-text("Close")')
     close_btn.click()
-    agents_page.page.wait_for_timeout(300)
+    agents_page.page.wait_for_selector("#agent-modal", state="hidden", timeout=5000)
 
 
 def _open_edit_modal(agents_page: AgentsPage, index: int = 0) -> None:
@@ -91,7 +91,7 @@ def _close_edit_modal(agents_page: AgentsPage) -> None:
         '#a2a-edit-modal button:has-text("Cancel")'
     )
     cancel_btn.click()
-    agents_page.page.wait_for_timeout(300)
+    agents_page.page.wait_for_selector("#a2a-edit-modal", state="hidden", timeout=5000)
 
 
 def _open_test_modal(agents_page: AgentsPage, index: int = 0) -> None:
@@ -111,7 +111,7 @@ def _close_test_modal(agents_page: AgentsPage) -> None:
     """Close the agent test modal."""
     close_btn = agents_page.page.locator("#a2a-test-close")
     close_btn.click()
-    agents_page.page.wait_for_timeout(300)
+    agents_page.page.wait_for_selector("#a2a-test-modal", state="hidden", timeout=5000)
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +498,6 @@ class TestA2AEditModal:
         # Select basic auth
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("basic")
-        agents_page.page.wait_for_timeout(300)
 
         basic_fields = agents_page.page.locator("#auth-basic-fields-a2a-edit")
         expect(basic_fields).to_be_visible()
@@ -515,7 +514,6 @@ class TestA2AEditModal:
 
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("bearer")
-        agents_page.page.wait_for_timeout(300)
 
         bearer_fields = agents_page.page.locator(
             "#auth-bearer-fields-a2a-edit"
@@ -534,7 +532,6 @@ class TestA2AEditModal:
 
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         oauth_fields = agents_page.page.locator("#auth-oauth-fields-a2a-edit")
         expect(oauth_fields).to_be_visible()
@@ -553,7 +550,6 @@ class TestA2AEditModal:
 
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("query_param")
-        agents_page.page.wait_for_timeout(300)
 
         qp_fields = agents_page.page.locator(
             "#auth-query_param-fields-a2a-edit"
@@ -915,11 +911,9 @@ class TestA2AOAuthGrantTypeSwitching:
 
         # Select OAuth auth type
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         # Select authorization_code
         agents_page.oauth_grant_type_select.select_option("authorization_code")
-        agents_page.page.wait_for_timeout(300)
 
         # Authorization URL and Redirect URI should be visible
         expect(agents_page.oauth_authorization_url_input).to_be_visible()
@@ -946,10 +940,8 @@ class TestA2AOAuthGrantTypeSwitching:
         agents_page.wait_for_agents_panel_loaded()
 
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         agents_page.oauth_grant_type_select.select_option("client_credentials")
-        agents_page.page.wait_for_timeout(300)
 
         # Auth URL and Redirect URI should be hidden
         expect(agents_page.oauth_authorization_url_input).to_be_hidden()
@@ -969,10 +961,8 @@ class TestA2AOAuthGrantTypeSwitching:
         agents_page.wait_for_agents_panel_loaded()
 
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         agents_page.oauth_grant_type_select.select_option("password")
-        agents_page.page.wait_for_timeout(300)
 
         # Username and password fields for password grant should be visible
         username_field = agents_page.page.locator("#oauth-username-a2a")
@@ -988,27 +978,22 @@ class TestA2AOAuthGrantTypeSwitching:
         agents_page.wait_for_agents_panel_loaded()
 
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         # Start with authorization_code
         agents_page.oauth_grant_type_select.select_option("authorization_code")
-        agents_page.page.wait_for_timeout(300)
         expect(agents_page.oauth_authorization_url_input).to_be_visible()
 
         # Switch to client_credentials
         agents_page.oauth_grant_type_select.select_option("client_credentials")
-        agents_page.page.wait_for_timeout(300)
         expect(agents_page.oauth_authorization_url_input).to_be_hidden()
 
         # Switch to password
         agents_page.oauth_grant_type_select.select_option("password")
-        agents_page.page.wait_for_timeout(300)
         username_field = agents_page.page.locator("#oauth-username-a2a")
         expect(username_field).to_be_visible()
 
         # Switch back to authorization_code
         agents_page.oauth_grant_type_select.select_option("authorization_code")
-        agents_page.page.wait_for_timeout(300)
         expect(agents_page.oauth_authorization_url_input).to_be_visible()
         expect(username_field).to_be_hidden()
 

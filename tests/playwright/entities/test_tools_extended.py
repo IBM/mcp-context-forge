@@ -882,7 +882,6 @@ class TestToolsSearchAndFilter:
         search_input.fill(partial)
 
         # Wait for debounced HTMX request to complete
-        tools_page.page.wait_for_timeout(1500)
         tools_page.page.wait_for_function(
             "() => !document.querySelector('#tools-loading.htmx-request')",
             timeout=15000,
@@ -898,7 +897,6 @@ class TestToolsSearchAndFilter:
         search_input.fill(nonexistent)
 
         # Wait for debounced HTMX request to complete
-        tools_page.page.wait_for_timeout(1500)
         tools_page.page.wait_for_function(
             "() => !document.querySelector('#tools-loading.htmx-request')",
             timeout=15000,
@@ -907,7 +905,10 @@ class TestToolsSearchAndFilter:
         # Clear search to restore the full list
         clear_btn = tools_page.page.locator("#tools-clear-search")
         clear_btn.click()
-        tools_page.page.wait_for_timeout(1000)
+        tools_page.page.wait_for_function(
+            "() => !document.querySelector('#tools-loading.htmx-request')",
+            timeout=15000,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -968,12 +969,18 @@ class TestToolsPagination:
 
         # Change to 25
         per_page.select_option("25")
-        tools_page.page.wait_for_timeout(1000)
+        tools_page.page.wait_for_function(
+            "() => !document.querySelector('#tools-loading.htmx-request')",
+            timeout=15000,
+        )
         expect(per_page).to_have_value("25")
 
         # Change back to 50
         per_page.select_option("50")
-        tools_page.page.wait_for_timeout(1000)
+        tools_page.page.wait_for_function(
+            "() => !document.querySelector('#tools-loading.htmx-request')",
+            timeout=15000,
+        )
 
 
 # ---------------------------------------------------------------------------

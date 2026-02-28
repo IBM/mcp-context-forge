@@ -122,8 +122,6 @@ class SidebarComponent:
         self.page.wait_for_selector("#tokens-panel:not(.hidden)")
         # Wait for the form to be ready
         self.page.wait_for_selector("#create-token-form", state="visible")
-        # Wait a bit for any JavaScript initialization
-        self.page.wait_for_timeout(500)
 
     def click_metrics_tab(self) -> None:
         """Click on metrics tab and wait for panel."""

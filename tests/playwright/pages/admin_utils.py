@@ -79,8 +79,8 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
                     return item
         else:
             logger.warning("find_entity_by_name: %s returned status=%d: %s", endpoint, response.status, response.text()[:200])
-        # Back off linearly under DB contention in full-suite runs.
-        page.wait_for_timeout(500 * (attempt + 1))
+        # Exponential backoff with cap under DB contention in full-suite runs.
+        page.wait_for_timeout(min(100 * (2**attempt), 1000))
     return None
 
 
@@ -115,7 +115,7 @@ def wait_for_entity_deleted(page: Page, endpoint: str, name: str, retries: int =
             data = payload if isinstance(payload, list) else payload.get("data", [])
             if not any(item.get("name") == name for item in data):
                 return True
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(min(100 * (2**attempt), 800))
     return False
 
 
@@ -397,7 +397,7 @@ def find_user(page: Page, user_email: str, retries: int = 5):
                     return item
         else:
             logger.warning("find_user: returned status=%d: %s", response.status, response.text()[:200])
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(min(100 * (2**attempt), 1000))
     return None
 
 

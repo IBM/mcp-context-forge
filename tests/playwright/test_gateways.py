@@ -137,7 +137,6 @@ class TestGatewaysPage:
 
         # Select basic auth
         gateways_page.auth_type_select.select_option("basic")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.auth_basic_fields).to_be_visible()
@@ -153,7 +152,6 @@ class TestGatewaysPage:
 
         # Select bearer auth
         gateways_page.auth_type_select.select_option("bearer")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.auth_bearer_fields).to_be_visible()
@@ -168,7 +166,6 @@ class TestGatewaysPage:
 
         # Select OAuth
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.oauth_fields).to_be_visible()
@@ -186,7 +183,6 @@ class TestGatewaysPage:
 
         # Select query param auth
         gateways_page.auth_type_select.select_option("query_param")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible with security warning
         expect(gateways_page.auth_query_param_fields).to_be_visible()
@@ -202,7 +198,6 @@ class TestGatewaysPage:
 
         # Select custom headers auth
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.auth_headers_fields).to_be_visible()
@@ -220,7 +215,6 @@ class TestGatewaysPage:
 
         # Select Custom Headers auth type
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.auth_headers_fields).to_be_visible()
 
         # Add first header by typing into key/value fields
@@ -246,7 +240,6 @@ class TestGatewaysPage:
 
         # Select OAuth to show fields
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         grant_type_select = gateways_page.oauth_grant_type_select
         expect(grant_type_select).to_be_visible()
