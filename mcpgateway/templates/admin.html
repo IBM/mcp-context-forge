@@ -453,12 +453,12 @@
         <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0"
              :class="sidebarCollapsed ? 'justify-center' : 'justify-between'">
           <a href="{{ root_path }}/admin" class="flex items-center" x-show="!sidebarCollapsed">
-            <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge" class="h-8 dark:hidden" />
-            <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge" class="h-8 hidden dark:block" />
+            <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge logo" class="h-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge logo" class="h-8 hidden dark:block" />
           </a>
           <button @click="sidebarCollapsed = false" class="flex items-center justify-center" x-show="sidebarCollapsed" title="Expand sidebar">
-            <img src="{{ root_path }}/static/contextforge-icon.png" alt="ContextForge" class="h-8 w-8 dark:hidden" />
-            <img src="{{ root_path }}/static/contextforge-icon-white.png" alt="ContextForge" class="h-8 w-8 hidden dark:block" />
+            <img src="{{ root_path }}/static/contextforge-icon.png" alt="ContextForge icon" class="h-8 w-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-icon-white.png" alt="ContextForge icon" class="h-8 w-8 hidden dark:block" />
           </button>
           <button
             @click="sidebarCollapsed = !sidebarCollapsed"
@@ -2920,6 +2920,13 @@
                       <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
                     </div>
                   </div>
+                  <p
+                    id="noGatewayMessage"
+                    class="text-gray-700 dark:text-gray-300 mt-2"
+                    style="display: none"
+                  >
+                    No MCP server found containing "<span id="searchQueryServers"></span>"
+                  </p>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
                       type="button"
@@ -3062,6 +3069,13 @@
                     <span class="ml-2">Loading resources...</span>
                   </div>
                 </div>
+                <p
+                  id="noResourcesMessage"
+                  class="text-gray-700 dark:text-gray-300 mt-2"
+                  style="display: none"
+                >
+                  No resource found containing "<span id="searchResourcesQuery"></span>"
+                </p>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
                     type="button"
@@ -3122,6 +3136,13 @@
                     <span class="ml-2">Loading prompts...</span>
                   </div>
                 </div>
+                <p
+                  id="noPromptsMessage"
+                  class="text-gray-700 dark:text-gray-300 mt-2"
+                  style="display: none"
+                >
+                  No prompt found containing "<span id="searchPromptsQuery"></span>"
+                </p>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
                     type="button"
@@ -10914,38 +10935,38 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
                         <div class="flex gap-x-6 mt-2">
 
-                          <label class="flex items-center">
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="public"
-                              id="a2a-visibility-public-edit"
+                              id="edit-a2a-visibility-public"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                               checked
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</span>
-                          </label>
+                            <label for="edit-a2a-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</label>
+                          </div>
 
-                          <label class="flex items-center">
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="team"
-                              id="a2a-visibility-team-edit"
+                              id="edit-a2a-visibility-team"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</span>
-                          </label>
-                          <label class="flex items-center">
+                            <label for="edit-a2a-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</label>
+                          </div>
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="private"
-                              id="a2a-visibility-private-edit"
+                              id="edit-a2a-visibility-private"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</span>
-                          </label>
+                            <label for="edit-a2a-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</label>
+                          </div>
                         </div>
                       </div>
 
@@ -11149,10 +11170,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="visibility"
                             value="public"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-public"
+                            id="edit-server-visibility-public"
                           />
                           <label
-                            for="edit-visibility-public"
+                            for="edit-server-visibility-public"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >🌍Public</label
                           >
@@ -11164,10 +11185,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="visibility"
                             value="team"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-team"
+                            id="edit-server-visibility-team"
                           />
                           <label
-                            for="edit-visibility-team"
+                            for="edit-server-visibility-team"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >👥Team</label
                           >
@@ -11178,10 +11199,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="visibility"
                             value="private"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-private"
+                            id="edit-server-visibility-private"
                           />
                           <label
-                            for="edit-visibility-private"
+                            for="edit-server-visibility-private"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >🔒Private</label
                           >
@@ -11237,6 +11258,13 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
                     </div>
                   </div>
+                  <p
+                    id="noEditGatewayMessage"
+                    class="text-gray-700 dark:text-gray-300 mt-2"
+                    style="display: none"
+                  >
+                    No MCP server found containing "<span id="searchQueryEditServers"></span>"
+                  </p>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
                       type="button"

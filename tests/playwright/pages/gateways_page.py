@@ -642,7 +642,7 @@ class GatewaysPage(BasePage):
                     delete_btn.click(force=True)
             else:
                 delete_btn.click(force=True)
-                self.page.wait_for_timeout(1000)
+                self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=10000)
         finally:
             self.page.remove_listener("dialog", _handle_dialog)
 
@@ -657,7 +657,6 @@ class GatewaysPage(BasePage):
 
         # Scroll the row into view first
         gateway_row.scroll_into_view_if_needed()
-        self.page.wait_for_timeout(500)
 
         # Find the delete button within the row's action column
         delete_btn = gateway_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
@@ -684,7 +683,6 @@ class GatewaysPage(BasePage):
         # Find the specific row by name and click its delete button
         gateway_row = self.get_gateway_row_by_name(gateway_name)
         gateway_row.first.scroll_into_view_if_needed()
-        self.page.wait_for_timeout(500)
 
         delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
         self._click_delete_and_wait(delete_btn, confirm)
@@ -745,7 +743,6 @@ class GatewaysPage(BasePage):
                 except (PlaywrightTimeoutError, AssertionError):
                     # If we can't reload cleanly, just return — the delete succeeded
                     return deleted_any
-                self.page.wait_for_timeout(1000)
 
             except Exception as e:
                 logger.warning("Could not delete gateway '%s' with URL '%s': %s", gateway_name, gateway_url, e)
@@ -1084,7 +1081,7 @@ class GatewaysPage(BasePage):
     def close_test_modal(self) -> None:
         """Close the test modal."""
         self.test_modal_close_btn.click()
-        self.page.wait_for_timeout(300)
+        self.page.wait_for_selector("#gateway-test-modal", state="hidden", timeout=5000)
 
     def open_view_modal(self, gateway_index: int = 0) -> None:
         """Click View on a gateway row and wait for the view modal to appear.
@@ -1093,20 +1090,19 @@ class GatewaysPage(BasePage):
         where HTMX table swap hasn't yet reconnected event listeners.
         """
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
-        self.page.wait_for_timeout(500)
+        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
 
         self.click_view_button(gateway_index)
         try:
             self.page.wait_for_selector("#gateway-modal:not(.hidden)", state="visible", timeout=10000)
         except PlaywrightTimeoutError:
-            self.page.wait_for_timeout(1000)
             self.click_view_button(gateway_index)
             self.page.wait_for_selector("#gateway-modal:not(.hidden)", state="visible", timeout=10000)
 
     def close_view_modal(self) -> None:
         """Close the view modal."""
         self.view_modal_close_btn.click()
-        self.page.wait_for_timeout(300)
+        self.page.wait_for_selector("#gateway-modal", state="hidden", timeout=5000)
 
     def open_edit_modal(self, gateway_index: int = 0) -> None:
         """Click Edit on a gateway row and wait for the edit modal to appear.
@@ -1116,18 +1112,17 @@ class GatewaysPage(BasePage):
         """
         # Ensure gateway rows are present and JS handlers are ready
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
-        self.page.wait_for_timeout(500)
+        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
 
         self.click_edit_button(gateway_index)
         try:
             self.page.wait_for_selector("#gateway-edit-modal:not(.hidden)", state="visible", timeout=10000)
         except PlaywrightTimeoutError:
             # Retry: table may have been swapped by HTMX after our first click
-            self.page.wait_for_timeout(1000)
             self.click_edit_button(gateway_index)
             self.page.wait_for_selector("#gateway-edit-modal:not(.hidden)", state="visible", timeout=10000)
 
     def close_edit_modal(self) -> None:
         """Close the edit modal via Cancel."""
         self.edit_modal_cancel_btn.click()
-        self.page.wait_for_timeout(300)
+        self.page.wait_for_selector("#gateway-edit-modal", state="hidden", timeout=5000)

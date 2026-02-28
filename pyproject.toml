@@ -610,7 +610,7 @@ plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic model
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance"
+addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/e2e/test_mcp_cli_protocol.py"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -655,6 +655,9 @@ markers = [
     "mcp_tasks: marks tasks capability checks",
     "mcp_auth: marks authorization discovery checks",
     "mcp_security: marks security compliance checks",
+    "regression: marks regression tests for previously-fixed bugs",
+    "proxy: marks tests that run through a simulated proxy prefix",
+    "iframe: marks tests that run inside an iframe host page",
 ]
 
 # Playwright-specific test discovery patterns

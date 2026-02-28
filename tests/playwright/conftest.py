@@ -103,17 +103,13 @@ def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -
 
 
 def _goto_admin(page: Page, url: str) -> None:
-    """Navigate to an admin URL with tolerant wait strategy.
+    """Navigate to an admin URL with domcontentloaded wait strategy.
 
-    We prefer networkidle to let CDN/script-heavy pages settle, but under load
-    some admin paths can keep transient background requests alive. In that case,
-    fallback to domcontentloaded to avoid fixture deadlocks.
+    The caller (_ensure_admin_logged_in) already waits for specific UI
+    elements (e.g. [data-testid="servers-tab"]) and JS initialisation,
+    so networkidle is redundant and stalls under SSE/setInterval traffic.
     """
-    try:
-        page.goto(url, wait_until="networkidle", timeout=30000)
-    except PlaywrightTimeoutError:
-        logger.warning("Admin navigation timed out with networkidle; retrying domcontentloaded (url=%s)", url)
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
 
 def _submit_login_and_wait(page: Page, login_page, email: str, password: str) -> Optional[int]:
