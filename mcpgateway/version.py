@@ -62,7 +62,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -71,6 +71,7 @@ from sqlalchemy import text
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import engine
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -723,6 +724,25 @@ button{{margin-top:1rem;padding:.5rem 1rem;}}
 </body></html>"""
 
 
+def _has_version_admin_access(user: Any) -> bool:
+    """Return True when diagnostics access is permitted for the authenticated user.
+
+    Admin diagnostics access requires unrestricted admin scope when the caller is a JWT payload.
+    """
+    if not isinstance(user, dict):
+        return False
+
+    is_admin = bool(user.get("is_admin", False))
+    if not is_admin:
+        nested_user = user.get("user", {})
+        if isinstance(nested_user, dict):
+            is_admin = bool(nested_user.get("is_admin", False))
+    if not is_admin:
+        return False
+
+    return normalize_token_teams(user) is None
+
+
 # Endpoint
 @router.get("/version", summary="Diagnostics (auth required)")
 async def version_endpoint(
@@ -819,6 +839,9 @@ async def version_endpoint(
         >>> isinstance(response, JSONResponse)
         True
     """
+    if not _has_version_admin_access(_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
+
     # Redis health check - use shared client from factory
     redis_ok = False
     redis_version: Optional[str] = None

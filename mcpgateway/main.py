@@ -75,7 +75,7 @@ from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
@@ -124,7 +124,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
-from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -2584,23 +2584,21 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     Raises:
         HTTPException: If the request method is not "ping".
     """
-    req_id: Optional[str] = None
-    try:
-        body: dict = await _read_request_json(request)
-        if body.get("method") != "ping":
-            raise HTTPException(status_code=400, detail="Invalid method")
-        req_id = body.get("id")
-        logger.debug(f"Authenticated user {user} sent ping request.")
-        # Return an empty result per the MCP ping specification.
-        response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
-        return ORJSONResponse(content=response)
-    except Exception as e:
-        error_response: dict = {
-            "jsonrpc": "2.0",
-            "id": req_id,  # Now req_id is always defined
-            "error": {"code": -32603, "message": "Internal error", "data": str(e)},
-        }
-        return ORJSONResponse(status_code=500, content=error_response)
+    body = await _read_request_json(request)
+    req_id = body.get("id") if isinstance(body, dict) else None
+    if not isinstance(body, dict) or body.get("method") != "ping":
+        return ORJSONResponse(
+            status_code=400,
+            content={
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32600, "message": "Invalid Request"},
+            },
+        )
+
+    logger.debug(f"Authenticated user {user} sent ping request.")
+    response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
+    return ORJSONResponse(content=response)
 
 
 @protocol_router.post("/notifications")
@@ -2658,7 +2656,10 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
         user_email = None
     elif token_teams is None:
         token_teams = []
-    return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
+    try:
+        return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
+    except CompletionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @protocol_router.post("/sampling/createMessage")
@@ -2676,7 +2677,10 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
     """
     logger.debug(f"User {user['email']} sent a sampling request")
     body = await _read_request_json(request)
-    return await sampling_handler.create_message(db, body)
+    try:
+        return await sampling_handler.create_message(db, body)
+    except SamplingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 ###############
@@ -5920,7 +5924,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         PluginError: If encounters issue with plugin
         PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
     """
-    req_id = None
+    req_id: Optional[Union[int, str]] = None
     try:
         # Extract user identifier from either RBAC user object or JWT payload
         if hasattr(user, "email"):
@@ -5942,11 +5946,47 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     "id": None,
                 },
             )
-        method = body["method"]
+
+        if not isinstance(body, dict):
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Invalid Request"},
+                "id": None,
+            }
+
+        req_id = body.get("id")
+        if req_id is not None and not isinstance(req_id, (str, int)):
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Invalid Request"},
+                "id": None,
+            }
+
+        method = body.get("method")
+        params = body.get("params", {})
+        if params is None:
+            params = {}
+        jsonrpc_version = body.get("jsonrpc")
+
+        if jsonrpc_version != "2.0" or not isinstance(method, str) or not method.strip() or not isinstance(params, dict):
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Invalid Request"},
+                "id": req_id,
+            }
+
+        try:
+            RPCRequest(jsonrpc=jsonrpc_version, method=method, params=params, id=req_id)
+        except (ValidationError, ValueError):
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Invalid Request"},
+                "id": req_id,
+            }
+
         req_id = body.get("id")
         if req_id is None:
             req_id = str(uuid.uuid4())
-        params = body.get("params", {})
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
@@ -5973,9 +6013,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 )
         elif _token_server_id is not None:
             server_id = _token_server_id
-
-        RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
-
         # Multi-worker session affinity: check if we should forward to another worker
         # This applies to ALL methods (except initialize which creates new sessions)
         # The x-forwarded-internally header marks requests that have already been forwarded
@@ -6027,6 +6064,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
             logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Internally forwarded request, executing locally")
+
+        if settings.use_stateful_sessions and mcp_session_id and method != "initialize":
+            try:
+                await _assert_session_owner_or_admin(request, user, mcp_session_id)
+            except HTTPException as exc:
+                if exc.status_code == status.HTTP_404_NOT_FOUND:
+                    raise JSONRPCError(-32002, "Session not found", {"method": method, "session_id": mcp_session_id}) from exc
+                raise JSONRPCError(-32003, str(exc.detail), {"method": method, "session_id": mcp_session_id}) from exc
 
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
@@ -6477,7 +6522,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "sampling/createMessage":
             # MCP spec-compliant sampling endpoint
-            result = await sampling_handler.create_message(db, params)
+            try:
+                result = await sampling_handler.create_message(db, params)
+            except SamplingError as e:
+                raise JSONRPCError(-32602, str(e), params) from e
         elif method.startswith("sampling/"):
             # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
@@ -6572,7 +6620,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 user_email = None
             elif token_teams is None:
                 token_teams = []
-            result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
+            try:
+                result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
+            except CompletionError as e:
+                raise JSONRPCError(-32602, str(e), params) from e
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
@@ -6641,12 +6692,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
     except Exception as e:
-        if isinstance(e, ValueError):
-            return ORJSONResponse(content={"message": "Method invalid"}, status_code=422)
         logger.error(f"RPC error: {str(e)}")
         return {
             "jsonrpc": "2.0",
-            "error": {"code": -32000, "message": "Internal error", "data": str(e)},
+            "error": {"code": -32603, "message": "Internal error"},
             "id": req_id,
         }
 

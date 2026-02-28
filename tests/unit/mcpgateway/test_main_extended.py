@@ -4549,7 +4549,8 @@ class TestRpcHandling:
         payload_missing_method = {"jsonrpc": "2.0", "id": "err-1", "params": {}}
         request_missing_method = self._make_request(payload_missing_method)
         result = await handle_rpc(request_missing_method, db=MagicMock(), user={"email": "user@example.com"})
-        assert result["error"]["message"] == "Internal error"
+        assert result["error"]["code"] == -32600
+        assert result["error"]["message"] == "Invalid Request"
 
     async def test_handle_rpc_tools_call_cancel_callback_cancels_task(self, monkeypatch):
         """Cover inner cancel_tool_task() callback cancelling a live asyncio task."""
