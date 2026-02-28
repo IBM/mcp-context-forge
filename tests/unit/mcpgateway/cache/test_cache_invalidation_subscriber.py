@@ -56,17 +56,18 @@ class TestCacheInvalidationSubscriber:
         assert cache_subscriber._task is None
         assert cache_subscriber._stop_event is None
         assert cache_subscriber._pubsub is None
-        assert cache_subscriber._channel == "mcpgw:cache:invalidate"
         assert cache_subscriber._channels == ["mcpgw:cache:invalidate", "mcpgw:auth:invalidate"]
         assert cache_subscriber._started is False
 
     @pytest.mark.asyncio
     async def test_process_registry_tools_invalidation(self, cache_subscriber):
         """Test processing of registry:tools invalidation message."""
-        mock_registry_cache = create_mock_registry_cache({
-            "tools:hash1": {"data": "cached"},
-            "prompts:hash2": {"data": "cached"},
-        })
+        mock_registry_cache = create_mock_registry_cache(
+            {
+                "tools:hash1": {"data": "cached"},
+                "prompts:hash2": {"data": "cached"},
+            }
+        )
 
         with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=mock_registry_cache):
             await cache_subscriber._process_invalidation("registry:tools")
@@ -78,10 +79,12 @@ class TestCacheInvalidationSubscriber:
     @pytest.mark.asyncio
     async def test_process_registry_prompts_invalidation(self, cache_subscriber):
         """Test processing of registry:prompts invalidation message."""
-        mock_registry_cache = create_mock_registry_cache({
-            "tools:hash1": {"data": "cached"},
-            "prompts:hash2": {"data": "cached"},
-        })
+        mock_registry_cache = create_mock_registry_cache(
+            {
+                "tools:hash1": {"data": "cached"},
+                "prompts:hash2": {"data": "cached"},
+            }
+        )
 
         with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=mock_registry_cache):
             await cache_subscriber._process_invalidation("registry:prompts")
@@ -93,10 +96,12 @@ class TestCacheInvalidationSubscriber:
     @pytest.mark.asyncio
     async def test_process_registry_resources_invalidation(self, cache_subscriber):
         """Test processing of registry:resources invalidation message."""
-        mock_registry_cache = create_mock_registry_cache({
-            "resources:hash1": {"data": "cached"},
-            "tools:hash2": {"data": "cached"},
-        })
+        mock_registry_cache = create_mock_registry_cache(
+            {
+                "resources:hash1": {"data": "cached"},
+                "tools:hash2": {"data": "cached"},
+            }
+        )
 
         with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=mock_registry_cache):
             await cache_subscriber._process_invalidation("registry:resources")
@@ -473,10 +478,12 @@ class TestCrossWorkerCacheInvalidation:
         """
         subscriber = CacheInvalidationSubscriber()
 
-        mock_registry_cache = create_mock_registry_cache({
-            "tools:default": [{"name": "my-tool", "visibility": "public"}],
-            "tools:filtered": [{"name": "my-tool", "visibility": "public"}],
-        })
+        mock_registry_cache = create_mock_registry_cache(
+            {
+                "tools:default": [{"name": "my-tool", "visibility": "public"}],
+                "tools:filtered": [{"name": "my-tool", "visibility": "public"}],
+            }
+        )
 
         with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=mock_registry_cache):
             # Simulate receiving invalidation message (as would happen from another worker)
@@ -491,12 +498,14 @@ class TestCrossWorkerCacheInvalidation:
         """Test handling of multiple rapid invalidation messages."""
         subscriber = CacheInvalidationSubscriber()
 
-        mock_registry_cache = create_mock_registry_cache({
-            "tools:h1": {"data": "1"},
-            "tools:h2": {"data": "2"},
-            "prompts:h1": {"data": "1"},
-            "resources:h1": {"data": "1"},
-        })
+        mock_registry_cache = create_mock_registry_cache(
+            {
+                "tools:h1": {"data": "1"},
+                "tools:h2": {"data": "2"},
+                "prompts:h1": {"data": "1"},
+                "resources:h1": {"data": "1"},
+            }
+        )
 
         with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=mock_registry_cache):
             # Rapid-fire invalidations
@@ -594,6 +603,7 @@ class TestAuthCacheInvalidationSubscriber:
             def __await__(self):
                 async def _noop():
                     return None
+
                 return _noop().__await__()
 
         def _create_task(coro):

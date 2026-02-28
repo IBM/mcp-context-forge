@@ -29,7 +29,7 @@ import hashlib
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -566,7 +566,6 @@ class CacheInvalidationSubscriber:
         self._stop_event: Optional[asyncio.Event] = None
         self._pubsub: Optional[Any] = None
         self._channels = ["mcpgw:cache:invalidate", "mcpgw:auth:invalidate"]
-        self._channel = "mcpgw:cache:invalidate"  # Keep for backward compat
         self._started = False
 
     async def start(self) -> None:
@@ -761,100 +760,89 @@ class CacheInvalidationSubscriber:
                         admin_stats_cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local admin:%s cache (%d keys)", prefix, len(keys_to_remove))
 
-            elif message.startswith("user:"):
-                # Handle auth user cache invalidation
-                email = message[len("user:") :]
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    keys_to_remove = [k for k in auth_cache._context_cache if k.startswith(f"{email}:")]  # pyright: ignore[reportPrivateUsage]
-                    for key in keys_to_remove:
-                        auth_cache._context_cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
-                    auth_cache._user_cache.pop(email, None)  # pyright: ignore[reportPrivateUsage]
-                    team_keys = [k for k in auth_cache._team_cache if k.startswith(f"{email}:")]  # pyright: ignore[reportPrivateUsage]
-                    for key in team_keys:
-                        auth_cache._team_cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
-                logger.debug("CacheInvalidationSubscriber: Cleared local auth user cache for %s", email)
-
-            elif message.startswith("revoke:"):
-                # Handle auth revocation cache invalidation
-                jti = message[len("revoke:") :]
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    auth_cache._revoked_jtis.add(jti)  # pyright: ignore[reportPrivateUsage]
-                    auth_cache._revocation_cache.pop(jti, None)  # pyright: ignore[reportPrivateUsage]
-                    keys_to_remove = [k for k in auth_cache._context_cache if k.endswith(f":{jti}")]  # pyright: ignore[reportPrivateUsage]
-                    for key in keys_to_remove:
-                        auth_cache._context_cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
-                logger.debug("CacheInvalidationSubscriber: Cleared local auth revocation cache for jti=%s", jti[:8])
-
-            elif message.startswith("team_roles:"):
-                # Handle auth team roles cache invalidation
-                team_id = message[len("team_roles:") :]
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    keys_to_remove = [k for k in auth_cache._role_cache if k.endswith(f":{team_id}")]  # pyright: ignore[reportPrivateUsage]
-                    for key in keys_to_remove:
-                        auth_cache._role_cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
-                logger.debug("CacheInvalidationSubscriber: Cleared local auth team_roles cache for team %s", team_id)
-
-            elif message.startswith("teams:"):
-                # Handle auth teams list cache invalidation
-                email = message[len("teams:") :]
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    keys_to_remove = [k for k in auth_cache._teams_list_cache if k.startswith(f"{email}:")]  # pyright: ignore[reportPrivateUsage]
-                    for key in keys_to_remove:
-                        auth_cache._teams_list_cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
-                logger.debug("CacheInvalidationSubscriber: Cleared local auth teams list cache for %s", email)
-
-            elif message.startswith("team:"):
-                # Handle auth team cache invalidation
-                email = message[len("team:") :]
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    auth_cache._team_cache.pop(email, None)  # pyright: ignore[reportPrivateUsage]
-                    keys_to_remove = [k for k in auth_cache._context_cache if k.startswith(f"{email}:")]  # pyright: ignore[reportPrivateUsage]
-                    for key in keys_to_remove:
-                        auth_cache._context_cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
-                logger.debug("CacheInvalidationSubscriber: Cleared local auth team cache for %s", email)
-
-            elif message.startswith("role:"):
-                # Handle auth role cache invalidation (format: role:{email}:{team_id})
-                cache_key = message[len("role:") :]
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    auth_cache._role_cache.pop(cache_key, None)  # pyright: ignore[reportPrivateUsage]
-                logger.debug("CacheInvalidationSubscriber: Cleared local auth role cache for %s", cache_key)
-
-            elif message.startswith("membership:"):
-                # Handle auth team membership cache invalidation
-                user_email = message[len("membership:") :]
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    keys_to_remove = [k for k in auth_cache._team_cache if k.startswith(f"{user_email}:")]  # pyright: ignore[reportPrivateUsage]
-                    for key in keys_to_remove:
-                        auth_cache._team_cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
-                logger.debug("CacheInvalidationSubscriber: Cleared local auth membership cache for %s", user_email)
+            elif message.startswith(("user:", "revoke:", "team_roles:", "teams:", "team:", "role:", "membership:")):
+                self._process_auth_invalidation(message)
 
             else:
                 logger.debug("CacheInvalidationSubscriber: Unknown message format: %s", message)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning("CacheInvalidationSubscriber: Error processing '%s': %s", message, e)
+
+    @staticmethod
+    def _evict_keys(cache_dict: dict, predicate: "Callable[[str], bool]") -> int:
+        """Remove all keys from *cache_dict* that satisfy *predicate*.
+
+        Must be called while holding the owning cache's ``_lock``.
+
+        Returns:
+            Number of keys removed.
+        """
+        keys = [k for k in cache_dict if predicate(k)]
+        for k in keys:
+            cache_dict.pop(k, None)
+        return len(keys)
+
+    def _process_auth_invalidation(self, message: str) -> None:  # pylint: disable=too-many-branches
+        """Dispatch an auth-channel invalidation message to the local auth cache.
+
+        Called from :meth:`_process_invalidation` for messages received on
+        ``mcpgw:auth:invalidate``.
+
+        Args:
+            message: The invalidation message (e.g. ``user:alice@test.com``).
+        """
+        # pylint: disable=protected-access
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        # Order matters: team_roles/teams must be checked before team
+        if message.startswith("user:"):
+            email = message[len("user:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._context_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+                auth_cache._user_cache.pop(email, None)  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._team_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth user cache for %s", email)
+
+        elif message.startswith("revoke:"):
+            jti = message[len("revoke:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                auth_cache._revoked_jtis.add(jti)  # pyright: ignore[reportPrivateUsage]
+                auth_cache._revocation_cache.pop(jti, None)  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._context_cache, lambda k: k.endswith(f":{jti}"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth revocation cache for jti=%s", jti[:8])
+
+        elif message.startswith("team_roles:"):
+            team_id = message[len("team_roles:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._role_cache, lambda k: k.endswith(f":{team_id}"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth team_roles cache for team %s", team_id)
+
+        elif message.startswith("teams:"):
+            email = message[len("teams:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._teams_list_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth teams list cache for %s", email)
+
+        elif message.startswith("team:"):
+            email = message[len("team:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                auth_cache._team_cache.pop(email, None)  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._context_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth team cache for %s", email)
+
+        elif message.startswith("role:"):
+            cache_key = message[len("role:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                auth_cache._role_cache.pop(cache_key, None)  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth role cache for %s", cache_key)
+
+        elif message.startswith("membership:"):
+            user_email = message[len("membership:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._team_cache, lambda k: k.startswith(f"{user_email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth membership cache for %s", user_email)
 
 
 # Global singleton for cache invalidation subscriber
