@@ -537,8 +537,8 @@ _MAX_REVOKED_JTIS = 100_000
 Prevents unbounded memory growth if a compromised Redis channel floods
 ``revoke:`` messages.  When the cap is reached new JTIs are still
 processed (cache eviction) but are not added to the local set; the
-next ``load_revoked_from_redis`` call will reconcile from the
-authoritative Redis set.
+next ``_load_revoked_jtis`` call (in ``auth_cache``) will reconcile
+from the authoritative Redis set.
 """
 
 
@@ -695,8 +695,11 @@ class CacheInvalidationSubscriber:
                         data = message.get("data")
                         if isinstance(data, bytes):
                             data = data.decode("utf-8")
+                        channel = message.get("channel", "")
+                        if isinstance(channel, bytes):
+                            channel = channel.decode("utf-8")
                         if data:
-                            await self._process_invalidation(data)
+                            await self._process_invalidation(data, channel=channel)
                 except asyncio.TimeoutError:
                     continue
                 except Exception as e:  # pylint: disable=broad-exception-caught
@@ -708,13 +711,19 @@ class CacheInvalidationSubscriber:
         finally:
             logger.debug("CacheInvalidationSubscriber listen loop exited")
 
-    async def _process_invalidation(self, message: str) -> None:  # pylint: disable=too-many-branches
+    _AUTH_PREFIXES = ("user:", "revoke:", "team_roles:", "teams:", "team:", "role:", "membership:")
+    """Message prefixes that belong exclusively to the auth invalidation channel."""
+
+    async def _process_invalidation(self, message: str, *, channel: str = "") -> None:  # pylint: disable=too-many-branches
         """Process a cache invalidation message.
 
         Args:
             message: The invalidation message in format 'type:identifier'
+            channel: The Redis pubsub channel the message arrived on.
+                     Used to enforce that auth-prefixed messages are only
+                     accepted from ``mcpgw:auth:invalidate``.
         """
-        logger.debug("CacheInvalidationSubscriber received: %s", message)
+        logger.debug("CacheInvalidationSubscriber received on %s: %s", channel, message)
 
         # pylint: disable=protected-access
         # pyright: ignore[reportPrivateUsage]
@@ -771,8 +780,11 @@ class CacheInvalidationSubscriber:
                         admin_stats_cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local admin:%s cache (%d keys)", prefix, len(keys_to_remove))
 
-            elif message.startswith(("user:", "revoke:", "team_roles:", "teams:", "team:", "role:", "membership:")):
-                self._process_auth_invalidation(message)
+            elif message.startswith(self._AUTH_PREFIXES):
+                if channel and channel != "mcpgw:auth:invalidate":
+                    logger.warning("CacheInvalidationSubscriber: Ignoring auth message on wrong channel %s: %s", channel, message)
+                else:
+                    self._process_auth_invalidation(message)
 
             else:
                 logger.debug("CacheInvalidationSubscriber: Unknown message format: %s", message)

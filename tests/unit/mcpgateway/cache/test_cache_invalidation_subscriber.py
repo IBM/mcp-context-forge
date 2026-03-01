@@ -916,3 +916,41 @@ class TestAuthCacheInvalidationSubscriber:
         # Should evict keys starting with "odd:user@test.com:"
         assert "odd:user@test.com:team-1" not in mock_auth._team_cache
         assert "normal@test.com:team-2" in mock_auth._team_cache
+
+    @pytest.mark.asyncio
+    async def test_auth_message_rejected_on_wrong_channel(self):
+        """Deny-path: auth messages on mcpgw:cache:invalidate are ignored."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            user_cache={"alice@test.com": "user-data"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("user:alice@test.com", channel="mcpgw:cache:invalidate")
+
+        # Cache must NOT have been evicted
+        assert "alice@test.com" in mock_auth._user_cache
+
+    @pytest.mark.asyncio
+    async def test_auth_message_accepted_on_correct_channel(self):
+        """Auth messages on mcpgw:auth:invalidate are processed normally."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            user_cache={"alice@test.com": "user-data"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("user:alice@test.com", channel="mcpgw:auth:invalidate")
+
+        assert "alice@test.com" not in mock_auth._user_cache
+
+    @pytest.mark.asyncio
+    async def test_registry_message_unaffected_by_channel_guard(self):
+        """Registry messages on mcpgw:cache:invalidate still work as before."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_registry_cache = create_mock_registry_cache({"tools:hash1": {"data": "cached"}})
+
+        with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=mock_registry_cache):
+            await subscriber._process_invalidation("registry:tools", channel="mcpgw:cache:invalidate")
+
+        assert "tools:hash1" not in mock_registry_cache._cache
