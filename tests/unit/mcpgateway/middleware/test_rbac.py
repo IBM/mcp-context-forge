@@ -907,6 +907,81 @@ async def test_require_permission_plugin_hook_denies(monkeypatch):
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
 
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_denies_even_with_override_enabled(monkeypatch):
+    """Plugin deny must stay enforced even when grant-override mode is enabled."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = False
+    mock_result.modified_payload.reason = "Denied by test"
+    mock_result.metadata = {"_decision_plugin": "deny-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        with pytest.raises(HTTPException) as exc:
+            await decorated(user=mock_user)
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_logs_decision_plugin_from_provenance(monkeypatch):
+    """RBAC audit logs should use manager-provided decision provenance."""
+
+    async def dummy_func(user=None):
+        return "plugin-granted"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = True
+    mock_result.modified_payload.reason = "Allowed by test"
+    # Simulate plugin returning no identity metadata while manager provides provenance.
+    mock_result.metadata = {"_decision_plugin": "authz-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        with patch.object(rbac, "logger") as mock_logger:
+            decorated = rbac.require_permission("tools.read")(dummy_func)
+            result = await decorated(user=mock_user)
+
+    assert result == "plugin-granted"
+    mock_logger.info.assert_any_call(
+        "Plugin permission decision: plugin=%s user=%s permission=%s granted=%s reason=%s",
+        "authz-plugin",
+        "user@test.com",
+        "tools.read",
+        True,
+        "Allowed by test",
+    )
+
+
 # --- Decorator fresh_db_session paths ---
 
 

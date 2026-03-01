@@ -922,3 +922,27 @@ class TestMultiPluginDictChain:
 
         result, _ = await executor.execute(hook_refs, payload, global_ctx, hook_type="auth_hook")
         assert result.modified_payload == {}, "Empty dict should be preserved, not replaced by original payload"
+
+
+@pytest.mark.asyncio
+async def test_http_auth_permission_result_includes_decision_plugin_provenance():
+    """Permission hook decisions should carry deciding plugin identity even with empty plugin metadata."""
+    from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+    from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
+    from mcpgateway.plugins.framework.manager import PluginExecutor
+    from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+    class DecisionPlugin(Plugin):
+        async def http_auth_check_permission(self, payload, context):
+            return PluginResult(continue_processing=True, modified_payload=HttpAuthCheckPermissionResultPayload(granted=False, reason="Denied by policy"), metadata={})
+
+    config = PluginConfig(name="decision-plugin", kind="test.Plugin", version="1.0", hooks=["http_auth_check_permission"])
+    hook_ref = HookRef("http_auth_check_permission", PluginRef(DecisionPlugin(config)))
+
+    executor = PluginExecutor(hook_policies={"http_auth_check_permission": HookPayloadPolicy(writable_fields=frozenset({"reason"}))})
+    payload = HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.read", resource_type="tool")
+    result, _ = await executor.execute([hook_ref], payload, GlobalContext(request_id="decision-1"), hook_type="http_auth_check_permission")
+
+    assert result.modified_payload is not None
+    assert result.modified_payload.granted is False
+    assert result.metadata["_decision_plugin"] == "decision-plugin"

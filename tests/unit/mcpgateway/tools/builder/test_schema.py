@@ -339,6 +339,14 @@ class TestBuildableConfig:
         with pytest.raises(ValidationError, match="unsupported characters"):
             GatewayConfig(repo="https://github.com/org/repo.git$(whoami)")
 
+    def test_repo_rejects_backslashes(self):
+        """Repository URL should reject backslashes in SCP-style values."""
+        with pytest.raises(ValidationError, match="cannot contain backslashes"):
+            GatewayConfig(repo=r"git@github.com:org/repo\\.git")
+
+        with pytest.raises(ValidationError, match="cannot contain backslashes"):
+            GatewayConfig(repo=r"git@github.com:org/repo\\xgit")
+
     def test_repo_accepts_scp_style_git_url(self):
         """Repository URL should support git@host:path syntax."""
         config = GatewayConfig(repo="git@github.com:org/repo.git")
@@ -351,3 +359,9 @@ class TestBuildableConfig:
 
         with pytest.raises(ValidationError, match="unsupported sequence"):
             GatewayConfig(repo="https://github.com/org/repo.git", ref="main..evil")
+
+        with pytest.raises(ValidationError, match="unsupported sequence"):
+            GatewayConfig(repo="https://github.com/org/repo.git", ref="main@{1}")
+
+        with pytest.raises(ValidationError, match="unsupported sequence"):
+            GatewayConfig(repo="https://github.com/org/repo.git", ref="main//evil")

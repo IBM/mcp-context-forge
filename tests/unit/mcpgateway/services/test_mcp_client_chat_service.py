@@ -43,16 +43,15 @@ def test_mcpserverconfig_stdio_requires_feature_flag(monkeypatch):
         svc.MCPServerConfig(command="python", args=["main.py"], transport="stdio")
 
 
-def test_mcpserverconfig_url_required_for_http_transports_validator():
-    info = SimpleNamespace(data={"transport": "sse"})
+def test_mcpserverconfig_url_required_for_http_transports():
     with pytest.raises(ValueError, match="URL is required"):
-        svc.MCPServerConfig.validate_url_for_transport(None, info)
+        svc.MCPServerConfig(transport="sse")
 
 
-def test_mcpserverconfig_command_required_for_stdio_validator():
-    info = SimpleNamespace(data={"transport": "stdio"})
+def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     with pytest.raises(ValueError, match="Command is required"):
-        svc.MCPServerConfig.validate_command_for_stdio(None, info)
+        svc.MCPServerConfig(transport="stdio")
 
 
 def test_azure_openai_config_and_defaults():

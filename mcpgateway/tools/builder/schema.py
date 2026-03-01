@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _PLUGIN_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _GIT_REF_PATTERN = re.compile(r"^[A-Za-z0-9._/-]+$")
-_SCP_REPO_PATTERN = re.compile(r"^git@[A-Za-z0-9._-]+:[A-Za-z0-9._/-]+(?:\\.git)?$")
+_SCP_REPO_PATTERN = re.compile(r"^git@[A-Za-z0-9._-]+:[A-Za-z0-9._/-]+(?:\.git)?$")
 
 
 class OpenShiftConfig(BaseModel):
@@ -240,6 +240,9 @@ class BuildableConfig(BaseModel):
 
         if any(ch.isspace() for ch in repo):
             raise ValueError("Repository URL cannot contain whitespace")
+
+        if "\\" in repo:
+            raise ValueError("Repository URL cannot contain backslashes")
 
         if any(token in repo for token in ("`", "$", "|", ";", "&", "<", ">")):
             raise ValueError("Repository URL contains unsupported characters")

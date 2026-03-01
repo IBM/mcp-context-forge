@@ -11,6 +11,7 @@ Unit tests for plain Python MCP Stack deployment.
 from pathlib import Path
 import re
 import subprocess
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch, call
 
 # Third-Party
@@ -63,6 +64,90 @@ class TestMCPStackPython:
 
         # Should call make commands for CA, gateway, and each plugin
         assert mock_run.call_count == 4  # CA + gateway + 2 plugins
+        mock_run.assert_has_calls(
+            [
+                call(["make", "certs-mcp-ca", "MCP_CERT_DAYS=825"]),
+                call(["make", "certs-mcp-gateway", "MCP_CERT_DAYS=825"]),
+                call(["make", "certs-mcp-plugin", "PLUGIN_NAME=Plugin1", "MCP_CERT_DAYS=825"]),
+                call(["make", "certs-mcp-plugin", "PLUGIN_NAME=Plugin2", "MCP_CERT_DAYS=825"]),
+            ]
+        )
+
+    def test_escape_make_value_doubles_dollar(self):
+        """Make variable values should escape '$' to '$$'."""
+        assert MCPStackPython._escape_make_value("Plugin$Name") == "Plugin$$Name"
+
+    @patch("mcpgateway.tools.builder.python_deploy.shutil.which")
+    @patch("mcpgateway.tools.builder.python_deploy.load_config")
+    @patch("mcpgateway.tools.builder.python_deploy.shutil.which", return_value="/usr/bin/make")
+    @patch.object(MCPStackPython, "_run_command")
+    @pytest.mark.asyncio
+    async def test_generate_certificates_escapes_plugin_name(self, mock_run, mock_make, mock_load, mock_which_runtime):
+        """Certificate generation should escape '$' in make variable values."""
+        mock_which_runtime.return_value = "/usr/bin/docker"
+        mock_load.return_value = SimpleNamespace(
+            certificates=SimpleNamespace(use_cert_manager=False, validity_days=365),
+            plugins=[SimpleNamespace(name="Plugin$One")],
+        )
+
+        stack = MCPStackPython()
+        await stack.generate_certificates("test-config.yaml")
+
+        mock_run.assert_has_calls(
+            [
+                call(["make", "certs-mcp-ca", "MCP_CERT_DAYS=365"]),
+                call(["make", "certs-mcp-gateway", "MCP_CERT_DAYS=365"]),
+                call(["make", "certs-mcp-plugin", "PLUGIN_NAME=Plugin$$One", "MCP_CERT_DAYS=365"]),
+            ]
+        )
+
+    def test_build_component_existing_repo_uses_fetch_separator(self, tmp_path, monkeypatch):
+        """Existing clone must fetch refs with '--' separator to avoid option parsing."""
+        monkeypatch.chdir(tmp_path)
+        clone_dir = tmp_path / "build" / "gateway"
+        (clone_dir / ".git").mkdir(parents=True)
+        (clone_dir / "Containerfile").write_text("FROM scratch\n")
+
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose"},
+                "gateway": {"repo": "https://github.com/test/gateway.git", "ref": "main"},
+                "plugins": [],
+            }
+        )
+
+        stack = MCPStackPython()
+        with patch.object(stack, "_detect_container_engine", return_value="docker"):
+            with patch.object(stack, "_run_command") as mock_run:
+                with patch("mcpgateway.tools.builder.python_deploy.handle_registry_operations", return_value="mcpgateway-gateway:latest"):
+                    stack._build_component(config.gateway, config, "gateway")
+
+        assert mock_run.call_args_list[0] == call(["git", "fetch", "origin", "--", "main"], cwd=Path("build/gateway"))
+
+    def test_build_component_new_repo_uses_clone_separator(self, tmp_path, monkeypatch):
+        """Fresh clone must pass repository after '--' separator."""
+        monkeypatch.chdir(tmp_path)
+        clone_dir = tmp_path / "build" / "PluginOne"
+        clone_dir.mkdir(parents=True)
+        (clone_dir / "Containerfile").write_text("FROM scratch\n")
+
+        config = MCPStackConfig.model_validate(
+            {
+                "deployment": {"type": "compose"},
+                "gateway": {"image": "mcpgateway:latest"},
+                "plugins": [{"name": "PluginOne", "repo": "https://github.com/test/plugin1.git", "ref": "release/v1"}],
+            }
+        )
+
+        stack = MCPStackPython()
+        with patch.object(stack, "_detect_container_engine", return_value="docker"):
+            with patch.object(stack, "_run_command") as mock_run:
+                with patch("mcpgateway.tools.builder.python_deploy.handle_registry_operations", return_value="mcpgateway-pluginone:latest"):
+                    stack._build_component(config.plugins[0], config, "PluginOne")
+
+        assert mock_run.call_args_list[0] == call(
+            ["git", "clone", "--branch", "release/v1", "--depth", "1", "--", "https://github.com/test/plugin1.git", str(Path("build/PluginOne"))]
+        )
 
     @patch("mcpgateway.tools.builder.python_deploy.shutil.which")
     @patch("mcpgateway.tools.builder.python_deploy.load_config")

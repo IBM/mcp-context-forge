@@ -620,11 +620,14 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     decision_plugin = "unknown"
                     decision_reason = getattr(result.modified_payload, "reason", None)
                     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+                    if result_metadata.get("_decision_plugin"):
+                        decision_plugin = str(result_metadata["_decision_plugin"])
                     for key in ("plugin_name", "plugin", "source_plugin", "handler"):
+                        if decision_plugin != "unknown":
+                            break
                         plugin_name = result_metadata.get(key)
                         if plugin_name:
                             decision_plugin = str(plugin_name)
-                            break
 
                     logger.info(
                         "Plugin permission decision: plugin=%s user=%s permission=%s granted=%s reason=%s",
