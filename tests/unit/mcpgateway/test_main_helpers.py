@@ -182,3 +182,64 @@ async def test_invalidate_resource_cache_clears_entries():
     await main.invalidate_resource_cache()
     assert main.resource_cache.get("/resource1") is None
     assert main.resource_cache.get("/resource2") is None
+
+
+# ---------------------------------------------------------------------------
+# tojson_attr filter tests
+# ---------------------------------------------------------------------------
+class TestTojsonAttrFilter:
+    """Tests for the tojson_attr Jinja2 filter in main.py."""
+
+    def test_returns_plain_str_not_markup(self):
+        """tojson_attr must return plain str so autoescape HTML-encodes it."""
+        from markupsafe import Markup
+
+        result = main.tojson_attr("hello")
+        assert isinstance(result, str)
+        assert not isinstance(result, Markup)
+
+    def test_string_produces_json_with_quotes(self):
+        """String value produces JSON-encoded output with surrounding quotes."""
+        result = main.tojson_attr("hello")
+        assert result == '"hello"'
+
+    def test_escapes_angle_brackets(self):
+        """< and > are escaped to unicode to prevent HTML injection."""
+        result = main.tojson_attr("<script>alert(1)</script>")
+        assert "<" not in result
+        assert ">" not in result
+        assert "\\u003c" in result
+        assert "\\u003e" in result
+
+    def test_escapes_ampersand(self):
+        """& is escaped to unicode to prevent entity injection."""
+        result = main.tojson_attr("a&b")
+        assert "&" not in result.replace("\\u0026", "")
+        assert "\\u0026" in result
+
+    def test_escapes_single_quote(self):
+        """Single quotes are escaped to unicode for safety in HTML contexts."""
+        result = main.tojson_attr("it's")
+        assert "'" not in result
+        assert "\\u0027" in result
+
+    def test_double_quotes_left_for_autoescape(self):
+        """Double quotes remain literal so Jinja2 autoescape encodes them to &quot;."""
+        result = main.tojson_attr('say "hi"')
+        # json.dumps produces: "say \"hi\""  — the backslash-quote is JSON escaping
+        assert '\\"' in result
+
+    def test_none_value(self):
+        """None produces JSON null."""
+        assert main.tojson_attr(None) == "null"
+
+    def test_integer_value(self):
+        """Integer passes through as JSON number."""
+        assert main.tojson_attr(42) == "42"
+
+    def test_xss_payload_is_neutralized(self):
+        """A realistic XSS payload is fully escaped."""
+        result = main.tojson_attr("'); alert(document.cookie);//")
+        assert "\\u0027" in result  # single quote escaped
+        assert "alert" in result  # content preserved but escaped
+        assert result.startswith('"') and result.endswith('"')  # valid JSON string

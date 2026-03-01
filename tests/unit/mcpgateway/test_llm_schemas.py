@@ -452,3 +452,114 @@ class TestAdditionalSchemas:
     def test_model_list_response(self):
         resp = LLMModelListResponse(models=[], total=0)
         assert resp.page == 1
+
+
+# ---------------------------------------------------------------------------
+# T-01 regression: XSS payloads must be rejected by SecurityValidator
+# ---------------------------------------------------------------------------
+class TestLLMSchemaXSSValidation:
+    """T-01 regression: LLM schemas must reject XSS payloads via SecurityValidator."""
+
+    def test_provider_name_rejects_xss(self):
+        """Provider name with script injection must be rejected."""
+        with pytest.raises(ValidationError):
+            LLMProviderCreate(
+                name="test'); alert(1);//",
+                provider_type=LLMProviderTypeEnum.OPENAI,
+            )
+
+    def test_provider_name_rejects_html_tags(self):
+        """Provider name with HTML tags must be rejected."""
+        with pytest.raises(ValidationError):
+            LLMProviderCreate(
+                name="<script>alert(1)</script>",
+                provider_type=LLMProviderTypeEnum.OPENAI,
+            )
+
+    def test_provider_description_sanitizes_html(self):
+        """Provider description with HTML must be sanitized."""
+        provider = LLMProviderCreate(
+            name="Safe-Provider",
+            provider_type=LLMProviderTypeEnum.OPENAI,
+            description="<b>Bold</b> description",
+        )
+        # sanitize_display_text strips HTML tags
+        assert "<b>" not in provider.description
+
+    def test_provider_update_name_rejects_xss(self):
+        """Provider update name with XSS must be rejected."""
+        with pytest.raises(ValidationError):
+            LLMProviderUpdate(name="test<img src=x onerror=alert(1)>")
+
+    def test_model_name_accepts_punctuation(self):
+        """Model name with common display punctuation must be accepted."""
+        model = LLMModelCreate(
+            provider_id="provider-123",
+            model_id="gpt-4o",
+            model_name="GPT-4o (Latest)",
+        )
+        assert model.model_name == "GPT-4o (Latest)"
+
+    def test_model_id_rejects_html(self):
+        """Model ID with HTML special chars must be rejected."""
+        with pytest.raises(ValidationError):
+            LLMModelCreate(
+                provider_id="provider-123",
+                model_id="<script>alert(1)</script>",
+                model_name="Safe-Model",
+            )
+
+    def test_model_id_allows_slashes_and_dots(self):
+        """Model ID should allow provider-style IDs like gpt-4o, claude-sonnet-4-20250514."""
+        model = LLMModelCreate(
+            provider_id="provider-123",
+            model_id="anthropic/claude-sonnet-4-20250514",
+            model_name="Claude-Sonnet",
+        )
+        assert model.model_id == "anthropic/claude-sonnet-4-20250514"
+
+    def test_model_id_allows_colons(self):
+        """Model ID should allow colons (e.g. Ollama llama3.2:latest)."""
+        model = LLMModelCreate(
+            provider_id="provider-123",
+            model_id="llama3.2:latest",
+            model_name="Llama 3.2",
+        )
+        assert model.model_id == "llama3.2:latest"
+
+    def test_model_update_name_rejects_xss(self):
+        """Model update name with XSS must be rejected."""
+        with pytest.raises(ValidationError):
+            LLMModelUpdate(model_name="<script>alert(1)</script>")
+
+    def test_provider_config_depth_validation(self):
+        """Deeply nested config (>30 levels) should be rejected."""
+        # Build 31 levels of nesting (default MAX_JSON_DEPTH=30)
+        nested: dict = {"key": "value"}
+        for _ in range(31):
+            nested = {"nested": nested}
+        with pytest.raises(ValidationError):
+            LLMProviderCreate(
+                name="Test-Provider",
+                provider_type=LLMProviderTypeEnum.OPENAI,
+                config=nested,
+            )
+
+    def test_provider_api_base_accepts_valid_urls(self):
+        """api_base accepts both public and localhost URLs (SSRF enforced at request time)."""
+        for url in ["https://api.openai.com", "http://localhost:11434"]:
+            provider = LLMProviderCreate(
+                name="Test-Provider",
+                provider_type=LLMProviderTypeEnum.OPENAI,
+                api_base=url,
+            )
+            assert provider.api_base == url
+
+    def test_provider_api_base_rejects_javascript_uri(self):
+        """api_base with javascript: scheme must be rejected."""
+        with pytest.raises(ValidationError):
+            LLMProviderCreate(
+                name="XSS-Provider",
+                provider_type=LLMProviderTypeEnum.OPENAI,
+                api_base="javascript:alert(1)",
+            )
