@@ -95,7 +95,7 @@
         {% for hook, count in stats.plugins_by_hook.items() %}
         <div
           class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
-          onclick="filterByHook('{{ hook }}')" onkeydown="handleKeydown(event, () => filterByHook('{{ hook }}'))" role="button" tabindex="0"
+          onclick="filterByHook({{ hook|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByHook({{ hook|tojson_attr }}))" role="button" tabindex="0"
         >
           <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
             >{{ hook.replace('_', ' ').title() }}</span
@@ -141,7 +141,7 @@
         {% for tag, count in stats.plugins_by_tag.items() %}
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-          onclick="filterByTag('{{ tag }}')" onkeydown="handleKeydown(event, () => filterByTag('{{ tag }}'))" role="button" tabindex="0"
+          onclick="filterByTag({{ tag|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByTag({{ tag|tojson_attr }}))" role="button" tabindex="0"
         >
           {{ tag }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -183,7 +183,7 @@
         {% for author, count in stats.plugins_by_author.items() %}
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-          onclick="filterByAuthor('{{ author }}')" onkeydown="handleKeydown(event, () => filterByAuthor('{{ author }}'))" role="button" tabindex="0"
+          onclick="filterByAuthor({{ author|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByAuthor({{ author|tojson_attr }}))" role="button" tabindex="0"
         >
           {{ author }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -378,7 +378,7 @@
 
       <!-- Action Button -->
       <button
-        onclick="showPluginDetails('{{ plugin.name }}')"
+        onclick="showPluginDetails({{ plugin.name|tojson_attr }})"
         class="w-full mt-4 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
       >
         View Details →

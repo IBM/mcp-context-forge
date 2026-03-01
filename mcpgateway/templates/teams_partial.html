@@ -89,7 +89,7 @@
         <span class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900 rounded-md border border-yellow-300 dark:border-yellow-600">
             ⏳ Requested to Join
         </span>
-        <button onclick="cancelJoinRequest('{{ team.id }}', '{{ team.pending_request.id }}')"
+        <button onclick="cancelJoinRequest({{ team.id|tojson_attr }}, {{ team.pending_request.id|tojson_attr }})"
             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
             Cancel Request
         </button>
