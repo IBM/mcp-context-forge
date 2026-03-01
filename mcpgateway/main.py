@@ -2171,6 +2171,37 @@ def decode_html_entities(value: str) -> str:
 
 jinja_env.filters["decode_html"] = decode_html_entities
 
+
+def tojson_attr(value: object) -> str:
+    """JSON-encode a value for safe use inside double-quoted HTML attributes.
+
+    Unlike the built-in ``|tojson`` filter (which returns ``Markup``, bypassing
+    autoescape), this filter returns a plain ``str``.  Jinja2 autoescape then
+    HTML-encodes the ``"`` characters to ``&quot;``, keeping the enclosing
+    ``"``-delimited HTML attribute intact.  The browser decodes the entities
+    back to ``"`` before passing the value to the JS engine.
+
+    Use ``|tojson_attr`` for inline event handlers (``onclick``, ``onsubmit``).
+    Use the built-in ``|tojson`` for ``<script>`` blocks (where ``Markup`` is fine).
+
+    Args:
+        value: Any JSON-serialisable object.
+
+    Returns:
+        Plain string with JSON content (autoescape will HTML-encode it).
+    """
+    # Standard
+    import json as _json
+
+    s = _json.dumps(value)
+    # Same HTML-safety replacements as Jinja2's htmlsafe_json_dumps,
+    # but we return a plain str so autoescape encodes the remaining `"`.
+    s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
+    return s
+
+
+jinja_env.filters["tojson_attr"] = tojson_attr
+
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")
