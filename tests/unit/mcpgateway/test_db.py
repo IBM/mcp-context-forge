@@ -25,6 +25,50 @@ def test_utc_now_returns_utc_datetime():
     assert now.tzinfo == timezone.utc
 
 
+def test_encrypted_text_bind_encrypts_plaintext(monkeypatch):
+    """EncryptedText should encrypt plaintext bind params."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.return_value = "v2:{ciphertext}"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    encrypted = db.EncryptedText().process_bind_param("plain-token", None)
+    assert encrypted == "v2:{ciphertext}"
+    mock_encryption.encrypt_secret.assert_called_once_with("plain-token")
+
+
+def test_encrypted_text_bind_preserves_pre_encrypted_values(monkeypatch):
+    """EncryptedText should avoid double-encrypting existing encrypted values."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_bind_param("v2:{already-encrypted}", None)
+    assert value == "v2:{already-encrypted}"
+    mock_encryption.encrypt_secret.assert_not_called()
+
+
+def test_encrypted_text_result_decrypts_encrypted_values(monkeypatch):
+    """EncryptedText should decrypt values when reading from the database."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    mock_encryption.decrypt_secret_or_plaintext.return_value = "plain-token"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("v2:{ciphertext}", None)
+    assert value == "plain-token"
+
+
+def test_encrypted_text_result_preserves_plaintext_values(monkeypatch):
+    """EncryptedText should leave plaintext rows unchanged for compatibility."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("legacy-plain-token", None)
+    assert value == "legacy-plain-token"
+
+
 # --- Tool metrics properties ---
 def make_tool_with_metrics(metrics):
     tool = db.Tool()

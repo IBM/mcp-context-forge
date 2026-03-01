@@ -1731,7 +1731,7 @@ class PromptService(BaseService):
 
             visibility = prompt_update.visibility or prompt.visibility
             team_id = prompt_update.team_id or prompt.team_id
-            owner_email = prompt_update.owner_email or prompt.owner_email or user_email
+            owner_email = prompt.owner_email or user_email
 
             candidate_custom_name = prompt.custom_name
 

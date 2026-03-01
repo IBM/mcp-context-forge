@@ -1044,6 +1044,48 @@ class TestSchemaValidators:
         assert empty_headers_tool.auth.auth_type == "authheaders"
         assert empty_headers_tool.auth.auth_value is None
 
+    def test_tool_create_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolCreate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "basic",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolCreate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "basic"
+        assert extra["auth_assembled"] is True
+
+    def test_tool_update_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolUpdate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "bearer",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolUpdate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "bearer"
+        assert extra["auth_assembled"] is True
+
     def test_tool_create_sets_default_timeout(self):
         """REST passthrough tools should default timeout_ms when missing."""
         tool = ToolCreate(name="rest-tool", integration_type="REST", request_type="GET", url="http://example.com")

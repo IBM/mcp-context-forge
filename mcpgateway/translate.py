@@ -708,6 +708,11 @@ def _build_fastapi(
     last_restart_ts: dict[str, float] = {"t": 0.0}
 
     def _restart_allowed() -> bool:
+        """Return whether enough time elapsed to allow a subprocess restart.
+
+        Returns:
+            bool: ``True`` when restart is allowed, otherwise ``False``.
+        """
         now = _time.monotonic()
         if now - last_restart_ts["t"] < restart_min_interval_secs:
             return False

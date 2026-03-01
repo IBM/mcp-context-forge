@@ -1212,9 +1212,6 @@ class ServerService(BaseService):
                     _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
 
-            if server_update.owner_email is not None:
-                server.owner_email = server_update.owner_email
-
             # Update associated tools if provided using bulk query
             if server_update.associated_tools is not None:
                 server.tools = []
