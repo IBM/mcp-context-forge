@@ -630,7 +630,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("user:alice@test.com")
+            await subscriber._process_invalidation("user:alice@test.com", channel="mcpgw:auth:invalidate")
 
         assert "alice@test.com" not in mock_auth._user_cache
         assert "bob@test.com" in mock_auth._user_cache
@@ -650,7 +650,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("revoke:jti-abc123")
+            await subscriber._process_invalidation("revoke:jti-abc123", channel="mcpgw:auth:invalidate")
 
         assert "jti-abc123" in mock_auth._revoked_jtis
         assert "jti-abc123" not in mock_auth._revocation_cache
@@ -668,7 +668,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("team:alice@test.com")
+            await subscriber._process_invalidation("team:alice@test.com", channel="mcpgw:auth:invalidate")
 
         assert "alice@test.com" not in mock_auth._team_cache
         assert "bob@test.com" in mock_auth._team_cache
@@ -688,7 +688,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("role:alice@test.com:team-123")
+            await subscriber._process_invalidation("role:alice@test.com:team-123", channel="mcpgw:auth:invalidate")
 
         assert "alice@test.com:team-123" not in mock_auth._role_cache
         assert "alice@test.com:team-456" in mock_auth._role_cache
@@ -707,7 +707,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("team_roles:team-123")
+            await subscriber._process_invalidation("team_roles:team-123", channel="mcpgw:auth:invalidate")
 
         assert "alice@test.com:team-123" not in mock_auth._role_cache
         assert "bob@test.com:team-123" not in mock_auth._role_cache
@@ -726,7 +726,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("teams:alice@test.com")
+            await subscriber._process_invalidation("teams:alice@test.com", channel="mcpgw:auth:invalidate")
 
         assert "alice@test.com:True" not in mock_auth._teams_list_cache
         assert "alice@test.com:False" not in mock_auth._teams_list_cache
@@ -745,7 +745,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("membership:alice@test.com")
+            await subscriber._process_invalidation("membership:alice@test.com", channel="mcpgw:auth:invalidate")
 
         assert "alice@test.com:team-1,team-2" not in mock_auth._team_cache
         assert "alice@test.com:team-3" not in mock_auth._team_cache
@@ -759,13 +759,13 @@ class TestAuthCacheInvalidationSubscriber:
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
             # All auth message types should not raise exceptions
-            await subscriber._process_invalidation("user:test@example.com")
-            await subscriber._process_invalidation("revoke:jti-12345678")
-            await subscriber._process_invalidation("team:test@example.com")
-            await subscriber._process_invalidation("role:test@example.com:team-123")
-            await subscriber._process_invalidation("team_roles:team-123")
-            await subscriber._process_invalidation("teams:test@example.com")
-            await subscriber._process_invalidation("membership:test@example.com")
+            await subscriber._process_invalidation("user:test@example.com", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("revoke:jti-12345678", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("team:test@example.com", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("role:test@example.com:team-123", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("team_roles:team-123", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("teams:test@example.com", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("membership:test@example.com", channel="mcpgw:auth:invalidate")
 
     @pytest.mark.asyncio
     async def test_cross_replica_auth_invalidation_end_to_end(self):
@@ -789,7 +789,7 @@ class TestAuthCacheInvalidationSubscriber:
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
             # Simulate receiving invalidation from another replica
             # (e.g., after user role change on replica 1, replica 2 gets this)
-            await subscriber._process_invalidation("user:admin@company.com")
+            await subscriber._process_invalidation("user:admin@company.com", channel="mcpgw:auth:invalidate")
 
         # All caches for this user should be cleared
         assert "admin@company.com" not in mock_auth._user_cache
@@ -797,14 +797,14 @@ class TestAuthCacheInvalidationSubscriber:
         assert "admin@company.com:team-a,team-b" not in mock_auth._team_cache
 
     @pytest.mark.asyncio
-    async def test_revoke_skips_add_when_revoked_jtis_at_cap(self):
+    async def test_revoke_skips_add_when_revoked_jtis_at_cap(self, monkeypatch):
         """Test that revoke handler respects _MAX_REVOKED_JTIS cap."""
-        # First-Party
-        from mcpgateway.cache.registry_cache import _MAX_REVOKED_JTIS
+        cap = 5
+        monkeypatch.setattr("mcpgateway.cache.registry_cache._MAX_REVOKED_JTIS", cap)
 
         subscriber = CacheInvalidationSubscriber()
         # Pre-fill _revoked_jtis to the cap
-        existing_jtis = {f"old-jti-{i}" for i in range(_MAX_REVOKED_JTIS)}
+        existing_jtis = {f"old-jti-{i}" for i in range(cap)}
         mock_auth = create_mock_auth_cache(
             revoked_jtis=existing_jtis,
             revocation_cache={"new-jti": "cached"},
@@ -812,11 +812,11 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("revoke:new-jti")
+            await subscriber._process_invalidation("revoke:new-jti", channel="mcpgw:auth:invalidate")
 
         # JTI should NOT be added to the set (cap reached)
         assert "new-jti" not in mock_auth._revoked_jtis
-        assert len(mock_auth._revoked_jtis) == _MAX_REVOKED_JTIS
+        assert len(mock_auth._revoked_jtis) == cap
         # But cache eviction should still happen
         assert "new-jti" not in mock_auth._revocation_cache
         assert "user@test.com:new-jti" not in mock_auth._context_cache
@@ -831,7 +831,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("revoke:new-jti")
+            await subscriber._process_invalidation("revoke:new-jti", channel="mcpgw:auth:invalidate")
 
         assert "new-jti" in mock_auth._revoked_jtis
 
@@ -846,7 +846,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("teams:alice@test.com")
+            await subscriber._process_invalidation("teams:alice@test.com", channel="mcpgw:auth:invalidate")
 
         # teams: should only clear _teams_list_cache, not _team_cache or _context_cache
         assert "alice@test.com:True" not in mock_auth._teams_list_cache
@@ -864,7 +864,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("team_roles:team-99")
+            await subscriber._process_invalidation("team_roles:team-99", channel="mcpgw:auth:invalidate")
 
         # team_roles: should only clear _role_cache, not _team_cache or _context_cache
         assert "alice@test.com:team-99" not in mock_auth._role_cache
@@ -879,13 +879,13 @@ class TestAuthCacheInvalidationSubscriber:
         mock_auth = create_mock_auth_cache()
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("user:")
-            await subscriber._process_invalidation("revoke:")
-            await subscriber._process_invalidation("team:")
-            await subscriber._process_invalidation("role:")
-            await subscriber._process_invalidation("team_roles:")
-            await subscriber._process_invalidation("teams:")
-            await subscriber._process_invalidation("membership:")
+            await subscriber._process_invalidation("user:", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("revoke:", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("team:", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("role:", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("team_roles:", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("teams:", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("membership:", channel="mcpgw:auth:invalidate")
 
     @pytest.mark.asyncio
     async def test_identifier_containing_colons(self):
@@ -897,7 +897,7 @@ class TestAuthCacheInvalidationSubscriber:
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
             # role: strips only the "role:" prefix; remainder is the full cache key
-            await subscriber._process_invalidation("role:user@co:with:extra")
+            await subscriber._process_invalidation("role:user@co:with:extra", channel="mcpgw:auth:invalidate")
 
         assert "user@co:with:extra" not in mock_auth._role_cache
         assert "clean@co:team-1" in mock_auth._role_cache
@@ -911,7 +911,7 @@ class TestAuthCacheInvalidationSubscriber:
         )
 
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
-            await subscriber._process_invalidation("membership:odd:user@test.com")
+            await subscriber._process_invalidation("membership:odd:user@test.com", channel="mcpgw:auth:invalidate")
 
         # Should evict keys starting with "odd:user@test.com:"
         assert "odd:user@test.com:team-1" not in mock_auth._team_cache

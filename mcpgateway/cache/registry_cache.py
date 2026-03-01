@@ -781,7 +781,7 @@ class CacheInvalidationSubscriber:
                 logger.debug("CacheInvalidationSubscriber: Cleared local admin:%s cache (%d keys)", prefix, len(keys_to_remove))
 
             elif message.startswith(self._AUTH_PREFIXES):
-                if channel and channel != "mcpgw:auth:invalidate":
+                if channel != "mcpgw:auth:invalidate":
                     logger.warning("CacheInvalidationSubscriber: Ignoring auth message on wrong channel %s: %s", channel, message)
                 else:
                     self._process_auth_invalidation(message)
