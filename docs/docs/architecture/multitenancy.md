@@ -1253,6 +1253,29 @@ For detailed information on RBAC configuration, token scoping, and permission ma
 
 ---
 
+## A2A Protocol Tenant vs Gateway Team
+
+A2A Protocol v1.0 introduces a `tenant` field on all request messages. This is a **routing label** forwarded to downstream A2A agents, distinct from the gateway's `team_id` which controls access authorization.
+
+| Concept | `team_id` | `tenant` |
+|---------|-----------|----------|
+| Purpose | Authorization / access control | Configuration / routing |
+| Scope | Gateway-internal | Protocol-level (A2A v1.0) |
+| Set by | Gateway admin (RBAC) | Server/agent configuration |
+| Lives in | JWT `teams` claim + DB column | `AgentInterface.tenant` + request messages |
+| Controls | WHO can see/invoke a resource | WHICH context downstream agents operate in |
+
+Key rules:
+
+- `team_id` is never sent in A2A protocol messages.
+- `tenant` is never used for gateway access control.
+- Multiple servers in different teams can share the same downstream `tenant`.
+- Tenant resolution precedence: caller-supplied (if allowed) > per-agent > server default > empty.
+
+For design rationale, see [ADR-0043: Tenant vs Team Separation](adr/043-tenant-vs-team.md).
+
+---
+
 ## Gaps & Issues
 
 - Team roles: Owner and Member only (platform Admin is global) — consistent across ERD, APIs, and UI.

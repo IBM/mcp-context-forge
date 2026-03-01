@@ -368,22 +368,6 @@ class PromptService(BaseService):
         }
         return PromptRead.model_validate(prompt_dict)
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
-        """Retrieve the team name given a team ID.
-
-        Args:
-            db (Session): Database session for querying teams.
-            team_id (Optional[str]): The ID of the team.
-
-        Returns:
-            Optional[str]: The name of the team if found, otherwise None.
-        """
-        if not team_id:
-            return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        db.commit()  # Release transaction to avoid idle-in-transaction
-        return team.name if team else None
-
     def _compute_prompt_name(self, custom_name: str, gateway: Optional[Any] = None) -> str:
         """Compute the stored prompt name from custom_name and gateway context.
 
@@ -1328,61 +1312,25 @@ class PromptService(BaseService):
     ) -> bool:
         """Check if user has access to a prompt based on visibility rules.
 
-        Implements the same access control logic as list_prompts() for consistency.
+        Delegates to BaseService.check_item_access for unified access control.
 
         Args:
             db: Database session for team membership lookup if needed.
             prompt: Prompt ORM object with visibility, team_id, owner_email.
             user_email: Email of the requesting user (None = unauthenticated).
             token_teams: List of team IDs from token.
-                - None = unrestricted admin access
-                - [] = public-only token
-                - [...] = team-scoped token
 
         Returns:
             True if access is allowed, False otherwise.
         """
-        visibility = getattr(prompt, "visibility", "public")
-        prompt_team_id = getattr(prompt, "team_id", None)
-        prompt_owner_email = getattr(prompt, "owner_email", None)
-
-        # Public prompts are accessible by everyone
-        if visibility == "public":
-            return True
-
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
-        if token_teams is None and user_email is None:
-            return True
-
-        # No user context (but not admin) = deny access to non-public prompts
-        if not user_email:
-            return False
-
-        # Public-only tokens (empty teams array) can ONLY access public prompts
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False  # Already checked public above
-
-        # Owner can access their own private prompts
-        if visibility == "private" and prompt_owner_email and prompt_owner_email == user_email:
-            return True
-
-        # Team prompts: check team membership (matches list_prompts behavior)
-        if prompt_team_id:
-            # Use token_teams if provided, otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            else:
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-
-            # Team/public visibility allows access if user is in the team
-            if visibility in ["team", "public"] and prompt_team_id in team_ids:
-                return True
-
-        return False
+        return await self.check_item_access(
+            visibility=getattr(prompt, "visibility", "public"),
+            item_team_id=getattr(prompt, "team_id", None),
+            item_owner_email=getattr(prompt, "owner_email", None),
+            user_email=user_email,
+            token_teams=token_teams,
+            db=db,
+        )
 
     async def get_prompt(
         self,

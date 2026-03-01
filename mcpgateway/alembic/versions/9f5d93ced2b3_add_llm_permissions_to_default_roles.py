@@ -2,7 +2,7 @@
 """Add LLM permissions to default RBAC roles.
 
 Revision ID: 9f5d93ced2b3
-Revises: y8i9j0k1l2m3
+Revises: y8j9k0l1m2n3
 Create Date: 2026-02-23 11:09:14.709030
 
 Backfills default role permission sets so existing deployments receive:
@@ -24,7 +24,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "9f5d93ced2b3"
-down_revision: Union[str, Sequence[str], None] = "y8i9j0k1l2m3"
+down_revision: Union[str, Sequence[str], None] = "y8j9k0l1m2n3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

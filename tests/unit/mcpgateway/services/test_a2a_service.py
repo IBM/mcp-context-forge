@@ -588,7 +588,7 @@ class TestA2AAgentService:
         # Ensure get_for_update returns our mocked agent so auth_value is read
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
             # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=basic_auth_headers):
+            with patch("mcpgateway.utils.services_auth.decode_auth", return_value=basic_auth_headers):
                 result = await service.invoke_agent(mock_db, "basic-auth-agent", {"test": "data"})
 
         # Verify successful response
@@ -654,7 +654,7 @@ class TestA2AAgentService:
         # Ensure get_for_update returns our mocked agent so auth_value is read
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
             # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=bearer_auth_headers):
+            with patch("mcpgateway.utils.services_auth.decode_auth", return_value=bearer_auth_headers):
                 result = await service.invoke_agent(mock_db, "bearer-auth-agent", {"test": "data"})
 
         # Verify successful response
@@ -720,7 +720,7 @@ class TestA2AAgentService:
         # Ensure get_for_update returns our mocked agent so auth_value is read
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
             # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=custom_auth_headers):
+            with patch("mcpgateway.utils.services_auth.decode_auth", return_value=custom_auth_headers):
                 result = await service.invoke_agent(mock_db, "apikey-auth-agent", {"test": "data"})
 
         # Verify successful response
@@ -877,26 +877,26 @@ class TestA2AAgentService:
         assert result == {"t1": "One", "t2": "Two"}
         assert service._batch_get_team_names(mock_db, []) == {}
 
-    def test_check_agent_access_variants(self, service):
+    async def test_check_agent_access_variants(self, service):
         """Test access control logic for agent visibility."""
         agent = SimpleNamespace(visibility="public", team_id="team-1", owner_email="owner@example.com")
 
-        assert service._check_agent_access(agent, user_email=None, token_teams=None) is True
-        assert service._check_agent_access(agent, user_email=None, token_teams=["x"]) is True
+        assert await service._check_agent_access(agent, user_email=None, token_teams=None) is True
+        assert await service._check_agent_access(agent, user_email=None, token_teams=["x"]) is True
 
         agent.visibility = "team"
         # No user context (user_email=None) denies access to non-public agents
-        assert service._check_agent_access(agent, user_email=None, token_teams=["team-1"]) is False
+        assert await service._check_agent_access(agent, user_email=None, token_teams=["team-1"]) is False
         # With user context, team membership grants access
-        assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["team-1"]) is True
-        assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["other"]) is False
+        assert await service._check_agent_access(agent, user_email="someone@example.com", token_teams=["team-1"]) is True
+        assert await service._check_agent_access(agent, user_email="someone@example.com", token_teams=["other"]) is False
 
         agent.visibility = "private"
         # Public-only tokens (token_teams=[]) cannot access private agents even as owner
-        assert service._check_agent_access(agent, user_email="owner@example.com", token_teams=[]) is False
+        assert await service._check_agent_access(agent, user_email="owner@example.com", token_teams=[]) is False
         # Team-scoped tokens: owner can access their own private agents
-        assert service._check_agent_access(agent, user_email="owner@example.com", token_teams=["team-1"]) is True
-        assert service._check_agent_access(agent, user_email="other@example.com", token_teams=["team-1"]) is False
+        assert await service._check_agent_access(agent, user_email="owner@example.com", token_teams=["team-1"]) is True
+        assert await service._check_agent_access(agent, user_email="other@example.com", token_teams=["team-1"]) is False
 
     def test_apply_visibility_filter(self, service):
         """Test visibility filter branches."""
@@ -2172,7 +2172,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda x: {"api_key": "secret123"})
         monkeypatch.setattr("mcpgateway.utils.url_auth.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
@@ -2206,7 +2206,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad auth")))
+        monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad auth")))
         mock_apply = MagicMock()
         monkeypatch.setattr("mcpgateway.utils.url_auth.apply_query_param_auth", mock_apply)
         mock_db.commit = MagicMock()
@@ -2265,7 +2265,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad")))
+        monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad")))
 
         with pytest.raises(A2AAgentError, match="Failed to decrypt authentication"):
             await service.invoke_agent(mock_db, "ag", {})
@@ -2388,7 +2388,7 @@ class TestInvokeAgentEdgeCases:
         assert call_args.args[0] == "POST"
         assert call_args.args[1].endswith("/base/v1/message:send")
         headers_used = call_args.kwargs["headers"]
-        assert headers_used.get("A2A-Version") == "0.3"
+        assert headers_used.get("A2A-Version") == "1.0"
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -2526,8 +2526,10 @@ class TestInvokeAgentEdgeCases:
         # Ensure string UUID id instead of static numeric id.
         assert isinstance(request_data["id"], str)
         uuid.UUID(request_data["id"])
-        assert request_data["params"]["message"]["parts"][0]["kind"] == "text"
+        # v1.0: parts use flat oneof structure (no "kind" or "type" discriminator)
+        assert request_data["params"]["message"]["parts"][0]["text"] == "hi"
         assert "type" not in request_data["params"]["message"]["parts"][0]
+        assert "kind" not in request_data["params"]["message"]["parts"][0]
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")

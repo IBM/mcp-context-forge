@@ -494,7 +494,7 @@ class TestCheckToolAccess:
 
         mock_team = MagicMock()
         mock_team.id = "team-db"
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_tms:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_tms:
             mock_tms_instance = AsyncMock()
             mock_tms.return_value = mock_tms_instance
             mock_tms_instance.get_user_teams.return_value = [mock_team]
@@ -2693,24 +2693,16 @@ class TestCallA2AAgentCoverage:
         assert call_data["params"]["message"]["parts"][0]["text"] == "hello"
 
     @pytest.mark.asyncio
-    async def test_jsonrpc_request_data_prepare_error_is_logged_and_raised(self, tool_service):
-        """If preparing JSONRPC request data fails, the error is logged and re-raised."""
+    async def test_dispatch_transport_error_is_propagated(self, tool_service):
+        """If the A2A transport dispatch raises, the error propagates to the caller."""
         agent = self._make_agent(agent_type="jsonrpc")
 
-        def _info_side_effect(msg, *args, **kwargs):
-            # Allow the initial "Calling A2A agent..." log, but force an exception for the JSONRPC request_data log.
-            if "JSONRPC request_data prepared" in str(msg):
-                raise RuntimeError("logger boom")
-            return None
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = RuntimeError("transport boom")
 
-        with patch("mcpgateway.services.tool_service.logger") as mock_logger:
-            mock_logger.info.side_effect = _info_side_effect
-            mock_logger.error = MagicMock()
-
-            with pytest.raises(RuntimeError, match="logger boom"):
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            with pytest.raises(RuntimeError, match="transport boom"):
                 await tool_service._call_a2a_agent(agent, {"query": "hello"})
-
-        mock_logger.error.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_custom_agent_format(self, tool_service):
@@ -2725,7 +2717,7 @@ class TestCallA2AAgentCoverage:
             result = await tool_service._call_a2a_agent(agent, {"query": "what"})
         assert result == {"answer": "42"}
         call_data = mock_client.post.call_args[1]["json"]
-        assert call_data["interaction_type"] == "query"
+        assert call_data["interaction_type"] == "tool_invoke"
 
     @pytest.mark.asyncio
     async def test_api_key_auth(self, tool_service):
@@ -2766,9 +2758,8 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "real-key"}),
-            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
-            patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
+            patch("mcpgateway.utils.services_auth.decode_auth", return_value={"api_key": "real-key"}),
+            patch("mcpgateway.utils.url_auth.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         assert mock_client.post.call_args[0][0] == "http://agent.test/api?api_key=real-key"
@@ -6172,8 +6163,8 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"token": "decrypted_val"}),
-            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://a2a-agent:9000/?token=decrypted_val"),
+            patch("mcpgateway.utils.services_auth.decode_auth", return_value={"token": "decrypted_val"}),
+            patch("mcpgateway.utils.url_auth.apply_query_param_auth", return_value="http://a2a-agent:9000/?token=decrypted_val"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])

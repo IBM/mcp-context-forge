@@ -36,6 +36,7 @@ from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import EmailTeam, fresh_db_session, get_for_update
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, normalize_a2a_agent_type
+from mcpgateway.plugins.framework.hooks.agents import AgentHookType, AgentPostInvokePayload, AgentPreInvokePayload
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
@@ -74,7 +75,7 @@ logger = logging_service.get_logger(__name__)
 # Initialize structured logger for A2A lifecycle tracking
 structured_logger = get_structured_logger("a2a_service")
 
-A2A_VERSION_HEADER = "0.3"
+A2A_VERSION_HEADER = "1.0"
 A2A_JSONRPC_ERROR_CODES: Dict[int, str] = {
     -32001: "TaskNotFoundError",
     -32002: "TaskNotCancelableError",
@@ -238,6 +239,11 @@ class A2AAgentService(BaseService):
         self._initialized = False
         self._event_streams: List[AsyncGenerator[str, None]] = []
 
+        # Lazy import to avoid circular dependencies at module load time.
+        from mcpgateway.plugins.framework import get_plugin_manager  # pylint: disable=import-outside-toplevel
+
+        self._plugin_manager = get_plugin_manager()
+
     async def initialize(self) -> None:
         """Initialize the A2A agent service."""
         if not self._initialized:
@@ -250,45 +256,7 @@ class A2AAgentService(BaseService):
             logger.info("Shutting down A2A Agent Service")
             self._initialized = False
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
-        """Retrieve the team name given a team ID.
-
-        Args:
-            db (Session): Database session for querying teams.
-            team_id (Optional[str]): The ID of the team.
-
-        Returns:
-            Optional[str]: The name of the team if found, otherwise None.
-        """
-        if not team_id:
-            return None
-
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        db.commit()  # Release transaction to avoid idle-in-transaction
-        return team.name if team else None
-
-    def _batch_get_team_names(self, db: Session, team_ids: List[str]) -> Dict[str, str]:
-        """Batch retrieve team names for multiple team IDs.
-
-        This method fetches team names in a single query to avoid N+1 issues
-        when converting multiple agents to schemas in list operations.
-
-        Args:
-            db (Session): Database session for querying teams.
-            team_ids (List[str]): List of team IDs to look up.
-
-        Returns:
-            Dict[str, str]: Mapping of team_id -> team_name for active teams.
-        """
-        if not team_ids:
-            return {}
-
-        # Single query for all teams
-        teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
-
-        return {team.id: team.name for team in teams}
-
-    def _check_agent_access(
+    async def _check_agent_access(
         self,
         agent: DbA2AAgent,
         user_email: Optional[str],
@@ -296,104 +264,23 @@ class A2AAgentService(BaseService):
     ) -> bool:
         """Check if user has access to agent based on visibility rules.
 
-        Access rules (matching tools/resources/prompts):
-        - public visibility: Always allowed
-        - token_teams is None AND user_email is None: Admin bypass (unrestricted access)
-        - No user context (but not admin): Deny access to non-public agents
-        - team visibility: Allowed if agent.team_id in token_teams
-        - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
+        Delegates to BaseService.check_item_access for unified access control.
 
         Args:
             agent: The agent to check access for
             user_email: User's email for owner matching
-            token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access)
+            token_teams: Teams from JWT. None = admin bypass, [] = public-only
 
         Returns:
             True if access allowed, False otherwise.
         """
-        # Public agents are accessible by everyone
-        if agent.visibility == "public":
-            return True
-
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
-        if token_teams is None and user_email is None:
-            return True
-
-        # No user context (but not admin) = deny access to non-public agents
-        if not user_email:
-            return False
-
-        # Public-only tokens (empty teams array) can ONLY access public agents
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False  # Already checked public above
-
-        # Owner can access their own private agents
-        if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
-            return True
-
-        # Team agents: check team membership
-        # At this point token_teams is guaranteed to be a non-empty list
-        # (None handled by admin bypass, [] by public-only check)
-        if agent.visibility == "team":
-            return agent.team_id in token_teams
-
-        return False
-
-
-    def _apply_visibility_filter(
-        self,
-        query,
-        user_email: Optional[str],
-        token_teams: List[str],
-        team_id: Optional[str] = None,
-    ) -> Any:
-        """Apply visibility-based access control to query.
-
-        Access rules (matching tools/resources/prompts):
-        - public: visible to all
-        - team: visible to team members (token_teams contains team_id)
-        - private: visible only to owner, BUT NOT for public-only tokens
-
-        Args:
-            query: SQLAlchemy query to filter
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. [] = public-only (no owner access)
-            team_id: Optional specific team filter
-
-        Returns:
-            Filtered query
-        """
-        # Check if this is a public-only token (empty teams array)
-        # Public-only tokens can ONLY see public resources - no owner access
-        is_public_only_token = len(token_teams) == 0
-
-        if team_id:
-            # User requesting specific team - verify access
-            if team_id not in token_teams:
-                # Return query that matches nothing (will return empty result)
-                return query.where(False)
-
-            access_conditions = [
-                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
-            ]
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
-            return query.where(or_(*access_conditions))
-
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbA2AAgent.visibility == "public"]
-
-        # Only include owner access for non-public-only tokens with user_email
-        if not is_public_only_token and user_email:
-            access_conditions.append(DbA2AAgent.owner_email == user_email)
-
-        if token_teams:
-            access_conditions.append(and_(DbA2AAgent.team_id.in_(token_teams), DbA2AAgent.visibility.in_(["team", "public"])))
-
-        return query.where(or_(*access_conditions))
+        return await self.check_item_access(
+            visibility=agent.visibility or "public",
+            item_team_id=agent.team_id,
+            item_owner_email=agent.owner_email,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
 
     def _build_agent_card_candidates(self, endpoint_url: str, *, include_extended: bool = False) -> List[str]:
         """Build discovery candidates for agent-card and extended-card endpoints."""
@@ -438,7 +325,13 @@ class A2AAgentService(BaseService):
         return deduped
 
     def _extract_agent_card(self, payload: Any) -> Optional[Dict[str, Any]]:
-        """Extract Agent Card data from direct payload or envelope."""
+        """Extract Agent Card data from direct payload or envelope.
+
+        Supports both v1.0 and v0.3 Agent Card formats:
+        - v1.0 uses ``supported_interfaces`` instead of ``url`` + ``preferred_transport`` + ``additional_interfaces``
+        - v1.0 uses ``capabilities.extended_agent_card`` instead of ``supports_authenticated_extended_card``
+        - v1.0 adds ``icon_url`` field
+        """
         if not isinstance(payload, dict):
             return None
 
@@ -448,8 +341,14 @@ class A2AAgentService(BaseService):
         if isinstance(payload.get("agentCard"), dict):
             return cast(Dict[str, Any], payload["agentCard"])
 
-        # Accept direct card payloads.
+        # Accept direct card payloads — v1.0 may have supported_interfaces instead of url.
         if isinstance(payload.get("url"), str) and isinstance(payload.get("name"), str):
+            return cast(Dict[str, Any], payload)
+
+        # v1.0: card may use supported_interfaces with no top-level url.
+        if isinstance(payload.get("supported_interfaces"), (list, dict)) and isinstance(payload.get("name"), str):
+            return cast(Dict[str, Any], payload)
+        if isinstance(payload.get("supportedInterfaces"), (list, dict)) and isinstance(payload.get("name"), str):
             return cast(Dict[str, Any], payload)
 
         return None
@@ -469,11 +368,27 @@ class A2AAgentService(BaseService):
         return None
 
     def _infer_transport_from_agent_card(self, agent_card: Dict[str, Any]) -> Optional[str]:
-        """Infer canonical transport from Agent Card fields."""
+        """Infer canonical transport from Agent Card fields.
+
+        Supports both v1.0 (``supported_interfaces`` / ``supportedInterfaces``) and
+        v0.3 (``preferredTransport`` + ``additionalInterfaces``) formats.
+        """
+        # v0.3: preferredTransport
         preferred_transport = self._normalize_card_transport(cast(Optional[str], agent_card.get("preferredTransport")))
         if preferred_transport:
             return preferred_transport
 
+        # v1.0: supported_interfaces / supportedInterfaces
+        supported_interfaces = agent_card.get("supported_interfaces") or agent_card.get("supportedInterfaces")
+        if isinstance(supported_interfaces, list):
+            for iface in supported_interfaces:
+                if not isinstance(iface, dict):
+                    continue
+                transport = self._normalize_card_transport(cast(Optional[str], iface.get("transport") or iface.get("protocol")))
+                if transport:
+                    return transport
+
+        # v0.3: additionalInterfaces
         interfaces = agent_card.get("additionalInterfaces")
         if isinstance(interfaces, list):
             for interface in interfaces:
@@ -542,7 +457,14 @@ class A2AAgentService(BaseService):
         if not base_card:
             return None
 
-        supports_extended = bool(base_card.get("supportsAuthenticatedExtendedCard") or base_card.get("supports_authenticated_extended_card"))
+        # v1.0: capabilities.extended_agent_card; v0.3: supportsAuthenticatedExtendedCard
+        capabilities = base_card.get("capabilities") or {}
+        supports_extended = bool(
+            base_card.get("supportsAuthenticatedExtendedCard")
+            or base_card.get("supports_authenticated_extended_card")
+            or (isinstance(capabilities, dict) and capabilities.get("extended_agent_card"))
+            or (isinstance(capabilities, dict) and capabilities.get("extendedAgentCard"))
+        )
         if auth_headers and supports_extended:
             extended_card = await _fetch_first_card(extended_candidates)
             if isinstance(extended_card, dict):
@@ -555,7 +477,17 @@ class A2AAgentService(BaseService):
         return base_card
 
     def _normalize_message_parts_to_kind(self, params: Any) -> Any:
-        """Normalize A2A message parts from `type` to `kind` for compatibility."""
+        """Normalize A2A message parts for v1.0 compliance.
+
+        v1.0 parts use a flat oneof structure (``text``, ``raw``, ``url``, ``data``
+        as top-level keys plus ``metadata``, ``filename``, ``media_type``).
+        v0.3 parts use a ``kind`` discriminator with nested ``file``/``data`` wrappers.
+
+        This method:
+        - Accepts both ``parts`` and ``content`` as the field name for the parts array.
+        - For inbound v0.3 parts (with ``kind`` field): converts to v1.0 flat structure.
+        - Preserves parts that are already in v1.0 format.
+        """
         if not isinstance(params, dict):
             return params
 
@@ -564,7 +496,8 @@ class A2AAgentService(BaseService):
         if not isinstance(message, dict):
             return normalized_params
 
-        parts = message.get("parts")
+        # Accept both "parts" (v1.0) and "content" (v0.3) as the parts array field name.
+        parts = message.get("parts") or message.get("content")
         if not isinstance(parts, list):
             return normalized_params
 
@@ -575,11 +508,51 @@ class A2AAgentService(BaseService):
                 continue
 
             normalized_part = dict(part)
-            if not normalized_part.get("kind") and isinstance(normalized_part.get("type"), str):
-                normalized_part["kind"] = normalized_part["type"]
-            normalized_part.pop("type", None)
+            kind = normalized_part.pop("kind", None)
+            # Also remove legacy "type" discriminator.
+            if not kind and isinstance(normalized_part.get("type"), str):
+                kind = normalized_part.pop("type", None)
+            else:
+                normalized_part.pop("type", None)
+
+            if kind:
+                kind_lower = str(kind).strip().lower()
+
+                if kind_lower == "text":
+                    # Already flat if "text" key exists; nothing extra needed.
+                    pass
+                elif kind_lower == "file":
+                    # v0.3 wraps file info under a "file" sub-object — flatten it.
+                    file_obj = normalized_part.pop("file", None)
+                    if isinstance(file_obj, dict):
+                        # Promote uri/bytes and metadata to top level as url/raw.
+                        uri = file_obj.get("fileWithUri") or file_obj.get("file_with_uri") or file_obj.get("uri")
+                        raw_bytes = file_obj.get("fileWithBytes") or file_obj.get("file_with_bytes") or file_obj.get("bytes")
+                        mime = file_obj.get("mimeType") or file_obj.get("mime_type")
+                        filename = file_obj.get("name") or file_obj.get("filename")
+                        if uri:
+                            normalized_part["url"] = uri
+                        if raw_bytes:
+                            normalized_part["raw"] = raw_bytes
+                        if mime:
+                            normalized_part["media_type"] = mime
+                        if filename:
+                            normalized_part["filename"] = filename
+                    elif isinstance(file_obj, str):
+                        normalized_part["url"] = file_obj
+                elif kind_lower == "data":
+                    # v0.3 wraps structured data under a "data" sub-object — flatten it.
+                    data_obj = normalized_part.pop("data", None)
+                    if isinstance(data_obj, dict):
+                        inner = data_obj.get("data", data_obj)
+                        normalized_part["data"] = inner
+                    elif data_obj is not None:
+                        normalized_part["data"] = data_obj
+
             normalized_parts.append(normalized_part)
 
+        # Always output as "parts" (v1.0 field name).
+        message.pop("content", None)
         message["parts"] = normalized_parts
         return normalized_params
 
@@ -614,7 +587,7 @@ class A2AAgentService(BaseService):
         rpc_method: str,
         rpc_params: Any,
     ) -> tuple[str, str, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Translate A2A method names to REST endpoints (A2A v0.3).
+        """Translate A2A method names to REST endpoints (A2A v1.0 with v0.3 backward compat).
 
         Returns:
             Tuple of (http_method, url, json_body, query_params).
@@ -656,68 +629,80 @@ class A2AAgentService(BaseService):
 
         normalized_method = str(rpc_method or "").strip().lower()
 
-        if normalized_method == "message/send":
+        # v1.0 PascalCase: sendmessage, v0.3 slash-style: message/send
+        if normalized_method in ("sendmessage", "message/send"):
             return "POST", f"{rest_base}/message:send", params, None
 
-        if normalized_method == "message/stream":
+        # v1.0: sendstreammessage / streamingmessage, v0.3: message/stream
+        if normalized_method in ("sendstreammessage", "streamingmessage", "message/stream"):
             return "POST", f"{rest_base}/message:stream", params, None
 
-        if normalized_method in ("task/get", "tasks/get"):
+        # v1.0: gettask, v0.3: task/get, tasks/get
+        if normalized_method in ("gettask", "task/get", "tasks/get"):
             task_id = _task_id_from(params)
             if not task_id:
-                raise A2AAgentError("tasks/get requires params.id (or params.taskId)")
+                raise A2AAgentError("GetTask requires params.id (or params.taskId)")
             query = {k: v for k, v in params.items() if k not in ("id", "taskId") and v is not None}
             return "GET", f"{rest_base}/tasks/{task_id}", None, query or None
 
-        if normalized_method in ("task/list", "tasks/list"):
+        # v1.0: listtasks, v0.3: task/list, tasks/list
+        if normalized_method in ("listtasks", "task/list", "tasks/list"):
             query = {k: v for k, v in params.items() if v is not None}
             return "GET", f"{rest_base}/tasks", None, query or None
 
-        if normalized_method in ("task/cancel", "tasks/cancel"):
+        # v1.0: canceltask, v0.3: task/cancel, tasks/cancel
+        if normalized_method in ("canceltask", "task/cancel", "tasks/cancel"):
             task_id = _task_id_from(params)
             if not task_id:
-                raise A2AAgentError("tasks/cancel requires params.id (or params.taskId)")
+                raise A2AAgentError("CancelTask requires params.id (or params.taskId)")
             body = {k: v for k, v in params.items() if k not in ("id", "taskId") and v is not None}
             return "POST", f"{rest_base}/tasks/{task_id}:cancel", body or {}, None
 
-        if normalized_method in ("task/subscribe", "tasks/subscribe", "tasks/resubscribe"):
+        # v1.0: subscribetask / resubscribetask, v0.3: task/subscribe, tasks/subscribe, tasks/resubscribe
+        if normalized_method in ("subscribetask", "resubscribetask", "task/subscribe", "tasks/subscribe", "tasks/resubscribe"):
             task_id = _task_id_from(params)
             if not task_id:
                 raise A2AAgentError(f"{rpc_method} requires params.id (or params.taskId)")
             body = {k: v for k, v in params.items() if k not in ("id", "taskId") and v is not None}
             return "POST", f"{rest_base}/tasks/{task_id}:subscribe", body or {}, None
 
-        if normalized_method in ("task/pushnotificationconfig/set", "tasks/pushnotificationconfig/set"):
+        # v1.0: setpushnotificationconfig, v0.3: task/pushnotificationconfig/set, tasks/pushnotificationconfig/set
+        if normalized_method in ("setpushnotificationconfig", "task/pushnotificationconfig/set", "tasks/pushnotificationconfig/set"):
             task_id = _task_id_from(params)
             if not task_id:
-                raise A2AAgentError("tasks/pushNotificationConfig/set requires params.id (or params.taskId)")
+                raise A2AAgentError("SetPushNotificationConfig requires params.id (or params.taskId)")
             body = {k: v for k, v in params.items() if k not in ("id", "taskId") and v is not None}
             return "POST", f"{rest_base}/tasks/{task_id}/pushNotificationConfigs", body or {}, None
 
-        if normalized_method in ("task/pushnotificationconfig/get", "tasks/pushnotificationconfig/get"):
+        # v1.0: getpushnotificationconfig, v0.3: task/pushnotificationconfig/get, tasks/pushnotificationconfig/get
+        if normalized_method in ("getpushnotificationconfig", "task/pushnotificationconfig/get", "tasks/pushnotificationconfig/get"):
             task_id = _task_id_from(params)
             cfg_id = _config_id_from(params)
             if not task_id or not cfg_id:
-                raise A2AAgentError("tasks/pushNotificationConfig/get requires params.taskId (or id) and params.pushNotificationConfigId (or configId)")
+                raise A2AAgentError("GetPushNotificationConfig requires params.taskId (or id) and params.pushNotificationConfigId (or configId)")
             return "GET", f"{rest_base}/tasks/{task_id}/pushNotificationConfigs/{cfg_id}", None, None
 
-        if normalized_method in ("task/pushnotificationconfig/list", "tasks/pushnotificationconfig/list"):
+        # v1.0: listpushnotificationconfigs, v0.3: task/pushnotificationconfig/list, tasks/pushnotificationconfig/list
+        if normalized_method in ("listpushnotificationconfigs", "task/pushnotificationconfig/list", "tasks/pushnotificationconfig/list"):
             task_id = _task_id_from(params)
             if not task_id:
-                raise A2AAgentError("tasks/pushNotificationConfig/list requires params.id (or params.taskId)")
+                raise A2AAgentError("ListPushNotificationConfigs requires params.id (or params.taskId)")
             return "GET", f"{rest_base}/tasks/{task_id}/pushNotificationConfigs", None, None
 
-        if normalized_method in ("task/pushnotificationconfig/delete", "tasks/pushnotificationconfig/delete"):
+        # v1.0: deletepushnotificationconfig, v0.3: task/pushnotificationconfig/delete, tasks/pushnotificationconfig/delete
+        if normalized_method in ("deletepushnotificationconfig", "task/pushnotificationconfig/delete", "tasks/pushnotificationconfig/delete"):
             task_id = _task_id_from(params)
             cfg_id = _config_id_from(params)
             if not task_id or not cfg_id:
-                raise A2AAgentError("tasks/pushNotificationConfig/delete requires params.taskId (or id) and params.pushNotificationConfigId (or configId)")
+                raise A2AAgentError("DeletePushNotificationConfig requires params.taskId (or id) and params.pushNotificationConfigId (or configId)")
             return "DELETE", f"{rest_base}/tasks/{task_id}/pushNotificationConfigs/{cfg_id}", None, None
 
-        if normalized_method in ("agent/getcard", "agent/card", "card/get", "getagentcard"):
+        # v1.0: getagentcard, v0.3: agent/getcard, agent/card, card/get
+        if normalized_method in ("getagentcard", "agent/getcard", "agent/card", "card/get"):
             return "GET", f"{rest_base}/card", None, None
 
-        if normalized_method in ("agent/getextendedcard", "agent/extendedcard", "extendedcard/get", "getextendedagentcard"):
+        # v1.0: getextendedagentcard, v0.3: agent/getextendedcard, agent/extendedcard, extendedcard/get
+        if normalized_method in ("getextendedagentcard", "agent/getextendedcard", "agent/extendedcard", "extendedcard/get"):
             return "GET", f"{rest_base}/extendedAgentCard", None, None
 
         raise A2AAgentError(f"Unsupported A2A REST method '{rpc_method}'")
@@ -1425,7 +1410,7 @@ class A2AAgentService(BaseService):
 
         # SECURITY: Check visibility/team access
         # Return 404 (not 403) to avoid leaking existence of private agents
-        if not self._check_agent_access(agent, user_email, token_teams):
+        if not await self._check_agent_access(agent, user_email, token_teams):
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
         # Delegate conversion and masking to convert_agent_to_read()
@@ -1932,8 +1917,9 @@ class A2AAgentService(BaseService):
         normalized: Dict[str, Any] = dict(message_payload)
         normalized.pop("kind", None)
 
-        if "parts" in normalized and "content" not in normalized:
-            normalized["content"] = normalized.pop("parts")
+        # v1.0 proto uses "parts"; accept legacy "content" from v0.3 callers.
+        if "content" in normalized and "parts" not in normalized:
+            normalized["parts"] = normalized.pop("content")
 
         role_value = normalized.get("role")
         if isinstance(role_value, str):
@@ -1947,14 +1933,14 @@ class A2AAgentService(BaseService):
             if mapped_role:
                 normalized["role"] = mapped_role
 
-        content = normalized.get("content")
-        if not isinstance(content, list):
+        parts_list = normalized.get("parts")
+        if not isinstance(parts_list, list):
             return normalized
 
-        converted_content: List[Any] = []
-        for part in content:
+        converted_parts: List[Any] = []
+        for part in parts_list:
             if not isinstance(part, dict):
-                converted_content.append(part)
+                converted_parts.append(part)
                 continue
 
             part_payload: Dict[str, Any] = dict(part)
@@ -1962,7 +1948,7 @@ class A2AAgentService(BaseService):
             part_payload.pop("metadata", None)
 
             if kind == "text" and "text" in part_payload:
-                converted_content.append({"text": part_payload.get("text", "")})
+                converted_parts.append({"text": part_payload.get("text", "")})
                 continue
 
             if kind == "file" and "file" in part_payload:
@@ -1993,7 +1979,7 @@ class A2AAgentService(BaseService):
                         converted_part["file"] = converted_file
                 elif isinstance(file_payload, str):
                     converted_part["file"] = {"fileWithUri": file_payload}
-                converted_content.append(converted_part if converted_part else part_payload)
+                converted_parts.append(converted_part if converted_part else part_payload)
                 continue
 
             if kind == "data" and "data" in part_payload:
@@ -2006,12 +1992,12 @@ class A2AAgentService(BaseService):
                         converted_part["data"] = {"data": data_payload}
                 else:
                     converted_part["data"] = {"data": data_payload}
-                converted_content.append(converted_part)
+                converted_parts.append(converted_part)
                 continue
 
-            converted_content.append(part_payload)
+            converted_parts.append(part_payload)
 
-        normalized["content"] = converted_content
+        normalized["parts"] = converted_parts
         return normalized
 
     def _build_a2a_grpc_send_message_request(self, request_payload: Dict[str, Any], a2a_pb2: Any, json_format: Any) -> Any:
@@ -2025,6 +2011,13 @@ class A2AAgentService(BaseService):
 
         normalized_message = self._normalize_a2a_message_for_grpc(message_payload)
         message_proto = a2a_pb2.Message()
+
+        # Compat shim: the a2a-sdk proto may use "content" instead of v1.0 "parts".
+        # Remap if the proto descriptor has "content" but not "parts".
+        msg_field_names = {f.name for f in message_proto.DESCRIPTOR.fields}
+        if "parts" in normalized_message and "parts" not in msg_field_names and "content" in msg_field_names:
+            normalized_message["content"] = normalized_message.pop("parts")
+
         json_format.ParseDict(normalized_message, message_proto)
 
         send_request = a2a_pb2.SendMessageRequest(request=message_proto)
@@ -2310,7 +2303,7 @@ class A2AAgentService(BaseService):
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         # Return 404 (not 403) to avoid leaking existence of private agents.
-        if not self._check_agent_access(agent, user_email, token_teams):
+        if not await self._check_agent_access(agent, user_email, token_teams):
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         if not agent.enabled:
@@ -2326,37 +2319,21 @@ class A2AAgentService(BaseService):
         agent_auth_query_params = agent.auth_query_params
         agent_oauth_config = getattr(agent, "oauth_config", None)
 
-        # Handle query_param auth - decrypt and apply to URL.
-        auth_query_params_decrypted: Optional[Dict[str, str]] = None
-        if agent_auth_type == "query_param" and agent_auth_query_params:
-            # First-Party
-            from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
+        # First-Party
+        from mcpgateway.services.a2a_dispatcher import build_dispatch_headers, dispatch_a2a_transport, prepare_rpc_params, resolve_a2a_auth  # pylint: disable=import-outside-toplevel
 
-            auth_query_params_decrypted = {}
-            for param_key, encrypted_value in agent_auth_query_params.items():
-                if not encrypted_value:
-                    continue
-                try:
-                    decrypted = decode_auth(encrypted_value)
-                    auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                except Exception:
-                    logger.warning("Failed to decrypt query param '%s' for A2A agent invocation — auth may be incomplete", param_key)
-                    raise A2AAgentError(f"Failed to decrypt query param authentication for agent '{agent_name}'")
-
-            if auth_query_params_decrypted:
-                agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
-
-        # Decode auth_value for supported auth types (before closing session).
-        auth_headers: Dict[str, str] = {}
-        if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
-            if isinstance(agent_auth_value, str):
-                try:
-                    decoded_headers = decode_auth(agent_auth_value)
-                    auth_headers = {str(k): str(v) for k, v in decoded_headers.items()}
-                except Exception as e:
-                    raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}")
-            elif isinstance(agent_auth_value, dict):
-                auth_headers = {str(k): str(v) for k, v in agent_auth_value.items()}
+        # Resolve auth using shared dispatcher.
+        auth_ctx = await resolve_a2a_auth(
+            endpoint_url=agent_endpoint_url,
+            auth_type=agent_auth_type,
+            auth_value=agent_auth_value,
+            auth_query_params=agent_auth_query_params,
+            oauth_config=agent_oauth_config,
+            agent_name=agent_name,
+            error_cls=A2AAgentError,
+        )
+        agent_endpoint_url = auth_ctx.endpoint_url
+        auth_headers = auth_ctx.headers
 
         # Release DB connection before outbound network call.
         db.commit()
@@ -2366,40 +2343,22 @@ class A2AAgentService(BaseService):
         success = False
         error_message: Optional[str] = None
         response: Any = None
-        rpc_method = parameters.get("method", "message/send") if isinstance(parameters, dict) else "message/send"
-        rpc_params: Any = parameters.get("params", parameters) if isinstance(parameters, dict) else parameters
-        if isinstance(rpc_params, dict):
-            rpc_params = self._normalize_message_parts_to_kind(rpc_params)
+
+        # Prepare RPC params using shared dispatcher.
+        rpc_method, rpc_params = prepare_rpc_params(parameters, normalized_agent_type, self._normalize_message_parts_to_kind)
 
         # First-Party
         from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
 
-        sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
+        sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_ctx.query_params_decrypted)
 
         try:
             # First-Party
             from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
             client = await get_http_client()
-            headers = {"Content-Type": "application/json"}
-            headers.update(auth_headers)
-
-            if agent_auth_type == "oauth" and agent_oauth_config:
-                # First-Party
-                from mcpgateway.services.oauth_manager import OAuthManager  # pylint: disable=import-outside-toplevel
-
-                try:
-                    access_token = await OAuthManager().get_access_token(agent_oauth_config)
-                except Exception as e:
-                    raise A2AAgentError(f"OAuth authentication failed for agent '{agent_name}': {e}") from e
-                headers["Authorization"] = f"Bearer {access_token}"
-
-            if normalized_agent_type == "a2a-rest":
-                headers["A2A-Version"] = A2A_VERSION_HEADER
-
             correlation_id = get_correlation_id()
-            if correlation_id:
-                headers["X-Correlation-ID"] = correlation_id
+            headers = build_dispatch_headers(auth_headers, normalized_agent_type, A2A_VERSION_HEADER, correlation_id)
 
             call_start_time = datetime.now(timezone.utc)
             structured_logger.log(
@@ -2421,51 +2380,40 @@ class A2AAgentService(BaseService):
                 },
             )
 
-            # Select transport strictly from normalized agent_type.
-            if normalized_agent_type == "a2a-jsonrpc":
-                request_data = {
-                    "jsonrpc": "2.0",
-                    "method": rpc_method,
-                    "params": rpc_params,
-                    "id": str(uuid.uuid4()),
-                }
-                http_response = await client.post(agent_endpoint_url, json=request_data, headers=headers)
-            elif normalized_agent_type == "a2a-rest":
-                rest_method, rest_url, rest_json, rest_query = self._build_rest_request(agent_endpoint_url, rpc_method, rpc_params)
-                http_response = await client.request(rest_method, rest_url, json=rest_json, params=rest_query, headers=headers)
-            elif normalized_agent_type == "rest-passthrough":
-                http_response = await client.post(agent_endpoint_url, json=parameters, headers=headers)
-            elif normalized_agent_type == "custom":
-                request_data = {
-                    "interaction_type": interaction_type,
-                    "parameters": parameters,
-                    "protocol_version": agent_protocol_version,
-                }
-                http_response = await client.post(agent_endpoint_url, json=request_data, headers=headers)
-            elif normalized_agent_type == "a2a-grpc":
-                try:
-                    response = await self._invoke_a2a_grpc(
-                        endpoint_url=agent_endpoint_url,
-                        parameters={"method": rpc_method, "params": rpc_params},
-                        interaction_type=interaction_type,
-                        auth_headers=auth_headers,
-                        correlation_id=correlation_id,
-                    )
-                except A2AAgentError as grpc_error:
-                    call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
-                    structured_logger.log(
-                        level="ERROR",
-                        message=f"A2A external call failed: {agent_name}",
-                        component="a2a_service",
-                        user_id=user_id,
-                        user_email=user_email,
-                        correlation_id=correlation_id,
-                        duration_ms=call_duration_ms,
-                        error_details={"error_type": "A2AGRPCError", "error_message": str(grpc_error)},
-                        metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent_id, "method": rpc_method},
-                    )
-                    raise
+            # Plugin hook: agent pre-invoke
+            if self._plugin_manager and self._plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
+                pre_messages = [{"role": "user", "content": str(rpc_params)}] if rpc_params else []
+                pre_result, _ = await self._plugin_manager.invoke_hook(
+                    AgentHookType.AGENT_PRE_INVOKE,
+                    payload=AgentPreInvokePayload(agent_id=agent_name, messages=pre_messages),
+                    global_context=None,
+                    local_contexts=None,
+                    violations_as_exceptions=True,
+                )
+                if pre_result.modified_payload:
+                    modified = pre_result.modified_payload
+                    if modified.agent_id != agent_name:
+                        agent_name = modified.agent_id
 
+            # Dispatch using shared transport logic.
+            dispatch_result = await dispatch_a2a_transport(
+                endpoint_url=agent_endpoint_url,
+                normalized_agent_type=normalized_agent_type,
+                rpc_method=rpc_method,
+                rpc_params=rpc_params,
+                headers=headers,
+                auth_headers=auth_headers,
+                http_client=client,
+                parameters=parameters,
+                interaction_type=interaction_type,
+                protocol_version=agent_protocol_version,
+                correlation_id=correlation_id,
+                build_rest_request_fn=self._build_rest_request,
+                invoke_grpc_fn=self._invoke_a2a_grpc,
+            )
+
+            # Handle gRPC result (returned directly, no HTTP response).
+            if dispatch_result.grpc_data is not None:
                 call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
                 success = True
                 structured_logger.log(
@@ -2478,10 +2426,9 @@ class A2AAgentService(BaseService):
                     duration_ms=call_duration_ms,
                     metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "method": rpc_method, "transport": "a2a-grpc", "success": True},
                 )
-                return response
-            else:  # pylint: disable=no-else-return
-                raise A2AAgentError(f"Unsupported A2A transport: {normalized_agent_type}")
+                return dispatch_result.grpc_data
 
+            http_response = dispatch_result.http_response
             call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
             response_payload: Any
@@ -2493,7 +2440,7 @@ class A2AAgentService(BaseService):
             if 200 <= http_response.status_code < 300:
                 jsonrpc_error = self._extract_jsonrpc_error_message(response_payload)
                 if normalized_agent_type == "a2a-jsonrpc" and jsonrpc_error:
-                    error_message = sanitize_exception_message(jsonrpc_error, auth_query_params_decrypted)
+                    error_message = sanitize_exception_message(jsonrpc_error, auth_ctx.query_params_decrypted)
                     raise A2AAgentUpstreamError(error_message)
 
                 if normalized_agent_type == "a2a-jsonrpc" and isinstance(response_payload, dict) and "result" in response_payload:
@@ -2512,10 +2459,24 @@ class A2AAgentService(BaseService):
                     duration_ms=call_duration_ms,
                     metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
                 )
+
+                # Plugin hook: agent post-invoke
+                if self._plugin_manager and self._plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
+                    post_messages = [{"role": "agent", "content": str(response)}] if response else []
+                    post_result, _ = await self._plugin_manager.invoke_hook(
+                        AgentHookType.AGENT_POST_INVOKE,
+                        payload=AgentPostInvokePayload(agent_id=agent_name, messages=post_messages),
+                        global_context=None,
+                        local_contexts=None,
+                        violations_as_exceptions=False,
+                    )
+                    if post_result.modified_payload and isinstance(post_result.modified_payload.messages, list) and post_result.modified_payload.messages:
+                        # Allow plugins to modify the response representation.
+                        pass
             else:
                 jsonrpc_error = self._extract_jsonrpc_error_message(response_payload)
                 raw_error = jsonrpc_error or f"HTTP {http_response.status_code}: {http_response.text}"
-                error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
+                error_message = sanitize_exception_message(raw_error, auth_ctx.query_params_decrypted)
 
                 structured_logger.log(
                     level="ERROR",
@@ -2534,7 +2495,7 @@ class A2AAgentService(BaseService):
             error_message = str(known_error)
             raise
         except Exception as e:
-            error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
+            error_message = sanitize_exception_message(str(e), auth_ctx.query_params_decrypted)
             logger.error("Failed to invoke A2A agent '%s': %s", agent_name, error_message)
             raise A2AAgentUpstreamError(f"Failed to invoke A2A agent: {error_message}")
         finally:
@@ -2625,7 +2586,7 @@ class A2AAgentService(BaseService):
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
-        if not self._check_agent_access(agent, user_email, token_teams):
+        if not await self._check_agent_access(agent, user_email, token_teams):
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         if not agent.enabled:
@@ -2635,42 +2596,22 @@ class A2AAgentService(BaseService):
         agent_id = agent.id
         agent_endpoint_url = agent.endpoint_url
         normalized_agent_type = normalize_a2a_agent_type(agent.agent_type)
-        agent_auth_type = agent.auth_type
-        agent_auth_value = agent.auth_value
-        agent_auth_query_params = agent.auth_query_params
-        agent_oauth_config = getattr(agent, "oauth_config", None)
 
-        # Handle query_param auth - decrypt and apply to URL.
-        auth_query_params_decrypted: Optional[Dict[str, str]] = None
-        if agent_auth_type == "query_param" and agent_auth_query_params:
-            # First-Party
-            from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
+        # Resolve auth using shared dispatcher.
+        # First-Party
+        from mcpgateway.services.a2a_dispatcher import build_dispatch_headers, resolve_a2a_auth  # pylint: disable=import-outside-toplevel
 
-            auth_query_params_decrypted = {}
-            for param_key, encrypted_value in agent_auth_query_params.items():
-                if not encrypted_value:
-                    continue
-                try:
-                    decrypted = decode_auth(encrypted_value)
-                    auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                except Exception:
-                    logger.warning("Failed to decrypt query param '%s' for A2A stream invocation — auth may be incomplete", param_key)
-                    raise A2AAgentError(f"Failed to decrypt query param authentication for agent '{agent_name}'")
-
-            if auth_query_params_decrypted:
-                agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
-
-        # Decode auth_value for supported auth types (before closing session).
-        auth_headers: Dict[str, str] = {}
-        if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
-            if isinstance(agent_auth_value, str):
-                try:
-                    decoded_headers = decode_auth(agent_auth_value)
-                    auth_headers = {str(k): str(v) for k, v in decoded_headers.items()}
-                except Exception as e:
-                    raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}")
-            elif isinstance(agent_auth_value, dict):
-                auth_headers = {str(k): str(v) for k, v in agent_auth_value.items()}
+        auth_ctx = await resolve_a2a_auth(
+            endpoint_url=agent_endpoint_url,
+            auth_type=agent.auth_type,
+            auth_value=agent.auth_value,
+            auth_query_params=agent.auth_query_params,
+            oauth_config=getattr(agent, "oauth_config", None),
+            agent_name=agent_name,
+            error_cls=A2AAgentError,
+        )
+        agent_endpoint_url = auth_ctx.endpoint_url
+        auth_headers = auth_ctx.headers
 
         # Release DB connection before outbound stream setup.
         db.commit()
@@ -2758,18 +2699,6 @@ class A2AAgentService(BaseService):
             client = await get_http_client()
             headers: Dict[str, str] = {"Accept": "text/event-stream", "Content-Type": "application/json"}
             headers.update(auth_headers)
-
-            if agent_auth_type == "oauth" and agent_oauth_config:
-                # First-Party
-                from mcpgateway.services.oauth_manager import OAuthManager  # pylint: disable=import-outside-toplevel
-
-                try:
-                    access_token = await OAuthManager().get_access_token(agent_oauth_config)
-                except Exception as e:
-                    logger.warning("OAuth authentication failed for SSE stream agent '%s': %s", agent_name, e)
-                    yield _sse_event("error", {"type": "error", "error": f"OAuth authentication failed: {_sanitize(str(e))}"})
-                    return
-                headers["Authorization"] = f"Bearer {access_token}"
 
             if normalized_agent_type == "a2a-rest":
                 headers["A2A-Version"] = A2A_VERSION_HEADER

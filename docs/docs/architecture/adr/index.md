@@ -42,5 +42,8 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0037  | External Plugin STDIO Launch with Command/Env Overrides | Accepted | Extensibility | 2026-01-28 |
 | 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Proposed | Performance | 2025-12-26 |
 | 0039  | Adopt Fully Independent Plugin Crates Architecture | Accepted | Architecture | 2026-02-13 |
+| 0041  | A2A Protocol v1.0 RC1 Migration Strategy             | Accepted  | Protocol       | 2026-03-01  |
+| 0042  | Virtual Servers as Multi-Protocol Endpoints           | Accepted  | Architecture   | 2026-03-01  |
+| 0043  | Tenant vs Team Separation                             | Accepted  | Architecture   | 2026-03-01  |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

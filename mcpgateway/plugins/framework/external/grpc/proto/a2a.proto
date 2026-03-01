@@ -21,10 +21,10 @@ option java_package = "com.google.a2a.v1";
 // TaskPushNotificationConfig.
 // - Messages are not a standard resource so there is no get/delete/update/list
 //   interface, only a send and stream custom methods.
-// - Tasks have a get interface and custom cancel and subscribe methods.
+// - Tasks have get, list, cancel and subscribe methods.
 // - TaskPushNotificationConfig are a resource whose parent is a task.
 //   They have get, list and create methods.
-// - AgentCard is a static resource with only a get method.
+// - AgentCard is a static resource with get and get-extended methods.
 // fields are not present as they don't comply with AIP rules, and the
 // optional history_length on the get task method is not present as it also
 // violates AIP-127 and AIP-131.
@@ -53,6 +53,14 @@ service A2AService {
     };
     option (google.api.method_signature) = "name";
   }
+
+  // List tasks from the agent.
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {
+    option (google.api.http) = {
+      get: "/v1/tasks"
+    };
+  }
+
   // Cancel a task from the agent. If supported one should expect no
   // more task updates for the task.
   rpc CancelTask(CancelTaskRequest) returns (Task) {
@@ -61,11 +69,11 @@ service A2AService {
       body: "*"
     };
   }
-  // TaskSubscription is a streaming call that will return a stream of task
+  // SubscribeToTask is a streaming call that will return a stream of task
   // update events. This attaches the stream to an existing in process task.
   // If the task is complete the stream will return the completed task (like
   // GetTask) and close the stream.
-  rpc TaskSubscription(TaskSubscriptionRequest)
+  rpc SubscribeToTask(SubscribeToTaskRequest)
       returns (stream StreamResponse) {
     option (google.api.http) = {
       get: "/v1/{name=tasks/*}:subscribe"
@@ -101,6 +109,13 @@ service A2AService {
   rpc GetAgentCard(GetAgentCardRequest) returns (AgentCard) {
     option (google.api.http) = {
       get: "/v1/card"
+    };
+  }
+  // GetExtendedAgentCard returns the extended agent card for the agent.
+  // This is only available when the caller is authenticated.
+  rpc GetExtendedAgentCard(GetExtendedAgentCardRequest) returns (AgentCard) {
+    option (google.api.http) = {
+      get: "/v1/extendedAgentCard"
     };
   }
   // Delete a push notification config for a task.
@@ -164,9 +179,9 @@ enum TaskState {
   TASK_STATE_COMPLETED = 3;
   // Represents the status a task is done but failed. This is a terminal state
   TASK_STATE_FAILED = 4;
-  // Represents the status a task was cancelled before it finished.
+  // Represents the status a task was canceled before it finished.
   // This is a terminal state.
-  TASK_STATE_CANCELLED = 5;
+  TASK_STATE_CANCELED = 5;
   // Represents the status that the task requires information to complete.
   // This is an interrupted state.
   TASK_STATE_INPUT_REQUIRED = 6;
@@ -192,31 +207,25 @@ message TaskStatus {
 }
 
 // Part represents a container for a section of communication content.
-// Parts can be purely textual, some sort of file (image, video, etc) or
-// a structured data blob (i.e. JSON).
+// Parts can be purely textual, a raw byte payload, a URL reference,
+// or a structured data blob (i.e. JSON).
 message Part {
-  oneof part {
+  oneof content {
+    // Plain text content.
     string text = 1;
-    FilePart file = 2;
-    DataPart data = 3;
+    // Raw byte content (e.g. image, audio, video).
+    bytes raw = 2;
+    // A URL reference to content.
+    string url = 3;
+    // Structured data content (e.g. JSON).
+    google.protobuf.Value data = 4;
   }
-}
-
-// FilePart represents the different ways files can be provided. If files are
-// small, directly feeding the bytes is supported via file_with_bytes. If the
-// file is large, the agent should read the content as appropriate directly
-// from the file_with_uri source.
-message FilePart {
-  oneof file {
-    string file_with_uri = 1;
-    bytes file_with_bytes = 2;
-  }
-  string mime_type = 3;
-}
-
-// DataPart represents a structured blob. This is most commonly a JSON payload.
-message DataPart {
-  google.protobuf.Struct data = 1;
+  // Optional metadata for the part.
+  google.protobuf.Struct metadata = 5;
+  // Optional filename associated with the part.
+  string filename = 6;
+  // Optional media type (MIME type) of the part content.
+  string media_type = 7;
 }
 
 enum Role {
@@ -247,13 +256,15 @@ message Message {
   // A role for the message.
   Role role = 4;
   // protolint:disable REPEATED_FIELD_NAMES_PLURALIZED
-  // Content is the container of the message content.
-  repeated Part content = 5;
+  // The parts of the message content.
+  repeated Part parts = 5;
   // protolint:enable REPEATED_FIELD_NAMES_PLURALIZED
   // Any optional metadata to provide along with the message.
   google.protobuf.Struct metadata = 6;
   // The URIs of extensions that are present or contributed to this Message.
   repeated string extensions = 7;
+  // Task IDs referenced by this message.
+  repeated string reference_task_ids = 8;
 }
 
 // Artifacts are the container for task completed results. These are similar
@@ -274,7 +285,7 @@ message Artifact {
   repeated string extensions = 7;
 }
 
-// TaskStatusUpdateEvent is a delta even on a task indicating that a task
+// TaskStatusUpdateEvent is a delta event on a task indicating that a task
 // has changed.
 message TaskStatusUpdateEvent {
   // The id of the task that is changed
@@ -283,8 +294,6 @@ message TaskStatusUpdateEvent {
   string context_id = 2;
   // The new status of the task.
   TaskStatus status = 3;
-  // Whether this is the last status update expected for this task.
-  bool final = 4;
   // Optional metadata to associate with the task update.
   google.protobuf.Struct metadata = 5;
 }
@@ -320,20 +329,23 @@ message PushNotificationConfig {
 
 // Defines authentication details, used for push notifications.
 message AuthenticationInfo {
-  // Supported authentication schemes - e.g. Basic, Bearer, etc
-  repeated string schemes = 1;
+  // Supported authentication scheme - e.g. Basic, Bearer, etc
+  string scheme = 1;
   // Optional credentials
   string credentials = 2;
 }
 
-// Defines additional transport information for the agent.
+// Defines an interface endpoint for the agent.
 message AgentInterface {
   // The url this interface is found at.
   string url = 1;
-  // The transport supported this url. This is an open form string, to be
-  // easily extended for many transport protocols. The core ones officially
-  // supported are JSONRPC, GRPC and HTTP+JSON.
-  string transport = 2;
+  // The protocol binding for this interface. Core bindings are
+  // "jsonrpc", "grpc", and "http+json".
+  string protocol_binding = 2;
+  // The protocol version supported at this interface.
+  string protocol_version = 3;
+  // The tenant this interface operates under.
+  string tenant = 4;
 }
 
 // AgentCard conveys key information:
@@ -341,24 +353,16 @@ message AgentInterface {
 // - Skills; a set of actions/solutions the agent can perform
 // - Default modalities/content types supported by the agent.
 // - Authentication requirements
-// Next ID: 18
+// Next ID: 19
 message AgentCard {
-  // The version of the A2A protocol this agent supports.
-  string protocol_version = 16;
   // A human readable name for the agent.
   // Example: "Recipe Agent"
   string name = 1;
   // A description of the agent's domain of action/solution space.
   // Example: "Agent that helps users with recipes and cooking."
   string description = 2;
-  // A URL to the address the agent is hosted at. This represents the
-  // preferred endpoint as declared by the agent.
-  string url = 3;
-  // The transport of the preferred endpoint. If empty, defaults to JSONRPC.
-  string preferred_transport = 14;
-  // Announcement of additional supported transports. Client can use any of
-  // the supported transports.
-  repeated AgentInterface additional_interfaces = 15;
+  // A URL to an icon for the agent.
+  string icon_url = 18;
   // The service provider of the agent.
   AgentProvider provider = 4;
   // The version of the agent.
@@ -366,7 +370,7 @@ message AgentCard {
   string version = 5;
   // A url to provide additional documentation about the agent.
   string documentation_url = 6;
-  // A2A Capability set supported by the agent.
+  // A2A Capability set supported by the agent
   AgentCapabilities capabilities = 7;
   // The security scheme details used for authenticating with this agent.
   map<string, SecurityScheme> security_schemes = 8;
@@ -376,15 +380,7 @@ message AgentCard {
   // one possible set of security requirements that must be present on a
   // request. This allows specifying, for example, "callers must either use
   // OAuth OR an API Key AND mTLS."
-  // Example:
-  // security {
-  //   schemes { key: "oauth" value { list: ["read"] } }
-  // }
-  // security {
-  //   schemes { key: "api-key" }
-  //   schemes { key: "mtls" }
-  // }
-  repeated Security security = 9;
+  repeated SecurityRequirement security_requirements = 9;
   // protolint:enable REPEATED_FIELD_NAMES_PLURALIZED
   // The set of interaction modes that the agent supports across all skills.
   // This can be overridden per skill. Defined as mime types.
@@ -395,10 +391,8 @@ message AgentCard {
   // somewhat abstract but represents a more focused set of actions that the
   // agent is highly likely to succeed at.
   repeated AgentSkill skills = 12;
-  // Whether the agent supports providing an extended agent card when
-  // the user is authenticated, i.e. is the card from .well-known
-  // different than the card from GetAgentCard.
-  bool supports_authenticated_extended_card = 13;
+  // The interfaces supported by this agent.
+  repeated AgentInterface supported_interfaces = 15;
   // JSON Web Signatures computed for this AgentCard.
   repeated AgentCardSignature signatures = 17;
 }
@@ -421,6 +415,9 @@ message AgentCapabilities {
   bool push_notifications = 2;
   // Extensions supported by this agent.
   repeated AgentExtension extensions = 3;
+  // Whether the agent supports providing an extended agent card when
+  // the user is authenticated.
+  bool extended_agent_card = 4;
 }
 
 // A declaration of an extension supported by an Agent.
@@ -464,11 +461,10 @@ message AgentSkill {
   // Possible output modalities produced
   repeated string output_modes = 7;
   // protolint:disable REPEATED_FIELD_NAMES_PLURALIZED
-  // Security schemes necessary for the agent to leverage this skill.
-  // As in the overall AgentCard.security, this list represents a logical OR of
-  // security requirement objects. Each object is a set of security schemes
-  // that must be used together (a logical AND).
-  repeated Security security = 8;
+  // Security requirements necessary for the agent to leverage this skill.
+  // As in the overall AgentCard.security_requirements, this list represents
+  // a logical OR of security requirement objects.
+  repeated SecurityRequirement security_requirements = 8;
 }
 
 // AgentCardSignature represents a JWS signature of an AgentCard.
@@ -495,7 +491,9 @@ message StringList {
 }
 // protolint:enable REPEATED_FIELD_NAMES_PLURALIZED
 
-message Security {
+// SecurityRequirement defines a set of security schemes that must be used
+// together to authorize a request.
+message SecurityRequirement {
   map<string, StringList> schemes = 1;
 }
 
@@ -561,6 +559,7 @@ message OAuthFlows {
     ClientCredentialsOAuthFlow client_credentials = 2;
     ImplicitOAuthFlow implicit = 3;
     PasswordOAuthFlow password = 4;
+    DeviceCodeOAuthFlow device_code = 5;
   }
 }
 
@@ -577,6 +576,8 @@ message AuthorizationCodeOAuthFlow {
   // The available scopes for the OAuth2 security scheme. A map between the
   // scope name and a short description for it. The map MAY be empty.
   map<string, string> scopes = 4;
+  // Whether PKCE (RFC 7636) is required for this flow.
+  bool pkce_required = 5;
 }
 
 message ClientCredentialsOAuthFlow {
@@ -591,6 +592,7 @@ message ClientCredentialsOAuthFlow {
   map<string, string> scopes = 3;
 }
 
+// Deprecated: Use AuthorizationCodeOAuthFlow with PKCE instead.
 message ImplicitOAuthFlow {
   // The authorization URL to be used for this flow. This MUST be in the
   // form of a URL. The OAuth2 standard requires the use of TLS
@@ -603,6 +605,7 @@ message ImplicitOAuthFlow {
   map<string, string> scopes = 3;
 }
 
+// Deprecated: Use AuthorizationCodeOAuthFlow with PKCE instead.
 message PasswordOAuthFlow {
   // The token URL to be used for this flow. This MUST be in the form of a URL.
   // The OAuth2 standard requires the use of TLS.
@@ -615,23 +618,59 @@ message PasswordOAuthFlow {
   map<string, string> scopes = 3;
 }
 
+// DeviceCodeOAuthFlow supports RFC 8628 Device Authorization Grant.
+// This flow is used for devices with limited input capabilities.
+message DeviceCodeOAuthFlow {
+  // The device authorization URL.
+  string device_authorization_url = 1;
+  // The token URL to be used for this flow.
+  string token_url = 2;
+  // The URL to be used for obtaining refresh tokens.
+  string refresh_url = 3;
+  // The available scopes for the OAuth2 security scheme.
+  map<string, string> scopes = 4;
+}
+
 ///////////// Request Messages ///////////
 message SendMessageRequest {
   Message request = 1
       [(google.api.field_behavior) = REQUIRED, json_name = "message"];
   SendMessageConfiguration configuration = 2;
   google.protobuf.Struct metadata = 3;
+  // The tenant context for this request.
+  string tenant = 4;
 }
 
 message GetTaskRequest {
   // name=tasks/{id}
   string name = 1 [(google.api.field_behavior) = REQUIRED];
   int32 history_length = 2;
+  // The tenant context for this request.
+  string tenant = 3;
+}
+
+message ListTasksRequest {
+  // Filter by context ID.
+  string context_id = 1;
+  // Filter by task state.
+  repeated TaskState status = 2;
+  // Maximum number of tasks to return.
+  int32 page_size = 3;
+  // Token for pagination.
+  string page_token = 4;
+  // Filter tasks updated after this timestamp.
+  google.protobuf.Timestamp status_timestamp_after = 5;
+  // Whether to include artifacts in the response.
+  bool include_artifacts = 6;
+  // The tenant context for this request.
+  string tenant = 7;
 }
 
 message CancelTaskRequest {
   // name=tasks/{id}
   string name = 1;
+  // The tenant context for this request.
+  string tenant = 2;
 }
 
 message GetTaskPushNotificationConfigRequest {
@@ -653,9 +692,11 @@ message CreateTaskPushNotificationConfigRequest {
       [(google.api.field_behavior) = REQUIRED];
 }
 
-message TaskSubscriptionRequest {
+message SubscribeToTaskRequest {
   // name=tasks/{id}
   string name = 1;
+  // The tenant context for this request.
+  string tenant = 2;
 }
 
 message ListTaskPushNotificationConfigRequest {
@@ -677,6 +718,11 @@ message ListTaskPushNotificationConfigRequest {
 
 message GetAgentCardRequest {
   // Empty. Added to fix linter violation.
+}
+
+message GetExtendedAgentCardRequest {
+  // The tenant context for this request.
+  string tenant = 1;
 }
 
 //////// Response Messages ///////////
@@ -703,6 +749,16 @@ message StreamResponse {
     TaskStatusUpdateEvent status_update = 3;
     TaskArtifactUpdateEvent artifact_update = 4;
   }
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  // Token for the next page of results.
+  string next_page_token = 2;
+  // The maximum number of tasks returned per page.
+  int32 page_size = 3;
+  // The total number of tasks matching the query.
+  int32 total_size = 4;
 }
 
 message ListTaskPushNotificationConfigResponse {

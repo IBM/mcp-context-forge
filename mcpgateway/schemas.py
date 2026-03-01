@@ -3718,6 +3718,68 @@ class ListFilters(BaseModelWithConfigDict):
 # --- Server Schemas ---
 
 
+class ServerInterfaceCreate(BaseModel):
+    """Schema for creating a protocol interface on a server."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    protocol: str = Field(..., description="Protocol family: mcp or a2a")
+    binding: str = Field(..., description="Protocol binding: jsonrpc, rest, grpc, sse, ws, streamable-http")
+    version: str = Field(default="1.0", description="Protocol version")
+    tenant: Optional[str] = Field(None, description="Routing label forwarded to downstream agents (not used for access control)")
+    enabled: bool = Field(True, description="Whether this interface is active")
+    config: Optional[Dict[str, Any]] = Field(None, description="Protocol-specific configuration (e.g. agent_card_override, allow_caller_tenant_override, allowed_tenants)")
+
+    @field_validator("protocol")
+    @classmethod
+    def validate_protocol(cls, v: str) -> str:
+        if v not in ("mcp", "a2a"):
+            raise ValueError("Protocol must be one of: mcp, a2a")
+        return v
+
+    @field_validator("binding")
+    @classmethod
+    def validate_binding(cls, v: str) -> str:
+        valid = {"jsonrpc", "rest", "grpc", "sse", "ws", "streamable-http"}
+        if v not in valid:
+            raise ValueError(f"Binding must be one of: {', '.join(sorted(valid))}")
+        return v
+
+
+class ServerInterfaceRead(BaseModel):
+    """Schema for reading a protocol interface on a server.
+
+    Attributes:
+        id (str): Unique interface ID.
+        server_id (str): ID of the parent server.
+        protocol (str): Protocol family (``mcp`` or ``a2a``).
+        binding (str): Protocol binding (e.g. ``jsonrpc``, ``rest``, ``grpc``, ``sse``).
+        version (str): Protocol version (e.g. ``1.0``).
+        tenant (Optional[str]): Routing label forwarded to downstream agents. Not used
+            for gateway access control. See ADR-0043.
+        enabled (bool): Whether this interface is active.
+        config (Optional[Dict[str, Any]]): Protocol-specific configuration. For A2A
+            interfaces this may include ``agent_card_override`` (JSON overrides for the
+            auto-generated AgentCard), ``allow_caller_tenant_override`` (bool, default
+            False, whether external callers can supply a tenant via request messages),
+            and ``allowed_tenants`` (list of valid tenant values when caller override
+            is enabled, null means any).
+        created_at (Optional[datetime]): When the interface was created.
+        updated_at (Optional[datetime]): When the interface was last modified.
+    """
+
+    id: str = Field(..., description="Unique interface ID")
+    server_id: str = Field(..., description="ID of the parent server")
+    protocol: str = Field(..., description="Protocol family: mcp or a2a")
+    binding: str = Field(..., description="Protocol binding: jsonrpc, rest, grpc, sse, ws, streamable-http")
+    version: str = Field(..., description="Protocol version")
+    tenant: Optional[str] = Field(None, description="Routing label forwarded to downstream agents (not used for access control)")
+    enabled: bool = Field(True, description="Whether this interface is active")
+    config: Optional[Dict[str, Any]] = Field(None, description="Protocol-specific config (e.g. agent_card_override, allow_caller_tenant_override, allowed_tenants)")
+    created_at: Optional[datetime] = Field(None, description="When the interface was created")
+    updated_at: Optional[datetime] = Field(None, description="When the interface was last modified")
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -3730,6 +3792,12 @@ class ServerCreate(BaseModel):
         associated_tools (Optional[List[str]]): Optional list of associated tool IDs.
         associated_resources (Optional[List[str]]): Optional list of associated resource IDs.
         associated_prompts (Optional[List[str]]): Optional list of associated prompt IDs.
+        interfaces (Optional[List[ServerInterfaceCreate]]): Protocol interfaces to expose on this
+            server. Each interface defines a protocol family (``mcp`` or ``a2a``), a binding
+            (``jsonrpc``, ``rest``, ``grpc``, ``sse``, ``ws``, ``streamable-http``), a protocol
+            version, and optional tenant routing label. A2A interfaces may include protocol-specific
+            configuration such as ``agent_card_override``, ``allow_caller_tenant_override``, and
+            ``allowed_tenants`` in the ``config`` JSON field.
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -3793,6 +3861,9 @@ class ServerCreate(BaseModel):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Protocol interfaces (child table)
+    interfaces: Optional[List["ServerInterfaceCreate"]] = Field(None, description="Protocol interfaces to create with this server")
 
     @field_validator("name")
     @classmethod
@@ -3927,6 +3998,9 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Protocol interfaces (child table)
+    interfaces: Optional[List["ServerInterfaceCreate"]] = Field(None, description="Protocol interfaces to create/replace for this server")
 
     @field_validator("tags")
     @classmethod
@@ -4104,6 +4178,9 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Protocol interfaces
+    interfaces: List["ServerInterfaceRead"] = Field(default_factory=list, description="Protocol interfaces exposed by this server")
 
     @model_validator(mode="before")
     @classmethod
@@ -4296,6 +4373,11 @@ class A2AAgentCreate(BaseModel):
         protocol_version (str): A2A protocol version supported.
         capabilities (Dict[str, Any]): Agent capabilities and features.
         config (Dict[str, Any]): Agent-specific configuration parameters.
+        tenant (Optional[str]): Per-agent tenant routing label forwarded to the downstream agent.
+            When this agent is invoked via an A2A-enabled virtual server, this value takes
+            precedence over the server's default tenant. Not used for gateway access control.
+        icon_url (Optional[str]): URL to an icon representing this agent. Used in the
+            auto-generated AgentCard when the agent is associated with a virtual server.
         auth_type (Optional[str]): Type of authentication ("api_key", "oauth", "bearer", etc.).
         auth_username (Optional[str]): Username for basic authentication.
         auth_password (Optional[str]): Password for basic authentication.
@@ -4323,6 +4405,9 @@ class A2AAgentCreate(BaseModel):
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
+    # A2A v1.0 fields
+    tenant: Optional[str] = Field(None, description="Per-agent tenant routing label (overrides server default when set)")
+    icon_url: Optional[str] = Field(None, description="URL to an icon for the agent")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
@@ -4668,6 +4753,9 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
     config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
+    # A2A v1.0 fields
+    tenant: Optional[str] = Field(None, description="Per-agent tenant routing label (overrides server default when set)")
+    icon_url: Optional[str] = Field(None, description="URL to an icon for the agent")
     auth_type: Optional[str] = Field(None, description="Type of authentication")
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
     auth_password: Optional[str] = Field(None, description="password for basic authentication")
@@ -5030,6 +5118,9 @@ class A2AAgentRead(BaseModelWithConfigDict):
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the agent")
     metrics: Optional[A2AAgentMetrics] = Field(None, description="Agent metrics (may be None in list operations)")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
+    # A2A v1.0 fields
+    tenant: Optional[str] = Field(None, description="Per-agent tenant routing label")
+    icon_url: Optional[str] = Field(None, description="URL to an icon for the agent")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")

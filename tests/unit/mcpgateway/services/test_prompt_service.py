@@ -1188,7 +1188,7 @@ class TestPromptAccessAuthorization:
         team = MagicMock()
         team.id = "team-abc"
 
-        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[team])
             MockTMS.return_value = mock_ts
@@ -1821,7 +1821,7 @@ class TestListPromptsAdvanced:
 
         with (
             patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
-            patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
         ):
             mock_cache = AsyncMock()
             mock_cache_fn.return_value = mock_cache
@@ -1895,7 +1895,7 @@ class TestListPromptsForUser:
 
         prompt_service.convert_prompt_to_read = MagicMock(return_value="converted")
 
-        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -1907,7 +1907,7 @@ class TestListPromptsForUser:
     @pytest.mark.asyncio
     async def test_team_no_access(self, prompt_service):
         db = MagicMock()
-        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -1952,7 +1952,7 @@ class TestListPromptsForUser:
 
         prompt_service.convert_prompt_to_read = MagicMock(side_effect=ValueError("bad"))
 
-        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -1966,7 +1966,7 @@ class TestListPromptsForUser:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
 
-        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -1980,7 +1980,7 @@ class TestListPromptsForUser:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
 
-        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -2082,7 +2082,7 @@ class TestListServerPrompts:
         team = MagicMock()
         team.id = "team-1"
 
-        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[team])
             MockTMS.return_value = mock_ts

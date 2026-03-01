@@ -43,3 +43,6 @@ nav:
   - 38b Multi-Worker Session Affinity: 038-multi-worker-session-affinity.md
   - 39 Adopt Fully Independent Plugin Crates Architecture: 039-adopt-fully-independent-plugin-crates-architecture.md
   - 40 Flexible Admin UI Section Visibility: 040-flexible-admin-ui-sections.md
+  - 41 A2A Protocol v1.0 RC1 Migration Strategy: 041-a2a-v1-migration.md
+  - 42 Virtual Servers as Multi-Protocol Endpoints: 042-virtual-server-multi-protocol.md
+  - 43 Tenant vs Team Separation: 043-tenant-vs-team.md

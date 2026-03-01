@@ -5100,7 +5100,7 @@ class TestToolServiceHelpers:
         service = ToolService()
         tool_payload = {"visibility": "team", "team_id": "team-9"}
 
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_instance = mock_team_service.return_value
             mock_instance.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-9")])
 

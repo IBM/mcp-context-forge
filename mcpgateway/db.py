@@ -2385,6 +2385,87 @@ class A2ATask(Base):
     a2a_agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="tasks")
 
 
+class ServerTaskMapping(Base):
+    """Maps server-level A2A task IDs to downstream agent task IDs.
+
+    When a virtual server with a2a_enabled receives A2A requests, it creates
+    a mapping between the server-level task ID (visible to external callers)
+    and the downstream agent's task ID. This persists across restarts.
+    """
+
+    __tablename__ = "server_task_mappings"
+    __table_args__ = (
+        UniqueConstraint("server_id", "server_task_id", name="uq_server_task_mapping"),
+        Index("ix_server_task_mappings_agent", "agent_name", "agent_task_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    server_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", comment="Mapping status: active, failed, completed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    server: Mapped["Server"] = relationship("Server", foreign_keys=[server_id])
+
+
+class ServerInterface(Base):
+    """Protocol interface configuration for a virtual server.
+
+    Each row represents one protocol interface the server exposes. This
+    directly mirrors the A2A v1.0 ``AgentInterface`` concept where each
+    interface has its own url, protocol_binding, protocol_version, and tenant.
+
+    A server can have multiple interfaces (e.g., both MCP-SSE and A2A-JSONRPC).
+    Protocol-specific configuration lives in the ``config`` JSON column.
+
+    A2A config keys: agent_card_override, allow_caller_tenant_override,
+    allowed_tenants.
+    """
+
+    __tablename__ = "server_interfaces"
+    __table_args__ = (
+        UniqueConstraint("server_id", "protocol", "binding", name="uq_server_interface"),
+        Index("ix_server_interfaces_server_id", "server_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False)
+    protocol: Mapped[str] = mapped_column(String(20), nullable=False, comment="Protocol family: mcp, a2a")
+    binding: Mapped[str] = mapped_column(String(30), nullable=False, comment="Protocol binding: jsonrpc, rest, grpc, sse, ws, streamable-http")
+    version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0", comment="Protocol version")
+    tenant: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="Routing label forwarded to downstream agents")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="Protocol-specific configuration")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    server: Mapped["Server"] = relationship("Server", back_populates="interfaces")
+
+
+class A2AAgentAuth(Base):
+    """Authentication configuration for an A2A agent.
+
+    Extracted from A2AAgent to keep the parent table focused on identity and
+    protocol, while auth configuration lives in this 1:1 child table.
+    """
+
+    __tablename__ = "a2a_agent_auth"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None, comment="basic, bearer, authheaders, oauth, query_param, or None")
+    auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True)
+    auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True, comment="Encrypted query parameters for auth")
+    oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    a2a_agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="auth_config")
+
+
 # ===================================
 # Metrics Hourly Rollup Tables
 # These tables store pre-aggregated hourly summaries for efficient historical queries.
@@ -4484,6 +4565,9 @@ class Server(Base):
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
+    # Protocol interfaces relationship (A2A, future protocols)
+    interfaces: Mapped[List["ServerInterface"]] = relationship("ServerInterface", back_populates="server", cascade="all, delete-orphan")
+
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
@@ -4764,6 +4848,10 @@ class A2AAgent(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # A2A protocol fields
+    tenant: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="A2A tenant routing label forwarded to downstream agent")
+    icon_url: Mapped[Optional[str]] = mapped_column(String(767), nullable=True, comment="URL to an icon for the agent")
+
     # Associated tool ID (A2A agents are automatically registered as tools)
     tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True)
 
@@ -4772,6 +4860,7 @@ class A2AAgent(Base):
     tool: Mapped[Optional["Tool"]] = relationship("Tool", foreign_keys=[tool_id])
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
     tasks: Mapped[List["A2ATask"]] = relationship("A2ATask", back_populates="a2a_agent", cascade="all, delete-orphan")
+    auth_config: Mapped[Optional["A2AAgentAuth"]] = relationship("A2AAgentAuth", back_populates="a2a_agent", uselist=False, cascade="all, delete-orphan")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),
