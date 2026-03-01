@@ -4712,10 +4712,15 @@ class TestExportImportEndpoints:
     async def test_export_selective_configuration_success(self):
         export_service = MagicMock()
         export_service.export_selective = AsyncMock(return_value={"tools": ["tool-1"]})
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[], _jwt_verified_payload=None)
 
         with patch("mcpgateway.main.export_service", export_service):
-            result = await export_selective_configuration({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
+            result = await export_selective_configuration(request, {"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
             assert result["tools"] == ["tool-1"]
+            kwargs = export_service.export_selective.await_args.kwargs
+            assert kwargs["user_email"] == "user@example.com"
+            assert kwargs["token_teams"] == []
 
     async def test_export_selective_configuration_error_mappings(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -4724,8 +4729,11 @@ class TestExportImportEndpoints:
         svc = MagicMock()
         svc.export_selective = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(main_mod, "export_service", svc)
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[], _jwt_verified_payload=None)
 
         result = await main_mod.export_selective_configuration.__wrapped__(
+            request,
             {"tools": ["tool-1"]},
             include_dependencies=False,
             db=MagicMock(),
@@ -4735,12 +4743,12 @@ class TestExportImportEndpoints:
 
         svc.export_selective = AsyncMock(side_effect=ExportError("bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_selective_configuration.__wrapped__({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.export_selective_configuration.__wrapped__(request, {"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 400
 
         svc.export_selective = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_selective_configuration.__wrapped__({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.export_selective_configuration.__wrapped__(request, {"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
 
     async def test_import_configuration_invalid_strategy(self):

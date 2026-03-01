@@ -9,6 +9,7 @@ Tests for export service implementation.
 
 # Standard
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -1427,3 +1428,141 @@ async def test_export_selected_resources_success_and_empty_list(export_service, 
     exported = await export_service._export_selected_resources(mock_db, ["file:///x"])
     assert exported[0]["uri"] == "file:///x"
     assert exported[0]["last_modified"] == now.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_export_selected_tools_scoped_visibility_filters_non_visible(export_service, mock_db):
+    """Ensure selective tool export enforces visibility scoping when context is provided."""
+    export_service._fetch_all_tools = AsyncMock(return_value=[SimpleNamespace(id="t1")])
+
+    now = datetime.now(timezone.utc)
+    visible_tool = MagicMock()
+    visible_tool.id = "t1"
+    visible_tool.integration_type = "REST"
+    visible_tool.gateway_id = None
+    visible_tool.original_name = "visible_tool"
+    visible_tool.custom_name = "visible_tool_custom"
+    visible_tool.display_name = "Visible Tool"
+    visible_tool.url = "https://example.com/visible"
+    visible_tool.request_type = "GET"
+    visible_tool.description = "visible"
+    visible_tool.headers = {}
+    visible_tool.input_schema = {"type": "object", "properties": {}}
+    visible_tool.output_schema = None
+    visible_tool.annotations = {}
+    visible_tool.jsonpath_filter = ""
+    visible_tool.tags = []
+    visible_tool.rate_limit = None
+    visible_tool.timeout = None
+    visible_tool.enabled = True
+    visible_tool.created_at = now
+    visible_tool.updated_at = now
+    visible_tool.auth_type = None
+    visible_tool.auth_value = None
+
+    hidden_tool = MagicMock()
+    hidden_tool.id = "t2"
+    hidden_tool.integration_type = "REST"
+    hidden_tool.gateway_id = None
+    hidden_tool.original_name = "hidden_tool"
+    hidden_tool.custom_name = "hidden_tool_custom"
+    hidden_tool.display_name = "Hidden Tool"
+    hidden_tool.url = "https://example.com/hidden"
+    hidden_tool.request_type = "GET"
+    hidden_tool.description = "hidden"
+    hidden_tool.headers = {}
+    hidden_tool.input_schema = {"type": "object", "properties": {}}
+    hidden_tool.output_schema = None
+    hidden_tool.annotations = {}
+    hidden_tool.jsonpath_filter = ""
+    hidden_tool.tags = []
+    hidden_tool.rate_limit = None
+    hidden_tool.timeout = None
+    hidden_tool.enabled = True
+    hidden_tool.created_at = now
+    hidden_tool.updated_at = now
+    hidden_tool.auth_type = None
+    hidden_tool.auth_value = None
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_tool, hidden_tool]
+
+    exported = await export_service._export_selected_tools(mock_db, ["t1", "t2"], user_email="user@example.com", token_teams=["team-1"])
+    assert len(exported) == 1
+    assert exported[0]["name"] == "visible_tool"
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_scoped_visibility_filters_non_visible(export_service, mock_db):
+    """Ensure selective prompt export enforces visibility scoping when context is provided."""
+    export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="p1", name="visible-prompt", original_name="visible-prompt", custom_name="visible-prompt-custom")])
+
+    visible_prompt = MagicMock()
+    visible_prompt.id = "p1"
+    visible_prompt.name = "visible-prompt"
+    visible_prompt.original_name = "visible-prompt"
+    visible_prompt.custom_name = "visible-prompt-custom"
+    visible_prompt.display_name = "Visible Prompt"
+    visible_prompt.template = "visible"
+    visible_prompt.description = "visible"
+    visible_prompt.argument_schema = {"type": "object", "properties": {}, "required": []}
+    visible_prompt.tags = []
+    visible_prompt.enabled = True
+
+    hidden_prompt = MagicMock()
+    hidden_prompt.id = "p2"
+    hidden_prompt.name = "hidden-prompt"
+    hidden_prompt.original_name = "hidden-prompt"
+    hidden_prompt.custom_name = "hidden-prompt-custom"
+    hidden_prompt.display_name = "Hidden Prompt"
+    hidden_prompt.template = "hidden"
+    hidden_prompt.description = "hidden"
+    hidden_prompt.argument_schema = {"type": "object", "properties": {}, "required": []}
+    hidden_prompt.tags = []
+    hidden_prompt.enabled = True
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_prompt, hidden_prompt]
+
+    exported = await export_service._export_selected_prompts(
+        mock_db,
+        ["p1", "p2", "visible-prompt", "hidden-prompt"],
+        user_email="user@example.com",
+        token_teams=["team-1"],
+    )
+    assert len(exported) == 1
+    assert exported[0]["name"] == "visible-prompt"
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_scoped_visibility_filters_non_visible(export_service, mock_db):
+    """Ensure selective resource export enforces visibility scoping when context is provided."""
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible.txt")])
+
+    now = datetime.now(timezone.utc)
+    visible_resource = MagicMock()
+    visible_resource.uri = "file:///visible.txt"
+    visible_resource.name = "visible"
+    visible_resource.description = "visible"
+    visible_resource.mime_type = "text/plain"
+    visible_resource.tags = []
+    visible_resource.enabled = True
+    visible_resource.updated_at = now
+
+    hidden_resource = MagicMock()
+    hidden_resource.uri = "file:///hidden.txt"
+    hidden_resource.name = "hidden"
+    hidden_resource.description = "hidden"
+    hidden_resource.mime_type = "text/plain"
+    hidden_resource.tags = []
+    hidden_resource.enabled = True
+    hidden_resource.updated_at = now
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_resource, hidden_resource]
+
+    exported = await export_service._export_selected_resources(
+        mock_db,
+        ["file:///visible.txt", "file:///hidden.txt"],
+        user_email="user@example.com",
+        token_teams=["team-1"],
+    )
+    assert len(exported) == 1
+    assert exported[0]["uri"] == "file:///visible.txt"
