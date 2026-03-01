@@ -271,6 +271,10 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class TokenEncryptionWriteError(ValueError):
+    """Raised when OAuth token encryption fails during DB write binding."""
+
+
 class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
     """Text type that applies best-effort encryption/decryption at ORM boundary.
 
@@ -335,6 +339,10 @@ class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
         Returns:
             Any: Encrypted value for persistence or unchanged value when no
                 encryption is applied.
+
+        Raises:
+            TokenEncryptionWriteError: If encryption is configured and token
+                encryption fails.
         """
         if value in (None, "") or not isinstance(value, str):
             return value
@@ -348,9 +356,9 @@ class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
                 return value
             return encryption.encrypt_secret(value)
         except Exception as exc:
-            logger.warning("EncryptedText bind encryption failed, persisting original value type")
+            logger.warning("EncryptedText bind encryption failed; rejecting token write")
             logger.debug("EncryptedText bind encryption exception: %s", exc)
-            return value
+            raise TokenEncryptionWriteError("OAuth token encryption failed during write") from exc
 
     def process_result_value(self, value, _dialect):  # pylint: disable=unused-argument
         """Decrypt stored encrypted values when reading rows.

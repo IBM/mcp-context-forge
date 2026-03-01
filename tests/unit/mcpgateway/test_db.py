@@ -48,6 +48,17 @@ def test_encrypted_text_bind_preserves_pre_encrypted_values(monkeypatch):
     mock_encryption.encrypt_secret.assert_not_called()
 
 
+def test_encrypted_text_bind_raises_on_encrypt_failure(monkeypatch):
+    """EncryptedText should fail closed on encryption errors when encryption is enabled."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.side_effect = RuntimeError("encrypt failed")
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    with pytest.raises(db.TokenEncryptionWriteError):
+        db.EncryptedText().process_bind_param("plain-token", None)
+
+
 def test_encrypted_text_result_decrypts_encrypted_values(monkeypatch):
     """EncryptedText should decrypt values when reading from the database."""
     mock_encryption = MagicMock()

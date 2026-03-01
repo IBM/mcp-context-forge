@@ -299,6 +299,10 @@ class LLMProviderNameConflictError(LLMProviderError):
         super().__init__(message)
 
 
+class LLMProviderValidationError(LLMProviderError, ValueError):
+    """Raised when provider payload validation fails."""
+
+
 class LLMModelNotFoundError(LLMProviderError):
     """Raised when a requested LLM model is not found."""
 
@@ -326,10 +330,13 @@ class LLMProviderService:
             api_base: Provider base URL to validate.
 
         Raises:
-            ValueError: If URL fails core or SSRF validation.
+            LLMProviderValidationError: If URL fails core or SSRF validation.
         """
         if api_base:
-            SecurityValidator.validate_url(api_base, "Provider API base URL")
+            try:
+                SecurityValidator.validate_url(api_base, "Provider API base URL")
+            except ValueError as exc:
+                raise LLMProviderValidationError(str(exc)) from exc
 
     async def initialize(self) -> None:
         """Initialize the LLM provider service."""

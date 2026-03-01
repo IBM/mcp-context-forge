@@ -33,6 +33,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMProviderNameConflictError,
     LLMProviderNotFoundError,
     LLMProviderService,
+    LLMProviderValidationError,
     protect_provider_config_for_storage,
     sanitize_provider_config_for_response,
 )
@@ -97,7 +98,7 @@ def test_create_provider_rejects_ssrf_unsafe_api_base(service, db, monkeypatch: 
         plugin_ids=[],
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(LLMProviderValidationError):
         service.create_provider(db, provider_data, created_by="user")
 
 
@@ -241,7 +242,7 @@ def test_update_provider_rejects_ssrf_unsafe_api_base(service, db, monkeypatch: 
     monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
     update = LLMProviderUpdate.model_construct(api_base="http://127.0.0.1")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(LLMProviderValidationError):
         service.update_provider(db, "p1", update, modified_by="editor")
 
 

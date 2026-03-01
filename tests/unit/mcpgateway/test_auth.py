@@ -3100,6 +3100,51 @@ class TestSessionTokenBranches:
         assert exc.value.detail == "User not found in database"
 
     @pytest.mark.asyncio
+    async def test_plugin_auth_existing_db_inactive_user_rejected(self):
+        """Inactive DB users must be rejected even when plugin auth succeeds."""
+        # First-Party
+        from mcpgateway.plugins.framework import PluginResult
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config = SimpleNamespace(plugin_settings=SimpleNamespace(include_user_info=False))
+        mock_pm.invoke_hook = AsyncMock(
+            return_value=(
+                PluginResult(
+                    modified_payload={"email": "disabled@example.com", "is_admin": True},
+                    continue_processing=False,
+                    metadata={"auth_method": "plugin"},
+                ),
+                None,
+            )
+        )
+
+        db_user = EmailUser(
+            email="disabled@example.com",
+            password_hash="h",
+            full_name="Disabled User",
+            is_admin=False,
+            is_active=False,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_current_user(credentials=credentials, request=request)
+
+        assert exc.value.status_code == 401
+        assert exc.value.detail == "Account disabled"
+
+    @pytest.mark.asyncio
     async def test_plugin_auth_missing_user_defaults_to_non_admin_when_allowed(self, monkeypatch):
         """Missing DB users can authenticate as non-admin when DB-only mode is disabled."""
         # First-Party
