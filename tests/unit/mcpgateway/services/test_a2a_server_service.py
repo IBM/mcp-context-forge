@@ -160,47 +160,6 @@ class TestPickAgent:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_tenant
-# ---------------------------------------------------------------------------
-class TestResolveTenant:
-    def test_interface_tenant_default(self, service):
-        server = _make_server()
-        iface = _make_interface(tenant="default-tenant")
-        assert service._resolve_tenant(server, iface) == "default-tenant"
-
-    def test_agent_tenant_overrides_interface(self, service):
-        server = _make_server()
-        iface = _make_interface(tenant="interface-tenant")
-        agent = _make_agent(tenant="agent-tenant")
-        assert service._resolve_tenant(server, iface, agent=agent) == "agent-tenant"
-
-    def test_caller_tenant_rejected_by_default(self, service):
-        server = _make_server()
-        iface = _make_interface(tenant="default-tenant")
-        result = service._resolve_tenant(server, iface, caller_tenant="caller-tenant")
-        assert result == "default-tenant"
-
-    def test_caller_tenant_accepted_when_enabled(self, service):
-        server = _make_server()
-        iface = _make_interface(config={"allow_caller_tenant_override": True})
-        result = service._resolve_tenant(server, iface, caller_tenant="caller-tenant")
-        assert result == "caller-tenant"
-
-    def test_caller_tenant_validated_against_allowlist(self, service):
-        server = _make_server()
-        iface = _make_interface(config={"allow_caller_tenant_override": True, "allowed_tenants": ["allowed-1"]})
-        # Allowed tenant passes.
-        assert service._resolve_tenant(server, iface, caller_tenant="allowed-1") == "allowed-1"
-        # Disallowed tenant falls through to interface default.
-        assert service._resolve_tenant(server, iface, caller_tenant="forbidden") is None
-
-    def test_none_when_no_tenant_set(self, service):
-        server = _make_server()
-        iface = _make_interface(tenant=None)
-        assert service._resolve_tenant(server, iface) is None
-
-
-# ---------------------------------------------------------------------------
 # Agent Card Generation
 # ---------------------------------------------------------------------------
 class TestGetAgentCard:
@@ -424,3 +383,134 @@ class TestDiscovery:
         assert result[0]["name"] == "Server A"
         assert result[0]["a2a_interfaces"][0]["binding"] == "jsonrpc"
         assert result[0]["a2a_interfaces"][0]["tenant"] == "acme"
+
+
+# ---------------------------------------------------------------------------
+# Stream Message
+# ---------------------------------------------------------------------------
+class TestStreamMessage:
+    @pytest.mark.asyncio
+    async def test_routes_to_first_agent(self, service, mock_a2a_service, db):
+        agent = _make_agent(name="my-agent")
+        server = _make_server(interfaces=[_make_interface()], agents=[agent])
+        db.query.return_value.options.return_value.filter.return_value.first.return_value = server
+
+        result = await service.stream_message(db, "srv-1", {"message": {"role": "user"}}, "user-1")
+        mock_a2a_service.stream_message.assert_called_once()
+        call_kwargs = mock_a2a_service.stream_message.call_args.kwargs
+        assert call_kwargs["agent_name"] == "my-agent"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_server_not_found(self, service, db):
+        db.query.return_value.options.return_value.filter.return_value.first.return_value = None
+        with pytest.raises(A2AServerNotFoundError, match="not found"):
+            await service.stream_message(db, "nonexistent", {}, "user-1")
+
+
+# ---------------------------------------------------------------------------
+# Invoke Agent
+# ---------------------------------------------------------------------------
+class TestInvokeAgent:
+    @pytest.mark.asyncio
+    async def test_routes_to_first_agent(self, service, mock_a2a_service, db):
+        agent = _make_agent(name="my-agent")
+        server = _make_server(interfaces=[_make_interface()], agents=[agent])
+        db.query.return_value.options.return_value.filter.return_value.first.return_value = server
+
+        result = await service.invoke_agent(db, "srv-1", {"param": "value"}, user_id="user-1")
+        mock_a2a_service.invoke_agent.assert_called_once()
+        call_kwargs = mock_a2a_service.invoke_agent.call_args.kwargs
+        assert call_kwargs["agent_name"] == "my-agent"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_agents(self, service, db):
+        server = _make_server(interfaces=[_make_interface()], agents=[])
+        db.query.return_value.options.return_value.filter.return_value.first.return_value = server
+        with pytest.raises(A2AAgentError, match="no active"):
+            await service.invoke_agent(db, "srv-1", {}, user_id="user-1")
+
+
+# ---------------------------------------------------------------------------
+# list_a2a_servers team visibility
+# ---------------------------------------------------------------------------
+class TestListA2AServersTeamVisibility:
+    def test_public_only(self, service, db):
+        """With token_teams=[], the query should filter to public-only visibility."""
+        iface = _make_interface(binding="jsonrpc", version="1.0")
+        server = _make_server(name="Public Server", interfaces=[iface])
+        # Build a chain mock that supports the extra .filter() for visibility
+        chain = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.options.return_value = chain
+        chain.filter.return_value.distinct.return_value.all.return_value = [server]
+
+        result = service.list_a2a_servers(db, token_teams=[])
+        assert len(result) == 1
+        assert result[0]["name"] == "Public Server"
+        # The additional .filter() call should have been made for visibility
+        chain.filter.assert_called_once()
+
+    def test_admin_bypass(self, service, db):
+        """With token_teams=None, should not add visibility filters."""
+        iface = _make_interface(binding="jsonrpc", version="1.0")
+        server = _make_server(name="All Server", interfaces=[iface])
+        chain = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.options.return_value = chain
+        chain.distinct.return_value.all.return_value = [server]
+
+        result = service.list_a2a_servers(db, token_teams=None)
+        assert len(result) == 1
+        assert result[0]["name"] == "All Server"
+        # No additional .filter() call for visibility — admin bypass
+        chain.filter.assert_not_called()
+
+    def test_team_scoped(self, service, db):
+        """With token_teams=["team-1"], should filter by team."""
+        iface = _make_interface(binding="jsonrpc", version="1.0")
+        server = _make_server(name="Team Server", interfaces=[iface])
+        chain = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.options.return_value = chain
+        chain.filter.return_value.distinct.return_value.all.return_value = [server]
+
+        result = service.list_a2a_servers(db, token_teams=["team-1"])
+        assert len(result) == 1
+        assert result[0]["name"] == "Team Server"
+        # The additional .filter() call should have been made for team visibility
+        chain.filter.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Get Task — agent lookup failure
+# ---------------------------------------------------------------------------
+class TestGetTaskAgentLookupFailure:
+    @pytest.mark.asyncio
+    async def test_raises_when_agent_deleted(self, service, db):
+        mapping = MagicMock()
+        mapping.agent_id = "agent-id-deleted"
+        mapping.agent_task_id = "agent-task-xyz"
+
+        # First db.query call returns the mapping, second returns None (agent deleted)
+        query_mock = MagicMock()
+        query_mock.filter.return_value.first.side_effect = [mapping, None]
+        db.query.return_value = query_mock
+
+        with pytest.raises(A2AAgentNotFoundError, match="no longer exists"):
+            await service.get_task(db, "srv-1", "server-task-123", "user-1")
+
+
+# ---------------------------------------------------------------------------
+# Cancel Task — agent lookup failure
+# ---------------------------------------------------------------------------
+class TestCancelTaskAgentLookupFailure:
+    @pytest.mark.asyncio
+    async def test_raises_when_agent_deleted(self, service, db):
+        mapping = MagicMock()
+        mapping.agent_id = "agent-id-deleted"
+        mapping.agent_task_id = "agent-task-xyz"
+
+        # First db.query call returns the mapping, second returns None (agent deleted)
+        query_mock = MagicMock()
+        query_mock.filter.return_value.first.side_effect = [mapping, None]
+        db.query.return_value = query_mock
+
+        with pytest.raises(A2AAgentNotFoundError, match="no longer exists"):
+            await service.cancel_task(db, "srv-1", "server-task-123", "user-1")

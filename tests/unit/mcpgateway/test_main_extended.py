@@ -3585,14 +3585,12 @@ class TestA2ABranchCoverage:
         assert excinfo.value.status_code == 403
 
         svc.delete_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
-        with pytest.raises(HTTPException) as excinfo:
+        with pytest.raises(A2AAgentNotFoundError):
             await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 404
 
         svc.delete_agent = AsyncMock(side_effect=A2AAgentError("bad"))
-        with pytest.raises(HTTPException) as excinfo:
+        with pytest.raises(A2AAgentError):
             await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_invoke_a2a_agent_branches_and_errors(self, monkeypatch):
@@ -3616,14 +3614,12 @@ class TestA2ABranchCoverage:
         assert svc.invoke_agent.await_args.kwargs["token_teams"] == []
 
         svc.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
-        with pytest.raises(HTTPException) as excinfo:
+        with pytest.raises(A2AAgentNotFoundError):
             await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 404
 
         svc.invoke_agent = AsyncMock(side_effect=A2AAgentError("bad"))
-        with pytest.raises(HTTPException) as excinfo:
+        with pytest.raises(A2AAgentError):
             await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 400
 
         # Cover user_id=str(user) branch by bypassing RBAC wrapper.
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
@@ -3680,9 +3676,8 @@ class TestA2ABranchCoverage:
         assert result["agents"][0]["id"] == "agent-1"
         assert result["nextCursor"] == "next"
 
-        with pytest.raises(HTTPException) as excinfo:
+        with pytest.raises(A2AAgentNotFoundError):
             await main_mod.get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 404
 
 
 class TestRpcHandling:

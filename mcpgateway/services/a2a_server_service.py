@@ -14,6 +14,7 @@ handled by the router layer and the downstream ``A2AAgentService``.
 """
 
 # Standard
+import asyncio
 import logging
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -29,6 +30,11 @@ from mcpgateway.db import ServerTaskMapping
 from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNotFoundError
 
 logger = logging.getLogger(__name__)
+
+# Keys that callers may override via the ``agent_card_override`` interface config.
+# Structural fields (supportedInterfaces, capabilities) are excluded to prevent
+# callers from hijacking routing or capability advertisement.
+_CARD_OVERRIDE_ALLOWLIST = frozenset({"name", "description", "iconUrl", "icon_url", "provider", "version", "documentationUrl", "documentation_url"})
 
 
 class A2AServerNotFoundError(A2AAgentNotFoundError):
@@ -107,50 +113,6 @@ class A2AServerService:
             if iface.protocol == "a2a" and iface.enabled:
                 return iface
         raise A2AServerNotFoundError(f"Server '{server.id}' has no enabled A2A interfaces")
-
-    def _resolve_tenant(
-        self,
-        server: DbServer,
-        a2a_interface: DbServerInterface,
-        agent: Optional[DbA2AAgent] = None,
-        caller_tenant: Optional[str] = None,
-    ) -> Optional[str]:
-        """Resolve effective tenant using precedence rules.
-
-        Precedence (highest wins):
-        1. Caller-supplied tenant (only if allow_caller_tenant_override is True)
-        2. Per-agent tenant override
-        3. Interface-level tenant
-        4. None (no tenant)
-
-        Args:
-            server: Server database object.
-            a2a_interface: The A2A server interface with config.
-            agent: Optional agent for per-agent tenant override.
-            caller_tenant: Optional caller-supplied tenant value.
-
-        Returns:
-            Resolved tenant string, or ``None`` if no tenant applies.
-        """
-        config = a2a_interface.config or {}
-
-        # Caller override (gated).
-        if caller_tenant and config.get("allow_caller_tenant_override", False):
-            allowed = config.get("allowed_tenants")
-            if allowed is None or caller_tenant in allowed:
-                return caller_tenant
-            logger.warning(
-                "Caller tenant '%s' not in allowed_tenants for server '%s'",
-                caller_tenant,
-                server.id,
-            )
-
-        # Per-agent override.
-        if agent and getattr(agent, "tenant", None):
-            return agent.tenant
-
-        # Interface default.
-        return a2a_interface.tenant
 
     def _pick_agent(self, server: DbServer, skill_id: Optional[str] = None) -> DbA2AAgent:
         """Select which associated agent should handle a request.
@@ -255,12 +217,14 @@ class A2AServerService:
         if server.icon:
             card["iconUrl"] = server.icon
 
-        # Apply overrides from interface config.
+        # Apply overrides from interface config (allowlisted keys only).
         agent_card_override = config.get("agent_card_override")
         if isinstance(agent_card_override, dict):
             for key, value in agent_card_override.items():
-                if value is not None:
+                if value is not None and key in _CARD_OVERRIDE_ALLOWLIST:
                     card[key] = value
+                elif value is not None:
+                    logger.warning("Ignoring disallowed agent_card_override key '%s' for server '%s'", key, server_id)
 
         return card
 
@@ -491,11 +455,10 @@ class A2AServerService:
         """
         server = self._get_server_with_a2a(db, server_id)
 
-        # Aggregate tasks from all active agents.
-        all_tasks: List[Dict[str, Any]] = []
-        for agent in (server.a2a_agents or []):
-            if not getattr(agent, "enabled", True):
-                continue
+        # Aggregate tasks from all active agents concurrently.
+        active_agents = [a for a in (server.a2a_agents or []) if getattr(a, "enabled", True)]
+
+        async def _list_from_agent(agent: DbA2AAgent) -> List[Dict[str, Any]]:
             try:
                 result = await self.a2a_service.list_tasks(
                     db=db,
@@ -508,11 +471,17 @@ class A2AServerService:
                 if isinstance(result, dict):
                     tasks = result.get("result", {})
                     if isinstance(tasks, list):
-                        all_tasks.extend(tasks)
-                    elif isinstance(tasks, dict) and "tasks" in tasks:
-                        all_tasks.extend(tasks["tasks"])
+                        return tasks
+                    if isinstance(tasks, dict) and "tasks" in tasks:
+                        return tasks["tasks"]
             except A2AAgentError:
                 logger.debug("Failed to list tasks from agent '%s' on server '%s'", agent.name, server_id)
+            return []
+
+        results = await asyncio.gather(*[_list_from_agent(a) for a in active_agents])
+        all_tasks: List[Dict[str, Any]] = []
+        for task_list in results:
+            all_tasks.extend(task_list)
 
         # Remap agent task IDs to server task IDs
         agent_task_ids = [t.get("id") or t.get("taskId") for t in all_tasks if isinstance(t, dict)]

@@ -16,10 +16,11 @@ scoping via the standard RBAC middleware.
 
 # Standard
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -35,19 +36,22 @@ logger = logging.getLogger(__name__)
 # Router without prefix — mounted at /servers in main.py
 router = APIRouter(tags=["A2A Servers"])
 
-# Module-level service instance.
+# Module-level service instance with thread-safe initialization.
 _service: Optional[A2AServerService] = None
+_service_lock = threading.Lock()
 
 
 def _get_service() -> A2AServerService:
-    """Lazy-init the A2A server service.
+    """Lazy-init the A2A server service with double-checked locking.
 
     Returns:
         A2AServerService singleton instance.
     """
     global _service  # noqa: PLW0603
     if _service is None:
-        _service = A2AServerService()
+        with _service_lock:
+            if _service is None:
+                _service = A2AServerService()
     return _service
 
 
@@ -64,9 +68,9 @@ def _get_invoke_context(request: Request, user: Any) -> tuple:
         Tuple of (user_id, user_email, token_teams).
     """
     # First-Party
-    from mcpgateway.main import _get_a2a_invoke_context  # pylint: disable=import-outside-toplevel
+    from mcpgateway.main import get_a2a_invoke_context  # pylint: disable=import-outside-toplevel
 
-    return _get_a2a_invoke_context(request, user)
+    return get_a2a_invoke_context(request, user)
 
 
 def _base_url(request: Request) -> str:
@@ -108,17 +112,9 @@ async def get_server_agent_card(
 
     Returns:
         AgentCard dictionary for the specified virtual server.
-
-    Raises:
-        HTTPException: If the server is not found (404) or the request is invalid (400).
     """
-    try:
-        service = _get_service()
-        return service.get_agent_card(db, server_id, base_url=_base_url(request))
-    except A2AServerNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except A2AAgentError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    service = _get_service()
+    return service.get_agent_card(db, server_id, base_url=_base_url(request))
 
 
 @router.get("/{server_id}/.well-known/agent-card.json")
@@ -139,17 +135,9 @@ async def well_known_agent_card(
 
     Returns:
         AgentCard dictionary for the specified virtual server.
-
-    Raises:
-        HTTPException: If the server is not found (404) or the request is invalid (400).
     """
-    try:
-        service = _get_service()
-        return service.get_agent_card(db, server_id, base_url=_base_url(request))
-    except A2AServerNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except A2AAgentError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    service = _get_service()
+    return service.get_agent_card(db, server_id, base_url=_base_url(request))
 
 
 # -----------------------------------------------------------------------
@@ -185,6 +173,13 @@ async def jsonrpc_dispatch(
     method = body.get("method", "")
     params = body.get("params", {})
     rpc_id = body.get("id")
+
+    if body.get("jsonrpc") != "2.0":
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32600, "message": "Invalid Request: jsonrpc field must be '2.0'"},
+            "id": rpc_id,
+        }
 
     if not isinstance(params, dict):
         return {
@@ -253,21 +248,10 @@ async def send_message(
 
     Returns:
         A2A message response dictionary.
-
-    Raises:
-        HTTPException: If the server is not found (404), upstream error (502),
-            or the request is invalid (400).
     """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
-    try:
-        service = _get_service()
-        return await service.send_message(db, server_id, message_params, user_id, user_email, token_teams)
-    except A2AServerNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except A2AAgentUpstreamError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except A2AAgentError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    service = _get_service()
+    return await service.send_message(db, server_id, message_params, user_id, user_email, token_teams)
 
 
 @router.post("/{server_id}/a2a/message:stream")
@@ -290,22 +274,11 @@ async def stream_message(
 
     Returns:
         Streaming response with server-sent events for the A2A message.
-
-    Raises:
-        HTTPException: If the server is not found (404), upstream error (502),
-            or the request is invalid (400).
     """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
-    try:
-        service = _get_service()
-        event_stream = await service.stream_message(db, server_id, message_params, user_id, user_email, token_teams)
-        return StreamingResponse(event_stream, media_type="text/event-stream")
-    except A2AServerNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except A2AAgentUpstreamError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except A2AAgentError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    service = _get_service()
+    event_stream = await service.stream_message(db, server_id, message_params, user_id, user_email, token_teams)
+    return StreamingResponse(event_stream, media_type="text/event-stream")
 
 
 @router.get("/{server_id}/a2a/tasks/{task_id}", response_model=Dict[str, Any])
@@ -328,21 +301,10 @@ async def get_task(
 
     Returns:
         Task details dictionary.
-
-    Raises:
-        HTTPException: If the agent is not found (404), upstream error (502),
-            or the request is invalid (400).
     """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
-    try:
-        service = _get_service()
-        return await service.get_task(db, server_id, task_id, user_id, user_email, token_teams)
-    except A2AAgentNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except A2AAgentUpstreamError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except A2AAgentError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    service = _get_service()
+    return await service.get_task(db, server_id, task_id, user_id, user_email, token_teams)
 
 
 @router.get("/{server_id}/a2a/tasks", response_model=Dict[str, Any])
@@ -369,10 +331,6 @@ async def list_tasks(
 
     Returns:
         Dictionary containing the list of tasks.
-
-    Raises:
-        HTTPException: If the server is not found (404), upstream error (502),
-            or the request is invalid (400).
     """
     params: Dict[str, Any] = {}
     if state is not None:
@@ -383,15 +341,8 @@ async def list_tasks(
         params["limit"] = limit
 
     user_id, user_email, token_teams = _get_invoke_context(request, user)
-    try:
-        service = _get_service()
-        return await service.list_tasks(db, server_id, params, user_id, user_email, token_teams)
-    except A2AServerNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except A2AAgentUpstreamError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except A2AAgentError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    service = _get_service()
+    return await service.list_tasks(db, server_id, params, user_id, user_email, token_teams)
 
 
 @router.post("/{server_id}/a2a/tasks/{task_id}:cancel", response_model=Dict[str, Any])
@@ -414,21 +365,10 @@ async def cancel_task(
 
     Returns:
         Cancellation result dictionary.
-
-    Raises:
-        HTTPException: If the agent is not found (404), upstream error (502),
-            or the request is invalid (400).
     """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
-    try:
-        service = _get_service()
-        return await service.cancel_task(db, server_id, task_id, user_id, user_email, token_teams)
-    except A2AAgentNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except A2AAgentUpstreamError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except A2AAgentError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    service = _get_service()
+    return await service.cancel_task(db, server_id, task_id, user_id, user_email, token_teams)
 
 
 # -----------------------------------------------------------------------

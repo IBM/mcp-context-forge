@@ -3,8 +3,9 @@
 
 """Unit tests for A2A Server Router (mcpgateway/routers/a2a_server_router.py).
 
-Tests JSON-RPC dispatch, REST endpoints, agent card discovery, and server
-discovery routes using FastAPI's TestClient with mocked service and auth layers.
+Tests JSON-RPC dispatch, REST endpoints, agent card discovery, server
+discovery routes, and security deny-path scenarios using FastAPI's TestClient
+with mocked service and auth layers.
 """
 
 # Standard
@@ -13,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 # First-Party
@@ -30,7 +31,24 @@ from mcpgateway.services.a2a_server_service import A2AServerNotFoundError
 # ---------------------------------------------------------------------------
 
 _FAKE_USER = {"email": "user@test.com", "sub": "user-1", "is_admin": True, "teams": None, "db": MagicMock()}
+_DENIED_USER = {"email": "denied@test.com", "sub": "user-denied", "is_admin": False, "teams": ["team-1"], "db": MagicMock()}
 _INVOKE_CONTEXT = ("user-1", "user@test.com", ["team-1"])
+
+
+def _register_a2a_exception_handlers(app: FastAPI) -> None:
+    """Register A2A exception handlers matching main.py's global handlers."""
+
+    @app.exception_handler(A2AAgentNotFoundError)
+    async def _not_found(_request: Request, exc: A2AAgentNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.exception_handler(A2AAgentUpstreamError)
+    async def _upstream(_request: Request, exc: A2AAgentUpstreamError):
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.exception_handler(A2AAgentError)
+    async def _error(_request: Request, exc: A2AAgentError):
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _make_mock_service():
@@ -58,6 +76,7 @@ def _patched_client(mock_service):
     router_mod._get_invoke_context = lambda request, user: _INVOKE_CONTEXT
 
     app = FastAPI()
+    _register_a2a_exception_handlers(app)
     app.include_router(router, prefix="/servers")
     app.dependency_overrides[get_current_user_with_permissions] = lambda: _FAKE_USER
     app.dependency_overrides[get_db] = lambda: MagicMock()
@@ -67,6 +86,40 @@ def _patched_client(mock_service):
     finally:
         router_mod._service = orig_service
         router_mod._get_invoke_context = orig_ctx
+
+
+@contextmanager
+def _patched_client_denied(mock_service, mock_perm_svc):
+    """Context manager for deny-path tests where permission is refused.
+
+    Sets ``MockPermissionService.check_permission`` to return ``False`` and
+    injects ``_DENIED_USER`` (non-admin) so the ``@require_permission``
+    decorator returns 403.
+
+    Args:
+        mock_service: Mocked A2AServerService instance.
+        mock_perm_svc: The ``MockPermissionService`` class from the conftest
+            fixture, used to flip the permission outcome.
+    """
+    mock_perm_svc.check_permission = AsyncMock(return_value=False)
+
+    orig_service = router_mod._service
+    orig_ctx = router_mod._get_invoke_context
+    router_mod._service = mock_service
+    router_mod._get_invoke_context = lambda request, user: _INVOKE_CONTEXT
+
+    app = FastAPI()
+    _register_a2a_exception_handlers(app)
+    app.include_router(router, prefix="/servers")
+    app.dependency_overrides[get_current_user_with_permissions] = lambda: _DENIED_USER
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        router_mod._service = orig_service
+        router_mod._get_invoke_context = orig_ctx
+        mock_perm_svc.check_permission = AsyncMock(return_value=True)
 
 
 # ---------------------------------------------------------------------------
@@ -316,3 +369,47 @@ class TestDiscovery:
         assert len(data) == 1
         assert data[0]["name"] == "Server A"
         mock_service.list_a2a_servers.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Security Deny-Path Tests
+# ---------------------------------------------------------------------------
+
+
+class TestDenyPaths:
+    """Security deny-path regression tests: verify 403 when permission is denied.
+
+    Each test sets ``MockPermissionService.check_permission`` to ``False`` and
+    uses a non-admin user to confirm that every protected endpoint correctly
+    returns HTTP 403.
+    """
+
+    def test_jsonrpc_dispatch_denied(self, mock_service, mock_permission_service):
+        """POST /{server_id}/a2a must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.post(
+                "/servers/srv-1/a2a",
+                json={"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": "deny-1"},
+            )
+        assert resp.status_code == 403
+
+    def test_send_message_denied(self, mock_service, mock_permission_service):
+        """POST /{server_id}/a2a/message:send must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.post(
+                "/servers/srv-1/a2a/message:send",
+                json={"message": {"role": "user", "parts": [{"text": "hello"}]}},
+            )
+        assert resp.status_code == 403
+
+    def test_get_agent_card_denied(self, mock_service, mock_permission_service):
+        """GET /{server_id}/a2a/v1/card must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.get("/servers/srv-1/a2a/v1/card")
+        assert resp.status_code == 403
+
+    def test_list_a2a_servers_denied(self, mock_service, mock_permission_service):
+        """GET /a2a/discover must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.get("/servers/a2a/discover")
+        assert resp.status_code == 403

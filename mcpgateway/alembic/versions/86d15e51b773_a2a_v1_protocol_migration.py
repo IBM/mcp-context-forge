@@ -19,12 +19,31 @@ migration will drop them after the service layer fully adopts a2a_agent_auth.
 """
 
 # Standard
+import json
 import uuid
-from typing import Sequence, Union
+from typing import Any, Sequence, Union
 
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
+
+
+def _json_serialize(value: Any) -> Any:
+    """Serialize dicts/lists to JSON strings for raw SQL INSERT.
+
+    SQLite and PostgreSQL raw text parameters require JSON-encoded strings
+    rather than Python dicts when using ``sa.text()``.
+
+    Args:
+        value: The value to serialize.
+
+    Returns:
+        JSON string if *value* is a dict or list, otherwise *value* unchanged.
+    """
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return value
+
 
 # revision identifiers, used by Alembic.
 revision: str = "86d15e51b773"
@@ -67,8 +86,8 @@ def upgrade() -> None:
             sa.Column("tenant", sa.String(255), nullable=True),
             sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("config", sa.JSON(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.UniqueConstraint("server_id", "protocol", "binding", name="uq_server_interface"),
         )
         op.create_index("ix_server_interfaces_server_id", "server_interfaces", ["server_id"])
@@ -83,8 +102,8 @@ def upgrade() -> None:
             sa.Column("auth_value", sa.JSON(), nullable=True),
             sa.Column("auth_query_params", sa.JSON(), nullable=True),
             sa.Column("oauth_config", sa.JSON(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         )
         op.create_index("ix_a2a_agent_auth_agent_id", "a2a_agent_auth", ["a2a_agent_id"])
 
@@ -115,9 +134,9 @@ def upgrade() -> None:
                         "id": uuid.uuid4().hex,
                         "agent_id": agent["id"],
                         "auth_type": agent["auth_type"],
-                        "auth_value": agent["auth_value"],
-                        "auth_query_params": agent["auth_query_params"],
-                        "oauth_config": agent["oauth_config"],
+                        "auth_value": _json_serialize(agent["auth_value"]),
+                        "auth_query_params": _json_serialize(agent["auth_query_params"]),
+                        "oauth_config": _json_serialize(agent["oauth_config"]),
                     },
                 )
 
@@ -131,8 +150,8 @@ def upgrade() -> None:
             sa.Column("agent_id", sa.String(36), sa.ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False),
             sa.Column("agent_task_id", sa.String(255), nullable=False),
             sa.Column("status", sa.String(20), nullable=False, server_default="active"),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.UniqueConstraint("server_id", "server_task_id", name="uq_server_task_mapping"),
         )
         op.create_index("ix_server_task_mappings_agent", "server_task_mappings", ["agent_id", "agent_task_id"])

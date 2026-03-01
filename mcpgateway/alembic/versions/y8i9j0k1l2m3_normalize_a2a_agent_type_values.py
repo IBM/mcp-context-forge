@@ -48,4 +48,6 @@ def downgrade() -> None:
     This migration is intentionally one-way: multiple legacy values map into the
     same canonical transport name, so downgrading would be lossy and unsafe.
     """
+    print("WARNING: Downgrade of y8i9j0k1l2m3 (normalize_a2a_agent_type_values) is a no-op. "
+          "Multiple legacy agent_type values were mapped to canonical names and cannot be reversed.")
     return

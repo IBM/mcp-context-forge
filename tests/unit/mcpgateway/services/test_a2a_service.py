@@ -3498,3 +3498,666 @@ class TestValidateA2AIdentifier:
         """'  abc  ' returns 'abc'."""
         result = _validate_a2a_identifier("  abc  ", "task_id")
         assert result == "abc"
+
+
+class TestBuildRestRequest:
+    """Tests for _build_rest_request method -- A2A method to REST endpoint translation."""
+
+    def setup_method(self):
+        """Create a fresh A2AAgentService for each test."""
+        self.service = A2AAgentService()
+        self.base_url = "https://agent.example.com/api"
+
+    # ------------------------------------------------------------------
+    # 1. SendMessage / message/send
+    # ------------------------------------------------------------------
+    def test_send_message_pascal_case(self):
+        """SendMessage maps to POST /v1/message:send."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "SendMessage", {"message": {"role": "user"}}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:send"
+        assert body == {"message": {"role": "user"}}
+        assert query is None
+
+    def test_send_message_v03_alias(self):
+        """v0.3 alias message/send maps to POST /v1/message:send."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "message/send", {"message": {"role": "user"}}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:send"
+        assert body == {"message": {"role": "user"}}
+        assert query is None
+
+    # ------------------------------------------------------------------
+    # 2. SendStreamMessage / streamingmessage / message/stream
+    # ------------------------------------------------------------------
+    def test_send_stream_message_pascal_case(self):
+        """SendStreamMessage maps to POST /v1/message:stream."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "SendStreamMessage", {"message": {"role": "user"}}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:stream"
+        assert body == {"message": {"role": "user"}}
+        assert query is None
+
+    def test_streaming_message_alias(self):
+        """StreamingMessage alias maps to POST /v1/message:stream."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "StreamingMessage", {"message": {"role": "user"}}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:stream"
+        assert body == {"message": {"role": "user"}}
+        assert query is None
+
+    def test_message_stream_v03_alias(self):
+        """v0.3 alias message/stream maps to POST /v1/message:stream."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "message/stream", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:stream"
+        assert body == {"data": "test"}
+        assert query is None
+
+    # ------------------------------------------------------------------
+    # 3. GetTask / task/get
+    # ------------------------------------------------------------------
+    def test_get_task_with_id(self):
+        """GetTask with params.id maps to GET /v1/tasks/{task_id}."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "GetTask", {"id": "task-123"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-123"
+        assert body is None
+        assert query is None
+
+    def test_get_task_with_task_id_field(self):
+        """GetTask with params.taskId maps to GET /v1/tasks/{task_id}."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "GetTask", {"taskId": "task-456"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-456"
+        assert body is None
+        assert query is None
+
+    def test_get_task_extra_params_become_query(self):
+        """GetTask passes extra params as query parameters."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "GetTask", {"id": "task-789", "historyLength": 10}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-789"
+        assert body is None
+        assert query == {"historyLength": 10}
+
+    def test_get_task_v03_alias(self):
+        """v0.3 alias task/get maps to GET /v1/tasks/{task_id}."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "task/get", {"id": "task-100"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-100"
+        assert body is None
+        assert query is None
+
+    def test_get_task_tasks_get_alias(self):
+        """v0.3 alias tasks/get maps to GET /v1/tasks/{task_id}."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/get", {"id": "task-200"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-200"
+        assert body is None
+        assert query is None
+
+    def test_get_task_missing_id_raises(self):
+        """GetTask without params.id or params.taskId raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="GetTask requires params.id"):
+            self.service._build_rest_request(self.base_url, "GetTask", {"other": "value"})
+
+    def test_get_task_empty_params_raises(self):
+        """GetTask with empty params raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="GetTask requires params.id"):
+            self.service._build_rest_request(self.base_url, "GetTask", {})
+
+    # ------------------------------------------------------------------
+    # 4. ListTasks / task/list
+    # ------------------------------------------------------------------
+    def test_list_tasks(self):
+        """ListTasks maps to GET /v1/tasks."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "ListTasks", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks"
+        assert body is None
+        assert query is None
+
+    def test_list_tasks_with_filters(self):
+        """ListTasks passes filter params as query parameters."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "ListTasks", {"status": "completed", "limit": 50}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks"
+        assert body is None
+        assert query == {"status": "completed", "limit": 50}
+
+    def test_list_tasks_v03_alias(self):
+        """v0.3 alias task/list maps to GET /v1/tasks."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "task/list", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks"
+        assert body is None
+        assert query is None
+
+    def test_list_tasks_none_values_excluded(self):
+        """ListTasks excludes None-valued params from query."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "ListTasks", {"status": None, "limit": 10}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks"
+        assert body is None
+        assert query == {"limit": 10}
+
+    # ------------------------------------------------------------------
+    # 5. CancelTask / task/cancel
+    # ------------------------------------------------------------------
+    def test_cancel_task(self):
+        """CancelTask maps to POST /v1/tasks/{task_id}:cancel."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "CancelTask", {"id": "task-cancel-1"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-cancel-1:cancel"
+        assert body == {}
+        assert query is None
+
+    def test_cancel_task_missing_id_raises(self):
+        """CancelTask without task ID raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="CancelTask requires params.id"):
+            self.service._build_rest_request(self.base_url, "CancelTask", {})
+
+    def test_cancel_task_v03_alias(self):
+        """v0.3 alias task/cancel maps to POST /v1/tasks/{task_id}:cancel."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "task/cancel", {"id": "task-cancel-2"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-cancel-2:cancel"
+        assert body == {}
+        assert query is None
+
+    def test_cancel_task_with_extra_params(self):
+        """CancelTask includes extra params in the body."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "CancelTask", {"id": "task-cancel-3", "reason": "timeout"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-cancel-3:cancel"
+        assert body == {"reason": "timeout"}
+        assert query is None
+
+    # ------------------------------------------------------------------
+    # 6. SubscribeTask / resubscribetask / task/subscribe
+    # ------------------------------------------------------------------
+    def test_subscribe_task(self):
+        """SubscribeTask maps to POST /v1/tasks/{task_id}:subscribe."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "SubscribeTask", {"id": "task-sub-1"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-sub-1:subscribe"
+        assert body == {}
+        assert query is None
+
+    def test_resubscribe_task(self):
+        """ResubscribeTask maps to POST /v1/tasks/{task_id}:subscribe."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "ResubscribeTask", {"id": "task-sub-2"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-sub-2:subscribe"
+        assert body == {}
+        assert query is None
+
+    def test_subscribe_task_v03_alias(self):
+        """v0.3 alias task/subscribe maps to POST /v1/tasks/{task_id}:subscribe."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "task/subscribe", {"id": "task-sub-3"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-sub-3:subscribe"
+        assert body == {}
+        assert query is None
+
+    def test_subscribe_task_missing_id_raises(self):
+        """SubscribeTask without task ID raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="requires params.id"):
+            self.service._build_rest_request(self.base_url, "SubscribeTask", {})
+
+    # ------------------------------------------------------------------
+    # 7. SetPushNotificationConfig
+    # ------------------------------------------------------------------
+    def test_set_push_notification_config(self):
+        """SetPushNotificationConfig maps to POST /v1/tasks/{task_id}/pushNotificationConfigs."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "SetPushNotificationConfig", {"id": "task-push-1", "url": "https://hook.example.com"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-push-1/pushNotificationConfigs"
+        assert body == {"url": "https://hook.example.com"}
+        assert query is None
+
+    def test_set_push_notification_config_missing_task_id_raises(self):
+        """SetPushNotificationConfig without task ID raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="SetPushNotificationConfig requires"):
+            self.service._build_rest_request(self.base_url, "SetPushNotificationConfig", {})
+
+    def test_set_push_notification_config_v03_alias(self):
+        """v0.3 alias task/pushnotificationconfig/set works."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "task/pushnotificationconfig/set", {"id": "task-push-2", "enabled": True}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/task-push-2/pushNotificationConfigs"
+        assert body == {"enabled": True}
+        assert query is None
+
+    # ------------------------------------------------------------------
+    # 8. GetPushNotificationConfig
+    # ------------------------------------------------------------------
+    def test_get_push_notification_config(self):
+        """GetPushNotificationConfig maps to GET /v1/tasks/{task_id}/pushNotificationConfigs/{cfg_id}."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url,
+            "GetPushNotificationConfig",
+            {"id": "task-cfg-1", "pushNotificationConfigId": "cfg-abc"},
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-cfg-1/pushNotificationConfigs/cfg-abc"
+        assert body is None
+        assert query is None
+
+    def test_get_push_notification_config_with_config_id_alias(self):
+        """GetPushNotificationConfig accepts configId alias."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url,
+            "GetPushNotificationConfig",
+            {"taskId": "task-cfg-2", "configId": "cfg-def"},
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-cfg-2/pushNotificationConfigs/cfg-def"
+        assert body is None
+        assert query is None
+
+    def test_get_push_notification_config_missing_task_id_raises(self):
+        """GetPushNotificationConfig without task ID raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="GetPushNotificationConfig requires"):
+            self.service._build_rest_request(
+                self.base_url, "GetPushNotificationConfig", {"pushNotificationConfigId": "cfg-abc"}
+            )
+
+    def test_get_push_notification_config_missing_config_id_raises(self):
+        """GetPushNotificationConfig without config ID raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="GetPushNotificationConfig requires"):
+            self.service._build_rest_request(
+                self.base_url, "GetPushNotificationConfig", {"id": "task-cfg-3"}
+            )
+
+    # ------------------------------------------------------------------
+    # 9. ListPushNotificationConfigs
+    # ------------------------------------------------------------------
+    def test_list_push_notification_configs(self):
+        """ListPushNotificationConfigs maps to GET /v1/tasks/{task_id}/pushNotificationConfigs."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "ListPushNotificationConfigs", {"id": "task-list-cfg-1"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/task-list-cfg-1/pushNotificationConfigs"
+        assert body is None
+        assert query is None
+
+    def test_list_push_notification_configs_missing_task_id_raises(self):
+        """ListPushNotificationConfigs without task ID raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="ListPushNotificationConfigs requires"):
+            self.service._build_rest_request(self.base_url, "ListPushNotificationConfigs", {})
+
+    # ------------------------------------------------------------------
+    # 10. DeletePushNotificationConfig
+    # ------------------------------------------------------------------
+    def test_delete_push_notification_config(self):
+        """DeletePushNotificationConfig maps to DELETE /v1/tasks/{task_id}/pushNotificationConfigs/{cfg_id}."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url,
+            "DeletePushNotificationConfig",
+            {"id": "task-del-1", "configId": "cfg-del-1"},
+        )
+        assert method == "DELETE"
+        assert url == "https://agent.example.com/api/v1/tasks/task-del-1/pushNotificationConfigs/cfg-del-1"
+        assert body is None
+        assert query is None
+
+    def test_delete_push_notification_config_missing_ids_raises(self):
+        """DeletePushNotificationConfig without both IDs raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="DeletePushNotificationConfig requires"):
+            self.service._build_rest_request(
+                self.base_url, "DeletePushNotificationConfig", {"id": "task-del-2"}
+            )
+
+    def test_delete_push_notification_config_v03_alias(self):
+        """v0.3 alias task/pushnotificationconfig/delete works."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url,
+            "task/pushnotificationconfig/delete",
+            {"taskId": "task-del-3", "pushNotificationConfigId": "cfg-del-3"},
+        )
+        assert method == "DELETE"
+        assert url == "https://agent.example.com/api/v1/tasks/task-del-3/pushNotificationConfigs/cfg-del-3"
+        assert body is None
+        assert query is None
+
+    # ------------------------------------------------------------------
+    # 11. GetAgentCard / agent/getcard
+    # ------------------------------------------------------------------
+    def test_get_agent_card(self):
+        """GetAgentCard maps to GET /v1/card."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "GetAgentCard", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/card"
+        assert body is None
+        assert query is None
+
+    def test_get_agent_card_v03_alias(self):
+        """v0.3 alias agent/getcard maps to GET /v1/card."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "agent/getcard", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/card"
+        assert body is None
+        assert query is None
+
+    def test_get_agent_card_card_get_alias(self):
+        """v0.3 alias card/get maps to GET /v1/card."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "card/get", None
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/card"
+        assert body is None
+        assert query is None
+
+    # ------------------------------------------------------------------
+    # 12. GetExtendedAgentCard
+    # ------------------------------------------------------------------
+    def test_get_extended_agent_card(self):
+        """GetExtendedAgentCard maps to GET /v1/extendedAgentCard."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "GetExtendedAgentCard", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/extendedAgentCard"
+        assert body is None
+        assert query is None
+
+    def test_get_extended_agent_card_v03_alias(self):
+        """v0.3 alias agent/getextendedcard maps to GET /v1/extendedAgentCard."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "agent/getextendedcard", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/extendedAgentCard"
+        assert body is None
+        assert query is None
+
+    # ------------------------------------------------------------------
+    # 13. Unsupported method
+    # ------------------------------------------------------------------
+    def test_unsupported_method_raises(self):
+        """Unsupported RPC method raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="Unsupported A2A REST method 'DoSomethingWeird'"):
+            self.service._build_rest_request(self.base_url, "DoSomethingWeird", {})
+
+    def test_empty_method_raises(self):
+        """Empty string method raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="Unsupported A2A REST method"):
+            self.service._build_rest_request(self.base_url, "", {})
+
+    def test_none_method_raises(self):
+        """None method raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="Unsupported A2A REST method"):
+            self.service._build_rest_request(self.base_url, None, {})
+
+    # ------------------------------------------------------------------
+    # 14. Missing required params (task_id for GetTask)
+    # ------------------------------------------------------------------
+    def test_get_task_none_params_raises(self):
+        """GetTask with None rpc_params raises A2AAgentError (treated as empty dict)."""
+        with pytest.raises(A2AAgentError, match="GetTask requires params.id"):
+            self.service._build_rest_request(self.base_url, "GetTask", None)
+
+    def test_get_task_non_dict_params_raises(self):
+        """GetTask with non-dict rpc_params raises A2AAgentError (treated as empty dict)."""
+        with pytest.raises(A2AAgentError, match="GetTask requires params.id"):
+            self.service._build_rest_request(self.base_url, "GetTask", "not-a-dict")
+
+    # ------------------------------------------------------------------
+    # 15. Missing required params (config_id for GetPushNotificationConfig)
+    # ------------------------------------------------------------------
+    def test_get_push_notification_config_none_params_raises(self):
+        """GetPushNotificationConfig with None rpc_params raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="GetPushNotificationConfig requires"):
+            self.service._build_rest_request(self.base_url, "GetPushNotificationConfig", None)
+
+    # ------------------------------------------------------------------
+    # 16. URL construction with /v1 prefix already present
+    # ------------------------------------------------------------------
+    def test_url_with_v1_already_present(self):
+        """URL that already contains /v1 does not duplicate the prefix."""
+        method, url, body, query = self.service._build_rest_request(
+            "https://agent.example.com/api/v1", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:send"
+
+    def test_url_with_v1_in_middle_path(self):
+        """URL with /v1 in the middle of the path truncates at /v1."""
+        method, url, body, query = self.service._build_rest_request(
+            "https://agent.example.com/api/v1/extra/path", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:send"
+
+    def test_url_with_v1_and_trailing_slash(self):
+        """URL with /v1/ does not duplicate prefix."""
+        method, url, body, query = self.service._build_rest_request(
+            "https://agent.example.com/api/v1/", "GetAgentCard", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/card"
+
+    # ------------------------------------------------------------------
+    # 17. URL construction without /v1 prefix
+    # ------------------------------------------------------------------
+    def test_url_without_v1_appends_prefix(self):
+        """URL without /v1 gets /v1 appended."""
+        method, url, body, query = self.service._build_rest_request(
+            "https://agent.example.com/api", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:send"
+
+    def test_url_root_path_appends_v1(self):
+        """URL with root path only gets /v1 appended."""
+        method, url, body, query = self.service._build_rest_request(
+            "https://agent.example.com", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/v1/message:send"
+
+    def test_url_root_with_trailing_slash(self):
+        """URL with trailing slash on root gets /v1 appended correctly."""
+        method, url, body, query = self.service._build_rest_request(
+            "https://agent.example.com/", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/v1/message:send"
+
+    def test_url_no_scheme_no_v1(self):
+        """Non-URL endpoint without /v1 gets /v1 appended."""
+        method, url, body, query = self.service._build_rest_request(
+            "localhost:8080/api", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "localhost:8080/api/v1/message:send"
+
+    def test_url_no_scheme_with_v1(self):
+        """Non-URL endpoint already ending in /v1 does not duplicate."""
+        method, url, body, query = self.service._build_rest_request(
+            "localhost:8080/api/v1", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "localhost:8080/api/v1/message:send"
+
+    def test_url_no_scheme_trailing_slash(self):
+        """Non-URL endpoint with trailing slash gets /v1 appended."""
+        method, url, body, query = self.service._build_rest_request(
+            "localhost:8080/api/", "SendMessage", {"data": "test"}
+        )
+        assert method == "POST"
+        assert url == "localhost:8080/api/v1/message:send"
+
+    # ------------------------------------------------------------------
+    # 18. v0.3 method name aliases (comprehensive check)
+    # ------------------------------------------------------------------
+    def test_tasks_get_v03_alias(self):
+        """v0.3 alias tasks/get works for GetTask."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/get", {"id": "t1"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/t1"
+
+    def test_tasks_list_v03_alias(self):
+        """v0.3 alias tasks/list works for ListTasks."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/list", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks"
+
+    def test_tasks_cancel_v03_alias(self):
+        """v0.3 alias tasks/cancel works for CancelTask."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/cancel", {"id": "t2"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/t2:cancel"
+
+    def test_tasks_subscribe_v03_alias(self):
+        """v0.3 alias tasks/subscribe works for SubscribeTask."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/subscribe", {"id": "t3"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/t3:subscribe"
+
+    def test_tasks_resubscribe_v03_alias(self):
+        """v0.3 alias tasks/resubscribe works for ResubscribeTask."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/resubscribe", {"id": "t4"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/t4:subscribe"
+
+    def test_tasks_pushnotificationconfig_set_v03_alias(self):
+        """v0.3 alias tasks/pushnotificationconfig/set works."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/pushnotificationconfig/set", {"id": "t5", "url": "https://hook.example.com"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/tasks/t5/pushNotificationConfigs"
+
+    def test_tasks_pushnotificationconfig_get_v03_alias(self):
+        """v0.3 alias tasks/pushnotificationconfig/get works."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url,
+            "tasks/pushnotificationconfig/get",
+            {"id": "t6", "configId": "cfg-1"},
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/t6/pushNotificationConfigs/cfg-1"
+
+    def test_tasks_pushnotificationconfig_list_v03_alias(self):
+        """v0.3 alias tasks/pushnotificationconfig/list works."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "tasks/pushnotificationconfig/list", {"id": "t7"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/t7/pushNotificationConfigs"
+
+    def test_tasks_pushnotificationconfig_delete_v03_alias(self):
+        """v0.3 alias tasks/pushnotificationconfig/delete works."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url,
+            "tasks/pushnotificationconfig/delete",
+            {"id": "t8", "configId": "cfg-2"},
+        )
+        assert method == "DELETE"
+        assert url == "https://agent.example.com/api/v1/tasks/t8/pushNotificationConfigs/cfg-2"
+
+    def test_agent_card_v03_alias(self):
+        """v0.3 alias agent/card works for GetAgentCard."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "agent/card", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/card"
+
+    def test_extended_card_get_v03_alias(self):
+        """v0.3 alias extendedcard/get works for GetExtendedAgentCard."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "extendedcard/get", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/extendedAgentCard"
+
+    def test_agent_extendedcard_v03_alias(self):
+        """v0.3 alias agent/extendedcard works for GetExtendedAgentCard."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "agent/extendedcard", {}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/extendedAgentCard"
+
+    # ------------------------------------------------------------------
+    # Case insensitivity
+    # ------------------------------------------------------------------
+    def test_method_case_insensitive(self):
+        """Method names are case-insensitive."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "SENDMESSAGE", {"msg": "test"}
+        )
+        assert method == "POST"
+        assert url == "https://agent.example.com/api/v1/message:send"
+
+    def test_method_mixed_case(self):
+        """Mixed-case method name works."""
+        method, url, body, query = self.service._build_rest_request(
+            self.base_url, "getTask", {"id": "t-mixed"}
+        )
+        assert method == "GET"
+        assert url == "https://agent.example.com/api/v1/tasks/t-mixed"

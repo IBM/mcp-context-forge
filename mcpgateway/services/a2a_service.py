@@ -14,7 +14,7 @@ gRPC, passthrough).  Includes agent card discovery, task persistence, and messag
 """
 
 # Standard
-import asyncio  # noqa: F401
+import asyncio
 import binascii
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -372,35 +372,47 @@ class A2AAgentService(BaseService):
         if auth_headers:
             headers.update(auth_headers)
 
+        async def _try_one_url(client: Any, candidate_url: str) -> Optional[Dict[str, Any]]:
+            """Fetch a single candidate URL and return a valid agent card or None.
+
+            Args:
+                client: HTTP client instance.
+                candidate_url: URL to try.
+
+            Returns:
+                Valid agent card dict, or None.
+            """
+            try:
+                response = await client.get(candidate_url, headers=headers)
+            except Exception:
+                logger.debug("Agent card discovery request failed for %s", candidate_url, exc_info=True)
+                return None
+
+            if response.status_code != 200:
+                return None
+
+            try:
+                payload = response.json()
+            except ValueError:
+                logger.debug("Agent card discovery response was not JSON for %s", candidate_url)
+                return None
+
+            return self._extract_agent_card(payload)
+
         async def _fetch_first_card(candidate_urls: List[str]) -> Optional[Dict[str, Any]]:
-            """Try each candidate URL and return the first valid agent card.
+            """Try candidate URLs concurrently and return the first valid agent card.
 
             Args:
                 candidate_urls: List of candidate URLs to try.
 
             Returns:
-                First valid agent card dict, or None if none found.
+                First valid agent card dict (by candidate order), or None if none found.
             """
             client = await get_http_client()
-            for candidate_url in candidate_urls:
-                try:
-                    response = await client.get(candidate_url, headers=headers)
-                except Exception:
-                    logger.debug("Agent card discovery request failed for %s", candidate_url, exc_info=True)
-                    continue
-
-                if response.status_code != 200:
-                    continue
-
-                try:
-                    payload = response.json()
-                except ValueError:
-                    logger.debug("Agent card discovery response was not JSON for %s", candidate_url)
-                    continue
-
-                card = self._extract_agent_card(payload)
-                if card:
-                    return card
+            results = await asyncio.gather(*[_try_one_url(client, url) for url in candidate_urls], return_exceptions=True)
+            for result in results:
+                if isinstance(result, dict):
+                    return result
             return None
 
         extended_candidates = [url for url in self._build_agent_card_candidates(endpoint_url, include_extended=True) if "extendedAgentCard" in url]
@@ -2469,6 +2481,8 @@ class A2AAgentService(BaseService):
                 config_id = request_payload.get("configId") or request_payload.get("pushNotificationConfigId")
                 config_name = request_payload.get("name")
                 if isinstance(config_name, str) and config_name.strip():
+                    terminal = config_name.strip().rsplit("/", 1)[-1]
+                    _validate_a2a_identifier(terminal, "config_name")
                     resource_name = config_name.strip()
                 elif isinstance(config_id, str) and config_id.strip():
                     resource_name = f"{task_parent}/pushNotificationConfigs/{config_id.strip()}"
@@ -2504,6 +2518,8 @@ class A2AAgentService(BaseService):
                 config_id = request_payload.get("configId") or request_payload.get("pushNotificationConfigId")
                 config_name = request_payload.get("name")
                 if isinstance(config_name, str) and config_name.strip():
+                    terminal = config_name.strip().rsplit("/", 1)[-1]
+                    _validate_a2a_identifier(terminal, "config_name")
                     resource_name = config_name.strip()
                 elif isinstance(config_id, str) and config_id.strip():
                     resource_name = f"{task_parent}/pushNotificationConfigs/{config_id.strip()}"
@@ -2992,9 +3008,9 @@ class A2AAgentService(BaseService):
                 status_code = rpc_error.code() if callable(getattr(rpc_error, "code", None)) else None
                 status_name = status_code.name if status_code else "UNKNOWN"
                 details = rpc_error.details() if callable(getattr(rpc_error, "details", None)) else str(rpc_error)
-                yield _sse_event("error", {"type": "error", "error": f"A2A gRPC stream failed ({status_name}): {details}"})
+                yield _sse_event("error", {"type": "error", "error": f"A2A gRPC stream failed ({status_name}): {_sanitize(details, auth_ctx.query_params_decrypted)}"})
             except Exception as e:
-                yield _sse_event("error", {"type": "error", "error": _sanitize(str(e))})
+                yield _sse_event("error", {"type": "error", "error": _sanitize(str(e), auth_ctx.query_params_decrypted)})
             finally:
                 if channel is not None:
                     await channel.close()
@@ -3026,13 +3042,13 @@ class A2AAgentService(BaseService):
                     if response.status_code < 200 or response.status_code >= 300:
                         raw = await response.aread()
                         text = raw.decode("utf-8", errors="replace")[:1024] if raw else ""
-                        yield _sse_event("error", {"type": "error", "error": f"HTTP {response.status_code}: {_sanitize(text)}"})
+                        yield _sse_event("error", {"type": "error", "error": f"HTTP {response.status_code}: {_sanitize(text, auth_ctx.query_params_decrypted)}"})
                         return
                     async for chunk in response.aiter_raw():
                         yield chunk
             except Exception as e:
                 logger.warning("SSE stream error for agent '%s' (id=%s): %s", agent_name, agent_id, e)
-                yield _sse_event("error", {"type": "error", "error": _sanitize(str(e)), "agent": agent_name})
+                yield _sse_event("error", {"type": "error", "error": _sanitize(str(e), auth_ctx.query_params_decrypted), "agent": agent_name})
 
         # Choose stream based on transport.
         if normalized_agent_type == "a2a-grpc":
