@@ -41,6 +41,18 @@ pytestmark = pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not in
 class TestGrpcService:
     """Test suite for gRPC Service."""
 
+    @pytest.fixture(autouse=True)
+    def _skip_grpc_target_validation(self, monkeypatch):
+        """Disable SSRF target validation for unit tests that use localhost targets."""
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _target: None)
+
+    @pytest.fixture(autouse=True)
+    def _skip_tls_path_validation(self, monkeypatch):
+        """Disable TLS path validation for unit tests."""
+        from pathlib import Path
+
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", lambda path_str, label="TLS path": Path(path_str).resolve())
+
     @pytest.fixture
     def service(self):
         """Create gRPC service instance."""

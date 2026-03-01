@@ -72,17 +72,30 @@ def test_server_ids():
 
 def test_import_module():
     """Test the import_module function."""
-    # Test importing sys module
-    imported_sys = import_module("sys")
-    assert imported_sys is sys
+    # Test importing an allowed module (json is not blocked)
+    import json
 
-    # Test importing os module
-    os_mod = import_module("os")
-    assert hasattr(os_mod, "path")
+    imported_json = import_module("json")
+    assert imported_json is json
+
+    # Test importing a plugin-namespace module
+    mod = import_module("mcpgateway.plugins.framework.utils")
+    assert hasattr(mod, "import_module")
 
     # Test caching - calling again should return same object
-    imported_sys2 = import_module("sys")
-    assert imported_sys2 is imported_sys
+    imported_json2 = import_module("json")
+    assert imported_json2 is imported_json
+
+    # Test that blocked modules are rejected
+    import pytest
+
+    for blocked in ("os", "sys", "subprocess", "shutil", "os.path"):
+        with pytest.raises(ImportError, match="blocked for security"):
+            import_module(blocked)
+
+    # Test that path-traversal names are rejected
+    with pytest.raises(ImportError, match="invalid characters"):
+        import_module("some..module")
 
 
 # ============================================================================

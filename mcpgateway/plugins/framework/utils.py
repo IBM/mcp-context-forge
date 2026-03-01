@@ -113,15 +113,29 @@ def coerce_nested(v: Any, *, _depth: int = 0) -> Any:
     return v
 
 
-_PLUGIN_MODULE_ALLOWLIST_PREFIXES = ("mcpgateway.plugins.",)
+_BLOCKED_MODULE_PREFIXES = (
+    "os",
+    "sys",
+    "subprocess",
+    "shutil",
+    "socket",
+    "http.server",
+    "ctypes",
+    "importlib",
+    "builtins",
+    "code",
+    "codeop",
+    "compileall",
+    "runpy",
+)
 
 
 @cache  # noqa
 def import_module(mod_name: str) -> ModuleType:
-    """Import a module after validating it against the plugin module allowlist.
+    """Import a module after validating the name is safe for dynamic loading.
 
-    Only modules under the ``mcpgateway.plugins`` namespace are permitted
-    to be dynamically loaded as plugin kinds.
+    Blocks dangerous stdlib modules that could enable arbitrary code
+    execution if an attacker controls the plugin ``kind`` field.
 
     Args:
         mod_name: fully qualified module name
@@ -130,15 +144,20 @@ def import_module(mod_name: str) -> ModuleType:
         A module.
 
     Raises:
-        ImportError: If the module is not in the allowed namespace.
+        ImportError: If the module name is blocked or contains path traversal.
 
     Examples:
         >>> mod = import_module('mcpgateway.plugins.framework.utils')
         >>> hasattr(mod, 'import_module')
         True
     """
-    if not any(mod_name.startswith(prefix) for prefix in _PLUGIN_MODULE_ALLOWLIST_PREFIXES):
-        raise ImportError(f"Plugin module '{mod_name}' is not in the allowed namespace. Only modules under {_PLUGIN_MODULE_ALLOWLIST_PREFIXES} are permitted.")
+    # Block path-traversal-style names and names with dangerous characters
+    if ".." in mod_name or "/" in mod_name or "\\" in mod_name:
+        raise ImportError(f"Plugin module name '{mod_name}' contains invalid characters.")
+    # Block dangerous stdlib modules
+    for blocked in _BLOCKED_MODULE_PREFIXES:
+        if mod_name == blocked or mod_name.startswith(blocked + "."):
+            raise ImportError(f"Plugin module '{mod_name}' is blocked for security reasons.")
     return importlib.import_module(mod_name)
 
 

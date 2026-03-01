@@ -52,8 +52,11 @@ logger = logging_service.get_logger(__name__)
 def _validate_grpc_target(target: str) -> None:
     """Validate a gRPC target address against SSRF-unsafe destinations.
 
-    Blocks loopback, link-local, cloud metadata, and RFC 1918 private ranges
-    unless the host portion resolves to a safe address.
+    Consults the platform SSRF settings (``ssrf_allow_localhost``,
+    ``ssrf_allow_private_networks``, ``ssrf_allowed_networks``,
+    ``ssrf_blocked_networks``, ``ssrf_blocked_hosts``) so that gRPC
+    targets follow the same rules as HTTP URLs validated by
+    ``SecurityValidator.validate_url``.
 
     Args:
         target: gRPC target string (host:port or host).
@@ -61,22 +64,62 @@ def _validate_grpc_target(target: str) -> None:
     Raises:
         GrpcServiceError: If the target resolves to a blocked address.
     """
+    # First-Party
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
     # Extract host (strip port)
     host = target.rsplit(":", 1)[0].strip("[]")
     if not host:
         raise GrpcServiceError("Empty gRPC target address")
 
+    # Check blocked hostnames
+    hostname_normalized = host.lower().rstrip(".")
+    for blocked_host in settings.ssrf_blocked_hosts:
+        if hostname_normalized == blocked_host.lower().rstrip("."):
+            raise GrpcServiceError(f"gRPC target hostname '{host}' is blocked")
+
+    # Resolve IP and apply network-level checks
     try:
         addr = ipaddress.ip_address(host)
-        if addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
-            raise GrpcServiceError(f"gRPC target address '{host}' is blocked (loopback/link-local/reserved)")
-        if addr.is_private:
-            raise GrpcServiceError(f"gRPC target address '{host}' is blocked (private network)")
     except ValueError:
-        # Not an IP literal — check hostname patterns
-        blocked_hosts = {"localhost", "metadata.google.internal", "169.254.169.254"}
-        if host.lower().rstrip(".") in blocked_hosts:
-            raise GrpcServiceError(f"gRPC target hostname '{host}' is blocked")
+        # Hostname, not an IP literal — hostname check above is sufficient
+        if hostname_normalized == "localhost":
+            if not settings.ssrf_allow_localhost:
+                raise GrpcServiceError(f"gRPC target hostname '{host}' is blocked (localhost not allowed)")
+        return
+
+    # Always block: cloud metadata, link-local (from ssrf_blocked_networks)
+    for network_str in settings.ssrf_blocked_networks:
+        try:
+            network = ipaddress.ip_network(network_str, strict=False)
+            if addr in network:
+                raise GrpcServiceError(f"gRPC target address '{host}' is blocked (network: {network_str})")
+        except ValueError:
+            continue
+
+    # Loopback
+    if addr.is_loopback:
+        if not settings.ssrf_allow_localhost:
+            raise GrpcServiceError(f"gRPC target address '{host}' is blocked (loopback not allowed)")
+        return
+
+    # Reserved / multicast — always block
+    if addr.is_reserved or addr.is_multicast:
+        raise GrpcServiceError(f"gRPC target address '{host}' is blocked (reserved/multicast)")
+
+    # Private networks — consult settings
+    if addr.is_private and not addr.is_loopback:
+        if settings.ssrf_allow_private_networks:
+            return  # Explicitly allowed
+        # Check per-network allowlist
+        for network_str in settings.ssrf_allowed_networks or []:
+            try:
+                network = ipaddress.ip_network(network_str, strict=False)
+                if addr in network:
+                    return  # Allowed by specific network allowlist
+            except ValueError:
+                continue
+        raise GrpcServiceError(f"gRPC target address '{host}' is blocked (private network not allowed)")
 
 
 def _validate_tls_path(path_str: str, label: str = "TLS path") -> Path:
@@ -100,7 +143,7 @@ def _validate_tls_path(path_str: str, label: str = "TLS path") -> Path:
         Path("/etc/pki").resolve(),
         Path.cwd().joinpath("certs").resolve(),
     )
-    if not any(str(resolved).startswith(str(prefix)) for prefix in allowed_prefixes):
+    if not any(resolved.is_relative_to(prefix) for prefix in allowed_prefixes):
         raise GrpcServiceError(f"{label} '{path_str}' is outside allowed certificate directories")
     return resolved
 

@@ -173,9 +173,9 @@ async def test_export_configuration_with_filters(export_service, mock_db):
     # Execute export with filters
     result = await export_service.export_configuration(db=mock_db, include_types=["tools", "gateways"], tags=["production"], include_inactive=True, exported_by="test_user")
 
-    # Verify service calls with filters (cursor=None for pagination)
-    export_service.tool_service.list_tools.assert_called_once_with(mock_db, tags=["production"], include_inactive=True, cursor=None)
-    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, tags=["production"], include_inactive=True, cursor=None)
+    # Verify service calls with filters (cursor=None for pagination, user_email/token_teams=None for unscoped)
+    export_service.tool_service.list_tools.assert_called_once_with(mock_db, tags=["production"], include_inactive=True, cursor=None, user_email=None, token_teams=None)
+    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, tags=["production"], include_inactive=True, cursor=None, user_email=None, token_teams=None)
 
     # Should not call other services
     export_service.server_service.list_servers.assert_not_called()
@@ -515,8 +515,8 @@ async def test_export_with_include_inactive(export_service, mock_db):
     export_options = result["metadata"]["export_options"]
     assert export_options["include_inactive"] == True
 
-    # Verify service calls included the flag (cursor=None for pagination)
-    export_service.tool_service.list_tools.assert_called_with(mock_db, tags=None, include_inactive=True, cursor=None)
+    # Verify service calls included the flag (cursor=None for pagination, user_email/token_teams=None for unscoped)
+    export_service.tool_service.list_tools.assert_called_with(mock_db, tags=None, include_inactive=True, cursor=None, user_email=None, token_teams=None)
 
 
 @pytest.mark.asyncio
@@ -628,8 +628,8 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
     # Execute export with tag filter
     gateways = await export_service._export_gateways(mock_db, ["production"], False)
 
-    # Verify the service was called with the tag filter
-    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, tags=["production"], include_inactive=False, cursor=None)
+    # Verify the service was called with the tag filter (user_email/token_teams=None for unscoped)
+    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, tags=["production"], include_inactive=False, cursor=None, user_email=None, token_teams=None)
 
     # Should only include gateway with matching tags
     assert len(gateways) == 1

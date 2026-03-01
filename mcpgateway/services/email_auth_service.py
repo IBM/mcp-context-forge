@@ -699,7 +699,12 @@ class EmailAuthService:
                 await self._apply_failed_login_floor(start_time)
                 return None
 
-            if user.is_account_locked():
+            is_protected_admin = user.is_admin and settings.protect_all_admins
+
+            # Enforce lockout for all accounts.  Protected admins are allowed
+            # to continue attempting login (feature-flagged via protect_all_admins)
+            # but their failed attempts are still tracked for audit purposes.
+            if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
                 await self._verify_dummy_password_for_timing(password)
@@ -710,7 +715,7 @@ class EmailAuthService:
             if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
-                # Increment failed attempts for all accounts including admins
+                # Always increment failed attempts — including for protected admins
                 max_attempts = getattr(settings, "max_failed_login_attempts", 5)
                 lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
 
