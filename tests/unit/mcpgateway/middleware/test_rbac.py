@@ -806,7 +806,7 @@ async def test_no_proxy_no_trust_auth_required_api_401():
 
 @pytest.mark.asyncio
 async def test_require_permission_plugin_hook_grants(monkeypatch):
-    """Plugin hook grants permission, skipping RBAC (lines 416-452)."""
+    """Plugin hook grants permission when override feature flag is enabled."""
 
     async def dummy_func(user=None):
         return "plugin-granted"
@@ -826,6 +826,7 @@ async def test_require_permission_plugin_hook_grants(monkeypatch):
     mock_pm = MagicMock()
     mock_pm.has_hooks_for.return_value = True
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
 
     with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
@@ -833,6 +834,44 @@ async def test_require_permission_plugin_hook_grants(monkeypatch):
 
     assert result == "plugin-granted"
     mock_pm.invoke_hook.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_grant_ignored_when_override_disabled(monkeypatch):
+    """Plugin grant should be audit-only by default and fall through to RBAC."""
+
+    async def dummy_func(user=None):
+        return "rbac-granted"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = True
+    mock_result.modified_payload.reason = "Plugin would allow"
+    mock_result.metadata = {"plugin_name": "test-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", False)
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        result = await decorated(user=mock_user)
+
+    assert result == "rbac-granted"
+    mock_pm.invoke_hook.assert_called_once()
+    mock_perm_service.check_permission.assert_called_once()
 
 
 @pytest.mark.asyncio

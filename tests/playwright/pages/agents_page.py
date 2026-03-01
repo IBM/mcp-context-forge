@@ -227,8 +227,8 @@ class AgentsPage(BasePage):
 
     @property
     def agents_table(self) -> Locator:
-        """Agents table (if exists)."""
-        return self.agents_panel.locator("table")
+        """Agents table (HTMX-loaded, excludes the hidden legacy table)."""
+        return self.agents_panel.locator("#agents-table")
 
     @property
     def agents_table_body(self) -> Locator:

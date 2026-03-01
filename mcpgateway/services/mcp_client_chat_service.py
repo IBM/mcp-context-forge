@@ -124,7 +124,8 @@ class MCPServerConfig(BaseModel):
         >>> config.transport
         'streamable_http'
 
-        >>> # Stdio transport
+        >>> # Stdio transport (requires explicit feature flag)
+        >>> settings.mcpgateway_stdio_transport_enabled = True
         >>> config = MCPServerConfig(
         ...     command="python",
         ...     args=["server.py"],
@@ -227,6 +228,7 @@ class MCPServerConfig(BaseModel):
             ValueError: If command is missing for stdio transport.
 
         Examples:
+            >>> settings.mcpgateway_stdio_transport_enabled = True
             >>> config = MCPServerConfig(
             ...     command="python",
             ...     args=["server.py"],
@@ -239,6 +241,27 @@ class MCPServerConfig(BaseModel):
         if transport == "stdio" and not v:
             raise ValueError("Command is required for stdio transport")
         return v
+
+    @model_validator(mode="after")
+    def validate_transport_requirements(self):
+        """Validate transport-specific requirements and feature flags.
+
+        Returns:
+            MCPServerConfig: Validated config instance.
+
+        Raises:
+            ValueError: If transport requirements or feature flags are violated.
+        """
+        if self.transport in ["streamable_http", "sse"] and not self.url:
+            raise ValueError(f"URL is required for {self.transport} transport")
+
+        if self.transport == "stdio":
+            if not settings.mcpgateway_stdio_transport_enabled:
+                raise ValueError("stdio transport is disabled by default; set MCPGATEWAY_STDIO_TRANSPORT_ENABLED=true to enable it")
+            if not self.command:
+                raise ValueError("Command is required for stdio transport")
+
+        return self
 
     model_config = {
         "json_schema_extra": {
