@@ -255,7 +255,7 @@ def set_csrf_cookie(response: Any, token: str, settings: Any) -> None:
     response.set_cookie(
         key=cookie_name,
         value=token,
-        httponly=False,  # Must be readable by JavaScript
+        httponly=settings.csrf_cookie_httponly,  # Honor the setting from config
         secure=settings.csrf_cookie_secure,
         samesite=settings.csrf_cookie_samesite,
         max_age=settings.csrf_token_expiry,

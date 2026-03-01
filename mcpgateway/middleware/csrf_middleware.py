@@ -22,6 +22,7 @@ from starlette.responses import JSONResponse, Response
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.csrf_service import get_csrf_service
+from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,32 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if auth_header.startswith("Bearer "):
             return await call_next(request)
 
-        # 5. Extract CSRF token from header
+        # 5. Extract CSRF token from header or form field
         csrf_token = request.headers.get(settings.csrf_token_name)
+        
+        # If header is missing, try to parse form field (for classic HTML form submits)
+        if not csrf_token:
+            content_type = request.headers.get("content-type", "")
+            
+            # Parse application/x-www-form-urlencoded
+            if "application/x-www-form-urlencoded" in content_type:
+                try:
+                    body = await request.body()
+                    from urllib.parse import parse_qs
+                    form_data = parse_qs(body.decode("utf-8"))
+                    csrf_token = form_data.get("csrf_token", [None])[0]
+                except Exception as e:
+                    logger.error(f"Failed to parse form data for CSRF token: {e}")
+            
+            # Parse multipart/form-data
+            elif "multipart/form-data" in content_type:
+                try:
+                    from starlette.formparsers import MultiPartParser
+                    async with request.form() as form:
+                        csrf_token = form.get("csrf_token")
+                except Exception as e:
+                    logger.error(f"Failed to parse multipart form data for CSRF token: {e}")
+        
         if not csrf_token:
             logger.warning(f"CSRF token missing for {request.method} {request.url.path}")
             return JSONResponse(status_code=403, content={"detail": "CSRF token missing", "code": "CSRF_TOKEN_MISSING"})
@@ -123,39 +148,73 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # Bind CSRF tokens to the verified JWT session (jti) when available
         session_id = getattr(request.state, "jti", None)
 
+        # Fallback: derive user/session from a verified JWT when request.state
+        # was not populated yet (middleware ordering or disabled auth-context).
+        if not user_id or not session_id:
+            raw_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+            if not raw_token:
+                auth_header = request.headers.get("authorization", "")
+                if auth_header.startswith("Bearer "):
+                    raw_token = auth_header.split(" ", 1)[1].strip()
+
+            if raw_token:
+                try:
+                    payload = await verify_jwt_token_cached(raw_token, request)
+                    user_id = payload.get("sub") or payload.get("email") or payload.get("user", {}).get("email")
+                    session_id = payload.get("jti")
+                except Exception as exc:
+                    logger.warning("CSRF fallback JWT verification failed for %s %s: %s", request.method, request.url.path, exc)
+
         # If no user context or session binding, we can't validate the token
         if not user_id or not session_id:
             logger.warning(f"CSRF validation failed: no user context for {request.method} {request.url.path}")
-            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid", "code": "CSRF_TOKEN_INVALID"})
+            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid user_id and session_is do not match", "code": "CSRF_TOKEN_INVALID"})
 
-        # 7. Validate CSRF token
+        # 7. Double-submit cookie validation: compare cookie token with header/form token
+        cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+        cookie_token = request.cookies.get(cookie_name)
+        
+        if not cookie_token:
+            logger.warning(f"CSRF cookie missing for {request.method} {request.url.path}")
+            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid, no cookie token", "code": "CSRF_TOKEN_INVALID"})
+        
+        # Constant-time comparison to prevent timing attacks
+        import hmac
+        if not hmac.compare_digest(csrf_token, cookie_token):
+            logger.warning(f"CSRF double-submit validation failed: cookie and header/form tokens do not match")
+            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid, time issue", "code": "CSRF_TOKEN_INVALID"})
+        
+        # 8. Validate CSRF token HMAC
         csrf_service = get_csrf_service()
         if not csrf_service.validate_csrf_token(csrf_token, user_id, session_id):
-            logger.warning(f"CSRF token validation failed for user {user_id}")
-            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid", "code": "CSRF_TOKEN_INVALID"})
+            logger.warning(f"CSRF token HMAC validation failed for user {user_id}")
+            return JSONResponse(status_code=403, content={"detail": "CSRF token invalid hmac issue", "code": "CSRF_TOKEN_INVALID"})
 
-        # 8. Check Referer/Origin if configured
+        # 9. Check Referer/Origin if configured (fail-closed: reject if missing)
         if settings.csrf_check_referer:
             referer = request.headers.get("referer") or request.headers.get("origin")
 
-            # If header is present, validate it
-            if referer:
-                # Parse the referer/origin
-                parsed_referer = urlparse(referer)
-                referer_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"
+            # Fail closed: reject if header is missing
+            if not referer:
+                logger.warning(f"CSRF referer check failed: Referer/Origin header missing for {request.method} {request.url.path}")
+                return JSONResponse(status_code=403, content={"detail": "CSRF token invalid origin header issue", "code": "CSRF_TOKEN_INVALID"})
+            
+            # Parse the referer/origin
+            parsed_referer = urlparse(referer)
+            referer_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"
 
-                # Get allowed origins
-                app_domain = str(settings.app_domain)
-                parsed_app = urlparse(app_domain)
-                app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
+            # Get allowed origins
+            app_domain = str(settings.app_domain)
+            parsed_app = urlparse(app_domain)
+            app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
 
-                allowed_origins = {app_origin}
-                allowed_origins.update(settings.csrf_trusted_origins)
+            allowed_origins = {app_origin}
+            allowed_origins.update(settings.csrf_trusted_origins)
 
-                # Check if referer matches allowed origins
-                if referer_origin not in allowed_origins:
-                    logger.warning(f"CSRF referer check failed: {referer_origin} not in allowed origins for {request.method} {request.url.path}")
-                    return JSONResponse(status_code=403, content={"detail": "CSRF token invalid", "code": "CSRF_TOKEN_INVALID"})
+            # Check if referer matches allowed origins
+            if referer_origin not in allowed_origins:
+                logger.warning(f"CSRF referer check failed: {referer_origin} not in allowed origins for {request.method} {request.url.path}")
+                return JSONResponse(status_code=403, content={"detail": "CSRF token invalid allowed origin issue", "code": "CSRF_TOKEN_INVALID"})
 
         # 9. All checks passed, continue with request
         return await call_next(request)

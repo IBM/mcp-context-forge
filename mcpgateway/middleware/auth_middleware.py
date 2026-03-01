@@ -42,7 +42,7 @@ def _should_log_auth_success() -> bool:
     Returns:
         True if security_logging_level is "all", False otherwise.
     """
-    return settings.security_logging_level == "all"
+    return settings.security_logging_enabled and settings.security_logging_level == "all"
 
 
 def _should_log_auth_failure() -> bool:
@@ -52,7 +52,7 @@ def _should_log_auth_failure() -> bool:
         True if security_logging_level is "all" or "failures_only", False for "high_severity".
     """
     # Log failures for "all" and "failures_only" levels, not for "high_severity"
-    return settings.security_logging_level in ("all", "failures_only")
+    return settings.security_logging_enabled and settings.security_logging_level in ("all", "failures_only")
 
 
 class AuthContextMiddleware(BaseHTTPMiddleware):

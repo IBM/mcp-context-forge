@@ -223,6 +223,35 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
 
         logger.info(f"User {email} authenticated successfully")
 
+        # Generate CSRF token for session (rotate on login)
+        if settings.csrf_rotate_on_login:
+            try:
+                # Third-Party
+                import jwt
+
+                # First-Party
+                from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
+
+                # Decode JWT to get jti (don't verify since we just created it)
+                payload = jwt.decode(access_token, options={"verify_signature": False})
+                session_id = payload.get("jti", "")
+
+                # Generate CSRF token
+                csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+
+                # Create response with CSRF cookie
+                response = AuthenticationResponse(
+                    access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+                )  # nosec B106 - OAuth2 token type, not a password
+
+                # Set CSRF cookie on response
+                set_csrf_cookie(response, csrf_token, settings)
+
+                return response
+            except Exception as e:
+                logger.warning(f"Failed to set CSRF token for {user.email}: {e}")
+                # Fall back to response without CSRF token (non-critical)
+
         # Return session token for UI access and API key management
         return AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)

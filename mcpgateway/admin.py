@@ -145,7 +145,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
-from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
+from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -3345,17 +3345,11 @@ async def admin_ui(
     admin_email = get_user_email(user)
     session_id = getattr(request.state, "jti", None)
 
-    # Generate CSRF token for the admin UI (JWT-bound)
-    csrf_key = ""
-    if session_id:
-        csrf_key = generate_csrf_token(
-            user_id=admin_email,
-            session_id=session_id,
-            secret=settings.csrf_secret_key,
-            expiry=settings.csrf_token_expiry if hasattr(settings, "csrf_token_expiry") else 3600,
-        )
-    else:
-        LOGGER.warning("CSRF token not generated for admin UI: missing session identifier")
+    # Read existing CSRF token (generated during login flow) for template rendering.
+    csrf_cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+    csrf_key = request.cookies.get(csrf_cookie_name, "")
+    if not isinstance(csrf_key, str):
+        csrf_key = ""
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -3409,76 +3403,10 @@ async def admin_ui(
         },
     )
 
-    if csrf_key:
-        set_csrf_cookie(response, csrf_key, settings)
-
-    # Set JWT token cookie for HTMX requests if email auth is enabled
-    if getattr(settings, "email_auth_enabled", False):
-        try:
-            # JWT library is imported at top level as jwt
-
-            # Determine the admin user email
-            admin_email = get_user_email(user)
-            is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
-            full_name = getattr(settings, "platform_admin_full_name", "Platform User")
-            if isinstance(user, dict):
-                full_name = user.get("full_name") or full_name
-            else:
-                full_name = getattr(user, "full_name", full_name) or full_name
-
-            # Preserve auth provider across admin UI token refreshes so logout behavior
-            # can reliably detect SSO sessions (e.g., Keycloak) later.
-            auth_provider = "local"
-            if isinstance(user, dict):
-                provider_from_user = user.get("auth_provider")
-                if isinstance(provider_from_user, str) and provider_from_user.strip():
-                    auth_provider = provider_from_user.strip()
-            else:
-                provider_from_user = getattr(user, "auth_provider", None)
-                if isinstance(provider_from_user, str) and provider_from_user.strip():
-                    auth_provider = provider_from_user.strip()
-
-            # get_current_user_with_permissions may not include auth_provider in its dict.
-            # Fall back to the current jwt_token cookie payload before refreshing it.
-            if auth_provider == "local":
-                jwt_cookie = request.cookies.get("jwt_token")
-                if isinstance(jwt_cookie, str) and jwt_cookie:
-                    try:
-                        existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
-                        existing_user = existing_payload.get("user")
-                        provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
-                        if not provider_from_token:
-                            provider_from_token = existing_payload.get("auth_provider")
-                        if isinstance(provider_from_token, str) and provider_from_token.strip():
-                            auth_provider = provider_from_token.strip()
-                    except Exception as provider_error:  # nosec B110 - best-effort provider preservation
-                        LOGGER.warning("Could not resolve auth_provider from existing JWT cookie; SSO logout may not function correctly: %s", provider_error)
-                        if settings.sso_keycloak_enabled:
-                            auth_provider = "keycloak"
-
-            # Generate a lightweight session JWT token
-            now = datetime.now(timezone.utc)
-            payload = {
-                "sub": admin_email,
-                "iss": settings.jwt_issuer,
-                "aud": settings.jwt_audience,
-                "iat": int(now.timestamp()),
-                "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
-                "jti": str(uuid.uuid4()),
-                "auth_provider": auth_provider,
-                "user": {"email": admin_email, "full_name": full_name, "is_admin": is_admin_flag, "auth_provider": auth_provider},
-                "token_use": "session",  # nosec B105 - token type marker, not a password
-                "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
-            }
-
-            # Generate token using centralized token creation
-            token = await create_jwt_token(payload)
-
-            # Set HTTP-only cookie using centralized security cookie utility
-            set_auth_cookie(response, token, remember_me=False)
-            LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
-        except Exception as e:
-            LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
+    # Do not rotate JWT during admin UI rendering.
+    # CSRF tokens are bound to JWT jti and are issued during login flow.
+    # Reissuing JWTs here would desynchronize CSRF/JWT bindings and break
+    # state-changing requests.
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
@@ -3617,6 +3545,31 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
+    def _set_login_csrf_cookie(response: RedirectResponse, jwt_token: str, user_email: str) -> None:
+        """Generate and set CSRF token cookie for a newly created login JWT."""
+        if not getattr(settings, "csrf_enabled", True):
+            return
+
+        try:
+            # Third-Party
+            import jwt
+
+            payload = jwt.decode(jwt_token, options={"verify_signature": False})
+            session_id = payload.get("jti", "")
+            if not isinstance(session_id, str) or not session_id:
+                LOGGER.warning("CSRF token not generated during login for %s: missing JWT session identifier", user_email)
+                return
+
+            csrf_key = generate_csrf_token(
+                user_id=user_email,
+                session_id=session_id,
+                secret=settings.csrf_secret_key,
+                expiry=settings.csrf_token_expiry,
+            )
+            set_csrf_cookie(response, csrf_key, settings)
+        except Exception as exc:
+            LOGGER.warning("Failed to set CSRF token during login for %s: %s", user_email, exc)
+
     try:
         form = await request.form()
         email_val = form.get("email")
@@ -3707,6 +3660,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                         status_code=303,
                     )
 
+                _set_login_csrf_cookie(response, token, get_user_email(user))
                 return response
 
             # Create JWT token with proper audience and issuer claims
@@ -3725,6 +3679,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     status_code=303,
                 )
 
+            _set_login_csrf_cookie(response, token, get_user_email(user))
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
 

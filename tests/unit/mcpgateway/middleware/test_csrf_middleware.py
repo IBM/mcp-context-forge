@@ -526,3 +526,111 @@ async def test_trusted_origins_accepted():
 
     assert response.status_code == 200
     call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_csrf_fallback_jwt_context_from_cookie_succeeds():
+    """When request.state context is missing, middleware can derive user/jti from verified JWT cookie."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/admin/change-password-required"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
+         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service), \
+         patch(
+             "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+             AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
+         ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "admin@example.com", "session-jti-1")
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_csrf_fallback_jwt_verification_failure_returns_403():
+    """Missing state context plus invalid JWT should fail closed."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/admin/change-password-required"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "bad_jwt_token", "csrf_token": "valid_token"}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
+         patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(side_effect=Exception("invalid token"))):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF token invalid","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_csrf_form_token_with_jwt_fallback_and_double_submit_succeeds():
+    """Form token extraction + cookie match + JWT fallback context should pass."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/admin/change-password-required"
+    request.headers = {"content-type": "application/x-www-form-urlencoded"}
+    request.body = AsyncMock(return_value=b"csrf_token=valid_token&current_password=a&new_password=b&confirm_password=b")
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
+         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service), \
+         patch(
+             "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+             AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-2"}),
+         ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "admin@example.com", "session-jti-2")
+    call_next.assert_awaited_once_with(request)

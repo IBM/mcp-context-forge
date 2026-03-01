@@ -139,7 +139,8 @@ async function refreshCSRFToken() {
  */
 function injectCSRFIntoForm(form) {
     const safeMethods = ["GET", "HEAD"];
-    const method = (form.method || "GET").toUpperCase();
+    // Use attribute lookup to avoid DOM property shadowing from fields named "method".
+    const method = String(form.getAttribute("method") || "GET").toUpperCase();
 
     if (safeMethods.includes(method)) return;
 

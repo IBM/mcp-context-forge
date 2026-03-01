@@ -2081,17 +2081,17 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add authentication context middleware if security logging is enabled
-# This middleware extracts user context and logs security events (authentication attempts)
-# Note: This is independent of observability - security logging is always important
-if settings.security_logging_enabled:
+# Add authentication context middleware whenever authentication is active.
+# This ensures request.state.user/request.state.jti are available to downstream
+# middleware such as CSRF validation, independent of security logging settings.
+if settings.auth_required:
     # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
 
     app.add_middleware(AuthContextMiddleware)
-    logger.info("🔐 Authentication context middleware enabled - logging security events")
+    logger.info("🔐 Authentication context middleware enabled")
 else:
-    logger.info("🔐 Security event logging disabled")
+    logger.info("🔐 Authentication context middleware disabled (auth not required)")
 
 # Add CSRF protection middleware
 # This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
