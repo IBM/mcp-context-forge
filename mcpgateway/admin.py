@@ -462,7 +462,14 @@ _A2A_AGENT_TYPE_ALIASES = A2A_AGENT_TYPE_ALIASES
 
 
 def _canonicalize_a2a_agent_type(agent_type: Optional[str]) -> Optional[str]:
-    """Resolve raw/legacy A2A agent types to canonical admin UI values."""
+    """Resolve raw/legacy A2A agent types to canonical admin UI values.
+
+    Args:
+        agent_type: Raw agent type string to canonicalize.
+
+    Returns:
+        The canonical agent type string, or None if unrecognized or empty.
+    """
     if not agent_type:
         return None
     normalized = str(agent_type).strip().lower()
@@ -474,7 +481,15 @@ def _canonicalize_a2a_agent_type(agent_type: Optional[str]) -> Optional[str]:
 
 
 def _normalize_a2a_agent_type(agent_type: Optional[str], fallback: str = "custom") -> str:
-    """Normalize A2A agent type values used in admin create/edit/test flows."""
+    """Normalize A2A agent type values used in admin create/edit/test flows.
+
+    Args:
+        agent_type: Raw agent type string to normalize.
+        fallback: Default agent type to return when canonicalization fails.
+
+    Returns:
+        A canonical agent type string, falling back to the given default.
+    """
     canonical = _canonicalize_a2a_agent_type(agent_type)
     if canonical:
         return canonical
@@ -482,7 +497,14 @@ def _normalize_a2a_agent_type(agent_type: Optional[str], fallback: str = "custom
 
 
 def _format_a2a_agent_type_label(agent_type: Optional[str]) -> str:
-    """Return user-facing labels for canonical and legacy A2A types."""
+    """Return user-facing labels for canonical and legacy A2A types.
+
+    Args:
+        agent_type: Raw or canonical agent type string.
+
+    Returns:
+        A human-readable display label for the agent type.
+    """
     canonical = _canonicalize_a2a_agent_type(agent_type)
     if canonical:
         return _A2A_AGENT_TYPE_DISPLAY_LABELS[canonical]
@@ -493,16 +515,29 @@ def _format_a2a_agent_type_label(agent_type: Optional[str]) -> str:
 
 
 def _prepare_a2a_agent_for_admin_display(agent: Dict[str, Any]) -> Dict[str, Any]:
-    """Decorate A2A records with display-safe type labels for admin templates."""
+    """Decorate A2A records with display-safe type labels for admin templates.
+
+    Args:
+        agent: A2A agent record dictionary to prepare for display.
+
+    Returns:
+        A copy of the agent dictionary decorated with display-safe fields.
+    """
     prepared = dict(agent)
-    raw_type = prepared.get("agentType", prepared.get("agent_type"))
-    prepared["agentTypeRaw"] = raw_type
-    prepared["agentType"] = _format_a2a_agent_type_label(raw_type if isinstance(raw_type, str) else None)
     return prepared
 
 
 def _build_admin_a2a_test_payload(agent_type: Optional[str], user_query: str, now_ts: Optional[int] = None) -> Dict[str, Any]:
-    """Build test payloads per normalized A2A transport/protocol type."""
+    """Build test payloads per normalized A2A transport/protocol type.
+
+    Args:
+        agent_type: Raw or canonical agent type determining payload format.
+        user_query: The user query text to embed in the test payload.
+        now_ts: Optional Unix timestamp override; defaults to current time.
+
+    Returns:
+        A dictionary representing the protocol-appropriate test payload.
+    """
     normalized_type = _normalize_a2a_agent_type(agent_type, fallback="custom")
     timestamp = int(now_ts if now_ts is not None else time.time())
     message = {

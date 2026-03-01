@@ -4469,7 +4469,14 @@ class A2AAgentCreate(BaseModel):
     @field_validator("agent_type", mode="before")
     @classmethod
     def normalize_agent_type(cls, v: Optional[str]) -> str:
-        """Normalize agent type aliases to canonical transport types."""
+        """Normalize agent type aliases to canonical transport types.
+
+        Args:
+            v: Agent type string to normalize.
+
+        Returns:
+            Normalized canonical agent type string.
+        """
         return normalize_a2a_agent_type(v)
 
     @field_validator("endpoint_url")
@@ -4818,7 +4825,14 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     @field_validator("agent_type", mode="before")
     @classmethod
     def normalize_agent_type(cls, v: Optional[str]) -> Optional[str]:
-        """Normalize agent type aliases to canonical transport types."""
+        """Normalize agent type aliases to canonical transport types.
+
+        Args:
+            v: Agent type string to normalize.
+
+        Returns:
+            Normalized agent type, or None if input is None.
+        """
         if v is None:
             return None
         return normalize_a2a_agent_type(v)
@@ -5210,7 +5224,14 @@ class A2AAgentRead(BaseModelWithConfigDict):
     @field_validator("agent_type", mode="before")
     @classmethod
     def normalize_agent_type(cls, v: Optional[str]) -> str:
-        """Normalize stored and legacy agent type values for API responses."""
+        """Normalize stored and legacy agent type values for API responses.
+
+        Args:
+            v: Agent type string to normalize.
+
+        Returns:
+            Normalized canonical agent type string.
+        """
         return normalize_a2a_agent_type(v)
 
     # This will be the main method to automatically populate fields

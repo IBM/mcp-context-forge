@@ -19,14 +19,14 @@ import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.routers.well_known import get_base_url_with_protocol
 from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNotFoundError, A2AAgentUpstreamError
 from mcpgateway.services.a2a_server_service import A2AServerNotFoundError, A2AServerService
 
@@ -40,7 +40,11 @@ _service: Optional[A2AServerService] = None
 
 
 def _get_service() -> A2AServerService:
-    """Lazy-init the A2A server service."""
+    """Lazy-init the A2A server service.
+
+    Returns:
+        A2AServerService singleton instance.
+    """
     global _service  # noqa: PLW0603
     if _service is None:
         _service = A2AServerService()
@@ -51,6 +55,13 @@ def _get_invoke_context(request: Request, user: Any) -> tuple:
     """Extract (user_id, user_email, token_teams) from request context.
 
     Mirrors the helper used by the standalone A2A router in main.py.
+
+    Args:
+        request: Incoming HTTP request.
+        user: Authenticated user context.
+
+    Returns:
+        Tuple of (user_id, user_email, token_teams).
     """
     # First-Party
     from mcpgateway.main import _get_a2a_invoke_context  # pylint: disable=import-outside-toplevel
@@ -59,10 +70,19 @@ def _get_invoke_context(request: Request, user: Any) -> tuple:
 
 
 def _base_url(request: Request) -> str:
-    """Derive the external base URL from the incoming request."""
-    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", "localhost"))
-    return f"{scheme}://{host}"
+    """Derive the external base URL from the incoming request.
+
+    Delegates to :func:`get_base_url_with_protocol` which safely derives the
+    scheme from ``X-Forwarded-Proto`` (or ``request.url.scheme``) and the host
+    from ``request.base_url`` — avoiding untrusted ``X-Forwarded-Host``.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        External base URL string including scheme and host.
+    """
+    return get_base_url_with_protocol(request)
 
 
 # -----------------------------------------------------------------------
@@ -78,7 +98,20 @@ async def get_server_agent_card(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Return the auto-generated AgentCard for this server's A2A interface."""
+    """Return the auto-generated AgentCard for this server's A2A interface.
+
+    Args:
+        server_id: Virtual server identifier.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        AgentCard dictionary for the specified virtual server.
+
+    Raises:
+        HTTPException: If the server is not found (404) or the request is invalid (400).
+    """
     try:
         service = _get_service()
         return service.get_agent_card(db, server_id, base_url=_base_url(request))
@@ -96,7 +129,20 @@ async def well_known_agent_card(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Well-known alias for the AgentCard endpoint."""
+    """Well-known alias for the AgentCard endpoint.
+
+    Args:
+        server_id: Virtual server identifier.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        AgentCard dictionary for the specified virtual server.
+
+    Raises:
+        HTTPException: If the server is not found (404) or the request is invalid (400).
+    """
     try:
         service = _get_service()
         return service.get_agent_card(db, server_id, base_url=_base_url(request))
@@ -125,10 +171,27 @@ async def jsonrpc_dispatch(
     Accepts standard JSON-RPC requests with methods like ``SendMessage``,
     ``GetTask``, ``CancelTask``, etc. and routes them to the appropriate
     associated agent.
+
+    Args:
+        server_id: Virtual server identifier.
+        request: Incoming HTTP request.
+        body: JSON-RPC request body.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC 2.0 response dictionary with result or error.
     """
     method = body.get("method", "")
     params = body.get("params", {})
     rpc_id = body.get("id")
+
+    if not isinstance(params, dict):
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32600, "message": "Invalid Request: params must be an object"},
+            "id": rpc_id,
+        }
 
     user_id, user_email, token_teams = _get_invoke_context(request, user)
     service = _get_service()
@@ -179,7 +242,22 @@ async def send_message(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Send an A2A message through the virtual server."""
+    """Send an A2A message through the virtual server.
+
+    Args:
+        server_id: Virtual server identifier.
+        request: Incoming HTTP request.
+        message_params: A2A message parameters.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        A2A message response dictionary.
+
+    Raises:
+        HTTPException: If the server is not found (404), upstream error (502),
+            or the request is invalid (400).
+    """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
     try:
         service = _get_service()
@@ -201,7 +279,22 @@ async def stream_message(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
-    """Stream an A2A message through the virtual server."""
+    """Stream an A2A message through the virtual server.
+
+    Args:
+        server_id: Virtual server identifier.
+        request: Incoming HTTP request.
+        message_params: A2A message parameters.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        Streaming response with server-sent events for the A2A message.
+
+    Raises:
+        HTTPException: If the server is not found (404), upstream error (502),
+            or the request is invalid (400).
+    """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
     try:
         service = _get_service()
@@ -224,7 +317,22 @@ async def get_task(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Retrieve a task from the virtual server by server-level task ID."""
+    """Retrieve a task from the virtual server by server-level task ID.
+
+    Args:
+        server_id: Virtual server identifier.
+        task_id: Task identifier.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        Task details dictionary.
+
+    Raises:
+        HTTPException: If the agent is not found (404), upstream error (502),
+            or the request is invalid (400).
+    """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
     try:
         service = _get_service()
@@ -248,7 +356,24 @@ async def list_tasks(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """List tasks across agents associated with this virtual server."""
+    """List tasks across agents associated with this virtual server.
+
+    Args:
+        server_id: Virtual server identifier.
+        request: Incoming HTTP request.
+        state: Optional task state filter.
+        session_id: Optional session ID filter.
+        limit: Optional result limit.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        Dictionary containing the list of tasks.
+
+    Raises:
+        HTTPException: If the server is not found (404), upstream error (502),
+            or the request is invalid (400).
+    """
     params: Dict[str, Any] = {}
     if state is not None:
         params["state"] = state
@@ -278,7 +403,22 @@ async def cancel_task(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Cancel a task on the virtual server by server-level task ID."""
+    """Cancel a task on the virtual server by server-level task ID.
+
+    Args:
+        server_id: Virtual server identifier.
+        task_id: Task identifier.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        Cancellation result dictionary.
+
+    Raises:
+        HTTPException: If the agent is not found (404), upstream error (502),
+            or the request is invalid (400).
+    """
     user_id, user_email, token_teams = _get_invoke_context(request, user)
     try:
         service = _get_service()
@@ -296,13 +436,23 @@ async def cancel_task(
 # -----------------------------------------------------------------------
 
 
-@router.get("/{server_id}/a2a/discover", response_model=List[Dict[str, Any]])
+@router.get("/a2a/discover", response_model=List[Dict[str, Any]])
 @require_permission("a2a.invoke")
 async def list_a2a_servers(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
-    """List all virtual servers that expose A2A interfaces."""
+    """List all virtual servers that expose A2A interfaces.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        List of dictionaries describing A2A-enabled virtual servers.
+    """
+    _, user_email, token_teams = _get_invoke_context(request, user)
     service = _get_service()
-    return service.list_a2a_servers(db)
+    return service.list_a2a_servers(db, token_teams=token_teams, user_email=user_email)

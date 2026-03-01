@@ -3755,6 +3755,10 @@ async def delete_a2a_agent(
 def _get_a2a_invoke_context(request: Request, user: Any) -> tuple[str, Optional[str], Optional[List[str]]]:
     """Build invocation context (user_id, user_email, token_teams) for A2A call routes.
 
+    Args:
+        request: Incoming HTTP request.
+        user: Authenticated user context.
+
     Returns:
         Tuple of ``(user_id, user_email, token_teams)`` where *token_teams*
         is ``None`` for admin bypass, ``[]`` for public-only, or a list of
@@ -3786,7 +3790,21 @@ async def send_a2a_message(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Send an A2A message using the canonical `message/send` operation."""
+    """Send an A2A message using the canonical `message/send` operation.
+
+    Args:
+        agent_name: Target A2A agent name.
+        request: Incoming HTTP request.
+        message_params: A2A message parameters.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict from the upstream agent.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -3817,7 +3835,21 @@ async def stream_a2a_message(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
-    """Invoke A2A `message/stream` through the service transport layer."""
+    """Invoke A2A `message/stream` through the service transport layer.
+
+    Args:
+        agent_name: Target A2A agent name.
+        request: Incoming HTTP request.
+        message_params: A2A message parameters.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        Server-sent event streaming response from the upstream agent.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -3855,7 +3887,23 @@ async def list_a2a_tasks(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """List A2A tasks from the upstream agent."""
+    """List A2A tasks from the upstream agent.
+
+    Args:
+        agent_name: Target A2A agent name.
+        request: Incoming HTTP request.
+        state: Optional task state filter.
+        session_id: Optional session ID filter.
+        limit: Optional result limit.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict containing the task list.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -3894,7 +3942,21 @@ async def get_a2a_task(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Retrieve a task from an upstream A2A agent."""
+    """Retrieve a task from an upstream A2A agent.
+
+    Args:
+        agent_name: Target A2A agent name.
+        task_id: Task identifier.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict containing the task details.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -3926,7 +3988,22 @@ async def cancel_a2a_task(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Cancel an upstream A2A task."""
+    """Cancel an upstream A2A task.
+
+    Args:
+        agent_name: Target A2A agent name.
+        task_id: Task identifier.
+        request: Incoming HTTP request.
+        params: Request parameters.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict confirming cancellation.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -3959,7 +4036,22 @@ async def subscribe_a2a_task(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
-    """Subscribe to an upstream A2A task stream."""
+    """Subscribe to an upstream A2A task stream.
+
+    Args:
+        agent_name: Target A2A agent name.
+        task_id: Task identifier.
+        request: Incoming HTTP request.
+        params: Request parameters.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        Server-sent event streaming response for task updates.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -3997,7 +4089,22 @@ async def set_a2a_task_push_notification_config(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Create/update a task push-notification config on the upstream A2A agent."""
+    """Create/update a task push-notification config on the upstream A2A agent.
+
+    Args:
+        agent_name: Target A2A agent name.
+        task_id: Task identifier.
+        request: Incoming HTTP request.
+        params: Request parameters.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict with the push-notification config.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -4031,7 +4138,23 @@ async def list_a2a_task_push_notification_configs(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """List task push-notification configs from an upstream A2A agent."""
+    """List task push-notification configs from an upstream A2A agent.
+
+    Args:
+        agent_name: Target A2A agent name.
+        task_id: Task identifier.
+        request: Incoming HTTP request.
+        page_size: Optional page size for config listing.
+        page_token: Optional page token for config listing.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict containing the push-notification config list.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -4070,7 +4193,22 @@ async def get_a2a_task_push_notification_config(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Get one task push-notification config from an upstream A2A agent."""
+    """Get one task push-notification config from an upstream A2A agent.
+
+    Args:
+        agent_name: Target A2A agent name.
+        task_id: Task identifier.
+        config_id: Optional configuration ID.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict containing the push-notification config.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -4103,7 +4241,22 @@ async def delete_a2a_task_push_notification_config(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Delete one task push-notification config from an upstream A2A agent."""
+    """Delete one task push-notification config from an upstream A2A agent.
+
+    Args:
+        agent_name: Target A2A agent name.
+        task_id: Task identifier.
+        config_id: Optional configuration ID.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict confirming deletion.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -4134,7 +4287,20 @@ async def get_a2a_agent_card(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Fetch upstream Agent Card for a registered A2A agent."""
+    """Fetch upstream Agent Card for a registered A2A agent.
+
+    Args:
+        agent_name: Target A2A agent name.
+        request: Incoming HTTP request.
+        db: Database session.
+        user: Authenticated user context.
+
+    Returns:
+        JSON-RPC response dict containing the agent card.
+
+    Raises:
+        HTTPException: If the agent is not found, upstream fails, or request is invalid.
+    """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 

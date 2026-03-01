@@ -2740,7 +2740,8 @@ class ToolService(BaseService):
             ToolInvocationError: If invocation fails.
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin
+            PluginError: If encounters issue with plugin.
+            ToolError: If A2A agent authentication resolution fails.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -3803,7 +3804,7 @@ class ToolService(BaseService):
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
                     # First-Party
                     from mcpgateway.schemas import normalize_a2a_agent_type  # pylint: disable=import-outside-toplevel
-                    from mcpgateway.services.a2a_dispatcher import build_dispatch_headers, dispatch_a2a_transport, prepare_rpc_params, resolve_a2a_auth  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.a2a_dispatcher import dispatch_a2a_transport, prepare_rpc_params, resolve_a2a_auth  # pylint: disable=import-outside-toplevel
                     from mcpgateway.services.a2a_service import A2A_VERSION_HEADER, A2AAgentService  # pylint: disable=import-outside-toplevel
 
                     a2a_helper = A2AAgentService()

@@ -31,9 +31,10 @@ def _make_interface(protocol="a2a", binding="jsonrpc", version="1.0", tenant=Non
     return iface
 
 
-def _make_agent(name="agent-1", enabled=True, capabilities=None, tenant=None):
+def _make_agent(name="agent-1", agent_id="agent-id-1", enabled=True, capabilities=None, tenant=None):
     """Create a mock A2AAgent."""
     agent = MagicMock()
+    agent.id = agent_id
     agent.name = name
     agent.enabled = enabled
     agent.capabilities = capabilities or {}
@@ -298,7 +299,7 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_creates_task_mapping(self, service, mock_a2a_service, db):
-        agent = _make_agent(name="my-agent")
+        agent = _make_agent(name="my-agent", agent_id="agent-id-42")
         server = _make_server(interfaces=[_make_interface()], agents=[agent])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
 
@@ -308,7 +309,7 @@ class TestSendMessage:
         db.commit.assert_called_once()
         mapping = db.add.call_args[0][0]
         assert mapping.server_id == "srv-1"
-        assert mapping.agent_name == "my-agent"
+        assert mapping.agent_id == "agent-id-42"
         assert mapping.agent_task_id == "task-abc"
 
 
@@ -319,9 +320,14 @@ class TestGetTask:
     @pytest.mark.asyncio
     async def test_resolves_via_mapping(self, service, mock_a2a_service, db):
         mapping = MagicMock()
-        mapping.agent_name = "my-agent"
+        mapping.agent_id = "agent-id-99"
         mapping.agent_task_id = "agent-task-xyz"
-        db.query.return_value.filter.return_value.first.return_value = mapping
+        agent = _make_agent(name="my-agent", agent_id="agent-id-99")
+
+        # First db.query call returns the mapping, second returns the agent
+        query_mock = MagicMock()
+        query_mock.filter.return_value.first.side_effect = [mapping, agent]
+        db.query.return_value = query_mock
 
         result = await service.get_task(db, "srv-1", "server-task-123", "user-1")
         mock_a2a_service.get_task.assert_called_once()
@@ -345,9 +351,14 @@ class TestCancelTask:
     @pytest.mark.asyncio
     async def test_cancels_via_mapping(self, service, mock_a2a_service, db):
         mapping = MagicMock()
-        mapping.agent_name = "my-agent"
+        mapping.agent_id = "agent-id-99"
         mapping.agent_task_id = "agent-task-xyz"
-        db.query.return_value.filter.return_value.first.return_value = mapping
+        agent = _make_agent(name="my-agent", agent_id="agent-id-99")
+
+        # First db.query call returns the mapping, second returns the agent
+        query_mock = MagicMock()
+        query_mock.filter.return_value.first.side_effect = [mapping, agent]
+        db.query.return_value = query_mock
 
         result = await service.cancel_task(db, "srv-1", "server-task-123", "user-1")
         mock_a2a_service.cancel_task.assert_called_once()
@@ -370,6 +381,8 @@ class TestListTasks:
         a2 = _make_agent(name="agent-2")
         server = _make_server(interfaces=[_make_interface()], agents=[a1, a2])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
+        # The remapping query for ServerTaskMapping returns empty (no prior mappings)
+        db.query.return_value.filter.return_value.all.return_value = []
 
         result = await service.list_tasks(db, "srv-1", {}, "user-1")
         assert mock_a2a_service.list_tasks.call_count == 2
@@ -380,6 +393,8 @@ class TestListTasks:
         a2 = _make_agent(name="disabled", enabled=False)
         server = _make_server(interfaces=[_make_interface()], agents=[a1, a2])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
+        # The remapping query for ServerTaskMapping returns empty (no prior mappings)
+        db.query.return_value.filter.return_value.all.return_value = []
 
         await service.list_tasks(db, "srv-1", {}, "user-1")
         assert mock_a2a_service.list_tasks.call_count == 1
@@ -400,9 +415,11 @@ class TestDiscovery:
     def test_list_a2a_servers(self, service, db):
         iface = _make_interface(binding="jsonrpc", version="1.0", tenant="acme")
         server = _make_server(name="Server A", interfaces=[iface])
+        db.query.return_value.join.return_value.filter.return_value.options.return_value.filter.return_value.distinct.return_value.all.return_value = [server]
         db.query.return_value.join.return_value.filter.return_value.options.return_value.distinct.return_value.all.return_value = [server]
 
-        result = service.list_a2a_servers(db)
+        # With token_teams=None (admin bypass), no visibility filtering
+        result = service.list_a2a_servers(db, token_teams=None)
         assert len(result) == 1
         assert result[0]["name"] == "Server A"
         assert result[0]["a2a_interfaces"][0]["binding"] == "jsonrpc"

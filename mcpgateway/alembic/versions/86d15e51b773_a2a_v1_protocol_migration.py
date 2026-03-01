@@ -91,19 +91,19 @@ def upgrade() -> None:
     # --- Migrate existing auth data from a2a_agents to a2a_agent_auth ---
     if _table_exists("a2a_agents") and _table_exists("a2a_agent_auth") and _column_exists("a2a_agents", "auth_type"):
         bind = op.get_bind()
-        # Select agents that have any auth configuration
+        # Select agents that have any auth configuration (use .mappings() for named access)
         agents = bind.execute(
             sa.text(
                 "SELECT id, auth_type, auth_value, auth_query_params, oauth_config "
                 "FROM a2a_agents "
                 "WHERE auth_type IS NOT NULL"
             )
-        ).fetchall()
+        ).mappings().all()
         for agent in agents:
             # Check if auth config already exists (idempotent)
             existing = bind.execute(
                 sa.text("SELECT id FROM a2a_agent_auth WHERE a2a_agent_id = :agent_id"),
-                {"agent_id": agent[0]},
+                {"agent_id": agent["id"]},
             ).fetchone()
             if existing is None:
                 bind.execute(
@@ -113,11 +113,11 @@ def upgrade() -> None:
                     ),
                     {
                         "id": uuid.uuid4().hex,
-                        "agent_id": agent[0],
-                        "auth_type": agent[1],
-                        "auth_value": agent[2],
-                        "auth_query_params": agent[3],
-                        "oauth_config": agent[4],
+                        "agent_id": agent["id"],
+                        "auth_type": agent["auth_type"],
+                        "auth_value": agent["auth_value"],
+                        "auth_query_params": agent["auth_query_params"],
+                        "oauth_config": agent["oauth_config"],
                     },
                 )
 
@@ -128,14 +128,14 @@ def upgrade() -> None:
             sa.Column("id", sa.String(36), primary_key=True),
             sa.Column("server_id", sa.String(36), sa.ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True),
             sa.Column("server_task_id", sa.String(255), nullable=False),
-            sa.Column("agent_name", sa.String(255), nullable=False),
+            sa.Column("agent_id", sa.String(36), sa.ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False),
             sa.Column("agent_task_id", sa.String(255), nullable=False),
             sa.Column("status", sa.String(20), nullable=False, server_default="active"),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
             sa.UniqueConstraint("server_id", "server_task_id", name="uq_server_task_mapping"),
         )
-        op.create_index("ix_server_task_mappings_agent", "server_task_mappings", ["agent_name", "agent_task_id"])
+        op.create_index("ix_server_task_mappings_agent", "server_task_mappings", ["agent_id", "agent_task_id"])
 
     # --- Normalize cancelled -> canceled in a2a_tasks ---
     if _table_exists("a2a_tasks"):
@@ -170,8 +170,9 @@ def downgrade() -> None:
         op.drop_index("ix_server_interfaces_server_id", table_name="server_interfaces")
         op.drop_table("server_interfaces")
 
-    # --- Remove A2A agent fields ---
+    # --- Remove A2A agent fields (use batch_alter_table for SQLite compat) ---
     if _table_exists("a2a_agents"):
-        for col in ("icon_url", "tenant"):
-            if _column_exists("a2a_agents", col):
-                op.drop_column("a2a_agents", col)
+        with op.batch_alter_table("a2a_agents", schema=None) as batch_op:
+            for col in ("icon_url", "tenant"):
+                if _column_exists("a2a_agents", col):
+                    batch_op.drop_column(col)

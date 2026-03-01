@@ -414,8 +414,7 @@ class TestA2AAgentService:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    @patch("mcpgateway.services.a2a_service.get_for_update")
-    async def test_invoke_agent_success(self, mock_get_for_update, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+    async def test_invoke_agent_success(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test successful agent invocation."""
         # Mock HTTP client (shared client pattern)
         mock_client = AsyncMock()
@@ -425,10 +424,7 @@ class TestA2AAgentService:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations - agent lookup by name returns ID
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
-
-        # Mock get_for_update to return agent with proper attributes
+        # Mock database operations - agent lookup by name returns full agent
         mock_agent = MagicMock()
         mock_agent.id = sample_db_agent.id
         mock_agent.name = sample_db_agent.name
@@ -442,7 +438,7 @@ class TestA2AAgentService:
         mock_agent.visibility = "public"
         mock_agent.team_id = None
         mock_agent.owner_email = None
-        mock_get_for_update.return_value = mock_agent
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent
 
         # Mock fresh_db_session for last_interaction update
         mock_ts_db = MagicMock()
@@ -472,25 +468,23 @@ class TestA2AAgentService:
         disabled_agent.enabled = False
         disabled_agent.name = sample_db_agent.name
         disabled_agent.id = sample_db_agent.id
+        disabled_agent.visibility = "public"
+        disabled_agent.team_id = None
+        disabled_agent.owner_email = None
 
-        # Mock the database query to return agent ID
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+        # Mock the database query to return the disabled agent
+        mock_db.execute.return_value.scalar_one_or_none.return_value = disabled_agent
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
 
-        # Mock get_for_update to return the disabled agent
-        with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
-            mock_get_for_update.return_value = disabled_agent
-            mock_db.commit = MagicMock()
-            mock_db.close = MagicMock()
-
-            # Execute and verify exception
-            with pytest.raises(A2AAgentError, match="disabled"):
-                await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+        # Execute and verify exception
+        with pytest.raises(A2AAgentError, match="disabled"):
+            await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    @patch("mcpgateway.services.a2a_service.get_for_update")
-    async def test_invoke_agent_http_error(self, mock_get_for_update, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+    async def test_invoke_agent_http_error(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test agent invocation with HTTP error."""
         # Mock HTTP client with error response (shared client pattern)
         mock_client = AsyncMock()
@@ -500,10 +494,7 @@ class TestA2AAgentService:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations - agent lookup by name returns ID
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
-
-        # Mock get_for_update to return agent with proper attributes
+        # Mock database operations - agent lookup by name returns full agent
         mock_agent = MagicMock()
         mock_agent.id = sample_db_agent.id
         mock_agent.name = sample_db_agent.name
@@ -517,7 +508,7 @@ class TestA2AAgentService:
         mock_agent.visibility = "public"
         mock_agent.team_id = None
         mock_agent.owner_email = None
-        mock_get_for_update.return_value = mock_agent
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent
 
         # Mock fresh_db_session for last_interaction update
         mock_ts_db = MagicMock()
@@ -573,10 +564,8 @@ class TestA2AAgentService:
         )
         service.get_agent_by_name = AsyncMock(return_value=agent_with_auth)
 
-        # Mock db.execute for auth_value fetch
-        mock_db_row = MagicMock()
-        mock_db_row.auth_value = encrypted_auth_value
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_row
+        # Mock db.execute to return agent with auth
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent_with_auth
 
         # Mock fresh_db_session for last_interaction update
         mock_ts_db = MagicMock()
@@ -588,11 +577,9 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
-        # Ensure get_for_update returns our mocked agent so auth_value is read
-        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
-            # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.utils.services_auth.decode_auth", return_value=basic_auth_headers):
-                result = await service.invoke_agent(mock_db, "basic-auth-agent", {"test": "data"})
+        # Execute with decode_auth patched to return the expected headers
+        with patch("mcpgateway.utils.services_auth.decode_auth", return_value=basic_auth_headers):
+            result = await service.invoke_agent(mock_db, "basic-auth-agent", {"test": "data"})
 
         # Verify successful response
         assert result["response"] == "Auth success"
@@ -639,10 +626,8 @@ class TestA2AAgentService:
         )
         service.get_agent_by_name = AsyncMock(return_value=agent_with_auth)
 
-        # Mock db.execute for auth_value fetch
-        mock_db_row = MagicMock()
-        mock_db_row.auth_value = encrypted_auth_value
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_row
+        # Mock db.execute to return agent with auth
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent_with_auth
 
         # Mock fresh_db_session for last_interaction update
         mock_ts_db = MagicMock()
@@ -654,11 +639,9 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
-        # Ensure get_for_update returns our mocked agent so auth_value is read
-        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
-            # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.utils.services_auth.decode_auth", return_value=bearer_auth_headers):
-                result = await service.invoke_agent(mock_db, "bearer-auth-agent", {"test": "data"})
+        # Execute with decode_auth patched to return the expected headers
+        with patch("mcpgateway.utils.services_auth.decode_auth", return_value=bearer_auth_headers):
+            result = await service.invoke_agent(mock_db, "bearer-auth-agent", {"test": "data"})
 
         # Verify successful response
         assert result["response"] == "Bearer auth success"
@@ -705,10 +688,8 @@ class TestA2AAgentService:
         )
         service.get_agent_by_name = AsyncMock(return_value=agent_with_auth)
 
-        # Mock db.execute for auth_value fetch
-        mock_db_row = MagicMock()
-        mock_db_row.auth_value = encrypted_auth_value
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_row
+        # Mock db.execute to return agent with auth
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent_with_auth
 
         # Mock fresh_db_session for last_interaction update
         mock_ts_db = MagicMock()
@@ -720,11 +701,9 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
-        # Ensure get_for_update returns our mocked agent so auth_value is read
-        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
-            # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.utils.services_auth.decode_auth", return_value=custom_auth_headers):
-                result = await service.invoke_agent(mock_db, "apikey-auth-agent", {"test": "data"})
+        # Execute with decode_auth patched to return the expected headers
+        with patch("mcpgateway.utils.services_auth.decode_auth", return_value=custom_auth_headers):
+            result = await service.invoke_agent(mock_db, "apikey-auth-agent", {"test": "data"})
 
         # Verify successful response
         assert result["response"] == "API key auth success"
@@ -1955,23 +1934,21 @@ class TestInvokeAgentEdgeCases:
         with pytest.raises(A2AAgentNotFoundError, match="not found with name"):
             await service.invoke_agent(mock_db, "no-agent", {})
 
-    async def test_invoke_get_for_update_not_found(self, service, mock_db, monkeypatch):
-        """get_for_update returns None → A2AAgentNotFoundError."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "some-id"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: None)
+    async def test_invoke_agent_not_found(self, service, mock_db):
+        """Agent lookup returns None → A2AAgentNotFoundError."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
         with pytest.raises(A2AAgentNotFoundError, match="not found with name"):
             await service.invoke_agent(mock_db, "missing-agent", {})
 
-    async def test_invoke_access_denied(self, service, mock_db, monkeypatch):
+    async def test_invoke_access_denied(self, service, mock_db):
         """Private agent inaccessible → A2AAgentNotFoundError."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         agent = SimpleNamespace(
             id="a1", name="secret", enabled=True, endpoint_url="https://x.com",
             auth_type=None, auth_value=None, auth_query_params=None,
             visibility="private", team_id="t1", owner_email="other@x.com",
             agent_type="generic", protocol_version="1.0",
         )
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
         with pytest.raises(A2AAgentNotFoundError):
             await service.invoke_agent(mock_db, "secret", {}, user_email="me@x.com", token_teams=[])
@@ -1979,7 +1956,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_dict_auth_value(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_dict_auth_value(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """Dict auth_value is converted to string headers."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
@@ -1992,8 +1969,7 @@ class TestInvokeAgentEdgeCases:
             auth_query_params=None, visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2009,7 +1985,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_custom_a2a_format(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_custom_a2a_format(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """Non-generic agent type sends custom A2A format."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
@@ -2022,8 +1998,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="custom", protocol_version="2.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2040,7 +2015,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_generic_exception(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_generic_exception(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """Non-A2AAgentError exception is wrapped."""
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=ConnectionError("refused"))
@@ -2052,8 +2027,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2068,7 +2042,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_metrics_error(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_metrics_error(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """Metrics recording failure doesn't fail invocation."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
@@ -2081,8 +2055,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2098,7 +2071,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_last_interaction_update_error(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_last_interaction_update_error(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """Last interaction update failure doesn't fail invocation."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
@@ -2111,8 +2084,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2139,7 +2111,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2150,10 +2122,8 @@ class TestInvokeAgentEdgeCases:
 
         disabled_ts_agent = SimpleNamespace(enabled=False)
 
-        def get_for_update(db, *_args, **_kwargs):
-            return disabled_ts_agent if db is mock_ts_db else agent
-
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", get_for_update)
+        # get_for_update is still used in the finally block for the timestamp session
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *_a, **_kw: disabled_ts_agent)
 
         result = await service.invoke_agent(mock_db, "ag", {})
         assert result["ok"] is True
@@ -2176,8 +2146,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda x: {"api_key": "secret123"})
         monkeypatch.setattr("mcpgateway.utils.url_auth.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         mock_db.commit = MagicMock()
@@ -2210,8 +2179,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad auth")))
         mock_apply = MagicMock()
         monkeypatch.setattr("mcpgateway.utils.url_auth.apply_query_param_auth", mock_apply)
@@ -2233,7 +2201,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_auth_headers_from_dict(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_auth_headers_from_dict(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """auth_value dict is used directly for supported auth types."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
@@ -2246,8 +2214,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2269,8 +2236,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad")))
 
         with pytest.raises(A2AAgentError, match="Failed to decrypt authentication"):
@@ -2292,8 +2258,7 @@ class TestInvokeAgentEdgeCases:
             visibility="public", team_id=None, owner_email=None,
             agent_type="generic", protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_correlation_id", lambda: "corr-123")
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
@@ -2331,8 +2296,7 @@ class TestInvokeAgentEdgeCases:
             agent_type="custom",
             protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2349,7 +2313,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_rest_mapping_includes_a2a_version_header(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_rest_mapping_includes_a2a_version_header(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """REST transport maps A2A methods to /v1 endpoints and includes A2A-Version header matching agent's protocol_version."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
@@ -2370,8 +2334,7 @@ class TestInvokeAgentEdgeCases:
             agent_type="a2a-rest",
             protocol_version="0.3",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2400,7 +2363,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_rest_passthrough_does_not_include_a2a_version_header(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_rest_passthrough_does_not_include_a2a_version_header(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """rest-passthrough sends raw JSON without A2A REST headers."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
@@ -2421,8 +2384,7 @@ class TestInvokeAgentEdgeCases:
             agent_type="rest-passthrough",
             protocol_version="0.3",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2441,7 +2403,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
     async def test_invoke_oauth_sets_bearer_header(
-        self, mock_get_client, mock_fresh_db, mock_metrics_fn, mock_get_access_token, service, mock_db, monkeypatch
+        self, mock_get_client, mock_fresh_db, mock_metrics_fn, mock_get_access_token, service, mock_db
     ):
         """OAuth auth_type uses OAuthManager to set Authorization header."""
         mock_get_access_token.return_value = "oauth-token"
@@ -2466,8 +2428,7 @@ class TestInvokeAgentEdgeCases:
             agent_type="generic",
             protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2484,7 +2445,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_jsonrpc_alias_uses_uuid_and_normalizes_parts(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_jsonrpc_alias_uses_uuid_and_normalizes_parts(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """generic/jsonrpc aliases route to JSON-RPC with UUID id and kind-based parts."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"result": {"ok": True}}))
@@ -2505,8 +2466,7 @@ class TestInvokeAgentEdgeCases:
             agent_type="generic",
             protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2541,7 +2501,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_jsonrpc_error_code_mapping(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_jsonrpc_error_code_mapping(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """A2A JSON-RPC errors map canonical codes to descriptive failures."""
         mock_client = AsyncMock()
         mock_response = MagicMock(
@@ -2565,8 +2525,7 @@ class TestInvokeAgentEdgeCases:
             agent_type="jsonrpc",
             protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2593,7 +2552,7 @@ class TestInvokeAgentGrpcTransport:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_agent_dispatches_to_grpc(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    async def test_invoke_agent_dispatches_to_grpc(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db):
         """invoke_agent routes a2a-grpc agent_type to _invoke_a2a_grpc and does not call HTTP."""
         mock_client = AsyncMock()
         mock_client.post = AsyncMock()
@@ -2614,8 +2573,7 @@ class TestInvokeAgentGrpcTransport:
             agent_type="grpc",
             protocol_version="0.3.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *_a, **_kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2978,7 +2936,7 @@ class TestA2AServiceWrapperMethods:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_send_message_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+    async def test_send_message_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service):
         """send_message wraps invoke_agent with method='message/send'."""
         mock_db = MagicMock(spec=Session)
         mock_client = AsyncMock()
@@ -2992,8 +2950,7 @@ class TestA2AServiceWrapperMethods:
             visibility="public", team_id=None, owner_email=None,
             agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
         mock_ts_db = MagicMock()
@@ -3009,7 +2966,7 @@ class TestA2AServiceWrapperMethods:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_get_task_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+    async def test_get_task_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service):
         """get_task wraps invoke_agent with method='tasks/get' and params.id=task_id."""
         mock_db = MagicMock(spec=Session)
         mock_client = AsyncMock()
@@ -3023,8 +2980,7 @@ class TestA2AServiceWrapperMethods:
             visibility="public", team_id=None, owner_email=None,
             agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
         mock_ts_db = MagicMock()
@@ -3041,7 +2997,7 @@ class TestA2AServiceWrapperMethods:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_list_tasks_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+    async def test_list_tasks_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service):
         """list_tasks wraps invoke_agent with method='tasks/list'."""
         mock_db = MagicMock(spec=Session)
         mock_client = AsyncMock()
@@ -3055,8 +3011,7 @@ class TestA2AServiceWrapperMethods:
             visibility="public", team_id=None, owner_email=None,
             agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
         mock_ts_db = MagicMock()
@@ -3072,7 +3027,7 @@ class TestA2AServiceWrapperMethods:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_cancel_task_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+    async def test_cancel_task_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service):
         """cancel_task wraps invoke_agent with method='tasks/cancel' and params.id=task_id."""
         mock_db = MagicMock(spec=Session)
         mock_client = AsyncMock()
@@ -3086,8 +3041,7 @@ class TestA2AServiceWrapperMethods:
             visibility="public", team_id=None, owner_email=None,
             agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
         mock_ts_db = MagicMock()
@@ -3164,7 +3118,7 @@ class TestBuildSseStream:
         with pytest.raises(A2AAgentNotFoundError):
             await service._build_sse_stream(db=mock_db, agent_name="missing", rpc_method="message/stream", rpc_params={}, interaction_type="stream")
 
-    async def test_build_sse_stream_agent_disabled(self, service, monkeypatch):
+    async def test_build_sse_stream_agent_disabled(self, service):
         """_build_sse_stream raises A2AAgentError for disabled agent."""
         mock_db = MagicMock(spec=Session)
         agent = SimpleNamespace(
@@ -3173,13 +3127,12 @@ class TestBuildSseStream:
             visibility="public", team_id=None, owner_email=None,
             agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
         with pytest.raises(A2AAgentError, match="disabled"):
             await service._build_sse_stream(db=mock_db, agent_name="ag", rpc_method="message/stream", rpc_params={}, interaction_type="stream")
 
-    async def test_build_sse_stream_access_denied(self, service, monkeypatch):
+    async def test_build_sse_stream_access_denied(self, service):
         """_build_sse_stream raises A2AAgentNotFoundError for denied access."""
         mock_db = MagicMock(spec=Session)
         agent = SimpleNamespace(
@@ -3188,8 +3141,7 @@ class TestBuildSseStream:
             visibility="private", team_id=None, owner_email="other@example.com",
             agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
         with pytest.raises(A2AAgentNotFoundError):
             await service._build_sse_stream(
@@ -3200,7 +3152,7 @@ class TestBuildSseStream:
             )
 
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_build_sse_stream_jsonrpc_transport(self, mock_get_client, service, monkeypatch):
+    async def test_build_sse_stream_jsonrpc_transport(self, mock_get_client, service):
         """_build_sse_stream returns HTTP stream for a2a-jsonrpc transport."""
         mock_db = MagicMock(spec=Session)
         agent = SimpleNamespace(
@@ -3209,8 +3161,7 @@ class TestBuildSseStream:
             visibility="public", team_id=None, owner_email=None,
             agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -3223,7 +3174,7 @@ class TestBuildSseStream:
         # Result should be an async generator (not None)
         assert hasattr(result, "__aiter__")
 
-    async def test_build_sse_stream_unsupported_transport_raises(self, service, monkeypatch):
+    async def test_build_sse_stream_unsupported_transport_raises(self, service):
         """_build_sse_stream raises for unsupported transport types."""
         mock_db = MagicMock(spec=Session)
         agent = SimpleNamespace(
@@ -3232,8 +3183,7 @@ class TestBuildSseStream:
             visibility="public", team_id=None, owner_email=None,
             agent_type="custom", protocol_version="0.3", oauth_config=None,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -3486,3 +3436,65 @@ class TestAggregateMetricsEdgeCases:
         result = await service.aggregate_metrics(mock_db)
         assert result["total_agents"] == 3
         mock_cache.set.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _validate_a2a_identifier
+# ---------------------------------------------------------------------------
+class TestValidateA2AIdentifier:
+    """Tests for _validate_a2a_identifier()."""
+
+    def test_valid_identifier(self):
+        """'abc-123' passes and returns 'abc-123'."""
+        result = _validate_a2a_identifier("abc-123", "task_id")
+        assert result == "abc-123"
+
+    def test_valid_with_dots(self):
+        """'valid.id_01' passes."""
+        result = _validate_a2a_identifier("valid.id_01", "task_id")
+        assert result == "valid.id_01"
+
+    def test_valid_with_underscores(self):
+        """'test_name' passes."""
+        result = _validate_a2a_identifier("test_name", "task_id")
+        assert result == "test_name"
+
+    def test_empty_string(self):
+        """Empty string raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="cannot be empty"):
+            _validate_a2a_identifier("", "task_id")
+
+    def test_none_stripped(self):
+        """None raises A2AAgentError (stripped to empty)."""
+        with pytest.raises(A2AAgentError, match="cannot be empty"):
+            _validate_a2a_identifier(None, "task_id")
+
+    def test_whitespace_only(self):
+        """Whitespace-only string raises A2AAgentError."""
+        with pytest.raises(A2AAgentError, match="cannot be empty"):
+            _validate_a2a_identifier("   ", "task_id")
+
+    def test_double_dot(self):
+        """'..' raises A2AAgentError about relative path segment."""
+        with pytest.raises(A2AAgentError, match="cannot be a relative path segment"):
+            _validate_a2a_identifier("..", "task_id")
+
+    def test_single_dot(self):
+        """'.' raises A2AAgentError about relative path segment."""
+        with pytest.raises(A2AAgentError, match="cannot be a relative path segment"):
+            _validate_a2a_identifier(".", "task_id")
+
+    def test_path_traversal_with_slash(self):
+        """'../../etc' raises A2AAgentError (contains invalid characters)."""
+        with pytest.raises(A2AAgentError):
+            _validate_a2a_identifier("../../etc", "task_id")
+
+    def test_slash_in_value(self):
+        """'a/b' raises A2AAgentError (contains invalid characters)."""
+        with pytest.raises(A2AAgentError, match="contains invalid characters"):
+            _validate_a2a_identifier("a/b", "task_id")
+
+    def test_whitespace_trimmed(self):
+        """'  abc  ' returns 'abc'."""
+        result = _validate_a2a_identifier("  abc  ", "task_id")
+        assert result == "abc"

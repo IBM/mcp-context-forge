@@ -16,6 +16,7 @@ from mcpgateway.services.a2a_dispatcher import (
     build_dispatch_headers,
     dispatch_a2a_transport,
     prepare_rpc_params,
+    resolve_a2a_auth,
 )
 from mcpgateway.services.a2a_errors import A2AAgentError
 
@@ -287,7 +288,7 @@ class TestDispatchA2ATransport:
 
     @pytest.mark.asyncio
     async def test_unsupported_transport_raises(self, mock_client):
-        with pytest.raises(ValueError, match="Unsupported A2A transport"):
+        with pytest.raises(A2AAgentError, match="Unsupported A2A transport"):
             await dispatch_a2a_transport(
                 endpoint_url="https://example.com",
                 normalized_agent_type="unknown-transport",
@@ -312,6 +313,20 @@ class TestDispatchA2ATransport:
             timeout=30.0,
         )
         assert result.http_response is not None
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_invalid_url_scheme(self, mock_client):
+        """dispatch_a2a_transport raises A2AAgentError for file:// URLs."""
+        with pytest.raises(A2AAgentError, match="Unsupported URL scheme"):
+            await dispatch_a2a_transport(
+                endpoint_url="file:///etc/passwd",
+                normalized_agent_type="a2a-jsonrpc",
+                rpc_method="SendMessage",
+                rpc_params={},
+                headers={},
+                auth_headers={},
+                http_client=mock_client,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +367,203 @@ class TestDataclasses:
         result = A2ADispatchResult(grpc_data={"result": "ok"}, transport="a2a-grpc")
         assert result.grpc_data == {"result": "ok"}
         assert result.http_response is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_a2a_auth
+# ---------------------------------------------------------------------------
+class TestResolveA2AAuth:
+    """Tests for resolve_a2a_auth()."""
+
+    @pytest.mark.asyncio
+    async def test_no_auth(self):
+        """All auth params are None — returns empty headers, original URL."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        assert ctx.headers == {}
+        assert ctx.endpoint_url == "https://example.com/a2a"
+        assert ctx.query_params_decrypted is None
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.utils.url_auth.apply_query_param_auth", return_value="https://example.com/a2a?key=decrypted")
+    @patch("mcpgateway.utils.services_auth.decode_auth", return_value={"api_key": "decrypted"})
+    async def test_query_param_auth(self, mock_decode, mock_apply):
+        """auth_type='query_param' with encrypted query params — URL is modified."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="query_param",
+            auth_value=None,
+            auth_query_params={"api_key": "encrypted-value"},
+            oauth_config=None,
+        )
+        mock_decode.assert_called_once_with("encrypted-value")
+        mock_apply.assert_called_once()
+        assert ctx.endpoint_url == "https://example.com/a2a?key=decrypted"
+        assert ctx.query_params_decrypted == {"api_key": "decrypted"}
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.utils.services_auth.decode_auth", side_effect=Exception("decrypt failed"))
+    async def test_query_param_decrypt_failure(self, mock_decode):
+        """Decrypt fails — logs warning, URL unchanged."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="query_param",
+            auth_value=None,
+            auth_query_params={"api_key": "bad-encrypted"},
+            oauth_config=None,
+            agent_name="test-agent",
+        )
+        # URL should remain unchanged since decryption failed and no params decrypted.
+        assert ctx.endpoint_url == "https://example.com/a2a"
+        assert ctx.query_params_decrypted == {}
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.utils.services_auth.decode_auth", return_value={"Authorization": "Basic dXNlcjpwYXNz"})
+    async def test_basic_auth_encrypted(self, mock_decode):
+        """auth_type='basic', encrypted string auth_value — decrypts to headers."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="basic",
+            auth_value="encrypted-basic-value",
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        mock_decode.assert_called_once_with("encrypted-basic-value")
+        assert ctx.headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.utils.services_auth.decode_auth", return_value={"Authorization": "Bearer my-token"})
+    async def test_bearer_auth_encrypted(self, mock_decode):
+        """auth_type='bearer', encrypted string — decrypts to Bearer header."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="bearer",
+            auth_value="encrypted-bearer-value",
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        mock_decode.assert_called_once_with("encrypted-bearer-value")
+        assert ctx.headers == {"Authorization": "Bearer my-token"}
+
+    @pytest.mark.asyncio
+    async def test_authheaders_dict_value(self):
+        """auth_type='authheaders', dict auth_value — used directly as headers."""
+        auth_dict = {"X-Custom-Auth": "secret123", "X-API-Key": "key456"}
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="authheaders",
+            auth_value=auth_dict,
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        assert ctx.headers == {"X-Custom-Auth": "secret123", "X-API-Key": "key456"}
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.utils.services_auth.decode_auth", side_effect=Exception("decrypt failed"))
+    async def test_basic_auth_fallback_raw_enabled(self, mock_decode):
+        """Decrypt fails, fallback_raw_auth=True — uses raw value with 'Basic' prefix."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="basic",
+            auth_value="dXNlcjpwYXNz",
+            auth_query_params=None,
+            oauth_config=None,
+            fallback_raw_auth=True,
+        )
+        assert ctx.headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.utils.services_auth.decode_auth", side_effect=Exception("decrypt failed"))
+    async def test_bearer_auth_fallback_raw_enabled(self, mock_decode):
+        """Decrypt fails, fallback_raw_auth=True — uses raw value with 'Bearer' prefix."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="bearer",
+            auth_value="raw-token-value",
+            auth_query_params=None,
+            oauth_config=None,
+            fallback_raw_auth=True,
+        )
+        assert ctx.headers == {"Authorization": "Bearer raw-token-value"}
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.utils.services_auth.decode_auth", side_effect=Exception("decrypt failed"))
+    async def test_basic_auth_fallback_raw_disabled(self, mock_decode):
+        """Decrypt fails, fallback_raw_auth=False — raises error_cls."""
+        with pytest.raises(A2AAgentError, match="Failed to decrypt authentication"):
+            await resolve_a2a_auth(
+                endpoint_url="https://example.com/a2a",
+                auth_type="basic",
+                auth_value="bad-encrypted",
+                auth_query_params=None,
+                oauth_config=None,
+                error_cls=A2AAgentError,
+                fallback_raw_auth=False,
+            )
+
+    @pytest.mark.asyncio
+    async def test_api_key_auth(self):
+        """auth_type='api_key' with string value — adds Bearer header."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="api_key",
+            auth_value="my-api-key-123",
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        assert ctx.headers == {"Authorization": "Bearer my-api-key-123"}
+
+    @pytest.mark.asyncio
+    async def test_token_auth(self):
+        """auth_type='token' with string value — adds Bearer header."""
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="token",
+            auth_value="my-token-456",
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        assert ctx.headers == {"Authorization": "Bearer my-token-456"}
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.oauth_manager.OAuthManager")
+    async def test_oauth_auth(self, mock_oauth_cls):
+        """auth_type='oauth' with oauth_config — calls OAuthManager, adds Bearer header."""
+        mock_instance = MagicMock()
+        mock_instance.get_access_token = AsyncMock(return_value="oauth-access-token")
+        mock_oauth_cls.return_value = mock_instance
+
+        oauth_config = {"token_url": "https://auth.example.com/token", "client_id": "cid"}
+        ctx = await resolve_a2a_auth(
+            endpoint_url="https://example.com/a2a",
+            auth_type="oauth",
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=oauth_config,
+        )
+        mock_instance.get_access_token.assert_called_once_with(oauth_config)
+        assert ctx.headers["Authorization"] == "Bearer oauth-access-token"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.oauth_manager.OAuthManager")
+    async def test_oauth_failure(self, mock_oauth_cls):
+        """OAuthManager raises — raises error_cls."""
+        mock_instance = MagicMock()
+        mock_instance.get_access_token = AsyncMock(side_effect=Exception("token fetch failed"))
+        mock_oauth_cls.return_value = mock_instance
+
+        oauth_config = {"token_url": "https://auth.example.com/token"}
+        with pytest.raises(A2AAgentError, match="OAuth authentication failed"):
+            await resolve_a2a_auth(
+                endpoint_url="https://example.com/a2a",
+                auth_type="oauth",
+                auth_value=None,
+                auth_query_params=None,
+                oauth_config=oauth_config,
+                error_cls=A2AAgentError,
+            )

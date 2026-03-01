@@ -18,11 +18,13 @@ import asyncio  # noqa: F401
 import binascii
 from copy import deepcopy
 from datetime import datetime, timezone
+import re as _re
 from typing import Any, AsyncGenerator, cast, ClassVar, Dict, List, Optional, Union
 from urllib.parse import urlparse
 import uuid
 
 # Third-Party
+import httpx
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
@@ -46,6 +48,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentUpstreamError  # noqa: F401
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
@@ -85,9 +88,6 @@ A2A_JSONRPC_ERROR_CODES: Dict[int, str] = {
 }
 
 
-# Standard
-import re as _re
-
 # Matches SecurityValidator.IDENTIFIER_PATTERN from mcpgateway/common/validators.py.
 _A2A_IDENTIFIER_RE = _re.compile(r"^[\w\-\.]+$")
 
@@ -123,13 +123,11 @@ def _validate_a2a_identifier(value: str, label: str) -> str:
     stripped = value.strip() if value else ""
     if not stripped:
         raise A2AAgentError(f"{label} cannot be empty")
+    if stripped == ".." or stripped == ".":
+        raise A2AAgentError(f"{label} cannot be a relative path segment")
     if not _A2A_IDENTIFIER_RE.match(stripped):
         raise A2AAgentError(f"{label} contains invalid characters; only alphanumeric, hyphen, underscore, and dot are allowed")
     return stripped
-
-
-# Re-export from canonical location for backward compatibility.
-from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentUpstreamError  # noqa: F401
 
 
 class A2AAgentService(BaseService):
@@ -190,7 +188,15 @@ class A2AAgentService(BaseService):
         )
 
     def _build_agent_card_candidates(self, endpoint_url: str, *, include_extended: bool = False) -> List[str]:
-        """Build discovery candidates for agent-card and extended-card endpoints."""
+        """Build discovery candidates for agent-card and extended-card endpoints.
+
+        Args:
+            endpoint_url: Agent endpoint URL.
+            include_extended: Whether to include extended agent card fields.
+
+        Returns:
+            Deduplicated list of candidate discovery URLs.
+        """
         parsed = urlparse(endpoint_url)
         if not parsed.scheme or not parsed.netloc:
             return []
@@ -238,6 +244,12 @@ class A2AAgentService(BaseService):
         - v1.0 uses ``supported_interfaces`` instead of ``url`` + ``preferred_transport`` + ``additional_interfaces``
         - v1.0 uses ``capabilities.extended_agent_card`` instead of ``supports_authenticated_extended_card``
         - v1.0 adds ``icon_url`` field
+
+        Args:
+            payload: Request or response payload dict.
+
+        Returns:
+            Extracted agent card dict, or None if not found.
         """
         if not isinstance(payload, dict):
             return None
@@ -261,7 +273,14 @@ class A2AAgentService(BaseService):
         return None
 
     def _normalize_card_transport(self, transport: Optional[str]) -> Optional[str]:
-        """Normalize Agent Card transport names to canonical agent_type values."""
+        """Normalize Agent Card transport names to canonical agent_type values.
+
+        Args:
+            transport: Transport type string.
+
+        Returns:
+            Canonical agent type string, or None if unrecognized.
+        """
         if not transport:
             return None
 
@@ -279,6 +298,12 @@ class A2AAgentService(BaseService):
 
         Supports both v1.0 (``supported_interfaces`` / ``supportedInterfaces``) and
         v0.3 (``preferredTransport`` + ``additionalInterfaces``) formats.
+
+        Args:
+            agent_card: Agent card dictionary.
+
+        Returns:
+            Canonical transport string, or None if unable to infer.
         """
         # v0.3: preferredTransport
         preferred_transport = self._normalize_card_transport(cast(Optional[str], agent_card.get("preferredTransport")))
@@ -307,7 +332,15 @@ class A2AAgentService(BaseService):
         return None
 
     def _decode_auth_headers_for_discovery(self, auth_type: Optional[str], auth_value: Any) -> Dict[str, str]:
-        """Best-effort decode of stored auth headers for discovery calls."""
+        """Best-effort decode of stored auth headers for discovery calls.
+
+        Args:
+            auth_type: Authentication type.
+            auth_value: Encrypted authentication value.
+
+        Returns:
+            Decoded authentication headers dict.
+        """
         if auth_type not in ("basic", "bearer", "authheaders") or not auth_value:
             return {}
 
@@ -323,7 +356,15 @@ class A2AAgentService(BaseService):
         return {}
 
     async def _discover_agent_card(self, endpoint_url: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
-        """Discover an Agent Card from endpoint/root, best-effort and non-fatal."""
+        """Discover an Agent Card from endpoint/root, best-effort and non-fatal.
+
+        Args:
+            endpoint_url: Agent endpoint URL.
+            auth_headers: Authentication headers.
+
+        Returns:
+            Discovered agent card dict, or None if discovery failed.
+        """
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
@@ -332,7 +373,14 @@ class A2AAgentService(BaseService):
             headers.update(auth_headers)
 
         async def _fetch_first_card(candidate_urls: List[str]) -> Optional[Dict[str, Any]]:
-            """Try each candidate URL and return the first valid agent card."""
+            """Try each candidate URL and return the first valid agent card.
+
+            Args:
+                candidate_urls: List of candidate URLs to try.
+
+            Returns:
+                First valid agent card dict, or None if none found.
+            """
             client = await get_http_client()
             for candidate_url in candidate_urls:
                 try:
@@ -394,6 +442,15 @@ class A2AAgentService(BaseService):
         - Accepts both ``parts`` and ``content`` as the field name for the parts array.
         - For inbound v0.3 parts (with ``kind`` field): converts to v1.0 flat structure.
         - Preserves parts that are already in v1.0 format.
+
+        Args:
+            params: Query/filter parameters.
+
+        Returns:
+            Normalized parameters with v1.0-compliant parts.
+
+        Raises:
+            A2AAgentError: If v0.3 format is used and compat mode is disabled.
         """
         if not isinstance(params, dict):
             return params
@@ -595,7 +652,14 @@ class A2AAgentService(BaseService):
         return result
 
     def _extract_jsonrpc_error_message(self, payload: Any) -> Optional[str]:
-        """Extract and map JSON-RPC/A2A error details from payload."""
+        """Extract and map JSON-RPC/A2A error details from payload.
+
+        Args:
+            payload: Request or response payload dict.
+
+        Returns:
+            Formatted error detail string, or None if no error found.
+        """
         if not isinstance(payload, dict):
             return None
 
@@ -616,7 +680,7 @@ class A2AAgentService(BaseService):
             detail = f"JSON-RPC error: {message}"
 
         if data is not None:
-            detail = f"{detail} | data={data}"
+            logger.debug("JSON-RPC upstream error data for diagnostics: %s", data)
         return detail
 
     def _build_rest_request(
@@ -626,6 +690,11 @@ class A2AAgentService(BaseService):
         rpc_params: Any,
     ) -> tuple[str, str, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Translate A2A method names to REST endpoints (A2A v1.0 with v0.3 backward compat).
+
+        Args:
+            endpoint_url: Agent endpoint URL.
+            rpc_method: JSON-RPC method name.
+            rpc_params: JSON-RPC method parameters.
 
         Returns:
             Tuple of (http_method, url, json_body, query_params).
@@ -652,14 +721,28 @@ class A2AAgentService(BaseService):
                 rest_base = f"{rest_base}/v1"
 
         def _task_id_from(payload: Dict[str, Any]) -> Optional[str]:
-            """Extract and validate task ID from 'id' or 'taskId' fields."""
+            """Extract and validate task ID from 'id' or 'taskId' fields.
+
+            Args:
+                payload: Request or response payload dict.
+
+            Returns:
+                Validated task ID string, or None if not present.
+            """
             task_id = payload.get("id") or payload.get("taskId")
             if task_id is None:
                 return None
             return _validate_a2a_identifier(str(task_id), "task_id")
 
         def _config_id_from(payload: Dict[str, Any]) -> Optional[str]:
-            """Extract and validate push notification config ID from payload."""
+            """Extract and validate push notification config ID from payload.
+
+            Args:
+                payload: Request or response payload dict.
+
+            Returns:
+                Validated config ID string, or None if not present.
+            """
             cfg_id = payload.get("pushNotificationConfigId") or payload.get("configId")
             if cfg_id is None:
                 return None
@@ -746,11 +829,25 @@ class A2AAgentService(BaseService):
         raise A2AAgentError(f"Unsupported A2A REST method '{rpc_method}'")
 
     def normalize_message_parts_to_kind(self, params: Any) -> Any:
-        """Public wrapper for message-part normalization used by other services."""
+        """Public wrapper for message-part normalization used by other services.
+
+        Args:
+            params: Query/filter parameters.
+
+        Returns:
+            Normalized parameters with v1.0-compliant parts.
+        """
         return self._normalize_message_parts_to_kind(params)
 
     def extract_jsonrpc_error_message(self, payload: Any) -> Optional[str]:
-        """Public wrapper for JSON-RPC error extraction used by other services."""
+        """Public wrapper for JSON-RPC error extraction used by other services.
+
+        Args:
+            payload: Request or response payload dict.
+
+        Returns:
+            Formatted error detail string, or None if no error found.
+        """
         return self._extract_jsonrpc_error_message(payload)
 
     def build_rest_request(
@@ -759,7 +856,16 @@ class A2AAgentService(BaseService):
         rpc_method: str,
         rpc_params: Any,
     ) -> tuple[str, str, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Public wrapper for REST mapping used by other services."""
+        """Public wrapper for REST mapping used by other services.
+
+        Args:
+            endpoint_url: Agent endpoint URL.
+            rpc_method: JSON-RPC method name.
+            rpc_params: JSON-RPC method parameters.
+
+        Returns:
+            Tuple of (http_method, url, json_body, query_params).
+        """
         return self._build_rest_request(endpoint_url, rpc_method, rpc_params)
 
     async def invoke_a2a_grpc(
@@ -770,18 +876,43 @@ class A2AAgentService(BaseService):
         auth_headers: Dict[str, str],
         correlation_id: Optional[str],
     ) -> Dict[str, Any]:
-        """Public wrapper for gRPC invocation used by other services."""
+        """Public wrapper for gRPC invocation used by other services.
+
+        Args:
+            endpoint_url: Agent endpoint URL.
+            parameters: Raw invocation parameters.
+            interaction_type: Invocation interaction type.
+            auth_headers: Authentication headers.
+            correlation_id: Request correlation ID.
+
+        Returns:
+            gRPC response as a dict.
+        """
         return await self._invoke_a2a_grpc(endpoint_url, parameters, interaction_type, auth_headers, correlation_id)
 
     def _extract_task_payloads(self, payload: Any) -> List[Dict[str, Any]]:
-        """Extract task objects from response payloads for persistence."""
+        """Extract task objects from response payloads for persistence.
+
+        Args:
+            payload: Request or response payload dict.
+
+        Returns:
+            List of extracted task payload dicts.
+        """
         tasks: Dict[str, Dict[str, Any]] = {}
 
-        def _collect(candidate: Any) -> None:
-            """Recursively collect task objects by ID into the tasks dict."""
+        def _collect(candidate: Any, depth: int = 0) -> None:
+            """Recursively collect task objects by ID into the tasks dict.
+
+            Args:
+                candidate: Candidate value to inspect.
+                depth: Recursion depth counter.
+            """
+            if depth > 20:
+                return
             if isinstance(candidate, list):
                 for item in candidate:
-                    _collect(item)
+                    _collect(item, depth + 1)
                 return
 
             if not isinstance(candidate, dict):
@@ -793,19 +924,29 @@ class A2AAgentService(BaseService):
                 tasks[task_id] = cast(Dict[str, Any], candidate)
 
             if isinstance(candidate.get("tasks"), list):
-                _collect(candidate["tasks"])
+                _collect(candidate["tasks"], depth + 1)
             if isinstance(candidate.get("result"), (dict, list)):
-                _collect(candidate["result"])
+                _collect(candidate["result"], depth + 1)
             if isinstance(candidate.get("task"), dict):
-                _collect(candidate["task"])
+                _collect(candidate["task"], depth + 1)
             if isinstance(candidate.get("data"), (dict, list)):
-                _collect(candidate["data"])
+                _collect(candidate["data"], depth + 1)
 
         _collect(payload)
         return list(tasks.values())
 
     def _upsert_a2a_task(self, db: Session, a2a_agent_id: str, task_payload: Dict[str, Any], observed_at: datetime) -> bool:
-        """Insert/update persisted task snapshot."""
+        """Insert/update persisted task snapshot.
+
+        Args:
+            db: Database session.
+            a2a_agent_id: Agent database ID.
+            task_payload: Task payload data.
+            observed_at: Observation timestamp.
+
+        Returns:
+            True if a task was inserted or updated, False otherwise.
+        """
         task_id = task_payload.get("id")
         if not isinstance(task_id, str) or not task_id:
             return False
@@ -982,8 +1123,8 @@ class A2AAgentService(BaseService):
                 tags=agent_data.tags,
                 passthrough_headers=getattr(agent_data, "passthrough_headers", None),
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                team_id=getattr(agent_data, "team_id", None) or team_id,
-                owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
+                team_id=team_id,
+                owner_email=owner_email or created_by,
                 # Endpoint visibility parameter takes precedence over schema default
                 visibility=visibility if visibility is not None else getattr(agent_data, "visibility", "public"),
                 created_by=created_by,
@@ -1454,12 +1595,14 @@ class A2AAgentService(BaseService):
         # Delegate conversion and masking to convert_agent_to_read()
         return self.convert_agent_to_read(agent, db=db)
 
-    async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
+    async def get_agent_by_name(self, db: Session, agent_name: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> A2AAgentRead:
         """Retrieve an A2A agent by name.
 
         Args:
             db: Database session.
             agent_name: Agent name.
+            user_email: Authenticated user email for access control.
+            token_teams: Token-scoped teams for visibility filtering.
 
         Returns:
             Agent data.
@@ -1471,6 +1614,9 @@ class A2AAgentService(BaseService):
         agent = db.execute(query).scalar_one_or_none()
 
         if not agent:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
+        if not await self._check_agent_access(agent, user_email, token_teams):
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         return self.convert_agent_to_read(agent, db=db)
@@ -1859,7 +2005,18 @@ class A2AAgentService(BaseService):
 
     @staticmethod
     def _resolve_a2a_grpc_method(method_name: Optional[str], interaction_type: str) -> str:
-        """Resolve an inbound method string to a supported A2A gRPC method."""
+        """Resolve an inbound method string to a supported A2A gRPC method.
+
+        Args:
+            method_name: JSON-RPC method name, or None to infer from interaction_type.
+            interaction_type: Invocation interaction type.
+
+        Returns:
+            Resolved gRPC method name.
+
+        Raises:
+            A2AAgentError: If the method name is not recognized.
+        """
         if method_name:
             normalized_method = method_name.strip().lower()
         else:
@@ -1928,6 +2085,12 @@ class A2AAgentService(BaseService):
         raw value is treated as a bare task identifier and prefixed with
         ``tasks/``.
 
+        Args:
+            request_payload: Request payload dict containing task identifiers.
+
+        Returns:
+            Resource name string in ``tasks/{id}`` format.
+
         Raises:
             A2AAgentError: If no identifier is present or any segment
                 fails the identifier allowlist check.
@@ -1951,7 +2114,14 @@ class A2AAgentService(BaseService):
 
     @staticmethod
     def _normalize_a2a_message_for_grpc(message_payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize A2A JSON message shapes into gRPC-compatible message payloads."""
+        """Normalize A2A JSON message shapes into gRPC-compatible message payloads.
+
+        Args:
+            message_payload: Message payload dict to normalize.
+
+        Returns:
+            Normalized message dict suitable for gRPC serialization.
+        """
         normalized: Dict[str, Any] = dict(message_payload)
         normalized.pop("kind", None)
 
@@ -2039,7 +2209,19 @@ class A2AAgentService(BaseService):
         return normalized
 
     def _build_a2a_grpc_send_message_request(self, request_payload: Dict[str, Any], a2a_pb2: Any, json_format: Any) -> Any:
-        """Build a `SendMessageRequest` protobuf message from user parameters."""
+        """Build a `SendMessageRequest` protobuf message from user parameters.
+
+        Args:
+            request_payload: Request payload dict containing message fields.
+            a2a_pb2: A2A protobuf module.
+            json_format: Protobuf json_format module.
+
+        Returns:
+            Constructed SendMessageRequest protobuf message.
+
+        Raises:
+            A2AAgentError: If the message payload is missing or invalid.
+        """
         message_payload = request_payload.get("message") or request_payload.get("request")
         if message_payload is None:
             message_payload = request_payload
@@ -2076,7 +2258,17 @@ class A2AAgentService(BaseService):
 
     @staticmethod
     def _parse_a2a_grpc_endpoint(endpoint_url: str) -> tuple[str, bool]:
-        """Parse an endpoint URL into `(grpc_target, use_tls)`."""
+        """Parse an endpoint URL into `(grpc_target, use_tls)`.
+
+        Args:
+            endpoint_url: Agent endpoint URL.
+
+        Returns:
+            Tuple of (grpc_target, use_tls).
+
+        Raises:
+            A2AAgentError: If the URL scheme is not grpc/grpcs or host is missing.
+        """
         parsed = urlparse(endpoint_url)
         scheme = parsed.scheme.lower()
         if scheme not in {"grpc", "grpcs"}:
@@ -2093,7 +2285,15 @@ class A2AAgentService(BaseService):
 
     @staticmethod
     def _build_a2a_grpc_metadata(auth_headers: Dict[str, str], correlation_id: Optional[str]) -> List[tuple[str, str]]:
-        """Convert outbound auth/correlation headers to gRPC metadata."""
+        """Convert outbound auth/correlation headers to gRPC metadata.
+
+        Args:
+            auth_headers: Authentication headers.
+            correlation_id: Request correlation ID.
+
+        Returns:
+            List of (key, value) tuples for gRPC metadata.
+        """
         metadata: List[tuple[str, str]] = []
         for key, value in auth_headers.items():
             if value is None:
@@ -2112,7 +2312,14 @@ class A2AAgentService(BaseService):
 
     @staticmethod
     def _protobuf_to_dict(proto_message: Any) -> Dict[str, Any]:
-        """Convert a protobuf message to a JSON-style dict."""
+        """Convert a protobuf message to a JSON-style dict.
+
+        Args:
+            proto_message: Protobuf message instance.
+
+        Returns:
+            JSON-compatible dict representation.
+        """
         # Third-Party
         from google.protobuf import json_format  # pylint: disable=import-outside-toplevel
 
@@ -2126,6 +2333,12 @@ class A2AAgentService(BaseService):
         official A2A SDK stubs.  This order avoids descriptor-pool collisions
         when both stub packages coexist in the same Python process (the
         ``TypeError`` for ``a2a.proto`` triggers the fallback).
+
+        Returns:
+            Tuple of (a2a_pb2, a2a_pb2_grpc) modules.
+
+        Raises:
+            TypeError: If descriptor registration fails for an unrelated proto.
         """
         try:
             # First-Party
@@ -2154,7 +2367,21 @@ class A2AAgentService(BaseService):
         auth_headers: Dict[str, str],
         correlation_id: Optional[str],
     ) -> Dict[str, Any]:  # pylint: disable=no-member
-        """Invoke an A2A gRPC agent using generated protobuf stubs."""
+        """Invoke an A2A gRPC agent using generated protobuf stubs.
+
+        Args:
+            endpoint_url: Agent endpoint URL.
+            parameters: Raw invocation parameters.
+            interaction_type: Invocation interaction type.
+            auth_headers: Authentication headers.
+            correlation_id: Request correlation ID.
+
+        Returns:
+            gRPC response as a dict.
+
+        Raises:
+            A2AAgentError: If the gRPC call fails.
+        """
         # Third-Party
         from google.protobuf import json_format  # pylint: disable=import-outside-toplevel
         import grpc  # pylint: disable=import-outside-toplevel
@@ -2330,13 +2557,10 @@ class A2AAgentService(BaseService):
         Raises:
             A2AAgentNotFoundError: If the agent is not found or user lacks access.
             A2AAgentError: If the agent is disabled or invocation fails.
+            A2AAgentUpstreamError: If the upstream agent returns an error response.
         """
-        # Lookup the agent id, then lock the row by id using get_for_update.
-        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
-        if not agent_row:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
-
-        agent = get_for_update(db, DbA2AAgent, agent_row)
+        # Lookup the agent by name (read-only path, no row lock needed).
+        agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
@@ -2375,7 +2599,6 @@ class A2AAgentService(BaseService):
 
         # Release DB connection before outbound network call.
         db.commit()
-        db.close()
 
         start_time = datetime.now(timezone.utc)
         success = False
@@ -2594,7 +2817,19 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Invoke A2A `message/send` for a specific agent."""
+        """Invoke A2A `message/send` for a specific agent.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            message_params: A2A message parameters.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Agent response dict.
+        """
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
@@ -2621,15 +2856,28 @@ class A2AAgentService(BaseService):
 
         NOTE: The returned async generator must not use the DB session; this method
         extracts everything needed before closing the session and returning.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            rpc_method: JSON-RPC method name.
+            rpc_params: JSON-RPC method parameters.
+            interaction_type: Invocation interaction type.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Async generator yielding SSE-formatted event bytes.
+
+        Raises:
+            A2AAgentNotFoundError: If the agent is not found or user lacks access.
+            A2AAgentError: If the agent is disabled or streaming is unsupported.
         """
         _ = user_id
 
-        # Lookup the agent id, then lock the row by id using get_for_update.
-        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
-        if not agent_row:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
-
-        agent = get_for_update(db, DbA2AAgent, agent_row)
+        # Lookup the agent by name (read-only path, no row lock needed).
+        agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
@@ -2646,7 +2894,7 @@ class A2AAgentService(BaseService):
 
         # Resolve auth using shared dispatcher.
         # First-Party
-        from mcpgateway.services.a2a_dispatcher import build_dispatch_headers, resolve_a2a_auth  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.a2a_dispatcher import resolve_a2a_auth  # pylint: disable=import-outside-toplevel
 
         auth_ctx = await resolve_a2a_auth(
             endpoint_url=agent_endpoint_url,
@@ -2662,7 +2910,6 @@ class A2AAgentService(BaseService):
 
         # Release DB connection before outbound stream setup.
         db.commit()
-        db.close()
 
         # Normalize message parts for spec transports.
         agent_protocol_version = agent.protocol_version
@@ -2682,7 +2929,15 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message as _sanitize  # pylint: disable=import-outside-toplevel
 
         def _sse_event(event_type: str, data: Dict[str, Any]) -> bytes:
-            """Format a single SSE event as UTF-8 bytes."""
+            """Format a single SSE event as UTF-8 bytes.
+
+            Args:
+                event_type: SSE event type string.
+                data: Event data dict to serialize as JSON.
+
+            Returns:
+                SSE-formatted event as UTF-8 bytes.
+            """
             payload = orjson.dumps(data)
             return b"event: " + event_type.encode("utf-8") + b"\n" + b"data: " + payload + b"\n\n"
 
@@ -2747,6 +3002,12 @@ class A2AAgentService(BaseService):
         async def _http_stream(http_method: str, url: str, json_body: Any, query: Optional[Dict[str, Any]]) -> AsyncGenerator[bytes, None]:
             """Proxy an HTTP streaming response as SSE events.
 
+            Args:
+                http_method: HTTP method to use (GET, POST, etc.).
+                url: Target URL for the streaming request.
+                json_body: JSON request body, or None.
+                query: Query parameters dict, or None.
+
             Yields:
                 SSE-formatted event bytes.
             """
@@ -2761,7 +3022,7 @@ class A2AAgentService(BaseService):
                 headers["X-Correlation-ID"] = correlation_id
 
             try:
-                async with client.stream(http_method, url, json=json_body, params=query, headers=headers, timeout=None) as response:
+                async with client.stream(http_method, url, json=json_body, params=query, headers=headers, timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)) as response:
                     if response.status_code < 200 or response.status_code >= 300:
                         raw = await response.aread()
                         text = raw.decode("utf-8", errors="replace")[:1024] if raw else ""
@@ -2806,7 +3067,19 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> AsyncGenerator[bytes, None]:
-        """Invoke A2A ``SendStreamMessage`` and proxy upstream SSE events."""
+        """Invoke A2A ``SendStreamMessage`` and proxy upstream SSE events.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            message_params: A2A message parameters.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Async generator yielding SSE-formatted event bytes.
+        """
         return await self._build_sse_stream(
             db=db,
             agent_name=agent_name,
@@ -2828,7 +3101,19 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Invoke A2A ``GetTask`` for a specific task."""
+        """Invoke A2A ``GetTask`` for a specific task.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            task_id: Task identifier.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Task response dict.
+        """
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
@@ -2849,7 +3134,19 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Invoke A2A `tasks/list`."""
+        """Invoke A2A `tasks/list`.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            params: Query/filter parameters.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Task list response dict.
+        """
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
@@ -2871,7 +3168,20 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Invoke A2A `tasks/cancel` for a specific task."""
+        """Invoke A2A `tasks/cancel` for a specific task.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            task_id: Task identifier.
+            params: Query/filter parameters.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Cancel response dict.
+        """
         cancel_params = {"id": task_id}
         if params:
             cancel_params.update(params)
@@ -2896,7 +3206,20 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> AsyncGenerator[bytes, None]:
-        """Invoke A2A `tasks/subscribe` and proxy upstream task SSE events."""
+        """Invoke A2A `tasks/subscribe` and proxy upstream task SSE events.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            task_id: Task identifier.
+            params: Query/filter parameters.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Async generator yielding SSE-formatted event bytes.
+        """
         subscribe_params = {"id": task_id}
         if params:
             subscribe_params.update(params)
@@ -2922,7 +3245,20 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Create or update a task push-notification configuration."""
+        """Create or update a task push-notification configuration.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            task_id: Task identifier.
+            params: Query/filter parameters.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Push notification config response dict.
+        """
         payload = {"id": task_id}
         if params:
             payload.update(params)
@@ -2947,7 +3283,20 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Retrieve one task push-notification configuration."""
+        """Retrieve one task push-notification configuration.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            task_id: Task identifier.
+            config_id: Optional configuration ID.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Push notification config response dict.
+        """
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
@@ -2969,7 +3318,20 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """List task push-notification configurations."""
+        """List task push-notification configurations.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            task_id: Task identifier.
+            params: Query/filter parameters.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            List of push notification configs response dict.
+        """
         payload = {"id": task_id}
         if params:
             payload.update(params)
@@ -2994,7 +3356,20 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Delete one task push-notification configuration."""
+        """Delete one task push-notification configuration.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            task_id: Task identifier.
+            config_id: Optional configuration ID.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Deletion response dict.
+        """
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
@@ -3014,7 +3389,18 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Fetch the upstream A2A Agent Card through the configured transport."""
+        """Fetch the upstream A2A Agent Card through the configured transport.
+
+        Args:
+            db: Database session.
+            agent_name: A2A agent name.
+            user_id: Authenticated user ID.
+            user_email: Authenticated user email.
+            token_teams: JWT-derived team list for visibility filtering.
+
+        Returns:
+            Agent card response dict.
+        """
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,

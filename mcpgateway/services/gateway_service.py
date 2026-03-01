@@ -691,7 +691,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         visibility: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
     ) -> GatewayRead:
-        """Register a new gateway.
+        """Register a new gateway.  # noqa: DAR401
 
         Args:
             db: Database session
@@ -710,7 +710,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
+            GatewayDuplicateConflictError: If a duplicate gateway already exists with the same URL and auth
             GatewayConnectionError: If there was an error connecting to the gateway
+            GatewayError: If the gateway mode is disabled or another gateway-level error occurs
             ValueError: If required values are missing
             RuntimeError: If there is an error during processing that is not covered by other exceptions
             IntegrityError: If there is a database integrity error
@@ -1298,6 +1300,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Raises:
             GatewayConnectionError: If connection or OAuth fails
+            ValueError: If the gateway is not found, has no OAuth configuration, or uses an unsupported transport type
         """
         try:
             # Get the gateway with eager loading for sync operations to avoid N+1 queries
@@ -1756,11 +1759,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Raises:
             GatewayNotFoundError: If gateway not found
+            GatewayDuplicateConflictError: If a duplicate gateway already exists with the same URL and auth
             PermissionError: If user doesn't own the gateway
             GatewayError: For other update errors
             GatewayNameConflictError: If gateway name conflict occurs
             IntegrityError: If there is a database integrity error
             ValidationError: If validation fails
+            ValueError: If query parameter authentication is disabled or the host is not allowed
         """
         try:  # pylint: disable=too-many-nested-blocks
             # Acquire row lock and eager-load relationships while locked so
@@ -4853,6 +4858,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
+
+        Raises:
+            GatewayConnectionError: If the SSE connection fails or all tools fail validation.
         """
         if authentication is None:
             authentication = {}
@@ -4986,6 +4994,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
+
+        Raises:
+            GatewayConnectionError: If the connection to the SSE server fails or cannot be established.
         """
         if authentication is None:
             authentication = {}
@@ -5146,6 +5157,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
+
+        Raises:
+            GatewayConnectionError: If the connection to the Streamable HTTP server fails or cannot be established.
         """
         if authentication is None:
             authentication = {}

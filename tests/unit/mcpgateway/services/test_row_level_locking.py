@@ -383,18 +383,12 @@ class TestA2AServiceLocking:
     """Test row-level locking in A2AAgentService."""
 
     @pytest.mark.asyncio
-    async def test_invoke_agent_uses_for_update(self):
-        """Verify A2A agent invocation uses get_for_update."""
+    async def test_invoke_agent_uses_direct_query(self):
+        """Verify A2A agent invocation uses a direct query (no row lock) for the read path."""
         service = A2AAgentService()
         db = MagicMock(spec=Session)
 
-        # Mock the initial name lookup
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = "agent-id"
-        db.execute.return_value = mock_result
-        db.commit = MagicMock()
-        db.close = MagicMock()
-
+        # Mock the direct agent lookup by name
         mock_agent = MagicMock(spec=A2AAgent)
         mock_agent.id = "agent-id"
         mock_agent.enabled = True
@@ -402,28 +396,35 @@ class TestA2AServiceLocking:
         mock_agent.agent_type = "generic"
         mock_agent.protocol_version = "v1"
         mock_agent.auth_type = None
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
 
-        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent) as mock_get:
-            # Patch the http_client_service module where get_http_client is imported from
-            with patch("mcpgateway.services.http_client_service.get_http_client") as mock_http:
-                mock_client = MagicMock()
-                mock_response = MagicMock()
-                mock_response.status_code = 200
-                mock_response.json.return_value = {"result": "success"}
-                mock_client.post.return_value = mock_response
-                mock_http.return_value = mock_client
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_agent
+        db.execute.return_value = mock_result
+        db.commit = MagicMock()
 
-                with patch("mcpgateway.db.fresh_db_session"):
-                    with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service"):
-                        with patch("mcpgateway.utils.correlation_id.get_correlation_id", return_value="test-id"):
-                            with patch("mcpgateway.services.structured_logger.get_structured_logger"):
-                                try:
-                                    await service.invoke_agent(db, "test-agent", {})
-                                except Exception:
-                                    pass
+        # Patch the http_client_service module where get_http_client is imported from
+        with patch("mcpgateway.services.http_client_service.get_http_client") as mock_http:
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"result": "success"}
+            mock_client.post.return_value = mock_response
+            mock_http.return_value = mock_client
 
-            # Verify get_for_update was called for the agent
-            assert mock_get.call_count >= 1, "get_for_update should be called during agent invocation"
+            with patch("mcpgateway.db.fresh_db_session"):
+                with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service"):
+                    with patch("mcpgateway.utils.correlation_id.get_correlation_id", return_value="test-id"):
+                        with patch("mcpgateway.services.structured_logger.get_structured_logger"):
+                            try:
+                                await service.invoke_agent(db, "test-agent", {})
+                            except Exception:
+                                pass
+
+        # Verify db.execute was called (direct query, no get_for_update row lock)
+        assert db.execute.call_count >= 1, "db.execute should be called for the agent lookup"
 
     @pytest.mark.asyncio
     async def test_update_agent_uses_for_update(self):

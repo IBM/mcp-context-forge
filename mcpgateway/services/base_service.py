@@ -236,4 +236,5 @@ class BaseService(ABC):
         if not team_ids:
             return {}
         teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return {team.id: team.name for team in teams}

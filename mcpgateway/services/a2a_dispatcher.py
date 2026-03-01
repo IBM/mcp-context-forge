@@ -81,6 +81,9 @@ async def resolve_a2a_auth(
 
     Returns:
         A2AAuthContext with resolved headers and potentially modified URL.
+
+    Raises:
+        error_cls: If decryption fails (when fallback_raw_auth is False) or OAuth fails.
     """
     # First-Party
     from mcpgateway.utils.services_auth import decode_auth  # pylint: disable=import-outside-toplevel
@@ -159,6 +162,9 @@ def prepare_rpc_params(
 
     Returns:
         Tuple of (rpc_method, rpc_params).
+
+    Raises:
+        A2AAgentError: If a v0.3 slash-style method name is used when compat mode is off.
     """
     rpc_method = parameters.get("method", "SendMessage") if isinstance(parameters, dict) else "SendMessage"
 
@@ -239,9 +245,21 @@ async def dispatch_a2a_transport(
         A2ADispatchResult with either http_response or grpc_data set.
 
     Raises:
-        Exception: If the transport type is unsupported.
+        A2AAgentError: If the URL scheme is invalid or the transport type is unsupported.
+        ValueError: If a required callback (build_rest_request_fn, invoke_grpc_fn)
+            is not provided for a transport that needs it.
     """
     import asyncio  # pylint: disable=import-outside-toplevel
+
+    from mcpgateway.services.a2a_errors import A2AAgentError  # pylint: disable=import-outside-toplevel
+
+    # Validate URL scheme for HTTP transports
+    if normalized_agent_type in ("a2a-jsonrpc", "a2a-rest", "rest-passthrough", "custom"):
+        from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+        parsed = urlparse(endpoint_url)
+        if parsed.scheme not in ("http", "https"):
+            raise A2AAgentError(f"Unsupported URL scheme '{parsed.scheme}' for HTTP transport; only http:// and https:// are allowed")
 
     result = A2ADispatchResult(transport=normalized_agent_type)
 
@@ -290,7 +308,7 @@ async def dispatch_a2a_transport(
         result.grpc_data = await (asyncio.wait_for(coro, timeout=timeout) if timeout else coro)
 
     else:
-        raise ValueError(f"Unsupported A2A transport: {normalized_agent_type}")
+        raise A2AAgentError(f"Unsupported A2A transport: {normalized_agent_type}")
 
     return result
 

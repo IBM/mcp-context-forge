@@ -2396,19 +2396,20 @@ class ServerTaskMapping(Base):
     __tablename__ = "server_task_mappings"
     __table_args__ = (
         UniqueConstraint("server_id", "server_task_id", name="uq_server_task_mapping"),
-        Index("ix_server_task_mappings_agent", "agent_name", "agent_task_id"),
+        Index("ix_server_task_mappings_agent", "agent_id", "agent_task_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
     server_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False)
     agent_task_id: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", comment="Mapping status: active, failed, completed")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     server: Mapped["Server"] = relationship("Server", foreign_keys=[server_id])
+    agent: Mapped["A2AAgent"] = relationship("A2AAgent", foreign_keys=[agent_id])
 
 
 class ServerInterface(Base):

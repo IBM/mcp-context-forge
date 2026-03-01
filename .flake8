@@ -42,12 +42,6 @@ extend-ignore =
     E203,
     W503
 per-file-ignores =
-    mcpgateway/services/gateway_service.py: DAR401,DAR402
-    mcpgateway/translate.py: DAR401
-    mcpgateway/admin.py: DAR101,DAR201
-    mcpgateway/main.py: DAR101,DAR201,DAR401
-    mcpgateway/schemas.py: DAR101,DAR201
-    mcpgateway/services/a2a_service.py: DAR101,DAR201,DAR401
     tests/**/*.py: DAR
     tests/unit/**/*.py: F841
     tests/loadtest/locustfile.py: DAR101,DAR201,DUO102

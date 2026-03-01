@@ -103,10 +103,8 @@ class TestIssue840UserInputForA2AAgentTest:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    @patch("mcpgateway.services.a2a_service.get_for_update")
     async def test_invoke_agent_with_custom_user_query(
         self,
-        mock_get_for_update,
         mock_get_client,
         mock_fresh_db,
         mock_metrics_buffer_fn,
@@ -130,11 +128,8 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations - agent lookup by name returns ID
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_a2a_agent.id
-
-        # Mock get_for_update to return our sample agent
-        mock_get_for_update.return_value = sample_a2a_agent
+        # Mock database operations - direct agent lookup by name
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_a2a_agent
 
         # Mock fresh_db_session
         mock_ts_db = MagicMock()
@@ -219,10 +214,8 @@ class TestIssue840UserInputForA2AAgentTest:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    @patch("mcpgateway.services.a2a_service.get_for_update")
     async def test_custom_agent_receives_query_in_parameters(
         self,
-        mock_get_for_update,
         mock_get_client,
         mock_fresh_db,
         mock_metrics_buffer_fn,
@@ -248,11 +241,8 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations - agent lookup by name returns ID
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_a2a_agent.id
-
-        # Mock get_for_update to return our sample agent
-        mock_get_for_update.return_value = sample_a2a_agent
+        # Mock database operations - direct agent lookup by name
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_a2a_agent
 
         # Mock fresh_db_session
         mock_ts_db = MagicMock()
