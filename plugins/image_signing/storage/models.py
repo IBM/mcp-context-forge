@@ -84,7 +84,7 @@ class SignatureVerificationRecord(Base):
     slsa_builder: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    block_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     verification_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 

@@ -175,7 +175,7 @@ class SignatureVerificationResult(BaseModel):
         rekor_verified: Whether the Rekor transparency log entry was verified.
         slsa: SLSA verification summary.
         blocked: Whether the image deployment is blocked.
-        block_reason: Reason for blocking, if applicable.
+        reason: Reason for blocking, if applicable.
     """
 
     image_ref: str
@@ -188,4 +188,4 @@ class SignatureVerificationResult(BaseModel):
     rekor_verified: Optional[bool] = None
     slsa: SlsaResult = Field(default_factory=SlsaResult)
     blocked: bool = False
-    block_reason: Optional[str] = None
+    reason: Optional[str] = None
