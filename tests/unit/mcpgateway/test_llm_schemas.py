@@ -563,3 +563,84 @@ class TestLLMSchemaXSSValidation:
                 provider_type=LLMProviderTypeEnum.OPENAI,
                 api_base="javascript:alert(1)",
             )
+
+    def test_provider_update_none_fields_pass_through(self):
+        """Optional None fields on LLMProviderUpdate must pass through validators."""
+        update = LLMProviderUpdate(
+            name=None, description=None, api_base=None, config=None,
+        )
+        assert update.name is None
+        assert update.description is None
+        assert update.api_base is None
+        assert update.config is None
+
+    def test_provider_update_with_values_validates(self):
+        """LLMProviderUpdate validates non-None values through SecurityValidator."""
+        update = LLMProviderUpdate(
+            name="Updated-Name",
+            description="Updated description",
+            api_base="https://api.example.com",
+            config={"key": "value"},
+        )
+        assert update.name == "Updated-Name"
+        assert update.description == "Updated description"
+        assert update.api_base == "https://api.example.com"
+        assert update.config == {"key": "value"}
+
+    def test_model_update_none_fields_pass_through(self):
+        """Optional None fields on LLMModelUpdate must pass through validators."""
+        update = LLMModelUpdate(
+            model_id=None, model_name=None, model_alias=None, description=None,
+        )
+        assert update.model_id is None
+        assert update.model_name is None
+        assert update.model_alias is None
+        assert update.description is None
+
+    def test_model_update_with_values_validates(self):
+        """LLMModelUpdate validates non-None values through SecurityValidator."""
+        update = LLMModelUpdate(
+            model_id="gpt-4o",
+            model_name="GPT-4o Updated",
+            model_alias="gpt4o-alias",
+            description="Updated model",
+        )
+        assert update.model_id == "gpt-4o"
+        assert update.model_name == "GPT-4o Updated"
+        assert update.model_alias == "gpt4o-alias"
+        assert update.description == "Updated model"
+
+    def test_provider_base_description_none_accepted(self):
+        """LLMProviderBase accepts None description without error."""
+        provider = LLMProviderCreate(
+            name="No-Desc",
+            provider_type=LLMProviderTypeEnum.OPENAI,
+            description=None,
+            api_base=None,
+        )
+        assert provider.description is None
+        assert provider.api_base is None
+
+    def test_model_base_optional_none_accepted(self):
+        """LLMModelBase accepts None for optional fields."""
+        model = LLMModelCreate(
+            provider_id="p1",
+            model_id="gpt-4o",
+            model_name="GPT-4o",
+            model_alias=None,
+            description=None,
+        )
+        assert model.model_alias is None
+        assert model.description is None
+
+    def test_model_base_optional_values_validated(self):
+        """LLMModelBase validates non-None optional fields through sanitizers."""
+        model = LLMModelCreate(
+            provider_id="p1",
+            model_id="gpt-4o",
+            model_name="GPT-4o",
+            model_alias="gpt4o",
+            description="A fast model",
+        )
+        assert model.model_alias == "gpt4o"
+        assert model.description == "A fast model"
