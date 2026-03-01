@@ -506,14 +506,13 @@ def _build_admin_a2a_test_payload(agent_type: Optional[str], user_query: str, no
     normalized_type = _normalize_a2a_agent_type(agent_type, fallback="custom")
     timestamp = int(now_ts if now_ts is not None else time.time())
     message = {
-        "kind": "message",
         "messageId": f"admin-test-{timestamp}",
         "role": "user",
-        "parts": [{"kind": "text", "text": user_query}],
+        "parts": [{"text": user_query}],
     }
 
     if normalized_type == "a2a-jsonrpc":
-        return {"method": "message/send", "params": {"message": message}}
+        return {"method": "SendMessage", "params": {"message": message}}
     if normalized_type == "a2a-rest":
         return {"message": message}
     if normalized_type == "a2a-grpc":

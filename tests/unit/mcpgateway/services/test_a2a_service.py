@@ -53,7 +53,10 @@ class TestA2AAgentService:
     @pytest.fixture
     def service(self):
         """Create A2A agent service instance."""
-        return A2AAgentService()
+        svc = A2AAgentService()
+        # Prevent real HTTP calls during agent card discovery.
+        svc._discover_agent_card = AsyncMock(return_value=None)
+        return svc
 
     @pytest.fixture
     def mock_db(self):
@@ -1243,7 +1246,10 @@ class TestRegisterAgentEdgeCases:
 
     @pytest.fixture
     def service(self):
-        return A2AAgentService()
+        svc = A2AAgentService()
+        # Prevent real HTTP calls during agent card discovery.
+        svc._discover_agent_card = AsyncMock(return_value=None)
+        return svc
 
     @pytest.fixture
     def mock_db(self):
@@ -2344,7 +2350,7 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
     async def test_invoke_rest_mapping_includes_a2a_version_header(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """REST transport maps A2A methods to /v1 endpoints and includes A2A-Version header."""
+        """REST transport maps A2A methods to /v1 endpoints and includes A2A-Version header matching agent's protocol_version."""
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
         mock_client.request.return_value = mock_response
@@ -2388,7 +2394,8 @@ class TestInvokeAgentEdgeCases:
         assert call_args.args[0] == "POST"
         assert call_args.args[1].endswith("/base/v1/message:send")
         headers_used = call_args.kwargs["headers"]
-        assert headers_used.get("A2A-Version") == "1.0"
+        # Agent has protocol_version="0.3" → outbound version header matches
+        assert headers_used.get("A2A-Version") == "0.3"
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -3100,7 +3107,7 @@ class TestA2AServiceWrapperMethods:
             yield b"data: {}\n\n"
 
         async def _fake_build(*args, **kwargs):
-            assert kwargs["rpc_method"] == "message/stream"
+            assert kwargs["rpc_method"] == "SendStreamMessage"
             assert kwargs["interaction_type"] == "message_stream"
             return _fake_gen()
 
@@ -3116,7 +3123,7 @@ class TestA2AServiceWrapperMethods:
             yield b"event: status\n"
 
         async def _fake_build(*args, **kwargs):
-            assert kwargs["rpc_method"] == "tasks/subscribe"
+            assert kwargs["rpc_method"] == "SubscribeTask"
             assert kwargs["interaction_type"] == "tasks_subscribe"
             assert kwargs["rpc_params"]["id"] == "t1"
             return _fake_gen()
@@ -3127,7 +3134,7 @@ class TestA2AServiceWrapperMethods:
         assert len(chunks) == 1
 
     async def test_get_agent_card_delegates_to_invoke_agent(self, service, monkeypatch):
-        """get_agent_card wraps invoke_agent with method='agent/getCard'."""
+        """get_agent_card wraps invoke_agent with method='GetAgentCard'."""
         captured = {}
 
         async def _fake_invoke(db, agent_name, parameters, interaction_type, **kw):
@@ -3138,7 +3145,7 @@ class TestA2AServiceWrapperMethods:
         monkeypatch.setattr(service, "invoke_agent", _fake_invoke)
         result = await service.get_agent_card(db=MagicMock(), agent_name="ag")
         assert result["name"] == "test-agent"
-        assert captured["method"] == "agent/getCard"
+        assert captured["method"] == "GetAgentCard"
         assert captured["interaction_type"] == "agent_card"
 
 

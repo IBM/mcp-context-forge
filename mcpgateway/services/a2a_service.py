@@ -18,7 +18,7 @@ import asyncio  # noqa: F401
 import binascii
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, cast, ClassVar, Dict, List, Optional, Union
 from urllib.parse import urlparse
 import uuid
 
@@ -128,101 +128,8 @@ def _validate_a2a_identifier(value: str, label: str) -> str:
     return stripped
 
 
-class A2AAgentError(Exception):
-    """Base class for A2A agent-related errors.
-
-    Examples:
-        >>> try:
-        ...     raise A2AAgentError("Agent operation failed")
-        ... except A2AAgentError as e:
-        ...     str(e)
-        'Agent operation failed'
-        >>> try:
-        ...     raise A2AAgentError("Connection error")
-        ... except Exception as e:
-        ...     isinstance(e, A2AAgentError)
-        True
-    """
-
-
-class A2AAgentNotFoundError(A2AAgentError):
-    """Raised when a requested A2A agent is not found.
-
-    Examples:
-        >>> try:
-        ...     raise A2AAgentNotFoundError("Agent 'test-agent' not found")
-        ... except A2AAgentNotFoundError as e:
-        ...     str(e)
-        "Agent 'test-agent' not found"
-        >>> try:
-        ...     raise A2AAgentNotFoundError("No such agent")
-        ... except A2AAgentError as e:
-        ...     isinstance(e, A2AAgentError)  # Should inherit from A2AAgentError
-        True
-    """
-
-
-class A2AAgentNameConflictError(A2AAgentError):
-    """Raised when an A2A agent name conflicts with an existing one."""
-
-    def __init__(self, name: str, is_active: bool = True, agent_id: Optional[str] = None, visibility: Optional[str] = "public"):
-        """Initialize an A2AAgentNameConflictError exception.
-
-        Creates an exception that indicates an agent name conflict, with additional
-        context about whether the conflicting agent is active and its ID if known.
-
-        Args:
-            name: The agent name that caused the conflict.
-            is_active: Whether the conflicting agent is currently active.
-            agent_id: The ID of the conflicting agent, if known.
-            visibility: The visibility level of the conflicting agent (private, team, public).
-
-        Examples:
-            >>> error = A2AAgentNameConflictError("test-agent")
-            >>> error.name
-            'test-agent'
-            >>> error.is_active
-            True
-            >>> error.agent_id is None
-            True
-            >>> "test-agent" in str(error)
-            True
-            >>>
-            >>> # Test inactive agent conflict
-            >>> error = A2AAgentNameConflictError("inactive-agent", is_active=False, agent_id="agent-123")
-            >>> error.is_active
-            False
-            >>> error.agent_id
-            'agent-123'
-            >>> "inactive" in str(error)
-            True
-            >>> "agent-123" in str(error)
-            True
-        """
-        self.name = name
-        self.is_active = is_active
-        self.agent_id = agent_id
-        message = f"{visibility.capitalize()} A2A Agent already exists with name: {name}"
-        if not is_active:
-            message += f" (currently inactive, ID: {agent_id})"
-        super().__init__(message)
-
-
-class A2AAgentUpstreamError(A2AAgentError):
-    """Raised when an upstream A2A agent returns an error (HTTP 4xx/5xx, gRPC failure).
-
-    Route handlers should map this to HTTP 502 Bad Gateway to distinguish upstream
-    failures from client-side request errors.
-
-    Examples:
-        >>> try:
-        ...     raise A2AAgentUpstreamError("HTTP 500: Internal Server Error")
-        ... except A2AAgentUpstreamError as e:
-        ...     str(e)
-        'HTTP 500: Internal Server Error'
-        >>> isinstance(A2AAgentUpstreamError("x"), A2AAgentError)
-        True
-    """
+# Re-export from canonical location for backward compatibility.
+from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentUpstreamError  # noqa: F401
 
 
 class A2AAgentService(BaseService):
@@ -497,10 +404,17 @@ class A2AAgentService(BaseService):
             return normalized_params
 
         # Accept both "parts" (v1.0) and "content" (v0.3) as the parts array field name.
+        used_content_field = "content" in message and "parts" not in message
+        if used_content_field:
+            from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+            if not settings.mcpgateway_a2a_v1_compat_mode:
+                raise A2AAgentError("v0.3 message format rejected: 'content' field is deprecated in A2A v1.0. Use 'parts' instead. Enable MCPGATEWAY_A2A_V1_COMPAT_MODE=true to accept v0.3 formats.")
         parts = message.get("parts") or message.get("content")
         if not isinstance(parts, list):
             return normalized_params
 
+        v03_compat_used = used_content_field
         normalized_parts: List[Any] = []
         for part in parts:
             if not isinstance(part, dict):
@@ -516,6 +430,13 @@ class A2AAgentService(BaseService):
                 normalized_part.pop("type", None)
 
             if kind:
+                v03_compat_used = True
+                if not used_content_field:
+                    # Only check compat mode once per message (content field check is above).
+                    from mcpgateway.config import settings as _settings  # pylint: disable=import-outside-toplevel
+
+                    if not _settings.mcpgateway_a2a_v1_compat_mode:
+                        raise A2AAgentError("v0.3 Part format rejected: 'kind' discriminator is deprecated in A2A v1.0. Use flat part structure instead. Enable MCPGATEWAY_A2A_V1_COMPAT_MODE=true to accept v0.3 formats.")
                 kind_lower = str(kind).strip().lower()
 
                 if kind_lower == "text":
@@ -554,7 +475,124 @@ class A2AAgentService(BaseService):
         # Always output as "parts" (v1.0 field name).
         message.pop("content", None)
         message["parts"] = normalized_parts
+
+        if v03_compat_used:
+            structured_logger.log(
+                level="DEBUG",
+                message="A2A v0.3 compat: inbound message normalized to v1.0 format",
+                component="a2a_service",
+                metadata={"event": "a2a_v03_compat_inbound", "used_content_field": used_content_field, "part_count": len(normalized_parts)},
+            )
+
         return normalized_params
+
+    # ------------------------------------------------------------------
+    # Backward compatibility: v1.0 → v0.3 outbound conversion
+    # ------------------------------------------------------------------
+
+    # PascalCase (v1.0) ↔ slash-style (v0.3) method name mapping.
+    _V1_TO_V03_METHOD_MAP: ClassVar[Dict[str, str]] = {
+        "SendMessage": "message/send",
+        "SendStreamMessage": "message/stream",
+        "GetTask": "tasks/get",
+        "ListTasks": "tasks/list",
+        "CancelTask": "tasks/cancel",
+        "SubscribeTask": "tasks/subscribe",
+        "SetPushNotificationConfig": "tasks/pushNotificationConfig/set",
+        "GetPushNotificationConfig": "tasks/pushNotificationConfig/get",
+        "ListPushNotificationConfigs": "tasks/pushNotificationConfig/list",
+        "DeletePushNotificationConfig": "tasks/pushNotificationConfig/delete",
+        "GetAgentCard": "agent/card",
+        "GetExtendedAgentCard": "agent/extendedcard",
+    }
+
+    @staticmethod
+    def _outbound_method_for_version(method: str, protocol_version: str) -> str:
+        """Map v1.0 PascalCase method to v0.3 slash-style when targeting a v0.3 agent.
+
+        Args:
+            method: The RPC method name (typically v1.0 PascalCase).
+            protocol_version: The target agent's protocol version.
+
+        Returns:
+            The method name appropriate for the target agent's protocol version.
+        """
+        if protocol_version.startswith("1.") or protocol_version == "1":
+            return method
+        mapped = A2AAgentService._V1_TO_V03_METHOD_MAP.get(method)
+        if mapped:
+            structured_logger.log(
+                level="DEBUG",
+                message=f"A2A v0.3 compat: outbound method {method} → {mapped}",
+                component="a2a_service",
+                metadata={"event": "a2a_v03_compat_method", "v1_method": method, "v03_method": mapped, "protocol_version": protocol_version},
+            )
+            return mapped
+        return method
+
+    @staticmethod
+    def _normalize_outbound_for_v03(params: Any) -> Any:
+        """Convert v1.0 flat parts back to v0.3 kind-based format for outbound to v0.3 agents.
+
+        Reverses ``_normalize_message_parts_to_kind``:
+        - ``parts`` field → ``content`` field
+        - Flat ``text`` key → ``kind: "text"``
+        - Flat ``url``/``raw`` + ``media_type``/``filename`` → ``kind: "file"`` with nested ``file`` object
+        - Flat ``data`` key → ``kind: "data"`` with nested ``data`` object
+
+        Args:
+            params: The normalized v1.0 params dict.
+
+        Returns:
+            Params dict with v0.3 Part structure.
+        """
+        if not isinstance(params, dict):
+            return params
+
+        result = deepcopy(params)
+        message = result.get("message")
+        if not isinstance(message, dict):
+            return result
+
+        parts = message.get("parts")
+        if not isinstance(parts, list):
+            return result
+
+        v03_parts: List[Any] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                v03_parts.append(part)
+                continue
+
+            if "text" in part and not any(k in part for k in ("url", "raw", "data")):
+                v03_parts.append({"kind": "text", "text": part["text"]})
+            elif "url" in part or "raw" in part:
+                file_obj: Dict[str, Any] = {}
+                if "url" in part:
+                    file_obj["uri"] = part["url"]
+                if "raw" in part:
+                    file_obj["bytes"] = part["raw"]
+                if "media_type" in part:
+                    file_obj["mimeType"] = part["media_type"]
+                if "filename" in part:
+                    file_obj["name"] = part["filename"]
+                v03_parts.append({"kind": "file", "file": file_obj})
+            elif "data" in part:
+                v03_parts.append({"kind": "data", "data": {"data": part["data"]}})
+            else:
+                v03_parts.append(part)
+
+        # v0.3 uses "content" field, not "parts".
+        message.pop("parts", None)
+        message["content"] = v03_parts
+
+        structured_logger.log(
+            level="DEBUG",
+            message="A2A v0.3 compat: outbound parts converted to kind-based format",
+            component="a2a_service",
+            metadata={"event": "a2a_v03_compat_parts", "part_count": len(v03_parts)},
+        )
+        return result
 
     def _extract_jsonrpc_error_message(self, payload: Any) -> Optional[str]:
         """Extract and map JSON-RPC/A2A error details from payload."""
@@ -2347,6 +2385,15 @@ class A2AAgentService(BaseService):
         # Prepare RPC params using shared dispatcher.
         rpc_method, rpc_params = prepare_rpc_params(parameters, normalized_agent_type, self._normalize_message_parts_to_kind)
 
+        # Version-aware outbound: convert v1.0 format to v0.3 for legacy agents.
+        is_v03_agent = not (agent_protocol_version.startswith("1.") or agent_protocol_version == "1")
+        if is_v03_agent:
+            rpc_method = self._outbound_method_for_version(rpc_method, agent_protocol_version)
+            rpc_params = self._normalize_outbound_for_v03(rpc_params)
+
+        # Advertise the version matching the target agent's protocol.
+        outbound_version_header = agent_protocol_version if is_v03_agent else A2A_VERSION_HEADER
+
         # First-Party
         from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
 
@@ -2358,7 +2405,7 @@ class A2AAgentService(BaseService):
 
             client = await get_http_client()
             correlation_id = get_correlation_id()
-            headers = build_dispatch_headers(auth_headers, normalized_agent_type, A2A_VERSION_HEADER, correlation_id)
+            headers = build_dispatch_headers(auth_headers, normalized_agent_type, outbound_version_header, correlation_id)
 
             call_start_time = datetime.now(timezone.utc)
             structured_logger.log(
@@ -2551,7 +2598,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "message/send", "params": message_params},
+            parameters={"method": "SendMessage", "params": message_params},
             interaction_type="message_send",
             user_id=user_id,
             user_email=user_email,
@@ -2618,8 +2665,15 @@ class A2AAgentService(BaseService):
         db.close()
 
         # Normalize message parts for spec transports.
+        agent_protocol_version = agent.protocol_version
         if isinstance(rpc_params, dict):
             rpc_params = self._normalize_message_parts_to_kind(rpc_params)
+
+        # Version-aware outbound: convert v1.0 format to v0.3 for legacy agents.
+        is_v03_agent = not (agent_protocol_version.startswith("1.") or agent_protocol_version == "1")
+        if is_v03_agent:
+            rpc_method = self._outbound_method_for_version(rpc_method, agent_protocol_version)
+            rpc_params = self._normalize_outbound_for_v03(rpc_params) if isinstance(rpc_params, dict) else rpc_params
 
         correlation_id = get_correlation_id()
 
@@ -2752,11 +2806,11 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> AsyncGenerator[bytes, None]:
-        """Invoke A2A `message/stream` and proxy upstream SSE events."""
+        """Invoke A2A ``SendStreamMessage`` and proxy upstream SSE events."""
         return await self._build_sse_stream(
             db=db,
             agent_name=agent_name,
-            rpc_method="message/stream",
+            rpc_method="SendStreamMessage",
             rpc_params=message_params,
             interaction_type="message_stream",
             user_id=user_id,
@@ -2774,11 +2828,11 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Invoke A2A `tasks/get` for a specific task."""
+        """Invoke A2A ``GetTask`` for a specific task."""
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "tasks/get", "params": {"id": task_id}},
+            parameters={"method": "GetTask", "params": {"id": task_id}},
             interaction_type="tasks_get",
             user_id=user_id,
             user_email=user_email,
@@ -2799,7 +2853,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "tasks/list", "params": params or {}},
+            parameters={"method": "ListTasks", "params": params or {}},
             interaction_type="tasks_list",
             user_id=user_id,
             user_email=user_email,
@@ -2824,7 +2878,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "tasks/cancel", "params": cancel_params},
+            parameters={"method": "CancelTask", "params": cancel_params},
             interaction_type="tasks_cancel",
             user_id=user_id,
             user_email=user_email,
@@ -2849,7 +2903,7 @@ class A2AAgentService(BaseService):
         return await self._build_sse_stream(
             db=db,
             agent_name=agent_name,
-            rpc_method="tasks/subscribe",
+            rpc_method="SubscribeTask",
             rpc_params=subscribe_params,
             interaction_type="tasks_subscribe",
             user_id=user_id,
@@ -2875,7 +2929,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "tasks/pushNotificationConfig/set", "params": payload},
+            parameters={"method": "SetPushNotificationConfig", "params": payload},
             interaction_type="tasks_push_notification_set",
             user_id=user_id,
             user_email=user_email,
@@ -2897,7 +2951,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "tasks/pushNotificationConfig/get", "params": {"id": task_id, "configId": config_id}},
+            parameters={"method": "GetPushNotificationConfig", "params": {"id": task_id, "configId": config_id}},
             interaction_type="tasks_push_notification_get",
             user_id=user_id,
             user_email=user_email,
@@ -2922,7 +2976,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "tasks/pushNotificationConfig/list", "params": payload},
+            parameters={"method": "ListPushNotificationConfigs", "params": payload},
             interaction_type="tasks_push_notification_list",
             user_id=user_id,
             user_email=user_email,
@@ -2944,7 +2998,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "tasks/pushNotificationConfig/delete", "params": {"id": task_id, "configId": config_id}},
+            parameters={"method": "DeletePushNotificationConfig", "params": {"id": task_id, "configId": config_id}},
             interaction_type="tasks_push_notification_delete",
             user_id=user_id,
             user_email=user_email,
@@ -2964,7 +3018,7 @@ class A2AAgentService(BaseService):
         return await self.invoke_agent(
             db=db,
             agent_name=agent_name,
-            parameters={"method": "agent/getCard", "params": {}},
+            parameters={"method": "GetAgentCard", "params": {}},
             interaction_type="agent_card",
             user_id=user_id,
             user_email=user_email,

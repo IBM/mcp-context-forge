@@ -161,6 +161,16 @@ def prepare_rpc_params(
         Tuple of (rpc_method, rpc_params).
     """
     rpc_method = parameters.get("method", "SendMessage") if isinstance(parameters, dict) else "SendMessage"
+
+    # Reject v0.3 slash-style method names when compat mode is off.
+    if isinstance(rpc_method, str) and "/" in rpc_method:
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        if not settings.mcpgateway_a2a_v1_compat_mode:
+            from mcpgateway.services.a2a_errors import A2AAgentError  # pylint: disable=import-outside-toplevel
+
+            raise A2AAgentError(f"v0.3 method name '{rpc_method}' rejected. Use PascalCase (e.g., 'SendMessage') per A2A v1.0. Enable MCPGATEWAY_A2A_V1_COMPAT_MODE=true to accept v0.3 methods.")
+
     rpc_params: Any = parameters.get("params", parameters) if isinstance(parameters, dict) else parameters
 
     # Convenience: wrap a flat {"query": "..."} into an A2A message.

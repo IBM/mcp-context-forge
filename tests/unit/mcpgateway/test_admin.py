@@ -4403,8 +4403,8 @@ class TestA2AAgentManagement:
         mock_get_agent.assert_called_with(mock_db, "agent-1")
         mock_invoke_agent.assert_called_once()
         params = mock_invoke_agent.call_args.args[2]
-        assert params["method"] == "message/send"
-        assert params["params"]["message"]["parts"][0]["kind"] == "text"
+        assert params["method"] == "SendMessage"
+        assert params["params"]["message"]["parts"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_disabled(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -4475,8 +4475,7 @@ class TestA2AAgentManagement:
         result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert result.status_code == 200
         params = service.invoke_agent.call_args.args[2]
-        assert params["message"]["parts"][0]["kind"] == "text"
-        assert params["message"]["parts"][0]["text"] == "hi"
+        assert params["message"]["parts"][0] == {"text": "hi"}
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_exception_handler(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -13531,11 +13530,11 @@ class TestUtilityFunctions:
         assert _format_a2a_agent_type_label("jsonrpc") == "A2A Protocol (JSON-RPC 2.0)"
         assert "Legacy: unknown-x" in _format_a2a_agent_type_label("unknown-x")
 
-    def test_build_admin_a2a_test_payload_uses_parts_kind(self):
+    def test_build_admin_a2a_test_payload_v1_format(self):
         payload = _build_admin_a2a_test_payload("a2a-jsonrpc", "hello", now_ts=12345)
-        assert payload["method"] == "message/send"
-        assert payload["params"]["message"]["kind"] == "message"
-        assert payload["params"]["message"]["parts"][0]["kind"] == "text"
+        assert payload["method"] == "SendMessage"
+        assert "kind" not in payload["params"]["message"]
+        assert payload["params"]["message"]["parts"][0] == {"text": "hello"}
         assert payload["params"]["message"]["messageId"] == "admin-test-12345"
 
     def test_build_admin_a2a_test_payload_for_rest_and_custom(self):

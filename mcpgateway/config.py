@@ -611,6 +611,7 @@ class Settings(BaseSettings):
     mcpgateway_a2a_default_timeout: int = 30
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
+    mcpgateway_a2a_v1_compat_mode: bool = Field(default=True, description="Accept v0.3 method names and Part formats alongside v1.0. When False, v0.3 inbound formats are rejected.")
 
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
