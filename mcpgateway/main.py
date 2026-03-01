@@ -87,6 +87,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.routers.a2a_server_router import router as a2a_server_router
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -8036,6 +8037,7 @@ if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:
     app.include_router(a2a_router)
+    app.include_router(a2a_server_router, prefix="/servers")
     logger.info("A2A router included - A2A features enabled")
 else:
     logger.info("A2A router not included - A2A features disabled")
