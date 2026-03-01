@@ -60,6 +60,7 @@ CONTEXT_CLEANUP_INTERVAL = 300  # 5 minutes
 CONTEXT_MAX_AGE = 3600  # 1 hour
 HTTP_AUTH_CHECK_PERMISSION_HOOK = "http_auth_check_permission"
 DECISION_PLUGIN_METADATA_KEY = "_decision_plugin"
+RESERVED_INTERNAL_METADATA_KEYS = frozenset({DECISION_PLUGIN_METADATA_KEY})
 
 
 class PluginTimeoutError(Exception):
@@ -277,7 +278,7 @@ class PluginExecutor:
             # lets the chain continue (see execute_plugin exception handlers).
             if not result.continue_processing and hook_ref.plugin_ref.mode in (PluginMode.ENFORCE, PluginMode.ENFORCE_IGNORE_ERROR):
                 if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
-                    combined_metadata.setdefault(DECISION_PLUGIN_METADATA_KEY, decision_plugin_name)
+                    combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
                 return (
                     PluginResult(
                         continue_processing=False,
@@ -289,7 +290,7 @@ class PluginExecutor:
                 )
 
         if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
-            combined_metadata.setdefault(DECISION_PLUGIN_METADATA_KEY, decision_plugin_name)
+            combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
 
         return (PluginResult(continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata), res_local_contexts)
 
@@ -332,7 +333,7 @@ class PluginExecutor:
                 global_context.metadata.update(local_context.global_context.metadata)
             # Aggregate metadata from all plugins
             if result.metadata and combined_metadata is not None:
-                combined_metadata.update(result.metadata)
+                combined_metadata.update({k: v for k, v in result.metadata.items() if k not in RESERVED_INTERNAL_METADATA_KEYS})
 
             # Track payload modifications
             # if result.modified_payload is not None:
