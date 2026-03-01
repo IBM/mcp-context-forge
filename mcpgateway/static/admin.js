@@ -86,17 +86,16 @@ function buildA2AAdminTestPayload(
         ? Math.floor(timestampSec)
         : Math.floor(Date.now() / 1000);
     const message = {
-        kind: "message",
         messageId: `admin-test-${timestamp}`,
         role: "user",
-        parts: [{ kind: "text", text: normalizedQuery }],
+        parts: [{ text: normalizedQuery }],
     };
 
     if (normalizedType === "a2a-jsonrpc") {
         return {
             jsonrpc: "2.0",
             id: "<uuid>",
-            method: "message/send",
+            method: "SendMessage",
             params: {
                 message,
             },
@@ -107,7 +106,7 @@ function buildA2AAdminTestPayload(
     }
     if (normalizedType === "a2a-grpc") {
         return {
-            method: "message/send",
+            method: "SendMessage",
             request: { message },
         };
     }

@@ -12337,7 +12337,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.endpointUrl || item.endpoint || '')}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(typeof formatA2AAgentTypeLabel === 'function' ? formatA2AAgentTypeLabel(item.agentType || item.type || '') : (item.agentType || item.type || ''))}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+              ${escapeHtml(typeof formatA2AAgentTypeLabel === 'function' ? formatA2AAgentTypeLabel(item.agentType || item.type || '') : (item.agentType || item.type || ''))}
+              <div class="text-xs text-gray-400 dark:text-gray-500">v${escapeHtml(item.protocolVersion || item.protocol_version || '1.0')}</div>
+            </td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.enabled || item.isActive || item.is_active)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
           `;

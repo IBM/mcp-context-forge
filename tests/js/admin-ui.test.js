@@ -715,15 +715,15 @@ describe("A2A protocol helpers", () => {
         );
     });
 
-    test("builds JSON-RPC preview payload with parts.kind", () => {
+    test("builds JSON-RPC preview payload with v1.0 format", () => {
         const payload = win.buildA2AAdminTestPayload(
             "a2a-jsonrpc",
             "hello",
             42,
         );
         expect(payload.jsonrpc).toBe("2.0");
-        expect(payload.method).toBe("message/send");
-        expect(payload.params.message.parts[0].kind).toBe("text");
+        expect(payload.method).toBe("SendMessage");
+        expect(payload.params.message.parts[0]).toEqual({ text: "hello" });
         expect(payload.params.message.messageId).toBe("admin-test-42");
     });
 
