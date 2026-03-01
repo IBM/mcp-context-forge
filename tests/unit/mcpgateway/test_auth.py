@@ -3286,3 +3286,12 @@ class TestSessionTokenBranches:
 
         assert user.email == "user@example.com"
         mock_cache.set_user_teams.assert_called_once()
+
+
+def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email():
+    """Plugin-auth helper should reject empty or missing email claims."""
+    # First-Party
+    import mcpgateway.auth as auth_module
+
+    assert auth_module._resolve_plugin_authenticated_user_sync({}) is None
+    assert auth_module._resolve_plugin_authenticated_user_sync({"email": "   "}) is None

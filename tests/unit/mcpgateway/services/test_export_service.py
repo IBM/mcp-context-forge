@@ -1492,6 +1492,106 @@ async def test_export_selected_tools_scoped_visibility_filters_non_visible(expor
 
 
 @pytest.mark.asyncio
+async def test_export_selected_tools_scoped_no_visible_match_returns_empty(export_service, mock_db):
+    """When scoped visibility yields no selected tools, export should short-circuit to empty."""
+    export_service._fetch_all_tools = AsyncMock(return_value=[SimpleNamespace(id="t9")])
+    exported = await export_service._export_selected_tools(mock_db, ["t1"], user_email="user@example.com", token_teams=["team-1"])
+    assert exported == []
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_export_selected_gateways_scoped_visibility_filters_non_visible(export_service, mock_db):
+    """Ensure selective gateway export enforces visibility scoping when context is provided."""
+    export_service._fetch_all_gateways = AsyncMock(return_value=[SimpleNamespace(id="gw1")])
+
+    visible_gateway = MagicMock()
+    visible_gateway.id = "gw1"
+    visible_gateway.name = "visible-gateway"
+    visible_gateway.url = "https://visible.example.com"
+    visible_gateway.description = "visible"
+    visible_gateway.transport = "SSE"
+    visible_gateway.capabilities = {}
+    visible_gateway.enabled = True
+    visible_gateway.tags = []
+    visible_gateway.passthrough_headers = []
+    visible_gateway.auth_type = None
+    visible_gateway.auth_value = None
+    visible_gateway.auth_query_params = None
+
+    hidden_gateway = MagicMock()
+    hidden_gateway.id = "gw2"
+    hidden_gateway.name = "hidden-gateway"
+    hidden_gateway.url = "https://hidden.example.com"
+    hidden_gateway.description = "hidden"
+    hidden_gateway.transport = "SSE"
+    hidden_gateway.capabilities = {}
+    hidden_gateway.enabled = True
+    hidden_gateway.tags = []
+    hidden_gateway.passthrough_headers = []
+    hidden_gateway.auth_type = None
+    hidden_gateway.auth_value = None
+    hidden_gateway.auth_query_params = None
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_gateway, hidden_gateway]
+
+    exported = await export_service._export_selected_gateways(mock_db, ["gw1", "gw2"], user_email="user@example.com", token_teams=["team-1"])
+    assert len(exported) == 1
+    assert exported[0]["name"] == "visible-gateway"
+
+
+@pytest.mark.asyncio
+async def test_export_selected_gateways_scoped_no_visible_match_returns_empty(export_service, mock_db):
+    """When scoped visibility yields no selected gateways, export should short-circuit to empty."""
+    export_service._fetch_all_gateways = AsyncMock(return_value=[SimpleNamespace(id="gw9")])
+    exported = await export_service._export_selected_gateways(mock_db, ["gw1"], user_email="user@example.com", token_teams=["team-1"])
+    assert exported == []
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_export_selected_servers_scoped_visibility_filters_non_visible(export_service, mock_db):
+    """Ensure selective server export enforces visibility scoping when context is provided."""
+    export_service._fetch_all_servers = AsyncMock(return_value=[SimpleNamespace(id="s1")])
+
+    visible_server = MagicMock()
+    visible_server.id = "s1"
+    visible_server.name = "visible-server"
+    visible_server.description = "visible"
+    visible_server.tools = []
+    visible_server.enabled = True
+    visible_server.tags = []
+
+    hidden_server = MagicMock()
+    hidden_server.id = "s2"
+    hidden_server.name = "hidden-server"
+    hidden_server.description = "hidden"
+    hidden_server.tools = []
+    hidden_server.enabled = True
+    hidden_server.tags = []
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_server, hidden_server]
+
+    exported = await export_service._export_selected_servers(
+        mock_db,
+        ["s1", "s2"],
+        user_email="user@example.com",
+        token_teams=["team-1"],
+    )
+    assert len(exported) == 1
+    assert exported[0]["name"] == "visible-server"
+
+
+@pytest.mark.asyncio
+async def test_export_selected_servers_scoped_no_visible_match_returns_empty(export_service, mock_db):
+    """When scoped visibility yields no selected servers, export should short-circuit to empty."""
+    export_service._fetch_all_servers = AsyncMock(return_value=[SimpleNamespace(id="s9")])
+    exported = await export_service._export_selected_servers(mock_db, ["s1"], user_email="user@example.com", token_teams=["team-1"])
+    assert exported == []
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_export_selected_prompts_scoped_visibility_filters_non_visible(export_service, mock_db):
     """Ensure selective prompt export enforces visibility scoping when context is provided."""
     export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="p1", name="visible-prompt", original_name="visible-prompt", custom_name="visible-prompt-custom")])
@@ -1533,6 +1633,21 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
 
 
 @pytest.mark.asyncio
+async def test_export_selected_prompts_scoped_no_visible_match_returns_empty(export_service, mock_db):
+    """When scoped visibility yields no selected prompts, export should short-circuit to empty."""
+    export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="p9", name="p9", original_name="p9", custom_name="p9")])
+
+    exported = await export_service._export_selected_prompts(
+        mock_db,
+        ["p1", "missing-name"],
+        user_email="user@example.com",
+        token_teams=["team-1"],
+    )
+    assert exported == []
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_export_selected_resources_scoped_visibility_filters_non_visible(export_service, mock_db):
     """Ensure selective resource export enforces visibility scoping when context is provided."""
     export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible.txt")])
@@ -1566,3 +1681,18 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     )
     assert len(exported) == 1
     assert exported[0]["uri"] == "file:///visible.txt"
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_scoped_no_visible_match_returns_empty(export_service, mock_db):
+    """When scoped visibility yields no selected resources, export should short-circuit to empty."""
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible-only.txt")])
+
+    exported = await export_service._export_selected_resources(
+        mock_db,
+        ["file:///missing.txt"],
+        user_email="user@example.com",
+        token_teams=["team-1"],
+    )
+    assert exported == []
+    mock_db.execute.assert_not_called()
