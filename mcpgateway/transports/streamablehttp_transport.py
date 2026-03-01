@@ -1994,7 +1994,11 @@ class SessionManagerWrapper:
 
         # Multi-worker session affinity: check if we should forward to another worker
         # This must happen BEFORE the SDK's session manager handles the request
-        is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
+        # Only trust x-forwarded-internally from loopback to prevent external spoofing
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        _from_loopback = _client_host in ("127.0.0.1", "::1") if _client_host else False
+        is_internally_forwarded = _from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:

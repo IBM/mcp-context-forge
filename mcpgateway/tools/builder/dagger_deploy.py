@@ -18,6 +18,8 @@ Features:
 # Standard
 import asyncio
 from pathlib import Path
+import re
+import shlex
 import subprocess  # nosec B404
 from typing import List, Optional
 
@@ -164,6 +166,7 @@ class MCPStackDagger(CICDModule):
         Raises:
             dagger.ExecError: If certificate generation command fails (when using local generation)
             dagger.QueryError: If Dagger query fails (when using local generation)
+            ValueError: If a plugin name contains invalid characters
         """
         config = load_config(config_file)
 
@@ -208,9 +211,12 @@ class MCPStackDagger(CICDModule):
 
                 # Generate plugin certificates
                 plugins = config.plugins
+                _safe_name_re = re.compile(r"^[a-zA-Z0-9_-]+$")
                 for plugin in plugins:
                     plugin_name = plugin.name
-                    container = container.with_exec(["sh", "-c", f"make certs-mcp-plugin PLUGIN_NAME={plugin_name} MCP_CERT_DAYS={validity_days}"])
+                    if not _safe_name_re.match(plugin_name):
+                        raise ValueError(f"Plugin name contains invalid characters: {plugin_name!r}")
+                    container = container.with_exec(["sh", "-c", f"make certs-mcp-plugin PLUGIN_NAME={shlex.quote(plugin_name)} MCP_CERT_DAYS={shlex.quote(str(validity_days))}"])
 
                 # Export certificates back to host
                 output = container.directory("/workspace/certs")

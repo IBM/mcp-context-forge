@@ -29,7 +29,6 @@ import uuid
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.gateway_service import GatewayNameConflictError
@@ -611,18 +610,13 @@ class ImportService:
             return entity_data
 
         try:
-            # Decrypt with old key
+            # Decrypt with current key, re-encrypt with new key.
+            # Pass secrets explicitly to avoid mutating global settings state,
+            # which would corrupt concurrent encode/decode operations.
             old_auth_value = entity_data["auth_value"]
             decrypted_auth = decode_auth(old_auth_value)
-
-            # Re-encrypt with new key (temporarily change settings)
-            old_secret = settings.auth_encryption_secret
-            settings.auth_encryption_secret = new_secret
-            try:
-                new_auth_value = encode_auth(decrypted_auth)
-                entity_data["auth_value"] = new_auth_value
-            finally:
-                settings.auth_encryption_secret = old_secret
+            new_auth_value = encode_auth(decrypted_auth, secret=new_secret)
+            entity_data["auth_value"] = new_auth_value
 
             logger.debug("Successfully re-keyed authentication data")
             return entity_data

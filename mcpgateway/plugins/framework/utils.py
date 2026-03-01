@@ -113,9 +113,15 @@ def coerce_nested(v: Any, *, _depth: int = 0) -> Any:
     return v
 
 
+_PLUGIN_MODULE_ALLOWLIST_PREFIXES = ("mcpgateway.plugins.",)
+
+
 @cache  # noqa
 def import_module(mod_name: str) -> ModuleType:
-    """Import a module.
+    """Import a module after validating it against the plugin module allowlist.
+
+    Only modules under the ``mcpgateway.plugins`` namespace are permitted
+    to be dynamically loaded as plugin kinds.
 
     Args:
         mod_name: fully qualified module name
@@ -123,15 +129,16 @@ def import_module(mod_name: str) -> ModuleType:
     Returns:
         A module.
 
+    Raises:
+        ImportError: If the module is not in the allowed namespace.
+
     Examples:
-        >>> import sys
-        >>> mod = import_module('sys')
-        >>> mod is sys
-        True
-        >>> os_mod = import_module('os')
-        >>> hasattr(os_mod, 'path')
+        >>> mod = import_module('mcpgateway.plugins.framework.utils')
+        >>> hasattr(mod, 'import_module')
         True
     """
+    if not any(mod_name.startswith(prefix) for prefix in _PLUGIN_MODULE_ALLOWLIST_PREFIXES):
+        raise ImportError(f"Plugin module '{mod_name}' is not in the allowed namespace. Only modules under {_PLUGIN_MODULE_ALLOWLIST_PREFIXES} are permitted.")
     return importlib.import_module(mod_name)
 
 
