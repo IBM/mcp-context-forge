@@ -9,15 +9,8 @@ Tests for RateLimiterPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework import (
-    GlobalContext,
-    PluginConfig,
-    PluginContext,
-    PromptHookType,
-    PromptPrehookPayload,
-    ToolHookType
-)
-from plugins.rate_limiter.rate_limiter import RateLimiterPlugin, _make_headers, _select_most_restrictive, _store
+from mcpgateway.plugins.framework import GlobalContext, PluginConfig, PluginContext, PromptHookType, PromptPrehookPayload, ToolHookType
+from plugins.rate_limiter.rate_limiter import RateLimiterPlugin, _make_headers, _parse_rate, _select_most_restrictive, _store
 
 
 @pytest.fixture(autouse=True)
@@ -106,8 +99,8 @@ async def test_prompt_pre_fetch_violation_includes_all_headers():
 
 
 @pytest.mark.asyncio
-async def test_prompt_pre_fetch_success_includes_headers_without_retry_after():
-    """Test that successful requests include headers but not Retry-After."""
+async def test_prompt_pre_fetch_success_has_no_http_headers():
+    """Test that successful requests do not set http_headers on the result."""
     plugin = _mk("10/s")
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
     payload = PromptPrehookPayload(prompt_id="p", args={})
@@ -115,19 +108,7 @@ async def test_prompt_pre_fetch_success_includes_headers_without_retry_after():
     result = await plugin.prompt_pre_fetch(payload, ctx)
 
     assert result.violation is None
-    assert result.http_headers is not None
-
-    headers = result.http_headers
-    assert "X-RateLimit-Limit" in headers
-    assert headers["X-RateLimit-Limit"] == "10"
-
-    assert "X-RateLimit-Remaining" in headers
-    assert headers["X-RateLimit-Remaining"] == "9"  # 1 used, 9 remaining
-
-    assert "X-RateLimit-Reset" in headers
-    assert int(headers["X-RateLimit-Reset"]) > 0
-
-    assert "Retry-After" not in headers  # Should NOT be present on success
+    assert result.metadata is not None
 
 
 # ============================================================================
@@ -182,8 +163,8 @@ async def test_tool_pre_invoke_violation_includes_headers():
 
 
 @pytest.mark.asyncio
-async def test_tool_pre_invoke_success_includes_headers_without_retry_after():
-    """Test that successful tool invocations include headers but not Retry-After."""
+async def test_tool_pre_invoke_success_has_no_http_headers():
+    """Test that successful tool invocations do not set http_headers on the result."""
     from mcpgateway.plugins.framework import ToolPreInvokePayload
 
     plugin = _mk("10/s")
@@ -193,13 +174,7 @@ async def test_tool_pre_invoke_success_includes_headers_without_retry_after():
     result = await plugin.tool_pre_invoke(payload, ctx)
 
     assert result.violation is None
-    assert result.http_headers is not None
-
-    headers = result.http_headers
-    assert "X-RateLimit-Limit" in headers
-    assert "X-RateLimit-Remaining" in headers
-    assert "X-RateLimit-Reset" in headers
-    assert "Retry-After" not in headers
+    assert result.metadata is not None
 
 
 @pytest.mark.asyncio
@@ -212,12 +187,7 @@ async def test_tool_pre_invoke_per_tool_rate_limiting():
             name="rl",
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
-            config={
-                "by_user": "100/s",  # High user limit
-                "by_tool": {
-                    "restricted_tool": "1/s"  # Low tool-specific limit
-                }
-            },
+            config={"by_user": "100/s", "by_tool": {"restricted_tool": "1/s"}},  # High user limit  # Low tool-specific limit
         )
     )
 
@@ -267,6 +237,7 @@ def test_make_headers_without_retry_after():
 # ============================================================================
 # _select_most_restrictive TESTS
 # ============================================================================
+
 
 class TestSelectMostRestrictive:
     """Comprehensive tests for _select_most_restrictive function."""
@@ -325,36 +296,38 @@ class TestSelectMostRestrictive:
         assert remaining == 95
         assert reset_ts == now + 60
 
-    # Test Category 3: Multiple Violated Dimensions - Select Shortest Reset
+    # Test Category 3: Multiple Violated Dimensions - Select Longest Reset
 
-    def test_multiple_violated_shortest_reset_wins(self):
-        """When multiple violated, select the one with shortest reset time."""
+    def test_multiple_violated_longest_reset_wins(self):
+        """When multiple violated, select the one with longest reset time
+        so clients wait long enough for ALL violated dimensions to reset."""
         now = 1000
         results = [
-            (False, 10, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),   # Resets sooner
+            (False, 10, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),
             (False, 20, now + 60, {"limited": True, "remaining": 0, "reset_in": 60}),
-            (False, 30, now + 120, {"limited": True, "remaining": 0, "reset_in": 120}),
+            (False, 30, now + 120, {"limited": True, "remaining": 0, "reset_in": 120}),  # Longest
         ]
         allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
         assert allowed is False
-        assert limit == 10  # Shortest reset_in (30)
+        assert limit == 30  # Longest reset_in (120)
         assert remaining == 0
-        assert reset_ts == now + 30
-        assert meta["reset_in"] == 30
+        assert reset_ts == now + 120
+        assert meta["reset_in"] == 120
 
     def test_violated_with_allowed_dimensions(self):
-        """When some violated and some allowed, violated takes precedence."""
+        """When some violated and some allowed, violated takes precedence.
+        Among violated, the longest reset wins so clients wait long enough."""
         now = 1000
         results = [
             (True, 100, now + 60, {"limited": True, "remaining": 90, "reset_in": 60}),  # Allowed
-            (False, 50, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),   # Violated (shortest)
-            (False, 75, now + 90, {"limited": True, "remaining": 0, "reset_in": 90}),   # Violated
+            (False, 50, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),  # Violated
+            (False, 75, now + 90, {"limited": True, "remaining": 0, "reset_in": 90}),  # Violated (longest)
         ]
         allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
         assert allowed is False
-        assert limit == 50  # Violated with shortest reset
+        assert limit == 75  # Violated with longest reset
         assert remaining == 0
-        assert reset_ts == now + 30
+        assert reset_ts == now + 90
         assert "dimensions" in meta
         assert "violated" in meta["dimensions"]
         assert "allowed" in meta["dimensions"]
@@ -483,19 +456,20 @@ class TestSelectMostRestrictive:
         assert reset_ts == now + 30
 
     def test_multiple_violated_different_reset_times(self):
-        """Realistic scenario: multiple violated with different reset times."""
+        """Realistic scenario: multiple violated with different reset times.
+        Longest reset wins so clients wait for all dimensions to clear."""
         now = 1000
         results = [
-            (False, 100, now + 60, {"limited": True, "remaining": 0, "reset_in": 60}),  # User
-            (False, 1000, now + 10, {"limited": True, "remaining": 0, "reset_in": 10}),  # Tenant (soonest)
+            (False, 100, now + 60, {"limited": True, "remaining": 0, "reset_in": 60}),  # User (longest)
+            (False, 1000, now + 10, {"limited": True, "remaining": 0, "reset_in": 10}),  # Tenant
             (False, 50, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),  # Tool
         ]
         allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
         assert allowed is False
-        assert limit == 1000  # Tenant resets soonest
+        assert limit == 100  # User has longest reset
         assert remaining == 0
-        assert reset_ts == now + 10
-        assert meta["reset_in"] == 10
+        assert reset_ts == now + 60
+        assert meta["reset_in"] == 60
 
     def test_tenant_unlimited_user_tool_limited(self):
         """Realistic scenario: tenant unlimited, user and tool have limits."""
@@ -509,3 +483,98 @@ class TestSelectMostRestrictive:
         assert allowed is True
         assert limit == 50  # Tool is most restrictive
         assert remaining == 30
+
+
+# ============================================================================
+# _parse_rate Tests
+# ============================================================================
+
+
+class TestParseRate:
+    """Tests for _parse_rate function including daily unit support."""
+
+    def test_parse_rate_seconds(self):
+        """Test parsing second-based rates."""
+        assert _parse_rate("10/s") == (10, 1)
+        assert _parse_rate("10/sec") == (10, 1)
+        assert _parse_rate("10/second") == (10, 1)
+
+    def test_parse_rate_minutes(self):
+        """Test parsing minute-based rates."""
+        assert _parse_rate("60/m") == (60, 60)
+        assert _parse_rate("60/min") == (60, 60)
+        assert _parse_rate("60/minute") == (60, 60)
+
+    def test_parse_rate_hours(self):
+        """Test parsing hour-based rates."""
+        assert _parse_rate("100/h") == (100, 3600)
+        assert _parse_rate("100/hr") == (100, 3600)
+        assert _parse_rate("100/hour") == (100, 3600)
+
+    def test_parse_rate_daily_short(self):
+        """Test parsing daily rate with short unit."""
+        assert _parse_rate("1000/d") == (1000, 86400)
+
+    def test_parse_rate_daily_long(self):
+        """Test parsing daily rate with long unit."""
+        assert _parse_rate("1000/day") == (1000, 86400)
+
+    def test_parse_rate_unsupported_unit(self):
+        """Test that unsupported units raise ValueError."""
+        with pytest.raises(ValueError, match="Unsupported rate unit"):
+            _parse_rate("100/w")
+
+    def test_parse_rate_case_insensitive(self):
+        """Test that units are case-insensitive."""
+        assert _parse_rate("10/S") == (10, 1)
+        assert _parse_rate("60/M") == (60, 60)
+        assert _parse_rate("100/H") == (100, 3600)
+        assert _parse_rate("1000/D") == (1000, 86400)
+        assert _parse_rate("1000/Day") == (1000, 86400)
+
+    def test_parse_rate_whitespace_in_unit(self):
+        """Test that whitespace in units is handled."""
+        assert _parse_rate("10/ s ") == (10, 1)
+        assert _parse_rate("1000/ d ") == (1000, 86400)
+
+
+@pytest.mark.asyncio
+async def test_daily_rate_limit_blocks_after_quota():
+    """Test that daily rate limits enforce correctly."""
+    plugin = _mk("3/d")
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
+    payload = PromptPrehookPayload(prompt_id="p", args={})
+
+    # Three requests should succeed
+    for _ in range(3):
+        result = await plugin.prompt_pre_fetch(payload, ctx)
+        assert result.violation is None
+
+    # Fourth should be blocked
+    result = await plugin.prompt_pre_fetch(payload, ctx)
+    assert result.violation is not None
+    assert result.violation.http_status_code == 429
+    assert result.violation.code == "RATE_LIMIT"
+
+
+@pytest.mark.asyncio
+async def test_daily_rate_limit_headers_accuracy():
+    """Test that daily rate limit violation headers have correct values."""
+    plugin = _mk("1/d")
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
+    payload = PromptPrehookPayload(prompt_id="p", args={})
+
+    # First request succeeds
+    await plugin.prompt_pre_fetch(payload, ctx)
+
+    # Second triggers violation
+    result = await plugin.prompt_pre_fetch(payload, ctx)
+    assert result.violation is not None
+
+    headers = result.violation.http_headers
+    assert headers is not None
+    assert headers["X-RateLimit-Limit"] == "1"
+    assert headers["X-RateLimit-Remaining"] == "0"
+    # Retry-After should be close to 86400 seconds (24 hours)
+    retry_after = int(headers["Retry-After"])
+    assert 86390 <= retry_after <= 86400

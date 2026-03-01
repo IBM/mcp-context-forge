@@ -34,10 +34,10 @@ from mcpgateway.plugins.framework import (
 
 
 def _parse_rate(rate: str) -> tuple[int, int]:
-    """Parse rate like '60/m', '10/s', '100/h' -> (count, window_seconds).
+    """Parse rate like '60/m', '10/s', '100/h', '1000/d' -> (count, window_seconds).
 
     Args:
-        rate: Rate string in format 'count/unit' (e.g., '60/m', '10/s', '100/h').
+        rate: Rate string in format 'count/unit' (e.g., '60/m', '10/s', '100/h', '1000/d').
 
     Returns:
         Tuple of (count, window_seconds) for the rate limit.
@@ -54,6 +54,8 @@ def _parse_rate(rate: str) -> tuple[int, int]:
         return count, 60
     if per in ("h", "hr", "hour"):
         return count, 3600
+    if per in ("d", "day"):
+        return count, 86400
     raise ValueError(f"Unsupported rate unit: {per}")
 
 
@@ -149,17 +151,18 @@ def _make_headers(limit: int, remaining: int, reset_timestamp: int, retry_after:
     return headers
 
 
-def _select_most_restrictive(
-    results: list[tuple[bool, int, int, dict[str, Any]]]
-) -> tuple[bool, int, int, int, dict[str, Any]]:
+def _select_most_restrictive(results: list[tuple[bool, int, int, dict[str, Any]]]) -> tuple[bool, int, int, int, dict[str, Any]]:
     """Select the most restrictive rate limit from multiple dimensions.
 
     Args:
-        results: List of (allowed, limit, reset_timestamp, metadata) tuples from _allow().
-        - allowed: True if the request is allowed
-        - limit_count: The rate limit count (0 if unlimited)
-        - reset_timestamp: Unix timestamp when the window resets (0 if unlimited)
-        - metadata: Additional rate limiting information
+        results: List of (allowed, limit, reset_timestamp, metadata) tuples
+            from _allow(). Each tuple contains:
+            allowed (bool): True if the request is allowed.
+            limit_count (int): The rate limit count (0 if unlimited).
+            reset_timestamp (int): Unix timestamp when the window resets (0 if unlimited).
+            metadata (dict): Additional rate limiting information.
+                For limited results (limit > 0), _allow() always populates
+                "remaining" and "reset_in" keys.
 
     Returns:
         Tuple of (allowed, limit, remaining, reset_timestamp, metadata) representing
@@ -177,9 +180,10 @@ def _select_most_restrictive(
     violated = [(allowed, limit, reset_ts, meta) for allowed, limit, reset_ts, meta in limited_results if not allowed]
     allowed_dims = [(allowed, limit, reset_ts, meta) for allowed, limit, reset_ts, meta in limited_results if allowed]
 
-    # If any dimension is violated, pick the one with shortest retry_after (resets soonest)
+    # If any dimension is violated, pick the one with longest retry_after
+    # so clients wait long enough for ALL violated dimensions to reset.
     if violated:
-        most_restrictive = min(violated, key=lambda x: x[3].get("reset_in", float("inf")))
+        most_restrictive = max(violated, key=lambda x: x[3].get("reset_in", float("inf")))
         _, limit, reset_ts, meta = most_restrictive
         remaining = meta.get("remaining", 0)
         retry_after = meta.get("reset_in", 0)
@@ -192,7 +196,7 @@ def _select_most_restrictive(
             "dimensions": {
                 "violated": [m for _, _, _, m in violated],
                 "allowed": [m for _, _, _, m in allowed_dims],
-            }
+            },
         }
         return False, limit, remaining, reset_ts, aggregated_meta
 
@@ -262,11 +266,6 @@ class RateLimiterPlugin(Plugin):
                 ),
             )
 
-        # Success - include informational headers (without Retry-After)
-        if limit > 0:
-            headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=False)
-            return PromptPrehookResult(metadata=meta, http_headers=headers)
-
         return PromptPrehookResult(metadata=meta)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -313,10 +312,5 @@ class RateLimiterPlugin(Plugin):
                     http_headers=headers,
                 ),
             )
-
-        # Success - include informational headers (without Retry-After)
-        if limit > 0:
-            headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=False)
-            return ToolPreInvokeResult(metadata=meta, http_headers=headers)
 
         return ToolPreInvokeResult(metadata=meta)

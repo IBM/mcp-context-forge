@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/plugins/plugins/rate_limiter/test_rate_limiter.py
+"""Location: ./tests/integration/test_rate_limiter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
@@ -22,8 +22,6 @@ prompt_pre_fetch and tool_pre_invoke.
 
 import asyncio
 import time
-from typing import AsyncIterator, Dict
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -83,11 +81,7 @@ def rate_limit_plugin_2_per_second():
         kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
         hooks=["prompt_pre_fetch", "tool_pre_invoke"],
         priority=100,
-        config={
-            "by_user": "2/s",
-            "by_tenant": None,
-            "by_tool": {}
-        }
+        config={"by_user": "2/s", "by_tenant": None, "by_tool": {}},
     )
     return RateLimiterPlugin(config)
 
@@ -100,13 +94,7 @@ def rate_limit_plugin_multi_dimensional():
         kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
         hooks=["prompt_pre_fetch", "tool_pre_invoke"],
         priority=100,
-        config={
-            "by_user": "10/s",
-            "by_tenant": "5/s",
-            "by_tool": {
-                "restricted_tool": "1/s"
-            }
-        }
+        config={"by_user": "10/s", "by_tenant": "5/s", "by_tool": {"restricted_tool": "1/s"}},
     )
     return RateLimiterPlugin(config)
 
@@ -130,13 +118,10 @@ class TestRateLimitBasics:
         # First request - should succeed
         result1 = await plugin.prompt_pre_fetch(payload, ctx)
         assert result1.violation is None
-        assert result1.http_headers is not None
-        assert result1.http_headers["X-RateLimit-Remaining"] == "1"
 
         # Second request - should succeed
         result2 = await plugin.prompt_pre_fetch(payload, ctx)
         assert result2.violation is None
-        assert result2.http_headers["X-RateLimit-Remaining"] == "0"
 
     @pytest.mark.asyncio
     async def test_exceeding_limit_returns_violation(self, rate_limit_plugin_2_per_second):
@@ -157,25 +142,32 @@ class TestRateLimitBasics:
         assert "rate limit exceeded" in result.violation.description.lower()
 
     @pytest.mark.asyncio
-    async def test_rate_limit_headers_present(self, rate_limit_plugin_2_per_second):
-        """Verify all rate limit headers are present."""
+    async def test_rate_limit_violation_headers_present(self, rate_limit_plugin_2_per_second):
+        """Verify all rate limit headers are present on violations."""
         plugin = rate_limit_plugin_2_per_second
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
         payload = PromptPrehookPayload(prompt_id="test", args={})
 
+        # Exhaust rate limit
+        await plugin.prompt_pre_fetch(payload, ctx)
+        await plugin.prompt_pre_fetch(payload, ctx)
+
+        # Get violation
         result = await plugin.prompt_pre_fetch(payload, ctx)
+        assert result.violation is not None
 
-        assert result.http_headers is not None
-        assert "X-RateLimit-Limit" in result.http_headers
-        assert "X-RateLimit-Remaining" in result.http_headers
-        assert "X-RateLimit-Reset" in result.http_headers
+        headers = result.violation.http_headers
+        assert headers is not None
+        assert "X-RateLimit-Limit" in headers
+        assert "X-RateLimit-Remaining" in headers
+        assert "X-RateLimit-Reset" in headers
 
-        limit = int(result.http_headers["X-RateLimit-Limit"])
-        remaining = int(result.http_headers["X-RateLimit-Remaining"])
-        reset = int(result.http_headers["X-RateLimit-Reset"])
+        limit = int(headers["X-RateLimit-Limit"])
+        remaining = int(headers["X-RateLimit-Remaining"])
+        reset = int(headers["X-RateLimit-Reset"])
 
         assert limit == 2
-        assert remaining == 1
+        assert remaining == 0
         assert reset > int(time.time())
 
     @pytest.mark.asyncio
@@ -199,8 +191,8 @@ class TestRateLimitBasics:
         assert 0 < retry_after <= 1  # 1 second window
 
     @pytest.mark.asyncio
-    async def test_success_response_no_retry_after(self, rate_limit_plugin_2_per_second):
-        """Verify successful responses don't include Retry-After header."""
+    async def test_success_response_has_no_violation(self, rate_limit_plugin_2_per_second):
+        """Verify successful responses have no violation."""
         plugin = rate_limit_plugin_2_per_second
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
         payload = PromptPrehookPayload(prompt_id="test", args={})
@@ -208,8 +200,6 @@ class TestRateLimitBasics:
         result = await plugin.prompt_pre_fetch(payload, ctx)
 
         assert result.violation is None
-        assert result.http_headers is not None
-        assert "Retry-After" not in result.http_headers
 
 
 class TestRateLimitAlgorithm:
@@ -222,13 +212,18 @@ class TestRateLimitAlgorithm:
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
         payload = PromptPrehookPayload(prompt_id="test", args={})
 
-        # First request
+        # First request - succeeds
         result1 = await plugin.prompt_pre_fetch(payload, ctx)
-        assert result1.http_headers["X-RateLimit-Remaining"] == "1"
+        assert result1.violation is None
 
-        # Second request
+        # Second request - succeeds
         result2 = await plugin.prompt_pre_fetch(payload, ctx)
-        assert result2.http_headers["X-RateLimit-Remaining"] == "0"
+        assert result2.violation is None
+
+        # Third request - rate limited, remaining is 0
+        result3 = await plugin.prompt_pre_fetch(payload, ctx)
+        assert result3.violation is not None
+        assert result3.violation.http_headers["X-RateLimit-Remaining"] == "0"
 
     @pytest.mark.asyncio
     async def test_rate_limit_resets_after_window(self, rate_limit_plugin_2_per_second):
@@ -251,17 +246,22 @@ class TestRateLimitAlgorithm:
         # Verify rate limit reset
         result = await plugin.prompt_pre_fetch(payload, ctx)
         assert result.violation is None
-        assert result.http_headers["X-RateLimit-Remaining"] == "1"
 
     @pytest.mark.asyncio
     async def test_reset_timestamp_accuracy(self, rate_limit_plugin_2_per_second):
-        """Verify X-RateLimit-Reset timestamp is accurate."""
+        """Verify X-RateLimit-Reset timestamp is accurate on violations."""
         plugin = rate_limit_plugin_2_per_second
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
         payload = PromptPrehookPayload(prompt_id="test", args={})
 
+        # Exhaust rate limit
+        await plugin.prompt_pre_fetch(payload, ctx)
+        await plugin.prompt_pre_fetch(payload, ctx)
+
+        # Get violation
         result = await plugin.prompt_pre_fetch(payload, ctx)
-        reset_time = int(result.http_headers["X-RateLimit-Reset"])
+        assert result.violation is not None
+        reset_time = int(result.violation.http_headers["X-RateLimit-Reset"])
         current_time = int(time.time())
 
         # Reset should be current time + 1 second (with small tolerance)
@@ -281,11 +281,7 @@ class TestMultiDimensionalRateLimiting:
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch"],
             priority=100,
-            config={
-                "by_user": "10/s",
-                "by_tenant": None,  # No tenant limit
-                "by_tool": {}
-            }
+            config={"by_user": "10/s", "by_tenant": None, "by_tool": {}},  # No tenant limit
         )
         plugin = RateLimiterPlugin(config)
 
@@ -363,7 +359,7 @@ class TestMultiDimensionalRateLimiting:
             config={
                 "by_user": "10/s",  # More permissive
                 "by_tenant": "2/s",  # More restrictive
-            }
+            },
         )
         plugin = RateLimiterPlugin(config)
 
@@ -404,19 +400,26 @@ class TestToolPreInvoke:
         assert result3.violation.http_status_code == 429
 
     @pytest.mark.asyncio
-    async def test_tool_invoke_headers_present(self, rate_limit_plugin_2_per_second):
-        """Verify headers are present on tool invocations."""
+    async def test_tool_invoke_violation_headers_present(self, rate_limit_plugin_2_per_second):
+        """Verify headers are present on tool invocation violations."""
         plugin = rate_limit_plugin_2_per_second
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
-        result = await plugin.tool_pre_invoke(payload, ctx)
+        # Exhaust rate limit
+        await plugin.tool_pre_invoke(payload, ctx)
+        await plugin.tool_pre_invoke(payload, ctx)
 
-        assert result.http_headers is not None
-        assert "X-RateLimit-Limit" in result.http_headers
-        assert "X-RateLimit-Remaining" in result.http_headers
-        assert "X-RateLimit-Reset" in result.http_headers
-        assert "Retry-After" not in result.http_headers  # Not on success
+        # Get violation
+        result = await plugin.tool_pre_invoke(payload, ctx)
+        assert result.violation is not None
+
+        headers = result.violation.http_headers
+        assert headers is not None
+        assert "X-RateLimit-Limit" in headers
+        assert "X-RateLimit-Remaining" in headers
+        assert "X-RateLimit-Reset" in headers
+        assert "Retry-After" in headers
 
 
 class TestStoreCleanup:
