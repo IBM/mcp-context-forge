@@ -159,6 +159,9 @@ from mcpgateway.validation.jsonrpc import JSONRPCError
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
 
+# RFC 9110 'token' regex for validating HTTP header names.
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
@@ -1409,43 +1412,48 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
     return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
+# Header names plugins are allowed to set on violation responses.
+_PLUGIN_HEADER_ALLOWLIST = re.compile(
+    r"^(Retry-After|X-RateLimit-.+|X-Plugin-.+)$",
+    re.IGNORECASE,
+)
+
+
 def _validate_http_headers(headers: dict[str, str]) -> Optional[dict[str, str]]:
-    """Validate headers according to RFC 9110.
+    """Validate and filter headers according to RFC 9110.
+
+    Only headers matching ``_PLUGIN_HEADER_ALLOWLIST`` are forwarded so that
+    plugins cannot inject security-sensitive headers such as ``Set-Cookie``,
+    ``WWW-Authenticate``, or CORS headers.
 
     Args:
         headers: dict of headers
 
     Returns:
-        Optional[dict[str, str]]: dictionary of valid headers
+        Optional[dict[str, str]]: dictionary of valid, allowed headers
 
     Rules enforced:
+      - Header name must match the allowlist (Retry-After, X-RateLimit-*, X-Plugin-*).
       - Header name must match RFC 9110 'token'.
-      - No whitespace before colon (enforced by dictionary usage).
-      - Header value must not contain CTL characters (0x00–0x1F, 0x7F).
+      - Header value must not contain CTL characters (0x00–0x1F, 0x7F), except HTAB (0x09).
+        This includes rejection of CR (0x0D) and LF (0x0A) to prevent header injection.
     """
 
-    # RFC 9110 'token' definition:
-    # token = 1*tchar
-    # tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*"
-    #         / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
-    #         / DIGIT / ALPHA
-    header_key = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
     validated: dict[str, str] = {}
     for key, value in headers.items():
-        # Validate header name (RFC 9110)
-        if not re.match(header_key, key):
+        # Allowlist check — reject headers plugins should not control
+        if not _PLUGIN_HEADER_ALLOWLIST.match(key):
+            logger.debug(f"Header name not in plugin allowlist, skipping: {key}")
+            continue
+        # Validate header name (RFC 9110 token)
+        if not _HEADER_NAME_RE.match(key):
             logger.warning(f"Invalid header name: {key}")
             continue
-        # Validate header value (no CRLF)
-        if "\r" in value or "\n" in value:
-            logger.warning(f"Header value contains CRLF: {key}")
-            continue
-        # RFC 9110: Reject CTLs (0x00–0x1F, 0x7F). Allow SP (0x20) and HTAB (0x09).
-        # Further structure (quoted-string, lists, parameters) is left to higher-level parsers.
+        # RFC 9110: Reject CTLs (0x00–0x1F, 0x7F) including CR/LF. Allow HTAB (0x09).
         valid = True
         for ch in value:
             code = ord(ch)
-            if (0 <= code <= 31 or code == 127) and code not in (9, 32):
+            if (0 <= code <= 31 or code == 127) and code != 9:
                 valid = False
                 break
         if not valid:
@@ -1533,9 +1541,9 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
 
     response = ORJSONResponse(status_code=http_status, content={"error": json_rpc_error.model_dump()})
     if headers:
-        validatated_headers = _validate_http_headers(headers)
-        if validatated_headers:
-            response.headers.update(validatated_headers)
+        validated_headers = _validate_http_headers(headers)
+        if validated_headers:
+            response.headers.update(validated_headers)
     return response
 
 

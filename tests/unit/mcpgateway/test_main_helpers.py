@@ -185,108 +185,126 @@ async def test_invalidate_resource_cache_clears_entries():
 
 
 def test_validate_http_headers_valid():
-    """Test _validate_http_headers with valid headers."""
+    """Test _validate_http_headers with valid allowlisted headers."""
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer token123",
-        "X-Custom-Header": "value with spaces",
+        "Retry-After": "60",
+        "X-RateLimit-Limit": "100",
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": "1737394800",
+        "X-Plugin-Custom": "value with spaces",
     }
     result = main._validate_http_headers(headers)
     assert result == headers
 
 
+def test_validate_http_headers_allowlist_blocks_sensitive():
+    """Test _validate_http_headers rejects headers not on the allowlist."""
+    # Security-sensitive headers should be blocked
+    headers = {"Set-Cookie": "session=abc123"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    headers = {"WWW-Authenticate": "Bearer"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    headers = {"Content-Type": "application/json"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Mix of allowed and non-allowed
+    headers = {
+        "X-RateLimit-Limit": "100",
+        "Set-Cookie": "session=abc123",
+        "Retry-After": "30",
+    }
+    result = main._validate_http_headers(headers)
+    assert result == {"X-RateLimit-Limit": "100", "Retry-After": "30"}
+
+
 def test_validate_http_headers_invalid_name():
-    """Test _validate_http_headers rejects invalid header names (line 1435-1436)."""
-    # Invalid header name with space
+    """Test _validate_http_headers rejects invalid header names."""
+    # Invalid header name with space (also fails allowlist)
     headers = {"Invalid Name": "value"}
     result = main._validate_http_headers(headers)
     assert result is None
 
     # Invalid header name with special characters not in RFC 9110 token
-    headers = {"Invalid@Header": "value"}
+    headers = {"X-RateLimit-@Bad": "value"}
     result = main._validate_http_headers(headers)
     assert result is None
 
-    # Mix of valid and invalid headers
-    headers = {
-        "Valid-Header": "value1",
-        "Invalid Name": "value2",
-        "Another-Valid": "value3",
-    }
-    result = main._validate_http_headers(headers)
-    assert result == {"Valid-Header": "value1", "Another-Valid": "value3"}
-
 
 def test_validate_http_headers_crlf_in_value():
-    """Test _validate_http_headers rejects CRLF in header values (line 1439-1440)."""
+    """Test _validate_http_headers rejects CRLF in header values."""
     # Header value with carriage return
-    headers = {"Content-Type": "application/json\rinjection"}
+    headers = {"Retry-After": "60\rinjection"}
     result = main._validate_http_headers(headers)
     assert result is None
 
     # Header value with newline
-    headers = {"Authorization": "Bearer token\ninjection"}
+    headers = {"X-RateLimit-Limit": "100\ninjection"}
     result = main._validate_http_headers(headers)
     assert result is None
 
     # Header value with both CRLF
-    headers = {"X-Custom": "value\r\ninjection"}
+    headers = {"X-RateLimit-Reset": "value\r\ninjection"}
     result = main._validate_http_headers(headers)
     assert result is None
 
-    # Mix of valid and invalid headers
+    # Mix of valid and invalid values
     headers = {
-        "Valid-Header": "clean value",
-        "Invalid-Header": "value\r\ninjection",
-        "Another-Valid": "another clean value",
+        "X-RateLimit-Limit": "100",
+        "X-RateLimit-Remaining": "0\r\ninjection",
+        "Retry-After": "60",
     }
     result = main._validate_http_headers(headers)
-    assert result == {"Valid-Header": "clean value", "Another-Valid": "another clean value"}
+    assert result == {"X-RateLimit-Limit": "100", "Retry-After": "60"}
 
 
 def test_validate_http_headers_ctl_characters():
-    """Test _validate_http_headers rejects CTL characters in values (line 1447-1448, 1450)."""
+    """Test _validate_http_headers rejects CTL characters in values."""
     # Header value with null byte (0x00)
-    headers = {"Content-Type": "application/json\x00"}
+    headers = {"Retry-After": "60\x00"}
     result = main._validate_http_headers(headers)
     assert result is None
 
     # Header value with control character (0x01)
-    headers = {"Authorization": "Bearer\x01token"}
+    headers = {"X-RateLimit-Limit": "100\x01"}
     result = main._validate_http_headers(headers)
     assert result is None
 
     # Header value with DEL character (0x7F)
-    headers = {"X-Custom": "value\x7f"}
+    headers = {"X-RateLimit-Reset": "value\x7f"}
     result = main._validate_http_headers(headers)
     assert result is None
 
-    # Header value with various CTL characters (0x00-0x1F except tab and space)
+    # Header value with various CTL characters (0x00-0x1F except HTAB 0x09)
     for code in range(0, 32):
-        if code in (9, 32):  # Skip tab and space (allowed)
+        if code == 9:  # Skip HTAB (allowed)
             continue
-        headers = {"Test-Header": f"value{chr(code)}end"}
+        headers = {"X-Plugin-Test": f"value{chr(code)}end"}
         result = main._validate_http_headers(headers)
         assert result is None, f"Should reject CTL character 0x{code:02x}"
 
-    # Header value with tab (0x09) - should be allowed
-    headers = {"Content-Type": "application/json\tcharset=utf-8"}
+    # Header value with HTAB (0x09) - should be allowed
+    headers = {"X-Plugin-Info": "value1\tvalue2"}
     result = main._validate_http_headers(headers)
     assert result == headers
 
     # Header value with space (0x20) - should be allowed
-    headers = {"Authorization": "Bearer token with spaces"}
+    headers = {"X-Plugin-Info": "value with spaces"}
     result = main._validate_http_headers(headers)
     assert result == headers
 
-    # Mix of valid and invalid headers
+    # Mix of valid and invalid values
     headers = {
-        "Valid-Header": "clean value",
-        "Invalid-Header": "value\x01injection",
-        "Another-Valid": "another clean value",
+        "X-RateLimit-Limit": "100",
+        "X-RateLimit-Remaining": "value\x01injection",
+        "Retry-After": "60",
     }
     result = main._validate_http_headers(headers)
-    assert result == {"Valid-Header": "clean value", "Another-Valid": "another clean value"}
+    assert result == {"X-RateLimit-Limit": "100", "Retry-After": "60"}
 
 
 def test_validate_http_headers_empty_dict():
@@ -298,9 +316,9 @@ def test_validate_http_headers_empty_dict():
 def test_validate_http_headers_all_invalid():
     """Test _validate_http_headers when all headers are invalid."""
     headers = {
-        "Invalid Name": "value1",
-        "Valid-But-Bad-Value": "value\r\ninjection",
-        "Another-Invalid": "value\x00",
+        "Content-Type": "application/json",  # Not allowlisted
+        "Authorization": "Bearer token",  # Not allowlisted
+        "Set-Cookie": "session=abc",  # Not allowlisted
     }
     result = main._validate_http_headers(headers)
     assert result is None

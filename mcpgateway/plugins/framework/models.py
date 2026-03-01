@@ -1331,7 +1331,6 @@ class PluginResult(BaseModel, Generic[T]):
             modified_payload (Optional[Any]): The modified payload if the plugin is a transformer.
             violation (Optional[PluginViolation]): violation object.
             metadata (Optional[dict[str, Any]]): additional metadata.
-            http_headers (Optional[dict[str, str]]): HTTP headers to include in successful responses.
 
      Examples:
         >>> result = PluginResult()
@@ -1360,7 +1359,6 @@ class PluginResult(BaseModel, Generic[T]):
     modified_payload: Optional[T] = None
     violation: Optional[PluginViolation] = None
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
-    http_headers: Optional[dict[str, str]] = None
 
 
 class GlobalContext(BaseModel):

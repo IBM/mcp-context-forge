@@ -157,6 +157,10 @@ def proto_context_to_dict(proto_ctx: plugin_service_pb2.PluginContext) -> dict:
 def pydantic_violation_to_proto(violation: PydanticPluginViolation) -> plugin_service_pb2.PluginViolation:
     """Convert Pydantic PluginViolation to protobuf PluginViolation.
 
+    Note: http_status_code and http_headers are not yet included in the proto
+    schema, so external (gRPC) plugins cannot propagate custom HTTP status
+    codes or headers.  See issue #2668 follow-up for transport parity.
+
     Args:
         violation: The Pydantic PluginViolation model.
 
@@ -179,6 +183,10 @@ def pydantic_violation_to_proto(violation: PydanticPluginViolation) -> plugin_se
 
 def proto_violation_to_pydantic(proto_violation: plugin_service_pb2.PluginViolation) -> PydanticPluginViolation:
     """Convert protobuf PluginViolation to Pydantic PluginViolation.
+
+    Note: http_status_code and http_headers are not yet included in the proto
+    schema, so they will default to None when converting from protobuf.
+    See issue #2668 follow-up for transport parity.
 
     Args:
         proto_violation: The protobuf PluginViolation message.

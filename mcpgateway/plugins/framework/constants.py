@@ -9,8 +9,6 @@ This module stores a collection of plugin constants used throughout the framewor
 """
 
 # Standard
-
-# Standard
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
