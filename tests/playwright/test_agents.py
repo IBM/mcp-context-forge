@@ -73,9 +73,10 @@ class TestAgentsUI:
         option_values = [options.nth(i).get_attribute("value") for i in range(options.count())]
 
         # Verify expected options are present
-        assert "generic" in option_values
-        assert "openai" in option_values
-        assert "anthropic" in option_values
+        assert "a2a-jsonrpc" in option_values
+        assert "a2a-rest" in option_values
+        assert "a2a-grpc" in option_values
+        assert "rest-passthrough" in option_values
         assert "custom" in option_values
 
     def test_auth_type_options(self, agents_page: AgentsPage):

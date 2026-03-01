@@ -258,13 +258,13 @@ class AgentsPage(BasePage):
         # Wait for form to be attached
         self.wait_for_attached(self.add_agent_form, timeout=timeout)
 
-    def create_agent_basic(self, name: str, endpoint_url: str, agent_type: str = "generic", description: str = "", tags: str = "", visibility: str = "public") -> None:
+    def create_agent_basic(self, name: str, endpoint_url: str, agent_type: str = "a2a-jsonrpc", description: str = "", tags: str = "", visibility: str = "public") -> None:
         """Create a new A2A agent with basic configuration (no auth).
 
         Args:
             name: Agent name
             endpoint_url: Agent endpoint URL
-            agent_type: Agent type (generic, openai, anthropic, custom)
+            agent_type: Agent type (a2a-jsonrpc, a2a-rest, a2a-grpc, rest-passthrough, custom)
             description: Agent description
             tags: Comma-separated tags
             visibility: Visibility setting (public, team, private)
@@ -289,13 +289,13 @@ class AgentsPage(BasePage):
 
         self.click_locator(self.add_agent_btn)
 
-    def fill_agent_form_basic(self, name: str, endpoint_url: str, agent_type: str = "generic", description: str = "", tags: str = "", visibility: str = "public") -> None:
+    def fill_agent_form_basic(self, name: str, endpoint_url: str, agent_type: str = "a2a-jsonrpc", description: str = "", tags: str = "", visibility: str = "public") -> None:
         """Fill the add agent form with basic data (without submitting).
 
         Args:
             name: Agent name
             endpoint_url: Agent endpoint URL
-            agent_type: Agent type (generic, openai, anthropic, custom)
+            agent_type: Agent type (a2a-jsonrpc, a2a-rest, a2a-grpc, rest-passthrough, custom)
             description: Agent description
             tags: Comma-separated tags
             visibility: Visibility setting (public, team, private)
