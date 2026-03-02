@@ -810,7 +810,8 @@ function _navigateAdmin(fragment, searchParams) {
     // and skip the network reload.  This happens in proxy/iframe deployments
     // where the URL has no trailing slash (unlike direct mode where FastAPI
     // redirects /admin → /admin/, creating a path difference).  Force a full
-    // reload so the UI always reflects the latest server state.  Fixes #3324.
+    // reload so the UI always reflects the latest server state.
+    // Fixes #3351 (root cause of #3324).
     if (window.location.href === target) {
         window.location.reload();
     } else {
