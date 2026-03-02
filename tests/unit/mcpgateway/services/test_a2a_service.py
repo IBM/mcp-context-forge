@@ -2596,12 +2596,11 @@ class TestInvokeAgentGrpcTransport:
         mock_client.request.assert_not_called()
 
     async def test_invoke_a2a_grpc_send_message_over_insecure_channel(self, service):
-        """_invoke_a2a_grpc SendMessage builds request and uses grpc.aio.insecure_channel for grpc:// endpoints."""
+        """_invoke_a2a_grpc SendMessage builds request and uses cached gRPC channel for grpc:// endpoints."""
         # First-Party
         from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
 
         channel = MagicMock()
-        channel.close = AsyncMock()
 
         stub = MagicMock()
         stub.SendMessage = AsyncMock(
@@ -2611,7 +2610,7 @@ class TestInvokeAgentGrpcTransport:
         )
 
         with (
-            patch("grpc.aio.insecure_channel", return_value=channel) as mock_insecure,
+            patch("mcpgateway.services.a2a_service._get_grpc_channel", AsyncMock(return_value=channel)) as mock_get_channel,
             patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
         ):
             result = await service._invoke_a2a_grpc(
@@ -2623,8 +2622,7 @@ class TestInvokeAgentGrpcTransport:
             )
 
         assert result["message"]["messageId"] == "resp-1"
-        mock_insecure.assert_called_once_with("localhost:50051")
-        channel.close.assert_awaited_once()
+        mock_get_channel.assert_awaited_once_with("localhost:50051", False)
 
         call_args = stub.SendMessage.call_args
         sent_request = call_args.args[0]
@@ -2898,7 +2896,6 @@ class TestInvokeAgentGrpcTransport:
         import grpc
 
         channel = MagicMock()
-        channel.close = AsyncMock()
 
         class FakeRpcError(grpc.RpcError):
             def code(self):  # noqa: D401
@@ -2911,7 +2908,7 @@ class TestInvokeAgentGrpcTransport:
         stub.SendMessage = AsyncMock(side_effect=FakeRpcError())
 
         with (
-            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.services.a2a_service._get_grpc_channel", AsyncMock(return_value=channel)),
             patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
         ):
             with pytest.raises(A2AAgentError, match=r"A2A gRPC SendMessage failed \(UNAVAILABLE\): connection refused"):
@@ -2922,8 +2919,6 @@ class TestInvokeAgentGrpcTransport:
                     auth_headers={},
                     correlation_id=None,
                 )
-
-        channel.close.assert_awaited_once()
 
 
 class TestA2AServiceWrapperMethods:

@@ -483,6 +483,11 @@ def _canonicalize_a2a_agent_type(agent_type: Optional[str]) -> Optional[str]:
 def _normalize_a2a_agent_type(agent_type: Optional[str], fallback: str = "custom") -> str:
     """Normalize A2A agent type values used in admin create/edit/test flows.
 
+    NOTE: These admin normalization helpers are intentionally separate from
+    ``schemas.normalize_a2a_agent_type`` because the admin UI may need
+    display-specific fallback behaviour (e.g. "custom") that differs
+    from the API-layer default ("a2a-jsonrpc").
+
     Args:
         agent_type: Raw agent type string to normalize.
         fallback: Default agent type to return when canonicalization fails.
@@ -524,6 +529,7 @@ def _prepare_a2a_agent_for_admin_display(agent: Dict[str, Any]) -> Dict[str, Any
         A copy of the agent dictionary decorated with display-safe fields.
     """
     prepared = dict(agent)
+    prepared["agent_type_label"] = _format_a2a_agent_type_label(prepared.get("agent_type"))
     return prepared
 
 

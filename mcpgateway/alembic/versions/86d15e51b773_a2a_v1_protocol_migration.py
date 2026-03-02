@@ -20,8 +20,8 @@ migration will drop them after the service layer fully adopts a2a_agent_auth.
 
 # Standard
 import json
-import uuid
 from typing import Any, Sequence, Union
+import uuid
 
 # Third-Party
 from alembic import op
@@ -53,12 +53,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(table_name: str) -> bool:
+    """Return True if *table_name* exists in the current database."""
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     return table_name in inspector.get_table_names()
 
 
 def _column_exists(table_name: str, column_name: str) -> bool:
+    """Return True if *column_name* exists on *table_name*."""
     if not _table_exists(table_name):
         return False
     bind = op.get_bind()
@@ -67,6 +69,7 @@ def _column_exists(table_name: str, column_name: str) -> bool:
 
 
 def upgrade() -> None:
+    """Add A2A v1.0 RC1 tables, columns, and data normalization."""
     # --- A2A Agents: add tenant and icon_url ---
     if _table_exists("a2a_agents"):
         if not _column_exists("a2a_agents", "tenant"):
@@ -111,13 +114,7 @@ def upgrade() -> None:
     if _table_exists("a2a_agents") and _table_exists("a2a_agent_auth") and _column_exists("a2a_agents", "auth_type"):
         bind = op.get_bind()
         # Select agents that have any auth configuration (use .mappings() for named access)
-        agents = bind.execute(
-            sa.text(
-                "SELECT id, auth_type, auth_value, auth_query_params, oauth_config "
-                "FROM a2a_agents "
-                "WHERE auth_type IS NOT NULL"
-            )
-        ).mappings().all()
+        agents = bind.execute(sa.text("SELECT id, auth_type, auth_value, auth_query_params, oauth_config " "FROM a2a_agents " "WHERE auth_type IS NOT NULL")).mappings().all()
         for agent in agents:
             # Check if auth config already exists (idempotent)
             existing = bind.execute(
@@ -159,18 +156,19 @@ def upgrade() -> None:
     # --- Normalize cancelled -> canceled in a2a_tasks ---
     if _table_exists("a2a_tasks"):
         bind = op.get_bind()
-        bind.execute(
-            sa.text("UPDATE a2a_tasks SET state = 'canceled' WHERE state = 'cancelled'")
-        )
+        bind.execute(sa.text("UPDATE a2a_tasks SET state = 'canceled' WHERE state = 'cancelled'"))
 
 
 def downgrade() -> None:
+    """Revert A2A v1.0 RC1 tables, columns, and data normalization."""
     # --- Revert cancelled spelling ---
+    # NOTE: This revert is lossy — any tasks that were originally created with
+    # state='canceled' (American spelling) during the v1.0 period will be
+    # incorrectly changed to 'cancelled'.  There is no way to distinguish
+    # them from tasks that were migrated by upgrade().
     if _table_exists("a2a_tasks"):
         bind = op.get_bind()
-        bind.execute(
-            sa.text("UPDATE a2a_tasks SET state = 'cancelled' WHERE state = 'canceled'")
-        )
+        bind.execute(sa.text("UPDATE a2a_tasks SET state = 'cancelled' WHERE state = 'canceled'"))
 
     # --- Drop ServerTaskMapping table ---
     if _table_exists("server_task_mappings"):

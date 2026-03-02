@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Normalize legacy A2A agent_type values to canonical transport names.
 
-Revision ID: y8i9j0k1l2m3
+Revision ID: a1b2c3d4e5f6
 Revises: 2af2fa379eb9
 Create Date: 2026-02-16 00:00:00.000000
 """
@@ -14,7 +14,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "y8i9j0k1l2m3"
+revision: str = "a1b2c3d4e5f6"
 down_revision: Union[str, Sequence[str], None] = "2af2fa379eb9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -48,6 +48,5 @@ def downgrade() -> None:
     This migration is intentionally one-way: multiple legacy values map into the
     same canonical transport name, so downgrading would be lossy and unsafe.
     """
-    print("WARNING: Downgrade of y8i9j0k1l2m3 (normalize_a2a_agent_type_values) is a no-op. "
-          "Multiple legacy agent_type values were mapped to canonical names and cannot be reversed.")
+    print("WARNING: Downgrade of a1b2c3d4e5f6 (normalize_a2a_agent_type_values) is a no-op. " "Multiple legacy agent_type values were mapped to canonical names and cannot be reversed.")
     return

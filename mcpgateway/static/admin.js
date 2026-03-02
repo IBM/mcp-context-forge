@@ -25,10 +25,18 @@ const A2A_AGENT_TYPE_DISPLAY_LABELS = Object.freeze({
 });
 
 const A2A_AGENT_TYPE_LEGACY_MAP = Object.freeze({
+    // Canonical self-references (ensures lookup always succeeds for known types).
+    "a2a-jsonrpc": "a2a-jsonrpc",
+    "a2a-rest": "a2a-rest",
+    "a2a-grpc": "a2a-grpc",
+    "rest-passthrough": "rest-passthrough",
+    custom: "custom",
+    // Underscore variants.
     a2a_jsonrpc: "a2a-jsonrpc",
     a2a_rest: "a2a-rest",
     a2a_grpc: "a2a-grpc",
     rest_passthrough: "rest-passthrough",
+    // Legacy aliases.
     a2a: "a2a-jsonrpc",
     generic: "a2a-jsonrpc",
     jsonrpc: "a2a-jsonrpc",

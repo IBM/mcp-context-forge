@@ -3725,14 +3725,15 @@ class ServerInterfaceCreate(BaseModel):
 
     protocol: str = Field(..., description="Protocol family: mcp or a2a")
     binding: str = Field(..., description="Protocol binding: jsonrpc, rest, grpc, sse, ws, streamable-http")
-    version: str = Field(default="1.0", description="Protocol version")
-    tenant: Optional[str] = Field(None, description="Routing label forwarded to downstream agents (not used for access control)")
+    version: str = Field(default="1.0", max_length=10, description="Protocol version")
+    tenant: Optional[str] = Field(None, max_length=255, description="Routing label forwarded to downstream agents (not used for access control)")
     enabled: bool = Field(True, description="Whether this interface is active")
     config: Optional[Dict[str, Any]] = Field(None, description="Protocol-specific configuration (e.g. agent_card_override, allow_caller_tenant_override, allowed_tenants)")
 
     @field_validator("protocol")
     @classmethod
     def validate_protocol(cls, v: str) -> str:
+        """Ensure protocol is one of the supported families."""
         if v not in ("mcp", "a2a"):
             raise ValueError("Protocol must be one of: mcp, a2a")
         return v
@@ -3740,6 +3741,7 @@ class ServerInterfaceCreate(BaseModel):
     @field_validator("binding")
     @classmethod
     def validate_binding(cls, v: str) -> str:
+        """Ensure binding is a recognized transport binding."""
         valid = {"jsonrpc", "rest", "grpc", "sse", "ws", "streamable-http"}
         if v not in valid:
             raise ValueError(f"Binding must be one of: {', '.join(sorted(valid))}")
@@ -4401,13 +4403,13 @@ class A2AAgentCreate(BaseModel):
         default="a2a-jsonrpc",
         description="A2A transport type: a2a-jsonrpc, a2a-rest, a2a-grpc, rest-passthrough, or custom",
     )
-    protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
+    protocol_version: str = Field(default="1.0", max_length=10, description="A2A protocol version supported")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # A2A v1.0 fields
-    tenant: Optional[str] = Field(None, description="Per-agent tenant routing label (overrides server default when set)")
-    icon_url: Optional[str] = Field(None, description="URL to an icon for the agent")
+    tenant: Optional[str] = Field(None, max_length=255, description="Per-agent tenant routing label (overrides server default when set)")
+    icon_url: Optional[str] = Field(None, max_length=767, description="URL to an icon for the agent")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
@@ -4756,13 +4758,13 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         None,
         description="A2A transport type: a2a-jsonrpc, a2a-rest, a2a-grpc, rest-passthrough, or custom",
     )
-    protocol_version: Optional[str] = Field(None, description="A2A protocol version supported")
+    protocol_version: Optional[str] = Field(None, max_length=10, description="A2A protocol version supported")
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
     config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # A2A v1.0 fields
-    tenant: Optional[str] = Field(None, description="Per-agent tenant routing label (overrides server default when set)")
-    icon_url: Optional[str] = Field(None, description="URL to an icon for the agent")
+    tenant: Optional[str] = Field(None, max_length=255, description="Per-agent tenant routing label (overrides server default when set)")
+    icon_url: Optional[str] = Field(None, max_length=767, description="URL to an icon for the agent")
     auth_type: Optional[str] = Field(None, description="Type of authentication")
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
     auth_password: Optional[str] = Field(None, description="password for basic authentication")

@@ -58,7 +58,7 @@ def _make_mock_service():
     svc.get_task = AsyncMock(return_value={"result": {"id": "task-abc", "state": "WORKING"}})
     svc.cancel_task = AsyncMock(return_value={"result": {"id": "task-abc", "state": "CANCELED"}})
     svc.list_tasks = AsyncMock(return_value={"result": [{"id": "task-1"}, {"id": "task-2"}]})
-    svc.get_agent_card = MagicMock(return_value={"name": "Test Agent", "description": "A test agent card"})
+    svc.get_agent_card = AsyncMock(return_value={"name": "Test Agent", "description": "A test agent card"})
     svc.list_a2a_servers = MagicMock(return_value=[{"id": "srv-1", "name": "Server A"}])
     return svc
 
@@ -204,7 +204,7 @@ class TestJsonRpcDispatch:
         assert resp.status_code == 200
         data = resp.json()
         assert data["result"]["name"] == "Test Agent"
-        mock_service.get_agent_card.assert_called_once()
+        mock_service.get_agent_card.assert_awaited_once()
 
     def test_jsonrpc_method_not_found(self, client):
         resp = client.post(
@@ -269,6 +269,30 @@ class TestJsonRpcDispatch:
         assert data["error"]["code"] == -32600
         assert "Something went wrong" in data["error"]["message"]
 
+    def test_jsonrpc_version_mismatch(self, client):
+        """jsonrpc field set to something other than '2.0' should return -32600."""
+        resp = client.post(
+            "/servers/srv-1/a2a",
+            json={"jsonrpc": "1.0", "method": "SendMessage", "params": {}, "id": "req-ver"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["error"]["code"] == -32600
+        assert "2.0" in data["error"]["message"]
+        assert data["id"] == "req-ver"
+
+    def test_jsonrpc_version_missing(self, client):
+        """Missing jsonrpc field should return -32600."""
+        resp = client.post(
+            "/servers/srv-1/a2a",
+            json={"method": "SendMessage", "params": {}, "id": "req-nover"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["error"]["code"] == -32600
+        assert "2.0" in data["error"]["message"]
+        assert data["id"] == "req-nover"
+
 
 # ---------------------------------------------------------------------------
 # REST Endpoint Tests
@@ -322,6 +346,24 @@ class TestRestEndpoints:
         assert data["result"]["state"] == "CANCELED"
         mock_service.cancel_task.assert_awaited_once()
 
+    def test_stream_message_success(self):
+        """POST /{server_id}/a2a/message:stream should stream SSE events."""
+        svc = _make_mock_service()
+
+        async def _fake_stream(*args, **kwargs):
+            async def _gen():
+                yield b"event: message\ndata: {}\n\n"
+            return _gen()
+
+        svc.stream_message = AsyncMock(side_effect=_fake_stream)
+        with _patched_client(svc) as c:
+            resp = c.post(
+                "/servers/srv-1/a2a/message:stream",
+                json={"message": {"role": "user", "parts": [{"text": "hi"}]}},
+            )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+
 
 # ---------------------------------------------------------------------------
 # Agent Card Tests
@@ -336,18 +378,18 @@ class TestAgentCard:
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "Test Agent"
-        mock_service.get_agent_card.assert_called_once()
+        mock_service.get_agent_card.assert_awaited_once()
 
     def test_well_known_agent_card(self, client, mock_service):
         resp = client.get("/servers/srv-1/.well-known/agent-card.json")
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "Test Agent"
-        mock_service.get_agent_card.assert_called_once()
+        mock_service.get_agent_card.assert_awaited_once()
 
     def test_agent_card_server_not_found(self):
         svc = _make_mock_service()
-        svc.get_agent_card = MagicMock(side_effect=A2AServerNotFoundError("Server 'missing' not found"))
+        svc.get_agent_card = AsyncMock(side_effect=A2AServerNotFoundError("Server 'missing' not found"))
         with _patched_client(svc) as c:
             resp = c.get("/servers/missing/a2a/v1/card")
         assert resp.status_code == 404
@@ -413,3 +455,53 @@ class TestDenyPaths:
         with _patched_client_denied(mock_service, mock_permission_service) as c:
             resp = c.get("/servers/a2a/discover")
         assert resp.status_code == 403
+
+    def test_stream_message_denied(self, mock_service, mock_permission_service):
+        """POST /{server_id}/a2a/message:stream must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.post("/servers/srv-1/a2a/message:stream", json={})
+        assert resp.status_code == 403
+
+    def test_get_task_denied(self, mock_service, mock_permission_service):
+        """GET /{server_id}/a2a/tasks/{task_id} must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.get("/servers/srv-1/a2a/tasks/task-xyz")
+        assert resp.status_code == 403
+
+    def test_list_tasks_denied(self, mock_service, mock_permission_service):
+        """GET /{server_id}/a2a/tasks must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.get("/servers/srv-1/a2a/tasks")
+        assert resp.status_code == 403
+
+    def test_cancel_task_denied(self, mock_service, mock_permission_service):
+        """POST /{server_id}/a2a/tasks/{task_id}:cancel must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.post("/servers/srv-1/a2a/tasks/task-xyz:cancel")
+        assert resp.status_code == 403
+
+    def test_well_known_card_denied(self, mock_service, mock_permission_service):
+        """GET /{server_id}/.well-known/agent-card.json must return 403 when permission is denied."""
+        with _patched_client_denied(mock_service, mock_permission_service) as c:
+            resp = c.get("/servers/srv-1/.well-known/agent-card.json")
+        assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Server Visibility Tests
+# ---------------------------------------------------------------------------
+
+
+class TestServerVisibility:
+    """Verify that team-scoped servers are not accessible to unauthorized users."""
+
+    def test_server_visibility_denied(self):
+        """A user without matching team should get a 404 from a team-scoped server."""
+        svc = _make_mock_service()
+        svc.send_message = AsyncMock(side_effect=A2AServerNotFoundError("Server 'srv-team' not found"))
+        with _patched_client(svc) as c:
+            resp = c.post(
+                "/servers/srv-team/a2a/message:send",
+                json={"message": {"role": "user", "parts": [{"text": "hello"}]}},
+            )
+        assert resp.status_code == 404

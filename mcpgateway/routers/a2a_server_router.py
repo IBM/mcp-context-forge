@@ -67,6 +67,8 @@ def _get_invoke_context(request: Request, user: Any) -> tuple:
     Returns:
         Tuple of (user_id, user_email, token_teams).
     """
+    # Deferred import: main.py imports this router, so importing main at
+    # module level would create a circular dependency.
     # First-Party
     from mcpgateway.main import get_a2a_invoke_context  # pylint: disable=import-outside-toplevel
 
@@ -114,7 +116,8 @@ async def get_server_agent_card(
         AgentCard dictionary for the specified virtual server.
     """
     service = _get_service()
-    return service.get_agent_card(db, server_id, base_url=_base_url(request))
+    _, user_email, token_teams = _get_invoke_context(request, user)
+    return await service.get_agent_card(db, server_id, base_url=_base_url(request), user_email=user_email, token_teams=token_teams)
 
 
 @router.get("/{server_id}/.well-known/agent-card.json")
@@ -137,7 +140,8 @@ async def well_known_agent_card(
         AgentCard dictionary for the specified virtual server.
     """
     service = _get_service()
-    return service.get_agent_card(db, server_id, base_url=_base_url(request))
+    _, user_email, token_teams = _get_invoke_context(request, user)
+    return await service.get_agent_card(db, server_id, base_url=_base_url(request), user_email=user_email, token_teams=token_teams)
 
 
 # -----------------------------------------------------------------------
@@ -203,7 +207,7 @@ async def jsonrpc_dispatch(
         elif method == "ListTasks":
             result = await service.list_tasks(db, server_id, params, user_id, user_email, token_teams)
         elif method == "GetAgentCard":
-            result = {"result": service.get_agent_card(db, server_id, base_url=_base_url(request))}
+            result = {"result": await service.get_agent_card(db, server_id, base_url=_base_url(request), user_email=user_email, token_teams=token_teams)}
         else:
             return {
                 "jsonrpc": "2.0",

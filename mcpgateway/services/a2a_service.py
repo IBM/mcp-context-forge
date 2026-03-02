@@ -14,7 +14,6 @@ gRPC, passthrough).  Includes agent card discovery, task persistence, and messag
 """
 
 # Standard
-import asyncio
 import binascii
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -37,8 +36,9 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import EmailTeam, fresh_db_session, get_for_update
-from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, normalize_a2a_agent_type
 from mcpgateway.plugins.framework.hooks.agents import AgentHookType, AgentPostInvokePayload, AgentPreInvokePayload
+from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, normalize_a2a_agent_type
+from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentUpstreamError  # noqa: F401
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
@@ -48,7 +48,6 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
-from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentUpstreamError  # noqa: F401
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
@@ -77,6 +76,38 @@ logger = logging_service.get_logger(__name__)
 
 # Initialize structured logger for A2A lifecycle tracking
 structured_logger = get_structured_logger("a2a_service")
+
+# Module-level gRPC channel cache — channels are expensive to create and
+# support multiplexing, so we reuse them keyed by (target, use_tls).
+_GRPC_CHANNEL_CACHE: Dict[tuple, Any] = {}
+
+
+async def _get_grpc_channel(target: str, use_tls: bool) -> Any:
+    """Return a cached gRPC async channel, creating one if necessary.
+
+    Args:
+        target: gRPC target address (host:port).
+        use_tls: Whether to use TLS for the channel.
+
+    Returns:
+        A ``grpc.aio.Channel`` instance.
+    """
+    # Third-Party
+    import grpc  # pylint: disable=import-outside-toplevel
+
+    key = (target, use_tls)
+    channel = _GRPC_CHANNEL_CACHE.get(key)
+    if channel is not None:
+        state = channel.get_state(try_to_connect=False)
+        if state != grpc.ChannelConnectivity.SHUTDOWN:
+            return channel
+    if use_tls:
+        channel = grpc.aio.secure_channel(target, grpc.ssl_channel_credentials())
+    else:
+        channel = grpc.aio.insecure_channel(target)
+    _GRPC_CHANNEL_CACHE[key] = channel
+    return channel
+
 
 A2A_VERSION_HEADER = "1.0"
 A2A_JSONRPC_ERROR_CODES: Dict[int, str] = {
@@ -145,6 +176,7 @@ class A2AAgentService(BaseService):
         self._event_streams: List[AsyncGenerator[str, None]] = []
 
         # Lazy import to avoid circular dependencies at module load time.
+        # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager  # pylint: disable=import-outside-toplevel
 
         self._plugin_manager = get_plugin_manager()
@@ -400,17 +432,20 @@ class A2AAgentService(BaseService):
             return self._extract_agent_card(payload)
 
         async def _fetch_first_card(candidate_urls: List[str]) -> Optional[Dict[str, Any]]:
-            """Try candidate URLs concurrently and return the first valid agent card.
+            """Try candidate URLs sequentially and return the first valid agent card.
+
+            Uses sequential fetch with early return so that we stop as soon as
+            a valid card is found, avoiding unnecessary requests.
 
             Args:
                 candidate_urls: List of candidate URLs to try.
 
             Returns:
-                First valid agent card dict (by candidate order), or None if none found.
+                First valid agent card dict, or None if none found.
             """
             client = await get_http_client()
-            results = await asyncio.gather(*[_try_one_url(client, url) for url in candidate_urls], return_exceptions=True)
-            for result in results:
+            for url in candidate_urls:
+                result = await _try_one_url(client, url)
                 if isinstance(result, dict):
                     return result
             return None
@@ -443,7 +478,7 @@ class A2AAgentService(BaseService):
 
         return base_card
 
-    def _normalize_message_parts_to_kind(self, params: Any) -> Any:
+    def _normalize_message_parts_to_kind(self, params: Any, in_place: bool = False) -> Any:
         """Normalize A2A message parts for v1.0 compliance.
 
         v1.0 parts use a flat oneof structure (``text``, ``raw``, ``url``, ``data``
@@ -457,6 +492,7 @@ class A2AAgentService(BaseService):
 
         Args:
             params: Query/filter parameters.
+            in_place: When True, skip deepcopy and modify params directly.
 
         Returns:
             Normalized parameters with v1.0-compliant parts.
@@ -467,7 +503,13 @@ class A2AAgentService(BaseService):
         if not isinstance(params, dict):
             return params
 
-        normalized_params = deepcopy(params)
+        # Cache compat mode setting once per call instead of importing per-iteration.
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        compat_mode = settings.mcpgateway_a2a_v1_compat_mode
+
+        normalized_params = params if in_place else deepcopy(params)
         message = normalized_params.get("message")
         if not isinstance(message, dict):
             return normalized_params
@@ -475,9 +517,7 @@ class A2AAgentService(BaseService):
         # Accept both "parts" (v1.0) and "content" (v0.3) as the parts array field name.
         used_content_field = "content" in message and "parts" not in message
         if used_content_field:
-            from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-            if not settings.mcpgateway_a2a_v1_compat_mode:
+            if not compat_mode:
                 raise A2AAgentError("v0.3 message format rejected: 'content' field is deprecated in A2A v1.0. Use 'parts' instead. Enable MCPGATEWAY_A2A_V1_COMPAT_MODE=true to accept v0.3 formats.")
         parts = message.get("parts") or message.get("content")
         if not isinstance(parts, list):
@@ -501,11 +541,10 @@ class A2AAgentService(BaseService):
             if kind:
                 v03_compat_used = True
                 if not used_content_field:
-                    # Only check compat mode once per message (content field check is above).
-                    from mcpgateway.config import settings as _settings  # pylint: disable=import-outside-toplevel
-
-                    if not _settings.mcpgateway_a2a_v1_compat_mode:
-                        raise A2AAgentError("v0.3 Part format rejected: 'kind' discriminator is deprecated in A2A v1.0. Use flat part structure instead. Enable MCPGATEWAY_A2A_V1_COMPAT_MODE=true to accept v0.3 formats.")
+                    if not compat_mode:
+                        raise A2AAgentError(
+                            "v0.3 Part format rejected: 'kind' discriminator is deprecated in A2A v1.0. Use flat part structure instead. Enable MCPGATEWAY_A2A_V1_COMPAT_MODE=true to accept v0.3 formats."
+                        )
                 kind_lower = str(kind).strip().lower()
 
                 if kind_lower == "text":
@@ -562,7 +601,7 @@ class A2AAgentService(BaseService):
     # PascalCase (v1.0) ↔ slash-style (v0.3) method name mapping.
     _V1_TO_V03_METHOD_MAP: ClassVar[Dict[str, str]] = {
         "SendMessage": "message/send",
-        "SendStreamMessage": "message/stream",
+        "SendStreamingMessage": "message/stream",
         "GetTask": "tasks/get",
         "ListTasks": "tasks/list",
         "CancelTask": "tasks/cancel",
@@ -600,7 +639,7 @@ class A2AAgentService(BaseService):
         return method
 
     @staticmethod
-    def _normalize_outbound_for_v03(params: Any) -> Any:
+    def _normalize_outbound_for_v03(params: Any, in_place: bool = False) -> Any:
         """Convert v1.0 flat parts back to v0.3 kind-based format for outbound to v0.3 agents.
 
         Reverses ``_normalize_message_parts_to_kind``:
@@ -611,6 +650,7 @@ class A2AAgentService(BaseService):
 
         Args:
             params: The normalized v1.0 params dict.
+            in_place: When True, skip deepcopy and modify params directly.
 
         Returns:
             Params dict with v0.3 Part structure.
@@ -618,7 +658,7 @@ class A2AAgentService(BaseService):
         if not isinstance(params, dict):
             return params
 
-        result = deepcopy(params)
+        result = params if in_place else deepcopy(params)
         message = result.get("message")
         if not isinstance(message, dict):
             return result
@@ -902,6 +942,8 @@ class A2AAgentService(BaseService):
         """
         return await self._invoke_a2a_grpc(endpoint_url, parameters, interaction_type, auth_headers, correlation_id)
 
+    _MAX_EXTRACTED_TASKS = 1000
+
     def _extract_task_payloads(self, payload: Any) -> List[Dict[str, Any]]:
         """Extract task objects from response payloads for persistence.
 
@@ -921,6 +963,8 @@ class A2AAgentService(BaseService):
                 depth: Recursion depth counter.
             """
             if depth > 20:
+                return
+            if len(tasks) >= A2AAgentService._MAX_EXTRACTED_TASKS:
                 return
             if isinstance(candidate, list):
                 for item in candidate:
@@ -1171,7 +1215,7 @@ class A2AAgentService(BaseService):
 
                 metrics_cache.invalidate("a2a")
             except Exception as cache_error:
-                logger.warning(f"Cache invalidation failed after agent commit: {cache_error}")
+                logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
 
             # Automatically create a tool for the A2A agent if not already present
             # Tool creation is wrapped in try/except to ensure agent registration succeeds
@@ -1195,11 +1239,11 @@ class A2AAgentService(BaseService):
                 new_agent.tool = tool_db
                 db.commit()
                 db.refresh(new_agent)
-                logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) with tool ID: {tool_db.id}")
+                logger.info("Registered new A2A agent: %s (ID: %s) with tool ID: %s", new_agent.name, new_agent.id, tool_db.id)
             except Exception as tool_error:
                 # Log the error but don't fail agent registration
                 # Agent was already committed above, so it persists even if tool creation fails
-                logger.warning(f"Failed to create tool for A2A agent {new_agent.name}: {tool_error}")
+                logger.warning("Failed to create tool for A2A agent %s: %s", new_agent.name, tool_error)
                 structured_logger.warning(
                     f"A2A agent '{new_agent.name}' created without tool association",
                     user_id=created_by,
@@ -1209,9 +1253,12 @@ class A2AAgentService(BaseService):
                 )
                 # Refresh the agent to ensure it's in a clean state after any rollback
                 db.refresh(new_agent)
-                logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) without tool")
+                logger.info("Registered new A2A agent: %s (ID: %s) without tool", new_agent.name, new_agent.id)
 
             # Log A2A agent registration for lifecycle tracking
+            # First-Party
+            from mcpgateway.utils.url_auth import sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
+
             structured_logger.info(
                 f"A2A agent '{new_agent.name}' registered successfully",
                 user_id=created_by,
@@ -1225,7 +1272,7 @@ class A2AAgentService(BaseService):
                     "agent_type": new_agent.agent_type,
                     "protocol_version": new_agent.protocol_version,
                     "visibility": visibility,
-                    "endpoint_url": new_agent.endpoint_url,
+                    "endpoint_url": sanitize_url_for_logging(new_agent.endpoint_url),
                 },
             )
 
@@ -1236,7 +1283,7 @@ class A2AAgentService(BaseService):
             raise ie
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
             raise ie
         except ValueError as ve:
             raise ve
@@ -1380,7 +1427,7 @@ class A2AAgentService(BaseService):
                 s.team = team_map.get(s.team_id) if s.team_id else None
                 result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert A2A agent {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -1495,7 +1542,7 @@ class A2AAgentService(BaseService):
             try:
                 result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert A2A agent {getattr(agent, 'id', 'unknown')} ({getattr(agent, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(agent, "id", "unknown"), getattr(agent, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
 
         return result
@@ -1744,7 +1791,7 @@ class A2AAgentService(BaseService):
             # Clear auth_query_params when switching away from query_param auth
             if original_auth_type == "query_param" and agent_data.auth_type is not None and agent_data.auth_type != "query_param":
                 agent.auth_query_params = None
-                logger.debug(f"Cleared auth_query_params for agent {agent.id} (switched from query_param to {agent_data.auth_type})")
+                logger.debug("Cleared auth_query_params for agent %s (switched from query_param to %s)", agent.id, agent_data.auth_type)
 
             # Handle switching to query_param auth or updating existing query_param credentials
             is_switching_to_queryparam = agent_data.auth_type == "query_param" and original_auth_type != "query_param"
@@ -1858,9 +1905,9 @@ class A2AAgentService(BaseService):
                     modified_user_agent=modified_user_agent,
                 )
             except Exception as tool_err:
-                logger.warning(f"Failed to sync tool for A2A agent {agent.id}: {tool_err}. Agent update succeeded but tool may be out of sync.")
+                logger.warning("Failed to sync tool for A2A agent %s: %s. Agent update succeeded but tool may be out of sync.", agent.id, tool_err)
 
-            logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
+            logger.info("Updated A2A agent: %s (ID: %s)", agent.name, agent.id)
             return self.convert_agent_to_read(agent, db=db)
         except PermissionError:
             db.rollback()
@@ -1873,7 +1920,7 @@ class A2AAgentService(BaseService):
             raise nf
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
             raise ie
         except Exception as e:
             db.rollback()
@@ -1923,7 +1970,7 @@ class A2AAgentService(BaseService):
         await cache.invalidate_agents()
 
         status = "activated" if activate else "deactivated"
-        logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
+        logger.info("A2A agent %s: %s (ID: %s)", status, agent.name, agent.id)
 
         structured_logger.log(
             level="INFO",
@@ -1996,7 +2043,7 @@ class A2AAgentService(BaseService):
 
             await admin_stats_cache.invalidate_tags()
 
-            logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
+            logger.info("Deleted A2A agent: %s (ID: %s)", agent_name, agent_id)
 
             structured_logger.log(
                 level="INFO",
@@ -2111,9 +2158,11 @@ class A2AAgentService(BaseService):
         if isinstance(raw_name, str) and raw_name.strip():
             name = raw_name.strip()
             if "/" in name:
-                for segment in name.split("/"):
-                    if segment:
-                        _validate_a2a_identifier(segment, "resource_name_segment")
+                segments = name.split("/")
+                for segment in segments:
+                    if not segment:
+                        raise A2AAgentError("A2A resource name contains empty segment (double slash)")
+                    _validate_a2a_identifier(segment, "resource_name_segment")
                 return name
             return f"tasks/{_validate_a2a_identifier(name, 'task_name')}"
 
@@ -2415,12 +2464,8 @@ class A2AAgentService(BaseService):
         metadata = self._build_a2a_grpc_metadata(auth_headers, correlation_id)
         metadata_arg = metadata or None
 
-        channel: Optional[grpc.aio.Channel] = None
         try:
-            if use_tls:
-                channel = grpc.aio.secure_channel(target, grpc.ssl_channel_credentials())
-            else:
-                channel = grpc.aio.insecure_channel(target)
+            channel = await _get_grpc_channel(target, use_tls)
 
             stub = a2a_pb2_grpc.A2AServiceStub(channel)
 
@@ -2540,9 +2585,6 @@ class A2AAgentService(BaseService):
             status_name = status_code.name if status_code else "UNKNOWN"
             details = rpc_error.details() if callable(getattr(rpc_error, "details", None)) else str(rpc_error)
             raise A2AAgentError(f"A2A gRPC {grpc_method} failed ({status_name}): {details}") from rpc_error
-        finally:
-            if channel is not None:
-                await channel.close()
 
     async def invoke_agent(
         self,
@@ -2628,7 +2670,7 @@ class A2AAgentService(BaseService):
         is_v03_agent = not (agent_protocol_version.startswith("1.") or agent_protocol_version == "1")
         if is_v03_agent:
             rpc_method = self._outbound_method_for_version(rpc_method, agent_protocol_version)
-            rpc_params = self._normalize_outbound_for_v03(rpc_params)
+            rpc_params = self._normalize_outbound_for_v03(rpc_params, in_place=True)
 
         # Advertise the version matching the target agent's protocol.
         outbound_version_header = agent_protocol_version if is_v03_agent else A2A_VERSION_HEADER
@@ -2761,7 +2803,7 @@ class A2AAgentService(BaseService):
                         pass
             else:
                 jsonrpc_error = self._extract_jsonrpc_error_message(response_payload)
-                raw_error = jsonrpc_error or f"HTTP {http_response.status_code}: {http_response.text}"
+                raw_error = jsonrpc_error or f"HTTP {http_response.status_code}: {http_response.text[:1024]}"
                 error_message = sanitize_exception_message(raw_error, auth_ctx.query_params_decrypted)
 
                 structured_logger.log(
@@ -2890,7 +2932,7 @@ class A2AAgentService(BaseService):
             A2AAgentNotFoundError: If the agent is not found or user lacks access.
             A2AAgentError: If the agent is disabled or streaming is unsupported.
         """
-        _ = user_id
+        logger.debug("Building SSE stream for agent=%s user_id=%s", agent_name, user_id)
 
         # Lookup the agent by name (read-only path, no row lock needed).
         agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
@@ -2906,6 +2948,7 @@ class A2AAgentService(BaseService):
         # Extract all needed data before releasing DB connection.
         agent_id = agent.id
         agent_endpoint_url = agent.endpoint_url
+        agent_protocol_version = agent.protocol_version
         normalized_agent_type = normalize_a2a_agent_type(agent.agent_type)
 
         # Resolve auth using shared dispatcher.
@@ -2928,7 +2971,6 @@ class A2AAgentService(BaseService):
         db.commit()
 
         # Normalize message parts for spec transports.
-        agent_protocol_version = agent.protocol_version
         if isinstance(rpc_params, dict):
             rpc_params = self._normalize_message_parts_to_kind(rpc_params)
 
@@ -2936,7 +2978,7 @@ class A2AAgentService(BaseService):
         is_v03_agent = not (agent_protocol_version.startswith("1.") or agent_protocol_version == "1")
         if is_v03_agent:
             rpc_method = self._outbound_method_for_version(rpc_method, agent_protocol_version)
-            rpc_params = self._normalize_outbound_for_v03(rpc_params) if isinstance(rpc_params, dict) else rpc_params
+            rpc_params = self._normalize_outbound_for_v03(rpc_params, in_place=True) if isinstance(rpc_params, dict) else rpc_params
 
         correlation_id = get_correlation_id()
 
@@ -2980,12 +3022,8 @@ class A2AAgentService(BaseService):
             metadata = self._build_a2a_grpc_metadata(auth_headers, correlation_id)
             metadata_arg = metadata or None
 
-            channel: Optional[grpc.aio.Channel] = None
             try:
-                if use_tls:
-                    channel = grpc.aio.secure_channel(target, grpc.ssl_channel_credentials())
-                else:
-                    channel = grpc.aio.insecure_channel(target)
+                channel = await _get_grpc_channel(target, use_tls)
 
                 stub = a2a_pb2_grpc.A2AServiceStub(channel)
 
@@ -3011,9 +3049,6 @@ class A2AAgentService(BaseService):
                 yield _sse_event("error", {"type": "error", "error": f"A2A gRPC stream failed ({status_name}): {_sanitize(details, auth_ctx.query_params_decrypted)}"})
             except Exception as e:
                 yield _sse_event("error", {"type": "error", "error": _sanitize(str(e), auth_ctx.query_params_decrypted)})
-            finally:
-                if channel is not None:
-                    await channel.close()
 
         async def _http_stream(http_method: str, url: str, json_body: Any, query: Optional[Dict[str, Any]]) -> AsyncGenerator[bytes, None]:
             """Proxy an HTTP streaming response as SSE events.

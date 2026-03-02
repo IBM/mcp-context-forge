@@ -16,11 +16,11 @@ handled by the router layer and the downstream ``A2AAgentService``.
 # Standard
 import asyncio
 import logging
-import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
+import uuid
 
 # Third-Party
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -28,6 +28,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerTaskMapping
 from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNotFoundError
+from mcpgateway.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
@@ -69,26 +70,42 @@ class A2AServerService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_server_with_a2a(self, db: Session, server_id: str) -> DbServer:
+    async def _get_server_with_a2a(
+        self,
+        db: Session,
+        server_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> DbServer:
         """Load a server with its A2A interfaces and agents eagerly loaded.
+
+        Also performs a visibility check to ensure the caller is allowed to
+        access the server based on team scoping.
 
         Args:
             db: Database session.
             server_id: Virtual server identifier.
+            user_email: Authenticated user email for owner matching.
+            token_teams: JWT-derived team list for visibility filtering.
 
         Returns:
             The loaded ``DbServer`` with A2A interfaces and agents populated.
 
         Raises:
-            A2AServerNotFoundError: If the server doesn't exist or has no A2A interfaces.
+            A2AServerNotFoundError: If the server doesn't exist, has no A2A
+                interfaces, or the caller lacks visibility.
         """
-        server = (
-            db.query(DbServer)
-            .options(selectinload(DbServer.a2a_agents), selectinload(DbServer.interfaces))
-            .filter(DbServer.id == server_id, DbServer.enabled.is_(True))
-            .first()
-        )
+        server = db.query(DbServer).options(selectinload(DbServer.a2a_agents), selectinload(DbServer.interfaces)).filter(DbServer.id == server_id, DbServer.enabled.is_(True)).first()
         if server is None:
+            raise A2AServerNotFoundError(f"Server '{server_id}' not found")
+
+        if not await BaseService.check_item_access(
+            visibility=getattr(server, "visibility", "public"),
+            item_team_id=getattr(server, "team_id", None),
+            item_owner_email=getattr(server, "owner_email", None),
+            user_email=user_email,
+            token_teams=token_teams,
+        ):
             raise A2AServerNotFoundError(f"Server '{server_id}' not found")
 
         a2a_interfaces = [i for i in (server.interfaces or []) if i.protocol == "a2a" and i.enabled]
@@ -109,7 +126,7 @@ class A2AServerService:
         Raises:
             A2AServerNotFoundError: If no enabled A2A interface exists.
         """
-        for iface in (server.interfaces or []):
+        for iface in server.interfaces or []:
             if iface.protocol == "a2a" and iface.enabled:
                 return iface
         raise A2AServerNotFoundError(f"Server '{server.id}' has no enabled A2A interfaces")
@@ -146,11 +163,13 @@ class A2AServerService:
     # Agent Card Generation
     # ------------------------------------------------------------------
 
-    def get_agent_card(
+    async def get_agent_card(
         self,
         db: Session,
         server_id: str,
         base_url: str = "",
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Generate an AgentCard for this server's A2A interface.
 
@@ -161,11 +180,13 @@ class A2AServerService:
             db: Database session.
             server_id: Server ID.
             base_url: Base URL for constructing interface URLs.
+            user_email: Authenticated user email for owner matching.
+            token_teams: JWT-derived team list for visibility filtering.
 
         Returns:
             Agent card dict conforming to A2A v1.0 AgentCard schema.
         """
-        server = self._get_server_with_a2a(db, server_id)
+        server = await self._get_server_with_a2a(db, server_id, user_email=user_email, token_teams=token_teams)
         a2a_iface = self._get_a2a_interface(server)
         config = a2a_iface.config or {}
 
@@ -174,14 +195,14 @@ class A2AServerService:
         seen_skill_ids: set = set()
         all_caps: Dict[str, Any] = {}
 
-        for agent in (server.a2a_agents or []):
+        for agent in server.a2a_agents or []:
             if not getattr(agent, "enabled", True):
                 continue
             agent_caps = getattr(agent, "capabilities", {}) or {}
             # Merge capabilities (OR for additive, AND for restrictive).
             for key, value in agent_caps.items():
                 if key == "skills":
-                    for skill in (value or []):
+                    for skill in value or []:
                         sid = skill.get("id", "")
                         if sid and sid not in seen_skill_ids:
                             seen_skill_ids.add(sid)
@@ -257,7 +278,7 @@ class A2AServerService:
         Returns:
             A2A JSON-RPC response dict with server-level task ID.
         """
-        server = self._get_server_with_a2a(db, server_id)
+        server = await self._get_server_with_a2a(db, server_id, user_email=user_email, token_teams=token_teams)
         agent = self._pick_agent(server)
 
         result = await self.a2a_service.send_message(
@@ -316,7 +337,7 @@ class A2AServerService:
         Returns:
             Async iterator of SSE-formatted string chunks.
         """
-        server = self._get_server_with_a2a(db, server_id)
+        server = await self._get_server_with_a2a(db, server_id, user_email=user_email, token_teams=token_teams)
         agent = self._pick_agent(server)
 
         return await self.a2a_service.stream_message(
@@ -353,11 +374,10 @@ class A2AServerService:
         Raises:
             A2AAgentNotFoundError: If the task mapping or agent is not found.
         """
-        mapping = (
-            db.query(ServerTaskMapping)
-            .filter(ServerTaskMapping.server_id == server_id, ServerTaskMapping.server_task_id == task_id)
-            .first()
-        )
+        # Validate server visibility before processing task lookup.
+        await self._get_server_with_a2a(db, server_id, user_email=user_email, token_teams=token_teams)
+
+        mapping = db.query(ServerTaskMapping).filter(ServerTaskMapping.server_id == server_id, ServerTaskMapping.server_task_id == task_id).first()
         if mapping is None:
             raise A2AAgentNotFoundError(f"Task '{task_id}' not found on server '{server_id}'")
 
@@ -405,11 +425,10 @@ class A2AServerService:
         Raises:
             A2AAgentNotFoundError: If the task mapping or agent is not found.
         """
-        mapping = (
-            db.query(ServerTaskMapping)
-            .filter(ServerTaskMapping.server_id == server_id, ServerTaskMapping.server_task_id == task_id)
-            .first()
-        )
+        # Validate server visibility before processing task lookup.
+        await self._get_server_with_a2a(db, server_id, user_email=user_email, token_teams=token_teams)
+
+        mapping = db.query(ServerTaskMapping).filter(ServerTaskMapping.server_id == server_id, ServerTaskMapping.server_task_id == task_id).first()
         if mapping is None:
             raise A2AAgentNotFoundError(f"Task '{task_id}' not found on server '{server_id}'")
 
@@ -453,12 +472,13 @@ class A2AServerService:
         Returns:
             Dict with ``result`` key containing aggregated task list.
         """
-        server = self._get_server_with_a2a(db, server_id)
+        server = await self._get_server_with_a2a(db, server_id, user_email=user_email, token_teams=token_teams)
 
         # Aggregate tasks from all active agents concurrently.
         active_agents = [a for a in (server.a2a_agents or []) if getattr(a, "enabled", True)]
 
         async def _list_from_agent(agent: DbA2AAgent) -> List[Dict[str, Any]]:
+            """Fetch tasks from a single agent, returning [] on failure."""
             try:
                 result = await self.a2a_service.list_tasks(
                     db=db,
@@ -487,11 +507,7 @@ class A2AServerService:
         agent_task_ids = [t.get("id") or t.get("taskId") for t in all_tasks if isinstance(t, dict)]
         agent_task_ids = [tid for tid in agent_task_ids if tid]
         if agent_task_ids:
-            mappings = (
-                db.query(ServerTaskMapping)
-                .filter(ServerTaskMapping.server_id == server_id, ServerTaskMapping.agent_task_id.in_(agent_task_ids))
-                .all()
-            )
+            mappings = db.query(ServerTaskMapping).filter(ServerTaskMapping.server_id == server_id, ServerTaskMapping.agent_task_id.in_(agent_task_ids)).all()
             id_map = {m.agent_task_id: m.server_task_id for m in mappings}
             for task in all_tasks:
                 if isinstance(task, dict):
@@ -525,7 +541,7 @@ class A2AServerService:
         Returns:
             A2A JSON-RPC response dict from the downstream agent.
         """
-        server = self._get_server_with_a2a(db, server_id)
+        server = await self._get_server_with_a2a(db, server_id, user_email=user_email, token_teams=token_teams)
         agent = self._pick_agent(server)
 
         return await self.a2a_service.invoke_agent(

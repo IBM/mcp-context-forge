@@ -83,7 +83,7 @@ class A2AAgentNameConflictError(A2AAgentError):
         self.name = name
         self.is_active = is_active
         self.agent_id = agent_id
-        message = f"{visibility.capitalize()} A2A Agent already exists with name: {name}"
+        message = f"{(visibility or 'public').capitalize()} A2A Agent already exists with name: {name}"
         if not is_active:
             message += f" (currently inactive, ID: {agent_id})"
         super().__init__(message)

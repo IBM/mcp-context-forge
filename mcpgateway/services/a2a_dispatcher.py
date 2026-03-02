@@ -10,11 +10,11 @@ and metrics recording — this module only covers the common dispatch core.
 """
 
 # Standard
+from dataclasses import dataclass, field
 import logging
 import time
-import uuid
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ async def resolve_a2a_auth(
             try:
                 decrypted = decode_auth(encrypted_value)
                 ctx.query_params_decrypted[param_key] = decrypted.get(param_key, "")
-            except Exception:
+            except Exception:  # noqa: BLE001 — broad catch is intentional: skip undecryptable params gracefully
                 logger.warning("Failed to decrypt query param '%s' for A2A agent '%s'", param_key, agent_name)
 
         if ctx.query_params_decrypted:
@@ -129,6 +129,8 @@ async def resolve_a2a_auth(
         elif isinstance(auth_value, dict):
             ctx.headers = {str(k): str(v) for k, v in auth_value.items() if k and v is not None}
     elif auth_type in ("api_key", "token") and isinstance(auth_value, str) and auth_value:
+        # api_key / token auth types store the credential as plaintext
+        # (not encrypted via encode_auth) for backward compatibility.
         ctx.headers = {"Authorization": f"Bearer {auth_value}"}
 
     # OAuth token acquisition.
@@ -170,9 +172,11 @@ def prepare_rpc_params(
 
     # Reject v0.3 slash-style method names when compat mode is off.
     if isinstance(rpc_method, str) and "/" in rpc_method:
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         if not settings.mcpgateway_a2a_v1_compat_mode:
+            # First-Party
             from mcpgateway.services.a2a_errors import A2AAgentError  # pylint: disable=import-outside-toplevel
 
             raise A2AAgentError(f"v0.3 method name '{rpc_method}' rejected. Use PascalCase (e.g., 'SendMessage') per A2A v1.0. Enable MCPGATEWAY_A2A_V1_COMPAT_MODE=true to accept v0.3 methods.")
@@ -249,12 +253,15 @@ async def dispatch_a2a_transport(
         ValueError: If a required callback (build_rest_request_fn, invoke_grpc_fn)
             is not provided for a transport that needs it.
     """
+    # Standard
     import asyncio  # pylint: disable=import-outside-toplevel
 
+    # First-Party
     from mcpgateway.services.a2a_errors import A2AAgentError  # pylint: disable=import-outside-toplevel
 
     # Validate URL scheme for HTTP transports
     if normalized_agent_type in ("a2a-jsonrpc", "a2a-rest", "rest-passthrough", "custom"):
+        # Standard
         from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
         parsed = urlparse(endpoint_url)

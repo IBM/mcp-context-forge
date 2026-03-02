@@ -12,6 +12,7 @@ import pytest
 # First-Party
 from mcpgateway.services.a2a_errors import A2AAgentError, A2AAgentNotFoundError
 from mcpgateway.services.a2a_server_service import A2AServerNotFoundError, A2AServerService
+from mcpgateway.services.base_service import BaseService
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +82,13 @@ def db():
     return mock_db
 
 
+@pytest.fixture(autouse=True)
+def _mock_check_item_access():
+    """Mock BaseService.check_item_access to always grant visibility."""
+    with patch.object(BaseService, "check_item_access", new_callable=AsyncMock, return_value=True):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # A2AServerNotFoundError
 # ---------------------------------------------------------------------------
@@ -97,27 +105,31 @@ class TestA2AServerNotFoundError:
 # _get_server_with_a2a
 # ---------------------------------------------------------------------------
 class TestGetServerWithA2A:
-    def test_raises_when_server_not_found(self, service, db):
+    @pytest.mark.asyncio
+    async def test_raises_when_server_not_found(self, service, db):
         db.query.return_value.options.return_value.filter.return_value.first.return_value = None
         with pytest.raises(A2AServerNotFoundError, match="not found"):
-            service._get_server_with_a2a(db, "nonexistent")
+            await service._get_server_with_a2a(db, "nonexistent")
 
-    def test_raises_when_no_a2a_interfaces(self, service, db):
+    @pytest.mark.asyncio
+    async def test_raises_when_no_a2a_interfaces(self, service, db):
         server = _make_server(interfaces=[_make_interface(protocol="mcp", binding="sse")])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
         with pytest.raises(A2AServerNotFoundError, match="no enabled A2A"):
-            service._get_server_with_a2a(db, "srv-1")
+            await service._get_server_with_a2a(db, "srv-1")
 
-    def test_raises_when_a2a_interface_disabled(self, service, db):
+    @pytest.mark.asyncio
+    async def test_raises_when_a2a_interface_disabled(self, service, db):
         server = _make_server(interfaces=[_make_interface(enabled=False)])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
         with pytest.raises(A2AServerNotFoundError, match="no enabled A2A"):
-            service._get_server_with_a2a(db, "srv-1")
+            await service._get_server_with_a2a(db, "srv-1")
 
-    def test_succeeds_with_a2a_interface(self, service, db):
+    @pytest.mark.asyncio
+    async def test_succeeds_with_a2a_interface(self, service, db):
         server = _make_server(interfaces=[_make_interface()])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
-        result = service._get_server_with_a2a(db, "srv-1")
+        result = await service._get_server_with_a2a(db, "srv-1")
         assert result is server
 
 
@@ -163,7 +175,8 @@ class TestPickAgent:
 # Agent Card Generation
 # ---------------------------------------------------------------------------
 class TestGetAgentCard:
-    def test_basic_card_generation(self, service, db):
+    @pytest.mark.asyncio
+    async def test_basic_card_generation(self, service, db):
         agent = _make_agent(capabilities={"streaming": True, "skills": [{"id": "echo", "name": "Echo"}]})
         server = _make_server(
             name="My Server",
@@ -174,7 +187,7 @@ class TestGetAgentCard:
         )
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
 
-        card = service.get_agent_card(db, "srv-1", base_url="https://gw.example.com")
+        card = await service.get_agent_card(db, "srv-1", base_url="https://gw.example.com")
         assert card["name"] == "My Server"
         assert card["description"] == "Test desc"
         assert card["iconUrl"] == "https://icon.png"
@@ -184,24 +197,26 @@ class TestGetAgentCard:
         assert card["capabilities"]["streaming"] is True
         assert len(card["capabilities"]["skills"]) == 1
 
-    def test_card_with_override(self, service, db):
+    @pytest.mark.asyncio
+    async def test_card_with_override(self, service, db):
         server = _make_server(
             interfaces=[_make_interface(config={"agent_card_override": {"name": "Custom Name", "description": "Custom desc"}})],
             agents=[_make_agent()],
         )
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
 
-        card = service.get_agent_card(db, "srv-1")
+        card = await service.get_agent_card(db, "srv-1")
         assert card["name"] == "Custom Name"
         assert card["description"] == "Custom desc"
 
-    def test_card_aggregates_skills_from_multiple_agents(self, service, db):
+    @pytest.mark.asyncio
+    async def test_card_aggregates_skills_from_multiple_agents(self, service, db):
         a1 = _make_agent(name="a1", capabilities={"skills": [{"id": "s1"}, {"id": "s2"}]})
         a2 = _make_agent(name="a2", capabilities={"skills": [{"id": "s2"}, {"id": "s3"}]})
         server = _make_server(interfaces=[_make_interface()], agents=[a1, a2])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
 
-        card = service.get_agent_card(db, "srv-1")
+        card = await service.get_agent_card(db, "srv-1")
         skill_ids = [s["id"] for s in card["capabilities"]["skills"]]
         assert "s1" in skill_ids
         assert "s2" in skill_ids
@@ -209,33 +224,36 @@ class TestGetAgentCard:
         # s2 should only appear once (deduplication).
         assert skill_ids.count("s2") == 1
 
-    def test_card_includes_tenant_when_set(self, service, db):
+    @pytest.mark.asyncio
+    async def test_card_includes_tenant_when_set(self, service, db):
         server = _make_server(
             interfaces=[_make_interface(tenant="acme-corp")],
             agents=[_make_agent()],
         )
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
 
-        card = service.get_agent_card(db, "srv-1")
+        card = await service.get_agent_card(db, "srv-1")
         assert card["supportedInterfaces"][0]["tenant"] == "acme-corp"
 
-    def test_card_omits_tenant_when_none(self, service, db):
+    @pytest.mark.asyncio
+    async def test_card_omits_tenant_when_none(self, service, db):
         server = _make_server(
             interfaces=[_make_interface(tenant=None)],
             agents=[_make_agent()],
         )
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
 
-        card = service.get_agent_card(db, "srv-1")
+        card = await service.get_agent_card(db, "srv-1")
         assert "tenant" not in card["supportedInterfaces"][0]
 
-    def test_card_skips_disabled_agents(self, service, db):
+    @pytest.mark.asyncio
+    async def test_card_skips_disabled_agents(self, service, db):
         a1 = _make_agent(name="active", capabilities={"skills": [{"id": "s1"}]})
         a2 = _make_agent(name="disabled", enabled=False, capabilities={"skills": [{"id": "s2"}]})
         server = _make_server(interfaces=[_make_interface()], agents=[a1, a2])
         db.query.return_value.options.return_value.filter.return_value.first.return_value = server
 
-        card = service.get_agent_card(db, "srv-1")
+        card = await service.get_agent_card(db, "srv-1")
         skill_ids = [s["id"] for s in card["capabilities"]["skills"]]
         assert "s1" in skill_ids
         assert "s2" not in skill_ids
@@ -276,6 +294,13 @@ class TestSendMessage:
 # Get Task
 # ---------------------------------------------------------------------------
 class TestGetTask:
+    @pytest.fixture(autouse=True)
+    def _mock_server_lookup(self, service):
+        """Mock _get_server_with_a2a — these tests focus on task mapping logic."""
+        server = _make_server(interfaces=[_make_interface()], agents=[_make_agent()])
+        with patch.object(service, "_get_server_with_a2a", new_callable=AsyncMock, return_value=server):
+            yield
+
     @pytest.mark.asyncio
     async def test_resolves_via_mapping(self, service, mock_a2a_service, db):
         mapping = MagicMock()
@@ -307,6 +332,13 @@ class TestGetTask:
 # Cancel Task
 # ---------------------------------------------------------------------------
 class TestCancelTask:
+    @pytest.fixture(autouse=True)
+    def _mock_server_lookup(self, service):
+        """Mock _get_server_with_a2a — these tests focus on task mapping logic."""
+        server = _make_server(interfaces=[_make_interface()], agents=[_make_agent()])
+        with patch.object(service, "_get_server_with_a2a", new_callable=AsyncMock, return_value=server):
+            yield
+
     @pytest.mark.asyncio
     async def test_cancels_via_mapping(self, service, mock_a2a_service, db):
         mapping = MagicMock()
@@ -482,6 +514,13 @@ class TestListA2AServersTeamVisibility:
 # Get Task — agent lookup failure
 # ---------------------------------------------------------------------------
 class TestGetTaskAgentLookupFailure:
+    @pytest.fixture(autouse=True)
+    def _mock_server_lookup(self, service):
+        """Mock _get_server_with_a2a — these tests focus on agent lookup failure."""
+        server = _make_server(interfaces=[_make_interface()], agents=[_make_agent()])
+        with patch.object(service, "_get_server_with_a2a", new_callable=AsyncMock, return_value=server):
+            yield
+
     @pytest.mark.asyncio
     async def test_raises_when_agent_deleted(self, service, db):
         mapping = MagicMock()
@@ -501,6 +540,13 @@ class TestGetTaskAgentLookupFailure:
 # Cancel Task — agent lookup failure
 # ---------------------------------------------------------------------------
 class TestCancelTaskAgentLookupFailure:
+    @pytest.fixture(autouse=True)
+    def _mock_server_lookup(self, service):
+        """Mock _get_server_with_a2a — these tests focus on agent lookup failure."""
+        server = _make_server(interfaces=[_make_interface()], agents=[_make_agent()])
+        with patch.object(service, "_get_server_with_a2a", new_callable=AsyncMock, return_value=server):
+            yield
+
     @pytest.mark.asyncio
     async def test_raises_when_agent_deleted(self, service, db):
         mapping = MagicMock()
