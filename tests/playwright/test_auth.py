@@ -65,13 +65,13 @@ class TestAuthentication:
         """Test successful access with valid email/password credentials."""
         page = context.new_page()
         # Go directly to admin and log in if redirected
-        page.goto("/admin")
-        if re.search(r"/admin/login", page.url):
+        page.goto("/ui")
+        if re.search(r"/ui/login", page.url):
             if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
                 pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
 
         # Verify we successfully accessed the admin flow
-        expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+        expect(page).to_have_url(re.compile(r".*/ui(?!/login).*"))
 
         # Check for JWT cookie (set on successful email login)
         cookies = page.context.cookies()
@@ -87,7 +87,7 @@ class TestAuthentication:
 
         # Expect redirect back to login with an error
         login_page = LoginPage(page, BASE_URL)
-        expect(page).to_have_url(re.compile(r".*/admin/login\?error=invalid_credentials"))
+        expect(page).to_have_url(re.compile(r".*/ui/login\?error=invalid_credentials"))
         expect(login_page.error_message).to_be_visible()
 
     def test_should_require_authentication(self, context):
@@ -95,11 +95,11 @@ class TestAuthentication:
         page = context.new_page()
 
         # Access admin without credentials should redirect to login page when auth is required
-        response = page.goto("/admin")
+        response = page.goto("/ui")
         if response and response.status == 404:
             pytest.skip("Admin UI not enabled (admin endpoint not found).")
-        if re.search(r"/admin/login", page.url):
-            expect(page).to_have_url(re.compile(r".*/admin/login"))
+        if re.search(r"/ui/login", page.url):
+            expect(page).to_have_url(re.compile(r".*/ui/login"))
         else:
             admin_ui = AdminPage(page, BASE_URL)
             expect(admin_ui.servers_tab).to_be_visible()
@@ -109,17 +109,17 @@ class TestAuthentication:
         page = context.new_page()
 
         # Access admin page and log in if needed
-        response = page.goto("/admin")
+        response = page.goto("/ui")
         if response and response.status == 404:
             pytest.skip("Admin UI not enabled (admin endpoint not found).")
-        if re.search(r"/admin/login", page.url):
+        if re.search(r"/ui/login", page.url):
             if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
                 pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
 
         # Verify admin interface elements are present
-        if re.search(r"/admin/change-password-required", page.url):
+        if re.search(r"/ui/change-password-required", page.url):
             pytest.skip("Admin password change required; configure a final password and retry.")
-        expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+        expect(page).to_have_url(re.compile(r".*/ui(?!/login).*"))
         expect(page).to_have_title(re.compile(r".*Gateway Administration.*"))
 
         # Check that we can see admin tabs
@@ -173,10 +173,10 @@ class TestAuthentication:
 
         # Verify successful login by checking URL (allow change-password page as a valid post-login destination)
         try:
-            expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=5000)
+            expect(page).to_have_url(re.compile(r".*/ui(?!/login).*"), timeout=5000)
         except PlaywrightTimeoutError:
             current_url = page.url
-            pytest.fail(f"Login appeared to succeed but did not redirect to admin page.\n" f"Current URL: {current_url}\n" f"Expected URL pattern: .*/admin(?!/login).*")
+            pytest.fail(f"Login appeared to succeed but did not redirect to admin page.\n" f"Current URL: {current_url}\n" f"Expected URL pattern: .*/ui(?!/login).*")
 
         # Verify JWT cookie is set
         cookies = page.context.cookies()

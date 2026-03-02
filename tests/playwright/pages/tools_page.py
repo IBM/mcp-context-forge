@@ -225,7 +225,7 @@ class ToolsPage(BasePage):
     def _click_and_wait_for_tool_fetch(self, button: Locator, modal_id: str) -> None:
         """Click a button that triggers an async tool API fetch, then wait for the modal.
 
-        editTool(), testTool(), and viewTool() all fetch /admin/tools/{id}
+        editTool(), testTool(), and viewTool() all fetch /ui/tools/{id}
         before opening their respective modals.  If the API returns an error
         (e.g., RBAC 403), the JS catch block shows an error toast but never
         calls openModal(), so waiting for the modal selector would hang until
@@ -233,7 +233,7 @@ class ToolsPage(BasePage):
         """
         with self.page.expect_response(
             lambda resp: (
-                re.search(r"/admin/tools/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and "/search" not in resp.url and "/ids" not in resp.url and resp.request.method == "GET"
+                re.search(r"/ui/tools/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and "/search" not in resp.url and "/ids" not in resp.url and resp.request.method == "GET"
             ),
             timeout=30000,
         ) as response_info:

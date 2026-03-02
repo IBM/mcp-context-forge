@@ -905,7 +905,7 @@ class TestGatewayCreationWithAuth:
     def _submit_and_handle(gateways_page: GatewaysPage, gateway_name: str):
         """Submit gateway form and handle the response."""
         with gateways_page.page.expect_response(
-            lambda r: "/admin/gateways" in r.url and r.request.method == "POST",
+            lambda r: "/ui/gateways" in r.url and r.request.method == "POST",
             timeout=120000,
         ) as response_info:
             gateways_page.click_locator(gateways_page.add_gateway_btn)
@@ -1048,7 +1048,7 @@ class TestGatewayEditEndToEnd:
 
         # Save changes
         with gateways_page.page.expect_response(
-            lambda r: "/admin/gateways/" in r.url and r.request.method == "POST",
+            lambda r: "/ui/gateways/" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as response_info:
             gateways_page.edit_modal_save_btn.click()
@@ -1092,7 +1092,7 @@ class TestGatewayEditEndToEnd:
         gateways_page.edit_modal_save_btn.scroll_into_view_if_needed()
         try:
             with gateways_page.page.expect_response(
-                lambda r: "/admin/gateways/" in r.url and r.request.method == "POST",
+                lambda r: "/ui/gateways/" in r.url and r.request.method == "POST",
                 timeout=60000,
             ) as response_info:
                 gateways_page.edit_modal_save_btn.click(timeout=60000)

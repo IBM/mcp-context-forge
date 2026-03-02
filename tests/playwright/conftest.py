@@ -115,7 +115,7 @@ def _goto_admin(page: Page, url: str) -> None:
 def _submit_login_and_wait(page: Page, login_page, email: str, password: str) -> Optional[int]:
     """Submit login form and return the POST response status code."""
     try:
-        with page.expect_response(lambda resp: "/admin/login" in resp.url and resp.request.method == "POST", timeout=10000) as response_info:
+        with page.expect_response(lambda resp: "/ui/login" in resp.url and resp.request.method == "POST", timeout=10000) as response_info:
             login_page.submit_login(email, password)
         return response_info.value.status
     except PlaywrightTimeoutError:
@@ -135,7 +135,7 @@ def _candidate_admin_passwords(settings_obj: Settings, current_password: Optiona
 def _attempt_admin_login_with_password(page: Page, login_page, email: str, password: str) -> bool:
     """Attempt login using one password and handle password-change flow.
 
-    Returns True when the browser is no longer on /admin/login after the attempt.
+    Returns True when the browser is no longer on /ui/login after the attempt.
     """
     status = _submit_login_and_wait(page, login_page, email, password)
     if status is not None and status >= 500:
@@ -210,13 +210,13 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     if not DISABLE_JWT_FALLBACK:
         # ---- Primary path: inject a fresh JWT cookie per fixture ----
         _set_admin_jwt_cookie(page, admin_email)
-        _goto_admin(page, "/admin/")
+        _goto_admin(page, "/ui/")
         _wait_for_admin_transition(page)
     else:
         # ---- Fallback: interactive form login (JWT disabled) ----
-        _goto_admin(page, "/admin")
+        _goto_admin(page, "/ui")
         landing_url = page.url
-        if re.search(r"/admin/?(?:[?#].*)?$", landing_url):
+        if re.search(r"/ui/?(?:[?#].*)?$", landing_url):
             _wait_for_admin_transition(page, previous_url=landing_url)
 
         # Handle password change requirement
@@ -244,23 +244,23 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     # Verify we're on the admin page (retry JWT injection up to 2 times for
     # intermittent cookie/redirect races).
     for _attempt in range(3):
-        if "/admin/login" not in page.url:
+        if "/ui/login" not in page.url:
             break
         if DISABLE_JWT_FALLBACK:
             break
         _set_admin_jwt_cookie(page, admin_email)
-        _goto_admin(page, "/admin/")
+        _goto_admin(page, "/ui/")
         _wait_for_admin_transition(page)
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=30000)
+    expect(page).to_have_url(re.compile(r".*/ui(?!/login).*"), timeout=30000)
 
     # Wait for the application shell to load
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
     except PlaywrightTimeoutError:
-        if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
+        if "/ui/login" in page.url and not DISABLE_JWT_FALLBACK:
             # Recovery path for intermittent auth redirects during shell load.
             _set_admin_jwt_cookie(page, admin_email)
-            _goto_admin(page, "/admin/")
+            _goto_admin(page, "/ui/")
             _wait_for_admin_transition(page)
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
             return

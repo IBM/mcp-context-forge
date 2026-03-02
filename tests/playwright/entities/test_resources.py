@@ -21,7 +21,7 @@ class TestResourcesCRUD:
         resources_page.navigate_to_resources_tab()
 
         # Create resource using high-level Page Object method
-        with resources_page.page.expect_response(lambda response: "/admin/resources" in response.url and response.request.method == "POST") as response_info:
+        with resources_page.page.expect_response(lambda response: "/ui/resources" in response.url and response.request.method == "POST") as response_info:
             resources_page.create_resource(uri=test_resource_data["uri"], name=test_resource_data["name"], mime_type=test_resource_data["mimeType"], description=test_resource_data["description"])
         response = response_info.value
         assert response.status < 400
@@ -40,7 +40,7 @@ class TestResourcesCRUD:
         resources_page.navigate_to_resources_tab()
 
         # Create resource using high-level Page Object method
-        with resources_page.page.expect_response(lambda response: "/admin/resources" in response.url and response.request.method == "POST"):
+        with resources_page.page.expect_response(lambda response: "/ui/resources" in response.url and response.request.method == "POST"):
             resources_page.create_resource(uri=test_resource_data["uri"], name=test_resource_data["name"], mime_type=test_resource_data["mimeType"], description=test_resource_data["description"])
 
         # Verify creation

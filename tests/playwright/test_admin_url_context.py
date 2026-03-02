@@ -69,11 +69,11 @@ def _build_navigate_admin_url(page, fragment: str = "gateways") -> str:
     of actually navigating.  This lets us test URL-context preservation
     independently of the server's trailing-slash redirect behavior (which
     strips query params when a hash fragment is present — a separate known
-    bug in ``_navigateAdmin`` generating ``/admin`` without trailing slash).
+    bug in ``_navigateAdmin`` generating ``/ui`` without trailing slash).
     """
     return page.evaluate(f"""() => {{
         const currentPath = window.location.pathname;
-        const adminIdx = currentPath.lastIndexOf('/admin');
+        const adminIdx = currentPath.lastIndexOf('/ui');
         const base = adminIdx >= 0
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : (window.ROOT_PATH || window.location.origin);
@@ -84,7 +84,7 @@ def _build_navigate_admin_url(page, fragment: str = "gateways") -> str:
         const teamId = new URL(window.location.href).searchParams.get('team_id');
         if (teamId) {{ searchParams.set('team_id', teamId); }}
         const qs = searchParams.toString();
-        return base + '/admin' + (qs ? '?' + qs : '') + '#{fragment}';
+        return base + '/ui' + (qs ? '?' + qs : '') + '#{fragment}';
     }}""")
 
 
@@ -230,21 +230,21 @@ class TestAdminUrlContextPreservation:
     # ------------------------------------------------------------------
 
     def test_admin_page_retains_tools_fragment(self, page: Page, base_url: str):
-        """Navigating to /admin#tools loads and keeps #tools fragment."""
+        """Navigating to /ui#tools loads and keeps #tools fragment."""
         _ensure_admin_logged_in(page, base_url)
-        page.goto(f"{base_url}/admin#tools")
+        page.goto(f"{base_url}/ui#tools")
         expect(page).to_have_url(re.compile(r"#tools$"))
 
     def test_admin_page_retains_gateways_fragment(self, page: Page, base_url: str):
-        """Navigating to /admin#gateways loads and keeps #gateways fragment."""
+        """Navigating to /ui#gateways loads and keeps #gateways fragment."""
         _ensure_admin_logged_in(page, base_url)
-        page.goto(f"{base_url}/admin#gateways")
+        page.goto(f"{base_url}/ui#gateways")
         expect(page).to_have_url(re.compile(r"#gateways$"))
 
     def test_admin_page_retains_catalog_fragment(self, page: Page, base_url: str):
-        """Navigating to /admin#catalog loads and keeps #catalog fragment."""
+        """Navigating to /ui#catalog loads and keeps #catalog fragment."""
         _ensure_admin_logged_in(page, base_url)
-        page.goto(f"{base_url}/admin#catalog")
+        page.goto(f"{base_url}/ui#catalog")
         expect(page).to_have_url(re.compile(r"#catalog$"))
 
     # ------------------------------------------------------------------
@@ -448,7 +448,7 @@ class TestAdminUrlContextPreservation:
         # Navigate WITHOUT hash first — the server redirect strips query params
         # when a #fragment is present.  The JS checkbox initialization reads
         # include_inactive from window.location.search on DOMContentLoaded.
-        page.goto(f"{base_url}/admin/?include_inactive=true")
+        page.goto(f"{base_url}/ui/?include_inactive=true")
         page.wait_for_load_state("domcontentloaded")
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
 
@@ -634,7 +634,7 @@ class TestAdminProxyUrlContext:
         _ensure_admin_logged_in(page, base_url)
 
         # Navigate WITHOUT hash via proxy so include_inactive survives the redirect.
-        page.goto(f"{base_url}{_PROXY_PREFIX}/admin/?include_inactive=true")
+        page.goto(f"{base_url}{_PROXY_PREFIX}/ui/?include_inactive=true")
         page.wait_for_load_state("domcontentloaded")
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
 

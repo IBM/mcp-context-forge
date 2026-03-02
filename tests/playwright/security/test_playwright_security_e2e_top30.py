@@ -184,14 +184,14 @@ def email_logged_in_page(context: BrowserContext) -> Page:
             desired_password = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!")
             login_page.submit_password_change(password, desired_password)
 
-        if "/admin/login" not in page.url and "/admin/change-password-required" not in page.url:
+        if "/ui/login" not in page.url and "/ui/change-password-required" not in page.url:
             login_succeeded = True
             break
 
     if not login_succeeded:
         pytest.skip("Unable to complete email/password login with configured credentials.")
 
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    expect(page).to_have_url(re.compile(r".*/ui(?!/login).*"))
     return page
 
 
@@ -337,25 +337,25 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
     def test_01_admin_route_requires_authentication_when_enabled(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin")
+        response = page.goto("/ui")
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
         if settings.auth_required:
-            expect(page).to_have_url(re.compile(r".*/admin/login.*"))
+            expect(page).to_have_url(re.compile(r".*/ui/login.*"))
         else:
-            expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+            expect(page).to_have_url(re.compile(r".*/ui(?!/login).*"))
 
     def test_02_admin_deep_link_requires_authentication_when_enabled(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin/#tokens")
+        response = page.goto("/ui/#tokens")
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
         if settings.auth_required:
-            expect(page).to_have_url(re.compile(r".*/admin/login.*"))
+            expect(page).to_have_url(re.compile(r".*/ui/login.*"))
         else:
-            expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+            expect(page).to_have_url(re.compile(r".*/ui(?!/login).*"))
 
     def test_03_invalid_credentials_show_generic_error_message(self, context: BrowserContext):
         page = context.new_page()
@@ -368,7 +368,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
         login_page.submit_login("invalid@example.com", "definitely-wrong-password")
 
-        expect(page).to_have_url(re.compile(r".*/admin/login\?error=invalid_credentials"))
+        expect(page).to_have_url(re.compile(r".*/ui/login\?error=invalid_credentials"))
         expect(login_page.error_message).to_be_visible()
         expect(login_page.error_message).to_contain_text("Invalid email or password")
         content = page.content()
@@ -377,7 +377,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
     def test_04_login_page_maps_admin_required_error(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin/login?error=admin_required")
+        response = page.goto("/ui/login?error=admin_required")
         if response and response.status == 404:
             pytest.skip("Admin login endpoint is unavailable in this environment.")
 
@@ -388,7 +388,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
     def test_05_login_page_maps_session_expired_error(self, context: BrowserContext):
         page = context.new_page()
-        response = page.goto("/admin/login?error=session_expired")
+        response = page.goto("/ui/login?error=session_expired")
         if response and response.status == 404:
             pytest.skip("Admin login endpoint is unavailable in this environment.")
 
@@ -398,7 +398,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         assert "Traceback" not in page.content()
 
     def test_06_authenticated_admin_shell_loads_expected_tabs(self, admin_page):
-        expect(admin_page.page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+        expect(admin_page.page).to_have_url(re.compile(r".*/ui(?!/login).*"))
         expect(admin_page.servers_tab).to_be_visible()
         expect(admin_page.tools_tab).to_be_visible()
         expect(admin_page.gateways_tab).to_be_visible()
@@ -417,13 +417,13 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         if not settings.auth_required:
             pytest.skip("Auth is disabled, logout session invalidation is not applicable.")
 
-        logout_button = email_logged_in_page.locator('form[action$="/admin/logout"] button[type="submit"]')
+        logout_button = email_logged_in_page.locator('form[action$="/ui/logout"] button[type="submit"]')
         expect(logout_button).to_be_visible()
         email_logged_in_page.once("dialog", lambda dialog: dialog.accept())
         logout_button.click()
         email_logged_in_page.wait_for_load_state("domcontentloaded")
 
-        expect(email_logged_in_page).to_have_url(re.compile(r".*/admin/login.*"))
+        expect(email_logged_in_page).to_have_url(re.compile(r".*/ui/login.*"))
 
         jwt_cookie = next((cookie for cookie in email_logged_in_page.context.cookies() if cookie["name"] == "jwt_token"), None)
         assert jwt_cookie is None or not jwt_cookie.get("value"), "jwt_token cookie should be cleared after logout."
@@ -432,12 +432,12 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         if not settings.auth_required:
             pytest.skip("Auth is disabled, logout session invalidation is not applicable.")
 
-        response = email_logged_in_page.goto("/admin/logout")
+        response = email_logged_in_page.goto("/ui/logout")
         if response:
             assert response.status in (200, 302, 303)
 
-        email_logged_in_page.goto(f"/admin?logout_check={uuid.uuid4().hex[:8]}")
-        expect(email_logged_in_page).to_have_url(re.compile(r".*/admin/login.*"))
+        email_logged_in_page.goto(f"/ui?logout_check={uuid.uuid4().hex[:8]}")
+        expect(email_logged_in_page).to_have_url(re.compile(r".*/ui/login.*"))
 
         jwt_cookie = next((cookie for cookie in email_logged_in_page.context.cookies() if cookie["name"] == "jwt_token"), None)
         assert jwt_cookie is None or not jwt_cookie.get("value"), "jwt_token cookie should be cleared after logout."
@@ -448,24 +448,24 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
         page_one = email_logged_in_page
         page_two = page_one.context.new_page()
-        page_two.goto("/admin", wait_until="domcontentloaded", timeout=60000)
-        expect(page_two).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=15000)
+        page_two.goto("/ui", wait_until="domcontentloaded", timeout=60000)
+        expect(page_two).to_have_url(re.compile(r".*/ui(?!/login).*"), timeout=15000)
 
-        logout_button = page_one.locator('form[action$="/admin/logout"] button[type="submit"]')
+        logout_button = page_one.locator('form[action$="/ui/logout"] button[type="submit"]')
         expect(logout_button).to_be_visible()
         page_one.once("dialog", lambda dialog: dialog.accept())
         logout_button.click()
         page_one.wait_for_load_state("domcontentloaded")
 
-        page_two.goto(f"/admin?logout_check={uuid.uuid4().hex[:8]}")
-        expect(page_two).to_have_url(re.compile(r".*/admin/login.*"))
+        page_two.goto(f"/ui?logout_check={uuid.uuid4().hex[:8]}")
+        expect(page_two).to_have_url(re.compile(r".*/ui/login.*"))
         page_two.close()
 
     def test_11_post_logout_admin_api_requests_are_denied(self, email_logged_in_page: Page):
         if not settings.auth_required:
             pytest.skip("Auth is disabled, post-logout denial checks are not applicable.")
 
-        logout_button = email_logged_in_page.locator('form[action$="/admin/logout"] button[type="submit"]')
+        logout_button = email_logged_in_page.locator('form[action$="/ui/logout"] button[type="submit"]')
         expect(logout_button).to_be_visible()
         email_logged_in_page.once("dialog", lambda dialog: dialog.accept())
         logout_button.click()
@@ -474,7 +474,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         response = email_logged_in_page.request.get("/auth/email/admin/users")
 
         if response.status == 200:
-            assert "/admin/login" in response.url or "Sign In" in response.text()
+            assert "/ui/login" in response.url or "Sign In" in response.text()
         else:
             assert response.status in (401, 403, 302, 303)
 
@@ -487,10 +487,10 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         _set_jwt_cookie(context, expired_token)
 
         page = context.new_page()
-        response = page.goto("/admin")
+        response = page.goto("/ui")
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
-        expect(page).to_have_url(re.compile(r".*/admin/login.*"))
+        expect(page).to_have_url(re.compile(r".*/ui/login.*"))
 
     def test_13_non_admin_token_cannot_access_admin_ui(self, context: BrowserContext):
         if not settings.auth_required:
@@ -501,19 +501,19 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         _set_jwt_cookie(context, non_admin_token)
 
         page = context.new_page()
-        response = page.goto("/admin", wait_until="domcontentloaded", timeout=60000)
+        response = page.goto("/ui", wait_until="domcontentloaded", timeout=60000)
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
-        if "/admin/login" in page.url:
+        if "/ui/login" in page.url:
             assert (
                 "error=admin_required" in page.url
                 or "error=invalid_credentials" in page.url
-                or page.url.rstrip("/").endswith("/admin/login")
+                or page.url.rstrip("/").endswith("/ui/login")
             )
             return
 
-        # Some deployments keep URL at /admin and render denied content; ensure admin-only API is blocked.
+        # Some deployments keep URL at /ui and render denied content; ensure admin-only API is blocked.
         probe = page.request.get("/auth/email/admin/users")
         assert probe.status in (401, 403), f"Non-admin browser session should not access admin user API, got {probe.status}: {probe.text()}"
 
@@ -701,7 +701,7 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
     def test_30_xss_payloads_do_not_execute_in_login_errors_or_server_catalog(self, admin_api: APIRequestContext, admin_page):
         nonce = uuid.uuid4().hex[:8]
 
-        admin_page.page.goto(f"/admin/login?error=<img src=x onerror=window.__pw_xss_login_{nonce}=1>")
+        admin_page.page.goto(f"/ui/login?error=<img src=x onerror=window.__pw_xss_login_{nonce}=1>")
         expect(admin_page.page.locator("#error-message")).to_be_visible()
         login_xss_marker = admin_page.page.evaluate(f"Boolean(window.__pw_xss_login_{nonce})")
         assert login_xss_marker is False, "Error query parameter executed JavaScript in login page."

@@ -120,7 +120,7 @@ class TestHTMXInteractions:
         tools_page.fill_tool_form(test_tool_data["name"], test_tool_data["url"], test_tool_data["description"], test_tool_data["integrationType"])
 
         # Submit the form and assert success response
-        with tools_page.page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
+        with tools_page.page.expect_response(lambda response: "/ui/tools" in response.url and response.request.method == "POST") as response_info:
             tools_page.submit_tool_form()
         response = response_info.value
         assert response.status < 400
@@ -139,7 +139,7 @@ class TestHTMXInteractions:
             pytest.skip("No tools available to view in this UI configuration.")
 
         # Open the tool view modal using page object method
-        # viewTool() fetches /admin/tools/{id} — may fail with RBAC 403
+        # viewTool() fetches /ui/tools/{id} — may fail with RBAC 403
         try:
             tools_page.open_tool_view_modal(tool_index=0)
         except AssertionError as exc:
@@ -164,7 +164,7 @@ class TestHTMXInteractions:
         if tools_page.tool_rows.count() == 0:
             pytest.skip("No tools available to edit in this UI configuration.")
 
-        # Open edit modal — editTool() fetches /admin/tools/{id} before opening
+        # Open edit modal — editTool() fetches /ui/tools/{id} before opening
         try:
             tools_page.open_tool_edit_modal(tool_index=0)
         except AssertionError as exc:
@@ -193,7 +193,7 @@ class TestHTMXInteractions:
         if test_buttons.count() == 0:
             pytest.skip("No Test button available for tools.")
 
-        # Open test modal — testTool() fetches /admin/tools/{id} before opening
+        # Open test modal — testTool() fetches /ui/tools/{id} before opening
         try:
             tools_page.open_tool_test_modal(tool_index=0)
         except AssertionError as exc:
@@ -358,14 +358,14 @@ class TestHTMXInteractions:
         failed_requests = []
 
         def handle_request_failed(request):
-            if "/admin/tools" in request.url and request.method == "POST":
+            if "/ui/tools" in request.url and request.method == "POST":
                 failed_requests.append(request.url)
 
         tools_page.page.on("requestfailed", handle_request_failed)
 
         # Intercept network requests to simulate failure
         def handle_route(route):
-            if "/admin/tools" in route.request.url and route.request.method == "POST":
+            if "/ui/tools" in route.request.url and route.request.method == "POST":
                 route.abort("failed")
             else:
                 route.continue_()

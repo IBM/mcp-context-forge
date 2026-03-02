@@ -476,7 +476,7 @@ class GatewaysPage(BasePage):
         request_seen = False
         try:
             with self.page.expect_response(
-                lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
+                lambda response: "/ui/gateways/partial" in response.url and response.request.method == "GET",
                 timeout=5000,
             ):
                 self.click_locator(self.clear_search_btn)
@@ -489,7 +489,7 @@ class GatewaysPage(BasePage):
             # explicitly wait for the partial reload request.
             try:
                 with self.page.expect_response(
-                    lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
+                    lambda response: "/ui/gateways/partial" in response.url and response.request.method == "GET",
                     timeout=5000,
                 ):
                     self.page.evaluate("window.clearSearch && window.clearSearch('gateways')")
@@ -736,7 +736,7 @@ class GatewaysPage(BasePage):
                 try:
                     self.page.reload(wait_until="domcontentloaded")
                 except PlaywrightTimeoutError:
-                    self.page.goto("/admin#gateways", wait_until="domcontentloaded")
+                    self.page.goto("/ui#gateways", wait_until="domcontentloaded")
                 try:
                     self.navigate_to_gateways_tab()
                     self.wait_for_gateways_table_loaded()
