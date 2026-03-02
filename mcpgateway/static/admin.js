@@ -803,7 +803,20 @@ function _navigateAdmin(fragment, searchParams) {
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : window.ROOT_PATH || window.location.origin;
     const qs = searchParams ? searchParams.toString() : "";
-    window.location.href = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+    const target = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+
+    // When the target URL is identical to the current URL (same path, query,
+    // AND hash), browsers treat the assignment as an in-page anchor scroll
+    // and skip the network reload.  This happens in proxy/iframe deployments
+    // where the URL has no trailing slash (unlike direct mode where FastAPI
+    // redirects /admin → /admin/, creating a path difference).  Force a full
+    // reload so the UI always reflects the latest server state.
+    // Fixes #3351 (root cause of #3324).
+    if (window.location.href === target) {
+        window.location.reload();
+    } else {
+        window.location.href = target;
+    }
 }
 
 /**
