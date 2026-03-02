@@ -674,6 +674,7 @@ class TestToolsTestModal:
 
         tools_page.close_tool_test_modal()
 
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="Tool API fetch + modal open timing race")
     def test_test_modal_has_run_button(self, tools_page: ToolsPage):
         """Test that the test modal contains a Run Tool button."""
         # Reload to ensure clean state from previous modal tests

@@ -724,7 +724,15 @@ class Settings(BaseSettings):
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
+    mcpgateway_stdio_transport_enabled: bool = Field(
+        default=False,
+        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; " "set true only in trusted environments that intentionally need stdio process execution."),
+    )
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
+    plugins_can_override_rbac: bool = Field(
+        default=False,
+        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
+    )
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
@@ -1010,7 +1018,8 @@ class Settings(BaseSettings):
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
+            "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
+            != "my-test-key",  # nosec B105 - checking for default value
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,

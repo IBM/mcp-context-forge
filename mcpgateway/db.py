@@ -41,6 +41,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.types import TypeDecorator
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -268,6 +269,123 @@ def utc_now() -> datetime:
         True
     """
     return datetime.now(timezone.utc)
+
+
+class TokenEncryptionWriteError(ValueError):
+    """Raised when OAuth token encryption fails during DB write binding."""
+
+
+class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
+    """Text type that applies best-effort encryption/decryption at ORM boundary.
+
+    This preserves compatibility with service-layer encryption:
+    - Pre-encrypted values pass through unchanged.
+    - Plaintext values are encrypted when possible before persistence.
+    - On read, encrypted values are decrypted for runtime usage.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    @property
+    def python_type(self):
+        """Return the Python type represented by this SQLAlchemy type.
+
+        Returns:
+            type: Python ``str`` type.
+        """
+        return str
+
+    @staticmethod
+    def _get_encryption():
+        """Resolve encryption service for column-level token protection.
+
+        Returns:
+            Optional[EncryptionService]: Encryption service instance when configured,
+                otherwise ``None``.
+        """
+        secret = getattr(settings, "auth_encryption_secret", None)
+        if not secret:
+            return None
+        try:
+            # First-Party
+            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+            return get_encryption_service(secret)
+        except Exception as exc:
+            logger.debug("Unable to initialize encryption service for EncryptedText: %s", exc)
+            return None
+
+    def process_literal_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Render literal SQL parameter value via encrypted bind processing.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Bound parameter value after encryption handling.
+        """
+        processed = self.process_bind_param(value, _dialect)
+        return processed
+
+    def process_bind_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Encrypt plaintext values before persistence when encryption is available.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Encrypted value for persistence or unchanged value when no
+                encryption is applied.
+
+        Raises:
+            TokenEncryptionWriteError: If encryption is configured and token
+                encryption fails.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if encryption.is_encrypted(value):
+                return value
+            return encryption.encrypt_secret(value)
+        except Exception as exc:
+            logger.warning("EncryptedText bind encryption failed; rejecting token write")
+            logger.debug("EncryptedText bind encryption exception: %s", exc)
+            raise TokenEncryptionWriteError("OAuth token encryption failed during write") from exc
+
+    def process_result_value(self, value, _dialect):  # pylint: disable=unused-argument
+        """Decrypt stored encrypted values when reading rows.
+
+        Args:
+            value (Any): Raw value loaded from database.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Decrypted value when encrypted, otherwise unchanged.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if not encryption.is_encrypted(value):
+                return value
+            decrypted = encryption.decrypt_secret_or_plaintext(value)
+            return decrypted if decrypted is not None else value
+        except Exception as exc:
+            logger.warning("EncryptedText result decryption failed, returning stored value")
+            logger.debug("EncryptedText result decryption exception: %s", exc)
+            return value
 
 
 # Configure SQLite for better concurrency if using SQLite
@@ -4847,8 +4965,8 @@ class OAuthToken(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
     app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # ContextForge user
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    refresh_token: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)

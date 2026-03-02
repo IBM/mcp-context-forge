@@ -27,6 +27,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMModelNotFoundError,
     LLMProviderNameConflictError,
     LLMProviderNotFoundError,
+    LLMProviderValidationError,
 )
 
 
@@ -117,6 +118,16 @@ async def test_create_provider_conflict(monkeypatch: pytest.MonkeyPatch, ctx, mo
 
 
 @pytest.mark.asyncio
+async def test_create_provider_validation_error(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
+    monkeypatch.setattr(llm_config_router.llm_provider_service, "create_provider", MagicMock(side_effect=LLMProviderValidationError("blocked")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_config_router.create_provider(LLMProviderCreate(name="Provider", provider_type="openai"), current_user_ctx=ctx, db=mock_db)
+
+    assert excinfo.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_list_providers(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     provider = _provider()
     monkeypatch.setattr(llm_config_router.llm_provider_service, "list_providers", lambda **kwargs: ([provider], 1))
@@ -156,6 +167,16 @@ async def test_update_provider_conflict(monkeypatch: pytest.MonkeyPatch, ctx, mo
         await llm_config_router.update_provider("p1", LLMProviderUpdate(name="Provider"), current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_update_provider_validation_error(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
+    monkeypatch.setattr(llm_config_router.llm_provider_service, "update_provider", MagicMock(side_effect=LLMProviderValidationError("blocked")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_config_router.update_provider("p1", LLMProviderUpdate(name="Provider"), current_user_ctx=ctx, db=mock_db)
+
+    assert excinfo.value.status_code == 422
 
 
 @pytest.mark.asyncio

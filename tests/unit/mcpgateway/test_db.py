@@ -25,6 +25,129 @@ def test_utc_now_returns_utc_datetime():
     assert now.tzinfo == timezone.utc
 
 
+def test_encrypted_text_bind_encrypts_plaintext(monkeypatch):
+    """EncryptedText should encrypt plaintext bind params."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.return_value = "v2:{ciphertext}"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    encrypted = db.EncryptedText().process_bind_param("plain-token", None)
+    assert encrypted == "v2:{ciphertext}"
+    mock_encryption.encrypt_secret.assert_called_once_with("plain-token")
+
+
+def test_encrypted_text_bind_preserves_pre_encrypted_values(monkeypatch):
+    """EncryptedText should avoid double-encrypting existing encrypted values."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_bind_param("v2:{already-encrypted}", None)
+    assert value == "v2:{already-encrypted}"
+    mock_encryption.encrypt_secret.assert_not_called()
+
+
+def test_encrypted_text_bind_raises_on_encrypt_failure(monkeypatch):
+    """EncryptedText should fail closed on encryption errors when encryption is enabled."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.side_effect = RuntimeError("encrypt failed")
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    with pytest.raises(db.TokenEncryptionWriteError):
+        db.EncryptedText().process_bind_param("plain-token", None)
+
+
+def test_encrypted_text_result_decrypts_encrypted_values(monkeypatch):
+    """EncryptedText should decrypt values when reading from the database."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    mock_encryption.decrypt_secret_or_plaintext.return_value = "plain-token"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("v2:{ciphertext}", None)
+    assert value == "plain-token"
+
+
+def test_encrypted_text_result_preserves_plaintext_values(monkeypatch):
+    """EncryptedText should leave plaintext rows unchanged for compatibility."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("legacy-plain-token", None)
+    assert value == "legacy-plain-token"
+
+
+def test_encrypted_text_python_type_and_literal_param(monkeypatch):
+    """EncryptedText exposes str python_type and delegates literal params via bind processing."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.python_type is str
+    assert encrypted_type.process_literal_param("literal-token", None) == "literal-token"
+
+
+def test_encrypted_text_get_encryption_returns_none_when_secret_missing(monkeypatch):
+    """EncryptedText should skip encryption service setup when no secret is configured."""
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "")
+    assert db.EncryptedText._get_encryption() is None
+
+
+def test_encrypted_text_get_encryption_returns_none_on_import_error(monkeypatch):
+    """EncryptedText should degrade gracefully when encryption service import fails."""
+    # Standard
+    import builtins
+
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "test-secret")
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        if name == "mcpgateway.services.encryption_service":
+            raise ImportError("blocked for test")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert db.EncryptedText._get_encryption() is None
+
+
+def test_encrypted_text_get_encryption_returns_service_when_configured(monkeypatch):
+    """EncryptedText should return a configured encryption service instance."""
+    mock_service = MagicMock()
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "test-secret")
+    with patch("mcpgateway.services.encryption_service.get_encryption_service", return_value=mock_service) as mock_get:
+        service = db.EncryptedText._get_encryption()
+    assert service is mock_service
+    mock_get.assert_called_once_with("test-secret")
+
+
+def test_encrypted_text_bind_returns_original_for_non_string_and_without_encryption(monkeypatch):
+    """EncryptedText bind path should preserve values when encryption is unavailable or value is not a string."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.process_bind_param(123, None) == 123
+    assert encrypted_type.process_bind_param("plain-token", None) == "plain-token"
+
+
+def test_encrypted_text_result_returns_original_for_non_string_and_without_encryption(monkeypatch):
+    """EncryptedText result path should preserve values when decryption is unavailable or value is not a string."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.process_result_value({"token": "x"}, None) == {"token": "x"}
+    assert encrypted_type.process_result_value("stored-token", None) == "stored-token"
+
+
+def test_encrypted_text_result_returns_stored_value_when_decrypt_raises(monkeypatch):
+    """EncryptedText should return stored value if decrypting an encrypted token fails."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    mock_encryption.decrypt_secret_or_plaintext.side_effect = RuntimeError("decrypt failed")
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    stored = "v2:{ciphertext}"
+    assert db.EncryptedText().process_result_value(stored, None) == stored
+
+
 # --- Tool metrics properties ---
 def make_tool_with_metrics(metrics):
     tool = db.Tool()
