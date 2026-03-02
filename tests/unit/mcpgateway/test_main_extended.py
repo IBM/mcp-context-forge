@@ -1146,6 +1146,132 @@ class TestAdminAuthMiddleware:
         # No team_id in request, so should pass None
         mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
 
+    @pytest.mark.asyncio
+    async def test_admin_auth_empty_string_team_id_ignored(self, monkeypatch):
+        """Empty string team_id in query params should be treated as absent."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+            query_params={"team_id": ""},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+            ),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # Empty string is falsy, so team_id should be None
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_admin_bypass_ignores_query_team_id(self, monkeypatch):
+        """Admin bypass (token_teams=None) should ignore team_id in query and pass None."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+            query_params={"team_id": "team-abc-123"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=True)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
+            ),
+            # token_teams=None signals admin bypass
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # token_teams is None (admin bypass), so validated_team_id should be None
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("admin@example.com", team_id=None)
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_repeated_team_id_uses_last_value(self, monkeypatch):
+        """Repeated team_id query keys: .get() returns last value; validate against token_teams."""
+        from starlette.datastructures import QueryParams
+
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+        )
+        # Simulate repeated keys: ?team_id=team-evil&team_id=team-abc-123
+        # Starlette QueryParams.get() returns the last value
+        request.query_params = QueryParams("team_id=team-evil&team_id=team-abc-123")
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+            ),
+            # User belongs to team-abc-123 but NOT team-evil
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # .get() returns "team-abc-123" (last value), which IS in token_teams
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-abc-123")
+
 
 class TestMCPPathRewriteMiddleware:
     """Cover MCPPathRewriteMiddleware branches."""
