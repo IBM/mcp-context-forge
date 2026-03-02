@@ -20,7 +20,7 @@
         Auto-refresh
       </label>
       <button
-        hx-get="{{ root_path }}/admin/performance/stats"
+        hx-get="{{ root_path }}{{ ui_base_path }}/performance/stats"
         hx-target="#performance-panel"
         hx-swap="innerHTML"
         class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">

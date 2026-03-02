@@ -340,7 +340,7 @@ async def handle_sso_callback(
         # Third-Party
         from fastapi.responses import RedirectResponse
 
-        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=sso_failed", status_code=302)
 
     callback_result = await sso_service.handle_oauth_callback_with_tokens(provider_id, code, state, session_binding=browser_session_binding)
     if callback_result:
@@ -351,7 +351,7 @@ async def handle_sso_callback(
         # Third-Party
         from fastapi.responses import RedirectResponse
 
-        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=sso_failed", status_code=302)
 
     # Authenticate or create user
     access_token = await sso_service.authenticate_or_create_user(user_info)
@@ -360,13 +360,13 @@ async def handle_sso_callback(
         # Third-Party
         from fastapi.responses import RedirectResponse
 
-        return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=user_creation_failed", status_code=302)
 
     # Create redirect response
     # Third-Party
     from fastapi.responses import RedirectResponse
 
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}", status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
@@ -376,7 +376,7 @@ async def handle_sso_callback(
         set_auth_cookie(redirect_response, access_token, remember_me=False)
     except CookieTooLargeError:
         redirect_response = RedirectResponse(
-            url=f"{root_path}/admin/login?error=token_too_large",
+            url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=token_too_large",
             status_code=302,
         )
         return redirect_response

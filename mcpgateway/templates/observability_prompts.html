@@ -71,7 +71,7 @@ window.createPromptsController = function() {
     },
     async loadPromptUsage() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/prompts/usage?hours=${this.timeRange}&limit=${this.limit}`
+        `{{ root_path }}{{ ui_base_path }}/observability/prompts/usage?hours=${this.timeRange}&limit=${this.limit}`
       );
       if (!response.ok) throw new Error('Failed to load prompt usage');
       const data = await response.json();
@@ -88,7 +88,7 @@ window.createPromptsController = function() {
     },
     async loadPromptPerformance() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/prompts/performance?hours=${this.timeRange}&limit=${this.limit}`
+        `{{ root_path }}{{ ui_base_path }}/observability/prompts/performance?hours=${this.timeRange}&limit=${this.limit}`
       );
       if (!response.ok) throw new Error('Failed to load prompt performance');
       const data = await response.json();
@@ -106,7 +106,7 @@ window.createPromptsController = function() {
     },
     async loadPromptSlowness() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/prompts/performance?hours=${this.timeRange}&limit=10`
+        `{{ root_path }}{{ ui_base_path }}/observability/prompts/performance?hours=${this.timeRange}&limit=10`
       );
       if (!response.ok) throw new Error('Failed to load prompt slowness');
       const data = await response.json();
@@ -114,7 +114,7 @@ window.createPromptsController = function() {
     },
     async loadPromptErrorProne() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/prompts/errors?hours=${this.timeRange}&limit=10`
+        `{{ root_path }}{{ ui_base_path }}/observability/prompts/errors?hours=${this.timeRange}&limit=10`
       );
       if (!response.ok) throw new Error('Failed to load prompt errors');
       const data = await response.json();
