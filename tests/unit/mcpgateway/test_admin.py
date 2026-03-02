@@ -20303,6 +20303,7 @@ class TestPublicVisibilityGuard:
         assert result.status_code == 201
 
 
+<<<<<<< HEAD
 # ---------------------------------------------------------------------------
 # include_public parameter — team isolation with public overlay (#3411)
 # ---------------------------------------------------------------------------
@@ -21433,3 +21434,12 @@ class TestAdminPersonalTeamFiltering:
             call_kwargs = mock_team_service.list_teams.call_args[1]
             assert call_kwargs["search_query"] == "nomatch"
             assert call_kwargs["personal_owner_email"] == "admin@example.com"
+=======
+def test_ui_base_path_returns_settings_value():
+    """Test _ui_base_path() returns the configured value from settings."""
+    from mcpgateway.admin import _ui_base_path
+    from mcpgateway.config import settings
+
+    result = _ui_base_path()
+    assert result == settings.mcpgateway_ui_base_path
+>>>>>>> 81b711003 (coverage fix)

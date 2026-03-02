@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 # Third-Party
 # Third-party
@@ -1144,3 +1144,48 @@ def test_reverse_proxy_feature_default_false():
     """mcpgateway_reverse_proxy_enabled should default to False."""
     s = Settings(_env_file=None)
     assert s.mcpgateway_reverse_proxy_enabled is False
+
+
+class TestUIBasePathValidation:
+    """Tests for mcpgateway_ui_base_path validation."""
+
+    def test_ui_base_path_empty_raises_error(self, monkeypatch):
+        """Empty UI base path should raise ValueError."""
+        monkeypatch.setenv("MCPGATEWAY_UI_BASE_PATH", "")
+        with pytest.raises(ValidationError, match="cannot be empty"):
+            Settings(_env_file=None)
+
+    def test_ui_base_path_no_leading_slash_raises_error(self, monkeypatch):
+        """UI base path without leading slash should raise ValueError."""
+        monkeypatch.setenv("MCPGATEWAY_UI_BASE_PATH", "ui")
+        with pytest.raises(ValidationError, match="must start with /"):
+            Settings(_env_file=None)
+
+    def test_ui_base_path_trailing_slash_raises_error(self, monkeypatch):
+        """UI base path with trailing slash should raise ValueError."""
+        monkeypatch.setenv("MCPGATEWAY_UI_BASE_PATH", "/ui/")
+        with pytest.raises(ValidationError, match="must not end with /"):
+            Settings(_env_file=None)
+
+    def test_ui_base_path_root_only_raises_error(self, monkeypatch):
+        """UI base path of just / should raise ValueError."""
+        monkeypatch.setenv("MCPGATEWAY_UI_BASE_PATH", "/")
+        with pytest.raises(ValidationError, match="cannot be /"):
+            Settings(_env_file=None)
+
+    def test_ui_base_path_reserved_route_raises_error(self, monkeypatch):
+        """UI base path that conflicts with reserved routes should raise ValueError."""
+        monkeypatch.setenv("MCPGATEWAY_UI_BASE_PATH", "/api")
+        with pytest.raises(ValidationError, match="conflicts with reserved route"):
+            Settings(_env_file=None)
+
+    def test_ui_base_path_default_value(self):
+        """Default UI base path should be /ui."""
+        s = Settings(_env_file=None)
+        assert s.mcpgateway_ui_base_path == "/ui"
+
+    def test_ui_base_path_custom_valid_value(self, monkeypatch):
+        """Custom valid UI base path should be accepted."""
+        monkeypatch.setenv("MCPGATEWAY_UI_BASE_PATH", "/dashboard")
+        s = Settings(_env_file=None)
+        assert s.mcpgateway_ui_base_path == "/dashboard"
