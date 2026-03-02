@@ -1807,7 +1807,9 @@ function showMetricsError(error) {
                 </button>
             </div>
         `;
-        const retryBtn = errorDiv.querySelector('[data-action="retry-metrics"]');
+        const retryBtn = errorDiv.querySelector(
+            '[data-action="retry-metrics"]',
+        );
         if (retryBtn) {
             retryBtn.addEventListener("click", retryLoadMetrics);
         }
@@ -1916,7 +1918,9 @@ function displayMetrics(data, retryCount = 0) {
                     Refresh Metrics
                 </button>
             `;
-            const refreshBtn = emptyStateDiv.querySelector('[data-action="retry-metrics"]');
+            const refreshBtn = emptyStateDiv.querySelector(
+                '[data-action="retry-metrics"]',
+            );
             if (refreshBtn) {
                 refreshBtn.addEventListener("click", retryLoadMetrics);
             }
@@ -12131,11 +12135,21 @@ document.addEventListener("DOMContentLoaded", function () {
             const toolId = btn.dataset.toolId;
             if (!toolId) return;
             switch (btn.dataset.action) {
-                case "enrich-tool": enrichTool(toolId); break;
-                case "generate-tool-tests": generateToolTestCases(toolId); break;
-                case "validate-tool": validateTool(toolId); break;
-                case "view-tool": viewTool(toolId); break;
-                case "edit-tool": editTool(toolId); break;
+                case "enrich-tool":
+                    enrichTool(toolId);
+                    break;
+                case "generate-tool-tests":
+                    generateToolTestCases(toolId);
+                    break;
+                case "validate-tool":
+                    validateTool(toolId);
+                    break;
+                case "view-tool":
+                    viewTool(toolId);
+                    break;
+                case "edit-tool":
+                    editTool(toolId);
+                    break;
             }
         });
     }
@@ -18469,9 +18483,13 @@ function renderGlobalSearchResults(payload) {
     container.innerHTML = html;
 
     // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
-    container.querySelectorAll('[data-action="navigate-search-result"]').forEach((btn) => {
-        btn.addEventListener("click", () => navigateToGlobalSearchResult(btn));
-    });
+    container
+        .querySelectorAll('[data-action="navigate-search-result"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () =>
+                navigateToGlobalSearchResult(btn),
+            );
+        });
 }
 
 async function runGlobalSearch(query) {
@@ -19676,9 +19694,13 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
                     <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button data-action="clear-tag-filter" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
                 </div>
             `;
-            const clearBtn = emptyMessage.querySelector('[data-action="clear-tag-filter"]');
+            const clearBtn = emptyMessage.querySelector(
+                '[data-action="clear-tag-filter"]',
+            );
             if (clearBtn) {
-                clearBtn.addEventListener("click", () => clearTagFilter(entityType));
+                clearBtn.addEventListener("click", () =>
+                    clearTagFilter(entityType),
+                );
             }
             tableContainer.appendChild(emptyMessage);
         }
@@ -19886,7 +19908,9 @@ function addAuthHeader(containerId, options = {}) {
     }
     const removeBtn = headerRow.querySelector('[data-action="remove-header"]');
     if (removeBtn) {
-        removeBtn.addEventListener("click", () => removeAuthHeader(headerId, containerId));
+        removeBtn.addEventListener("click", () =>
+            removeAuthHeader(headerId, containerId),
+        );
     }
 
     container.appendChild(headerRow);
@@ -21839,9 +21863,13 @@ function setupCreateTokenForm() {
                     status +
                     "). " +
                     '<button type="button" data-action="retry-tokens" class="underline font-medium">Retry</button></div>';
-                const retryBtn = tokensTable.querySelector('[data-action="retry-tokens"]');
+                const retryBtn = tokensTable.querySelector(
+                    '[data-action="retry-tokens"]',
+                );
                 if (retryBtn) {
-                    retryBtn.addEventListener("click", () => loadTokensList(true));
+                    retryBtn.addEventListener("click", () =>
+                        loadTokensList(true),
+                    );
                 }
             }
         });
@@ -21852,9 +21880,13 @@ function setupCreateTokenForm() {
                     '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
                     "<strong>Failed to load tokens.</strong> Network error — check your connection and " +
                     '<button type="button" data-action="retry-tokens" class="underline font-medium">retry</button>.</div>';
-                const retryBtn = tokensTable.querySelector('[data-action="retry-tokens"]');
+                const retryBtn = tokensTable.querySelector(
+                    '[data-action="retry-tokens"]',
+                );
                 if (retryBtn) {
-                    retryBtn.addEventListener("click", () => loadTokensList(true));
+                    retryBtn.addEventListener("click", () =>
+                        loadTokensList(true),
+                    );
                 }
             }
         });
@@ -22405,9 +22437,11 @@ function showUsageStatsModal(stats) {
     `;
 
     // Attach close listeners (inline onclick is stripped by innerHTML sanitizer)
-    modal.querySelectorAll('[data-action="close-stats-modal"]').forEach((btn) => {
-        btn.addEventListener("click", () => modal.remove());
-    });
+    modal
+        .querySelectorAll('[data-action="close-stats-modal"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () => modal.remove());
+        });
 
     document.body.appendChild(modal);
 }
@@ -23779,9 +23813,13 @@ function displayPublicTeams(teams) {
     `;
 
     // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
-    container.querySelectorAll('[data-action="request-join"]').forEach((btn) => {
-        btn.addEventListener("click", () => requestToJoinTeam(btn.dataset.teamId));
-    });
+    container
+        .querySelectorAll('[data-action="request-join"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () =>
+                requestToJoinTeam(btn.dataset.teamId),
+            );
+        });
 }
 
 /**
@@ -24355,15 +24393,29 @@ function displayImportPreview(preview) {
     `;
 
     // Attach event listeners (inline onclick/onchange is stripped by innerHTML sanitizer)
-    previewContainer.querySelector('[data-action="select-all"]')?.addEventListener("click", () => selectAllItems());
-    previewContainer.querySelector('[data-action="select-none"]')?.addEventListener("click", () => selectNoneItems());
-    previewContainer.querySelector('[data-action="select-custom"]')?.addEventListener("click", () => selectOnlyCustom());
-    previewContainer.querySelector('[data-action="reset-selection"]')?.addEventListener("click", () => resetImportSelection());
-    previewContainer.querySelector('[data-action="preview-selected"]')?.addEventListener("click", () => handleSelectiveImport(true));
-    previewContainer.querySelector('[data-action="import-selected"]')?.addEventListener("click", () => handleSelectiveImport(false));
-    previewContainer.querySelectorAll('[data-action="update-count"]').forEach((cb) => {
-        cb.addEventListener("change", () => updateSelectionCount());
-    });
+    previewContainer
+        .querySelector('[data-action="select-all"]')
+        ?.addEventListener("click", () => selectAllItems());
+    previewContainer
+        .querySelector('[data-action="select-none"]')
+        ?.addEventListener("click", () => selectNoneItems());
+    previewContainer
+        .querySelector('[data-action="select-custom"]')
+        ?.addEventListener("click", () => selectOnlyCustom());
+    previewContainer
+        .querySelector('[data-action="reset-selection"]')
+        ?.addEventListener("click", () => resetImportSelection());
+    previewContainer
+        .querySelector('[data-action="preview-selected"]')
+        ?.addEventListener("click", () => handleSelectiveImport(true));
+    previewContainer
+        .querySelector('[data-action="import-selected"]')
+        ?.addEventListener("click", () => handleSelectiveImport(false));
+    previewContainer
+        .querySelectorAll('[data-action="update-count"]')
+        .forEach((cb) => {
+            cb.addEventListener("change", () => updateSelectionCount());
+        });
 
     // Store preview data and show preview section
     window.currentImportPreview = preview;
@@ -25727,17 +25779,19 @@ async function loadVirtualServersForChat() {
         });
 
         // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
-        serversList.querySelectorAll('[data-action="select-server"]').forEach((item) => {
-            item.addEventListener("click", () => {
-                selectServerForChat(
-                    item.dataset.serverId,
-                    item.dataset.serverName,
-                    item.dataset.isActive === "true",
-                    item.dataset.requiresToken === "true",
-                    item.dataset.visibility
-                );
+        serversList
+            .querySelectorAll('[data-action="select-server"]')
+            .forEach((item) => {
+                item.addEventListener("click", () => {
+                    selectServerForChat(
+                        item.dataset.serverId,
+                        item.dataset.serverName,
+                        item.dataset.isActive === "true",
+                        item.dataset.requiresToken === "true",
+                        item.dataset.visibility,
+                    );
+                });
             });
-        });
     } catch (error) {
         console.error("Error loading servers for chat:", error);
         serversList.innerHTML =
@@ -25750,7 +25804,7 @@ async function loadVirtualServersForChat() {
 /**
  * Select a server for chat
  */
-// eslint-disable-next-line no-unused-vars
+
 async function selectServerForChat(
     serverId,
     serverName,
@@ -30847,12 +30901,14 @@ function displaySecurityEvents(events) {
         .join("");
 
     // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
-    tbody.querySelectorAll('[data-action="show-correlation"]').forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            showCorrelationTrace(btn.dataset.correlationId);
+    tbody
+        .querySelectorAll('[data-action="show-correlation"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showCorrelationTrace(btn.dataset.correlationId);
+            });
         });
-    });
 }
 
 /**
@@ -31021,12 +31077,14 @@ function displayAuditTrail(trails) {
         .join("");
 
     // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
-    tbody.querySelectorAll('[data-action="show-correlation"]').forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            showCorrelationTrace(btn.dataset.correlationId);
+    tbody
+        .querySelectorAll('[data-action="show-correlation"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showCorrelationTrace(btn.dataset.correlationId);
+            });
         });
-    });
 }
 
 /**
@@ -33034,7 +33092,9 @@ function performTeamSelectorSearch(searchTerm) {
                     "Failed to load teams. " +
                     '<button type="button" data-action="retry-team-search" ' +
                     'class="underline font-medium">Retry</button></div>';
-                var retryBtn = container.querySelector('[data-action="retry-team-search"]');
+                const retryBtn = container.querySelector(
+                    '[data-action="retry-team-search"]',
+                );
                 if (retryBtn) {
                     retryBtn.addEventListener("click", function () {
                         delete container.dataset.loaded;
