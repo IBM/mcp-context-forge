@@ -877,9 +877,15 @@
                             container.innerHTML =
                               '<div class=\x22px-4 py-2 text-sm text-red-600 dark:text-red-400\x22>' +
                               'Failed to load teams. Backend may be temporarily unavailable. ' +
-                              '<button type=\x22button\x22 ' +
-                              'onclick=\x22delete document.getElementById(\'team-selector-items\').dataset.loaded; searchTeamSelector(\'\');\x22 ' +
+                              '<button type=\x22button\x22 data-action=\x22retry-load-teams\x22 ' +
                               'class=\x22underline font-medium\x22>Retry<\/button><\/div>';
+                            var retryBtn = container.querySelector('[data-action=\x22retry-load-teams\x22]');
+                            if (retryBtn) {
+                              retryBtn.addEventListener('click', function() {
+                                delete container.dataset.loaded;
+                                searchTeamSelector('');
+                              });
+                            }
                           });
                       }
                     }
