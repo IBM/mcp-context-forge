@@ -5856,29 +5856,7 @@ async function viewGateway(gatewayId) {
             idSpan.className = "font-mono text-sm";
             idSpan.textContent = gateway.id;
             idP.appendChild(idSpan);
-            const copyBtn = document.createElement("button");
-            copyBtn.type = "button";
-            copyBtn.title = "Copy ID to clipboard";
-            copyBtn.className =
-                "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
-            copyBtn.textContent = "📋 Copy";
-            copyBtn.addEventListener("click", () => {
-                navigator.clipboard
-                    .writeText(String(gateway.id))
-                    .then(() => {
-                        copyBtn.textContent = "✅ Copied!";
-                        setTimeout(() => {
-                            copyBtn.textContent = "📋 Copy";
-                        }, 2000);
-                    })
-                    .catch(() => {
-                        copyBtn.textContent = "❌ Failed";
-                        setTimeout(() => {
-                            copyBtn.textContent = "📋 Copy";
-                        }, 2000);
-                    });
-            });
-            idP.appendChild(copyBtn);
+            idP.appendChild(makeCopyIdButton(gateway.id));
             container.appendChild(idP);
 
             const fields = [
