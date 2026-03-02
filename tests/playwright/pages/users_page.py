@@ -189,7 +189,7 @@ class UsersPage(BasePage):
         except PlaywrightTimeoutError:
             pass  # Proceed with reload even if HTMX requests are still pending
         self.page.wait_for_load_state("domcontentloaded")
-        self.page.goto("/admin#users", wait_until="domcontentloaded")
+        self.page.goto("/ui#users", wait_until="domcontentloaded")
         self.wait_for_users_loaded()
 
     def user_has_badge(self, email: str, badge_text: str) -> bool:
