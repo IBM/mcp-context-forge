@@ -747,157 +747,199 @@ class TestAuditTrailCorrelation:
 
 
 class TestChatServerSelection:
-    """Chat server selection items use data-action + addEventListener."""
+    """Chat server selection items use data-action + addEventListener.
+
+    loadVirtualServersForChat() fetches /admin/servers, renders server items
+    with data-action="select-server", and attaches click listeners.
+    We intercept the fetch to return mock data so the real function runs.
+    """
 
     def test_chat_server_select_button_wired(self, admin_page):
-        """Server selection items should call selectServerForChat with correct args."""
+        """loadVirtualServersForChat() should wire working click handlers on server items."""
         page = admin_page.page
 
-        result = page.evaluate("""
-            () => {
-                let serversList = document.getElementById('chat-servers-list');
-                if (!serversList) {
-                    serversList = document.createElement('div');
-                    serversList.id = 'chat-servers-list';
-                    document.body.appendChild(serversList);
+        # Intercept /admin/servers to return mock server data
+        page.route("**/admin/servers", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"data": [{"id": "srv-1", "name": "Test Server", "status": "active", "visibility": "public", "require_token": false, "description": "A test server", "tools": [], "resources": [], "prompts": []}]}',
+        ))
+
+        try:
+            # Ensure container and state exist, then call the real function
+            result = page.evaluate("""
+                async () => {
+                    let serversList = document.getElementById('chat-servers-list');
+                    if (!serversList) {
+                        serversList = document.createElement('div');
+                        serversList.id = 'chat-servers-list';
+                        document.body.appendChild(serversList);
+                    }
+                    if (!window.llmChatState) {
+                        window.llmChatState = { selectedServerId: null };
+                    }
+
+                    // Spy on selectServerForChat
+                    let selectCalled = null;
+                    const orig = window.selectServerForChat;
+                    window.selectServerForChat = (id, name, active, token, vis) => {
+                        selectCalled = { id, name, active, token, vis };
+                    };
+
+                    try {
+                        await loadVirtualServersForChat();
+
+                        const btn = serversList.querySelector('[data-action="select-server"]');
+                        if (!btn) return { found: false };
+                        btn.click();
+                        return {
+                            found: true,
+                            selectCalled,
+                            serverId: btn.dataset.serverId,
+                        };
+                    } finally {
+                        window.selectServerForChat = orig;
+                    }
                 }
+            """)
 
-                if (!window.llmChatState) {
-                    window.llmChatState = { selectedServerId: null };
-                }
-
-                let selectCalled = null;
-                const orig = window.selectServerForChat;
-                window.selectServerForChat = (id, name, active, token, vis) => {
-                    selectCalled = { id, name, active, token, vis };
-                };
-
-                try {
-                    // Build HTML matching the pattern from loadVirtualServersForChat
-                    const div = document.createElement('div');
-                    div.setAttribute('data-action', 'select-server');
-                    div.setAttribute('data-server-id', 'srv-1');
-                    div.setAttribute('data-server-name', 'Test Server');
-                    div.setAttribute('data-is-active', 'true');
-                    div.setAttribute('data-requires-token', 'false');
-                    div.setAttribute('data-visibility', 'public');
-                    div.textContent = 'Test Server';
-                    serversList.appendChild(div);
-
-                    // Attach listener the same way loadVirtualServersForChat does
-                    serversList.querySelectorAll('[data-action="select-server"]').forEach((item) => {
-                        item.addEventListener('click', () => {
-                            selectServerForChat(
-                                item.dataset.serverId,
-                                item.dataset.serverName,
-                                item.dataset.isActive === 'true',
-                                item.dataset.requiresToken === 'true',
-                                item.dataset.visibility,
-                            );
-                        });
-                    });
-
-                    div.click();
-                    return { found: true, selectCalled };
-                } finally {
-                    window.selectServerForChat = orig;
-                    serversList.remove();
-                }
-            }
-        """)
-
-        assert result["found"], "Server item with data-action='select-server' not found"
-        assert result["selectCalled"]["id"] == "srv-1", "Should pass server ID"
-        assert result["selectCalled"]["active"] is True, "isActive should be parsed as boolean true"
-        assert result["selectCalled"]["token"] is False, "requiresToken should be parsed as boolean false"
+            assert result["found"], "Server item with data-action='select-server' not found"
+            assert result["serverId"] == "srv-1", "Server button should have correct data-server-id"
+            assert result["selectCalled"]["id"] == "srv-1", "Should pass server ID"
+            assert result["selectCalled"]["active"] is True, "isActive should be parsed as boolean true"
+            assert result["selectCalled"]["token"] is False, "requiresToken should be parsed as boolean false"
+        finally:
+            page.unroute("**/admin/servers")
 
 
 class TestTokenListRetryButton:
-    """Token list error retry button uses data-action + addEventListener."""
+    """Token list error retry button uses data-action + addEventListener.
 
-    def test_token_error_retry_button_pattern(self, admin_page):
-        """Token error state retry buttons should use data-action pattern."""
+    setupCreateTokenForm() attaches htmx:responseError / htmx:sendError
+    handlers to #tokens-panel. On error, it renders a retry button with
+    data-action="retry-tokens" and wires addEventListener.
+    We dispatch a synthetic HTMX event to trigger the real error handler.
+    """
+
+    def test_token_error_retry_button_from_htmx_event(self, admin_page):
+        """Dispatching htmx:responseError should render a wired retry button."""
         page = admin_page.page
 
         result = page.evaluate("""
             () => {
-                let container = document.createElement('div');
-                container.id = 'test-tokens-retry';
-                document.body.appendChild(container);
+                // Ensure required DOM elements exist
+                let panel = document.getElementById('tokens-panel');
+                if (!panel) {
+                    panel = document.createElement('div');
+                    panel.id = 'tokens-panel';
+                    document.body.appendChild(panel);
+                }
+                let table = document.getElementById('tokens-table');
+                if (!table) {
+                    table = document.createElement('div');
+                    table.id = 'tokens-table';
+                    panel.appendChild(table);
+                }
+                // Ensure the form element exists for setupCreateTokenForm
+                let form = document.getElementById('create-token-form');
+                if (!form) {
+                    form = document.createElement('form');
+                    form.id = 'create-token-form';
+                    document.body.appendChild(form);
+                }
+
+                // Reset the guard so setupCreateTokenForm re-attaches handlers
+                delete panel.dataset.htmxErrorHandlerAttached;
 
                 let retryCalled = false;
                 const orig = window.loadTokensList;
                 window.loadTokensList = () => { retryCalled = true; };
 
                 try {
-                    // Simulate the error HTML from setupCreateTokenForm
-                    const errorDiv = document.createElement('div');
-                    errorDiv.textContent = 'Failed to load tokens. ';
-                    const retryBtn = document.createElement('button');
-                    retryBtn.setAttribute('data-action', 'retry-tokens');
-                    retryBtn.textContent = 'Retry';
-                    errorDiv.appendChild(retryBtn);
-                    container.appendChild(errorDiv);
+                    // Call the real setupCreateTokenForm to attach HTMX error handlers
+                    setupCreateTokenForm();
 
-                    retryBtn.addEventListener('click', () => loadTokensList(true));
+                    // Dispatch a synthetic htmx:responseError event
+                    const evt = new CustomEvent('htmx:responseError', {
+                        bubbles: true,
+                        detail: { xhr: { status: 503 } },
+                    });
+                    panel.dispatchEvent(evt);
+
+                    // The handler should have rendered a retry button
+                    const retryBtn = table.querySelector('[data-action="retry-tokens"]');
+                    if (!retryBtn) return { found: false };
                     retryBtn.click();
                     return { found: true, retryCalled };
                 } finally {
                     window.loadTokensList = orig;
-                    container.remove();
                 }
             }
         """)
 
-        assert result["found"], "Retry button with data-action='retry-tokens' not found"
+        assert result["found"], "Retry button with data-action='retry-tokens' not found after htmx:responseError"
         assert result["retryCalled"], "Clicking retry should call loadTokensList"
 
 
 class TestTeamSearchRetryButton:
-    """Team selector search error retry button uses data-action + addEventListener."""
+    """Team selector search error retry button uses data-action + addEventListener.
 
-    def test_team_search_retry_button_pattern(self, admin_page):
-        """Team search error retry should clear loaded flag and call searchTeamSelector."""
+    performTeamSelectorSearch() fetches /admin/teams/partial. On fetch failure,
+    it renders a retry button with data-action="retry-team-search" and wires
+    addEventListener. We intercept the fetch to return a 500 so the real
+    error path runs.
+    """
+
+    def test_team_search_retry_from_fetch_error(self, admin_page):
+        """performTeamSelectorSearch() fetch failure should render a wired retry button."""
         page = admin_page.page
 
-        result = page.evaluate("""
-            () => {
-                let container = document.getElementById('team-selector-items');
-                if (!container) {
-                    container = document.createElement('div');
-                    container.id = 'team-selector-items';
-                    document.body.appendChild(container);
+        # Intercept teams partial endpoint to return 500
+        page.route("**/admin/teams/partial*", lambda route: route.fulfill(
+            status=500,
+            content_type="text/plain",
+            body="Internal Server Error",
+        ))
+
+        try:
+            result = page.evaluate("""
+                async () => {
+                    let container = document.getElementById('team-selector-items');
+                    if (!container) {
+                        container = document.createElement('div');
+                        container.id = 'team-selector-items';
+                        document.body.appendChild(container);
+                    }
+                    container.dataset.loaded = 'true';
+
+                    let searchCalled = false;
+                    const orig = window.searchTeamSelector;
+                    window.searchTeamSelector = () => { searchCalled = true; };
+
+                    try {
+                        // Call the real function — fetch will hit the intercepted 500 route
+                        performTeamSelectorSearch('nonexistent');
+
+                        // Wait for the fetch promise to settle (catch branch)
+                        await new Promise(r => setTimeout(r, 500));
+
+                        const retryBtn = container.querySelector('[data-action="retry-team-search"]');
+                        if (!retryBtn) return { found: false };
+                        retryBtn.click();
+                        return {
+                            found: true,
+                            searchCalled,
+                            loadedCleared: !container.dataset.loaded,
+                        };
+                    } finally {
+                        window.searchTeamSelector = orig;
+                        container.textContent = '';
+                    }
                 }
-                // Set loaded flag so we can verify it gets cleared
-                container.dataset.loaded = 'true';
+            """)
 
-                let searchCalled = false;
-                const orig = window.searchTeamSelector;
-                window.searchTeamSelector = () => { searchCalled = true; };
-
-                try {
-                    // Simulate the error path from performTeamSelectorSearch
-                    const errorDiv = document.createElement('div');
-                    errorDiv.textContent = 'Failed to load teams. ';
-                    const retryBtn = document.createElement('button');
-                    retryBtn.setAttribute('data-action', 'retry-team-search');
-                    retryBtn.textContent = 'Retry';
-                    errorDiv.appendChild(retryBtn);
-                    container.appendChild(errorDiv);
-
-                    retryBtn.addEventListener('click', function() {
-                        delete container.dataset.loaded;
-                        searchTeamSelector('');
-                    });
-                    retryBtn.click();
-                    return { found: true, searchCalled, loadedCleared: !container.dataset.loaded };
-                } finally {
-                    window.searchTeamSelector = orig;
-                    container.textContent = '';
-                }
-            }
-        """)
-
-        assert result["found"], "Retry button with data-action='retry-team-search' not found"
-        assert result["searchCalled"], "Clicking retry should call searchTeamSelector"
-        assert result["loadedCleared"], "Retry should clear the loaded dataset flag"
+            assert result["found"], "Retry button with data-action='retry-team-search' not found after fetch error"
+            assert result["searchCalled"], "Clicking retry should call searchTeamSelector"
+            assert result["loadedCleared"], "Retry should clear the loaded dataset flag"
+        finally:
+            page.unroute("**/admin/teams/partial*")
