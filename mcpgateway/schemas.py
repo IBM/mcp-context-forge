@@ -7309,14 +7309,14 @@ class PaginationLinks(BaseModel):
 
     Examples:
         >>> links = PaginationLinks(
-        ...     self="/admin/tools?page=2&per_page=50",
-        ...     first="/admin/tools?page=1&per_page=50",
-        ...     last="/admin/tools?page=5&per_page=50",
-        ...     next="/admin/tools?page=3&per_page=50",
-        ...     prev="/admin/tools?page=1&per_page=50"
+        ...     self="/ui/tools?page=2&per_page=50",
+        ...     first="/ui/tools?page=1&per_page=50",
+        ...     last="/ui/tools?page=5&per_page=50",
+        ...     next="/ui/tools?page=3&per_page=50",
+        ...     prev="/ui/tools?page=1&per_page=50"
         ... )
         >>> links.self
-        '/admin/tools?page=2&per_page=50'
+        '/ui/tools?page=2&per_page=50'
     """
 
     self: str = Field(..., description="Current page URL")

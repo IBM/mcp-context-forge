@@ -116,11 +116,11 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
-        """Test that /admin is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
-        mock_request.url.path = "/admin/users"
+        """Test that /ui is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
+        mock_request.url.path = "/ui/users"
 
-        # Test server restriction check - /admin should NOT be in general endpoints
-        result = middleware._check_server_restriction("/admin/users", "server-123")
+        # Test server restriction check - /ui should NOT be in general endpoints
+        result = middleware._check_server_restriction("/ui/users", "server-123")
         assert result == False, "Admin endpoints should not bypass server scoping restrictions"
 
     @pytest.mark.asyncio
@@ -234,23 +234,23 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
         """Test that admin endpoint groups use canonical granular permissions."""
-        result = middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
-        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT on /admin/users"
+        result = middleware._check_permission_restrictions("/ui/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT on /ui/users"
 
-        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
-        assert result == True, "Should accept canonical ADMIN_SYSTEM_CONFIG on /admin/config/*"
+        result = middleware._check_permission_restrictions("/ui/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
+        assert result == True, "Should accept canonical ADMIN_SYSTEM_CONFIG on /ui/config/*"
 
-        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        result = middleware._check_permission_restrictions("/ui/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
         assert result == False, "Should reject ADMIN_USER_MANAGEMENT for system-config admin routes"
 
         # Test that old non-canonical admin permissions would not work
-        result = middleware._check_permission_restrictions("/admin/users", "GET", ["admin.read"])
+        result = middleware._check_permission_restrictions("/ui/users", "GET", ["admin.read"])
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
     @pytest.mark.asyncio
     async def test_server_scoped_token_blocked_from_admin(self, middleware, mock_request):
         """Test that server-scoped tokens are blocked from admin endpoints (security fix)."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/ui/users"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -275,7 +275,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_permission_restricted_token_blocked_from_admin(self, middleware, mock_request):
         """Test that permission-restricted tokens are blocked from admin endpoints."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/ui/users"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -300,7 +300,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_admin_token_allowed_to_admin_endpoints(self, middleware, mock_request):
         """Test that tokens with admin permissions can access admin endpoints."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/ui/users"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -319,7 +319,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_wildcard_permissions_allow_all_access(self, middleware, mock_request):
         """Test that wildcard permissions allow access to any endpoint."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/ui/users"
         mock_request.method = "POST"
         mock_request.headers = {"Authorization": "Bearer token"}
 
@@ -338,7 +338,7 @@ class TestTokenScopingMiddleware:
     @pytest.mark.asyncio
     async def test_no_token_scopes_bypasses_middleware(self, middleware, mock_request):
         """Test that requests without token scopes bypass the middleware."""
-        mock_request.url.path = "/admin/users"
+        mock_request.url.path = "/ui/users"
         mock_request.headers = {}  # No Authorization header
 
         call_next = AsyncMock()
@@ -698,26 +698,26 @@ class TestTokenScopingMiddleware:
     async def test_regex_pattern_precision_admin(self, middleware):
         """Test that admin regex patterns enforce route-group-specific permissions."""
         # Dashboard/overview groups
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_DASHBOARD]) == True
-        assert middleware._check_permission_restrictions("/admin/overview/partial", "GET", [Permissions.ADMIN_OVERVIEW]) == True
+        assert middleware._check_permission_restrictions("/ui", "GET", [Permissions.ADMIN_DASHBOARD]) == True
+        assert middleware._check_permission_restrictions("/ui/overview/partial", "GET", [Permissions.ADMIN_OVERVIEW]) == True
 
         # User management vs config domains must remain separated
-        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == True
-        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == False
-        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
+        assert middleware._check_permission_restrictions("/ui/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        assert middleware._check_permission_restrictions("/ui/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == True
+        assert middleware._check_permission_restrictions("/ui/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == False
+        assert middleware._check_permission_restrictions("/ui/users", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
 
         # Other admin route groups
-        assert middleware._check_permission_restrictions("/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
-        assert middleware._check_permission_restrictions("/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
-        assert middleware._check_permission_restrictions("/admin/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
+        assert middleware._check_permission_restrictions("/ui/events", "GET", [Permissions.ADMIN_EVENTS]) == True
+        assert middleware._check_permission_restrictions("/ui/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
+        assert middleware._check_permission_restrictions("/ui/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
 
         # Unmapped admin paths default-deny when token has explicit restrictions
-        assert middleware._check_permission_restrictions("/admin/not-mapped", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
+        assert middleware._check_permission_restrictions("/ui/not-mapped", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
 
         # Explicitly multi-scoped token remains functional
         assert middleware._check_permission_restrictions(
-            "/admin/config/settings",
+            "/ui/config/settings",
             "GET",
             [Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SYSTEM_CONFIG],
         ) == True
@@ -986,7 +986,7 @@ class TestTokenScopingMiddleware:
         # Test that exact patterns still work correctly
         exact_matches = [
             ("/tools", "GET", [Permissions.TOOLS_READ], True),
-            ("/admin", "GET", [Permissions.ADMIN_DASHBOARD], True),
+            ("/ui", "GET", [Permissions.ADMIN_DASHBOARD], True),
             ("/resources", "GET", [Permissions.RESOURCES_READ], True),
             ("/prompts", "POST", [Permissions.PROMPTS_CREATE], True),
             ("/servers", "POST", [Permissions.SERVERS_CREATE], True),

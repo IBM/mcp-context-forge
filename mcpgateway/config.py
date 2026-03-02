@@ -600,6 +600,14 @@ class Settings(BaseSettings):
         default_factory=list,
         description="CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
     )
+    mcpgateway_ui_base_path: str = Field(
+        default="/ui",
+        description="Base URL path for the UI (e.g., /ui, /dashboard). Must start with / and not end with /",
+    )
+    mcpgateway_ui_legacy_redirect: bool = Field(
+        default=True,
+        description="Enable 301 redirect from deprecated /admin path to the configured UI base path",
+    )
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
@@ -1932,6 +1940,55 @@ Disallow: /
                 normalized.append(candidate)
 
         return normalized
+
+    @field_validator("mcpgateway_ui_base_path", mode="after")
+    @classmethod
+    def _validate_ui_base_path(cls, value: str) -> str:
+        """Validate the UI base path configuration.
+
+        Ensures the path:
+        - Starts with /
+        - Does not end with / (except for single /)
+        - Is not just / (would conflict with API root)
+        - Does not collide with reserved API routes
+
+        Args:
+            value: The configured UI base path.
+
+        Returns:
+            str: The validated base path.
+
+        Raises:
+            ValueError: If the path is invalid or collides with reserved routes.
+        """
+        # Reserved API route prefixes that cannot be used as UI base path
+        reserved_routes = frozenset({
+            "/tools", "/servers", "/gateways", "/prompts", "/resources", "/roots",
+            "/mcp", "/sse", "/ws", "/api", "/auth", "/docs", "/openapi.json",
+            "/redoc", "/health", "/healthz", "/ready", "/live", "/metrics",
+            "/.well-known", "/static", "/favicon.ico", "/llm", "/a2a", "/grpc",
+            "/version", "/tags", "/catalog", "/tokens",
+        })
+
+        if not value:
+            raise ValueError("MCPGATEWAY_UI_BASE_PATH cannot be empty")
+
+        if not value.startswith("/"):
+            raise ValueError("MCPGATEWAY_UI_BASE_PATH must start with /")
+
+        if value != "/" and value.endswith("/"):
+            raise ValueError("MCPGATEWAY_UI_BASE_PATH must not end with / (except for root)")
+
+        if value == "/":
+            raise ValueError("MCPGATEWAY_UI_BASE_PATH cannot be / (conflicts with API root)")
+
+        # Check for collision with reserved routes
+        value_lower = value.lower()
+        for route in reserved_routes:
+            if value_lower == route or value_lower.startswith(route + "/"):
+                raise ValueError(f"MCPGATEWAY_UI_BASE_PATH '{value}' conflicts with reserved route '{route}'")
+
+        return value
 
     @property
     def api_key(self) -> str:

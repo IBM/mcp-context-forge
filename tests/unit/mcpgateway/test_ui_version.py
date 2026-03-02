@@ -118,7 +118,7 @@ def auth_headers() -> Dict[str, str]:
 @pytest.mark.skipif(not settings.mcpgateway_ui_enabled, reason="Admin UI tests require MCPGATEWAY_UI_ENABLED=true")
 def test_admin_ui_contains_version_tab(test_client: TestClient, auth_headers: Dict[str, str]):
     """The Admin dashboard must contain the "Version & Environment Info" tab."""
-    resp = test_client.get("/admin", headers=auth_headers)
+    resp = test_client.get("/ui", headers=auth_headers)
     assert resp.status_code == 200
     assert 'id="tab-version-info"' in resp.text
     assert "Version and Environment Info" in resp.text

@@ -1103,7 +1103,7 @@ class TeamManagementService:
                     per_page=per_page or 30,
                     cursor=None,
                     limit=None,
-                    base_url=f"/admin/teams/{team_id}/members",
+                    base_url=f"{settings.mcpgateway_ui_base_path}/teams/{team_id}/members",
                     query_params={},
                 )
                 self.db.commit()

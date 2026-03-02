@@ -389,7 +389,8 @@ class EmailAuthService:
         """
         app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
         root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
-        return f"{app_domain}{root_path}/admin/forgot-password"
+        ui_base_path = str(getattr(settings, "mcpgateway_ui_base_path", "/ui"))
+        return f"{app_domain}{root_path}{ui_base_path}/forgot-password"
 
     @staticmethod
     def _build_reset_password_url(token: str) -> str:
@@ -404,7 +405,8 @@ class EmailAuthService:
         safe_token = urllib.parse.quote(token, safe="")
         app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
         root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
-        return f"{app_domain}{root_path}/admin/reset-password/{safe_token}"
+        ui_base_path = str(getattr(settings, "mcpgateway_ui_base_path", "/ui"))
+        return f"{app_domain}{root_path}{ui_base_path}/reset-password/{safe_token}"
 
     async def _invalidate_user_auth_cache(self, email: str) -> None:
         """Invalidate cached authentication data for a user.
@@ -1223,7 +1225,7 @@ class EmailAuthService:
                     per_page=per_page,
                     cursor=None,
                     limit=None,
-                    base_url="/admin/users",
+                    base_url=f"{settings.mcpgateway_ui_base_path}/users",
                     query_params={},
                 )
                 return UsersListResult(data=pag_result["data"], pagination=pag_result["pagination"], links=pag_result["links"])
@@ -1288,9 +1290,9 @@ class EmailAuthService:
                     data=[],
                     pagination=PaginationMeta(page=page, per_page=fallback_per_page, total_items=0, total_pages=0, has_next=False, has_prev=False),
                     links=PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
-                        self=f"/admin/users?page=1&per_page={fallback_per_page}",
-                        first=f"/admin/users?page=1&per_page={fallback_per_page}",
-                        last=f"/admin/users?page=1&per_page={fallback_per_page}",
+                        self=f"{settings.mcpgateway_ui_base_path}/users?page=1&per_page={fallback_per_page}",
+                        first=f"{settings.mcpgateway_ui_base_path}/users?page=1&per_page={fallback_per_page}",
+                        last=f"{settings.mcpgateway_ui_base_path}/users?page=1&per_page={fallback_per_page}",
                     ),
                 )
 
@@ -1360,7 +1362,7 @@ class EmailAuthService:
                     per_page=per_page or 30,
                     cursor=None,
                     limit=None,
-                    base_url=f"/admin/teams/{team_id}/non-members",
+                    base_url=f"{settings.mcpgateway_ui_base_path}/teams/{team_id}/non-members",
                     query_params={},
                 )
                 return UsersListResult(data=pag_result["data"], pagination=pag_result["pagination"], links=pag_result["links"])
@@ -1420,9 +1422,9 @@ class EmailAuthService:
                     data=[],
                     pagination=PaginationMeta(page=page, per_page=per_page or 30, total_items=0, total_pages=0, has_next=False, has_prev=False),
                     links=PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
-                        self=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
-                        first=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
-                        last=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
+                        self=f"{settings.mcpgateway_ui_base_path}/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
+                        first=f"{settings.mcpgateway_ui_base_path}/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
+                        last=f"{settings.mcpgateway_ui_base_path}/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
                     ),
                 )
 

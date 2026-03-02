@@ -266,7 +266,7 @@ class TestWellKnownAdminEndpoint:
         mock_settings.custom_well_known_files = {}
         mock_settings.well_known_cache_max_age = 3600
 
-        response = auth_client.get("/admin/well-known")
+        response = auth_client.get("/ui/well-known")
         assert response.status_code == 200
 
         data = response.json()
@@ -292,7 +292,7 @@ class TestWellKnownAdminEndpoint:
         mock_settings.custom_well_known_files = {}
         mock_settings.well_known_cache_max_age = 7200
 
-        response = auth_client.get("/admin/well-known")
+        response = auth_client.get("/ui/well-known")
         assert response.status_code == 200
 
         data = response.json()
@@ -314,7 +314,7 @@ class TestWellKnownAdminEndpoint:
         mock_settings.custom_well_known_files = {"custom1.txt": "Custom content 1", "custom2.txt": "Custom content 2"}
         mock_settings.well_known_cache_max_age = 1800
 
-        response = auth_client.get("/admin/well-known")
+        response = auth_client.get("/ui/well-known")
         assert response.status_code == 200
 
         data = response.json()

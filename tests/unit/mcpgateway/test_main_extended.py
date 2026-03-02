@@ -482,7 +482,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_bypasses_when_auth_disabled(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools")
+        request = _make_request("/ui/tools")
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", False)
@@ -494,7 +494,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_invalid_jwt_returns_401(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request = _make_request("/ui/tools", headers={"Authorization": "Bearer token"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -507,7 +507,7 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_revoked_token_redirects(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         request = _make_request(
-            "/admin/tools",
+            "/ui/tools",
             headers={"Authorization": "Bearer token", "accept": "text/html"},
         )
         call_next = AsyncMock(return_value="ok")
@@ -527,7 +527,7 @@ class TestAdminAuthMiddleware:
         """HTMX partial requests must receive HX-Redirect header instead of 302 redirect (issue #2874)."""
         middleware = AdminAuthMiddleware(None)
         request = _make_request(
-            "/admin/tools",
+            "/ui/tools",
             headers={"Authorization": "Bearer token", "accept": "text/html", "hx-request": "true"},
         )
         call_next = AsyncMock(return_value="ok")
@@ -540,7 +540,7 @@ class TestAdminAuthMiddleware:
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 200
-        assert "/admin/login" in response.headers.get("hx-redirect", "")
+        assert "/ui/login" in response.headers.get("hx-redirect", "")
         assert "token_revoked" in response.headers.get("hx-redirect", "")
 
     @pytest.mark.asyncio
@@ -548,7 +548,7 @@ class TestAdminAuthMiddleware:
         """HTMX requests without valid auth must get HX-Redirect, not 302 (issue #2874)."""
         middleware = AdminAuthMiddleware(None)
         request = _make_request(
-            "/admin/tools",
+            "/ui/tools",
             headers={"hx-request": "true"},
         )
         call_next = AsyncMock(return_value="ok")
@@ -558,12 +558,12 @@ class TestAdminAuthMiddleware:
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 200
-        assert "/admin/login" in response.headers.get("hx-redirect", "")
+        assert "/ui/login" in response.headers.get("hx-redirect", "")
 
     @pytest.mark.asyncio
     async def test_admin_auth_api_token_expired(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request = _make_request("/ui/tools", headers={"Authorization": "Bearer token"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -579,7 +579,7 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_proxy_user_allows_access(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         proxy_header = settings.proxy_user_header
-        request = _make_request("/admin/tools", headers={proxy_header: "proxy@example.com"})
+        request = _make_request("/ui/tools", headers={proxy_header: "proxy@example.com"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -610,7 +610,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_platform_admin_bootstrap(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request = _make_request("/ui/tools", headers={"Authorization": "Bearer token"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -638,7 +638,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_non_admin_denied(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request = _make_request("/ui/tools", headers={"Authorization": "Bearer token"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -670,7 +670,7 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_public_only_admin_token_denied(self, monkeypatch):
         """teams=[] tokens are public-only and must not pass admin middleware."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token", "accept": "application/json"})
+        request = _make_request("/ui/tools", headers={"Authorization": "Bearer token", "accept": "application/json"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -685,7 +685,7 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_explicit_null_teams_admin_bypass_allowed(self, monkeypatch):
         """teams=null + is_admin=true should preserve unrestricted admin middleware behavior."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request = _make_request("/ui/tools", headers={"Authorization": "Bearer token"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -716,7 +716,7 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_session_token_resolves_teams_from_db(self, monkeypatch):
         """Session tokens should resolve team scope via DB helper before admin path checks."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request = _make_request("/ui/tools", headers={"Authorization": "Bearer token"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -752,11 +752,11 @@ class TestAdminAuthMiddleware:
     @pytest.mark.parametrize(
         "path",
         [
-            "/admin/login",
-            "/admin/logout",
-            "/admin/forgot-password",
-            "/admin/reset-password/token-123",
-            "/admin/static/app.css",
+            "/ui/login",
+            "/ui/logout",
+            "/ui/forgot-password",
+            "/ui/reset-password/token-123",
+            "/ui/static/app.css",
         ],
     )
     async def test_admin_auth_exempt_paths_call_next_when_auth_required(self, monkeypatch, path):
@@ -775,9 +775,9 @@ class TestAdminAuthMiddleware:
     @pytest.mark.parametrize(
         "path",
         [
-            "/qa/gateway/admin/login",
-            "/qa/gateway/admin/forgot-password",
-            "/qa/gateway/admin/reset-password/token-123",
+            "/qa/gateway/ui/login",
+            "/qa/gateway/ui/forgot-password",
+            "/qa/gateway/ui/reset-password/token-123",
         ],
     )
     async def test_admin_auth_exempt_path_with_prefixed_scope_path(self, monkeypatch, path):
@@ -794,15 +794,15 @@ class TestAdminAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_admin_auth_root_path_slash_does_not_break_paths(self, monkeypatch):
-        """root_path of '/' must be ignored so /admin routes are still detected."""
+        """root_path of '/' must be ignored so /ui routes are still detected."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/login", root_path="/")
+        request = _make_request("/ui/login", root_path="/")
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
 
         response = await middleware.dispatch(request, call_next)
-        # /admin/login is exempt; leading slash must not be stripped
+        # /ui/login is exempt; leading slash must not be stripped
         assert response == "ok"
         call_next.assert_called_once()
 
@@ -810,7 +810,7 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_prefixed_non_exempt_path_enforces_auth(self, monkeypatch):
         """A non-exempt prefixed admin path must be detected as admin and require auth."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/qa/gateway/admin/tools", root_path="/qa/gateway", headers={"accept": "text/html"})
+        request = _make_request("/qa/gateway/ui/tools", root_path="/qa/gateway", headers={"accept": "text/html"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -818,28 +818,28 @@ class TestAdminAuthMiddleware:
         response = await middleware.dispatch(request, call_next)
         # No credentials: should redirect to login (302), not pass through
         assert response.status_code == 302
-        assert "/admin/login" in response.headers.get("location", "")
+        assert "/ui/login" in response.headers.get("location", "")
         call_next.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_admin_auth_trailing_slash_root_path(self, monkeypatch):
         """root_path with trailing slash must still normalize correctly."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/qa/gateway/admin/tools", root_path="/qa/gateway/", headers={"accept": "text/html"})
+        request = _make_request("/qa/gateway/ui/tools", root_path="/qa/gateway/", headers={"accept": "text/html"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
 
         response = await middleware.dispatch(request, call_next)
         assert response.status_code == 302
-        assert "/admin/login" in response.headers.get("location", "")
+        assert "/ui/login" in response.headers.get("location", "")
         call_next.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_admin_auth_cookie_token_revocation_check_failure_still_allows(self, monkeypatch):
         """Cover cookie token extraction + revocation check failure path."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request = _make_request("/ui/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -874,7 +874,7 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_api_token_revoked_and_success(self, monkeypatch):
         """Cover API token revoked and valid branches (when JWT validation fails)."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request = _make_request("/ui/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -910,7 +910,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_user_not_found_returns_401(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request = _make_request("/ui/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -936,7 +936,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_user_not_found_browser_redirects_to_login(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "text/html"})
+        request = _make_request("/ui/tools", cookies={"jwt_token": "token"}, headers={"accept": "text/html"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -958,12 +958,12 @@ class TestAdminAuthMiddleware:
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 302
-        assert "/admin/login" in response.headers.get("location", "")
+        assert "/ui/login" in response.headers.get("location", "")
 
     @pytest.mark.asyncio
     async def test_admin_auth_disabled_user_returns_403(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request = _make_request("/ui/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -989,7 +989,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_http_exception_and_general_exception_paths(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request = _make_request("/ui/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -3142,11 +3142,11 @@ class TestUtilityFunctions:
 
         # The behavior depends on whether UI was enabled when app was imported
         if response.status_code == 303:
-            # UI enabled: redirects to /admin/
+            # UI enabled: redirects to /ui/
             location = response.headers.get("location", "")
-            assert "/admin/" in location
+            assert "/ui/" in location
         elif response.status_code == 200:
-            # Could be JSON (UI disabled) or HTML (followed redirect to admin)
+            # Could be JSON (UI disabled) or HTML (followed redirect to UI)
             content_type = response.headers.get("content-type", "")
             if "application/json" in content_type:
                 data = response.json()
@@ -4499,7 +4499,7 @@ class TestRpcHandling:
         assert result["error"]["code"] == -32602
 
     async def test_handle_rpc_resources_read_admin_error_on_missing(self):
-        payload = {"jsonrpc": "2.0", "id": "23", "method": "resources/read", "params": {"uri": "resource://admin"}}
+        payload = {"jsonrpc": "2.0", "id": "23", "method": "resources/read", "params": {"uri": "resource://ui"}}
         request = self._make_request(payload)
         request.state = MagicMock()
 

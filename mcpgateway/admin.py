@@ -423,7 +423,7 @@ def _validated_team_id_param(team_id: Optional[str] = Query(None, description="F
 
 
 def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
-    """Build an admin redirect URL preserving query parameters.
+    """Build a UI redirect URL preserving query parameters.
 
     Args:
         root_path: The root path prefix for the application.
@@ -447,7 +447,8 @@ def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str]
             pass
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""
     sep = "/?" if query else ""
-    return f"{root_path}/admin{sep}{query}#{fragment}"
+    ui_base = settings.mcpgateway_ui_base_path
+    return f"{root_path}{ui_base}{sep}{query}#{fragment}"
 
 
 def get_client_ip(request: Request) -> str:
@@ -1061,7 +1062,17 @@ def _admin_cookie_path(request: Request) -> str:
         Admin cookie path scoped under the deployed app root.
     """
     root_path = _resolve_root_path(request)
-    return f"{root_path}/admin" if root_path else "/admin"
+    ui_base = settings.mcpgateway_ui_base_path
+    return f"{root_path}{ui_base}" if root_path else ui_base
+
+
+def _ui_base_path() -> str:
+    """Return the configured UI base path.
+
+    Returns:
+        The UI base path from settings (e.g., /ui, /dashboard).
+    """
+    return settings.mcpgateway_ui_base_path
 
 
 def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
@@ -1241,7 +1252,7 @@ async def enforce_admin_csrf(request: Request) -> None:
 
 
 admin_router = APIRouter(
-    prefix="/admin",
+    prefix=settings.mcpgateway_ui_base_path,
     tags=["Admin UI"],
     dependencies=[Depends(enforce_admin_csrf)],
 )
@@ -2362,7 +2373,7 @@ async def admin_servers_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/servers/partial"
+    base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/servers/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -3595,6 +3606,7 @@ async def admin_ui(
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
+            "ui_base_path": settings.mcpgateway_ui_base_path,
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
@@ -3700,7 +3712,7 @@ async def admin_ui(
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
         scope_root_path = _resolve_root_path(request)
-        ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
+        ui_cookie_path = f"{scope_root_path}{settings.mcpgateway_ui_base_path}" if scope_root_path else settings.mcpgateway_ui_base_path
         use_secure = (settings.environment == "production") or settings.secure_cookies
         samesite = settings.cookie_samesite
         if cookie_action == "set":
@@ -3764,7 +3776,7 @@ async def admin_login_page(request: Request) -> Response:
     # Check if email auth is enabled
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}", status_code=303)
 
     root_path = settings.app_root_path
 
@@ -3848,7 +3860,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}", status_code=303)
 
     try:
         form = await request.form()
@@ -3862,7 +3874,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             params = "error=missing_fields"
             if email:
                 params += f"&email={urllib.parse.quote(email)}"
-            return RedirectResponse(url=f"{root_path}/admin/login?{params}", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?{params}", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -3876,12 +3888,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = _resolve_root_path(request)
-                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
+                return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
                 LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
                 root_path = _resolve_root_path(request)
-                return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
+                return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
@@ -3928,7 +3940,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
                 # Create redirect response to password change page
                 root_path = _resolve_root_path(request)
-                response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
+                response = RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
                 try:
@@ -3936,7 +3948,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 except CookieTooLargeError:
                     root_path = _resolve_root_path(request)
                     return RedirectResponse(
-                        url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                        url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=token_too_large&email={urllib.parse.quote(email)}",
                         status_code=303,
                     )
 
@@ -3948,14 +3960,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             # Create redirect response
             root_path = _resolve_root_path(request)
-            response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+            response = RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}", status_code=303)
 
             # Set JWT token as secure cookie
             try:
                 set_auth_cookie(response, token, remember_me=False)
             except CookieTooLargeError:
                 return RedirectResponse(
-                    url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                    url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=token_too_large&email={urllib.parse.quote(email)}",
                     status_code=303,
                 )
 
@@ -3970,12 +3982,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=server_error", status_code=303)
 
 
 @admin_router.get("/forgot-password")
@@ -3990,7 +4002,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
     """
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login", status_code=303)
     response = request.app.state.templates.TemplateResponse(
         request,
         "forgot-password.html",
@@ -4019,25 +4031,25 @@ async def admin_forgot_password_handler(request: Request, db: Session = Depends(
     """
     root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=password_reset_disabled", status_code=303)
 
     try:
         form = await request.form()
         email_val = form.get("email")
         email = str(email_val).strip() if email_val else ""
         if not email:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=missing_email", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=missing_email", status_code=303)
 
         auth_service = EmailAuthService(db)
         result = await auth_service.request_password_reset(email=email, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
         if result.rate_limited:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=rate_limited", status_code=303)
-        return RedirectResponse(url=f"{root_path}/admin/login?notice=reset_email_sent", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=rate_limited", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?notice=reset_email_sent", status_code=303)
     except Exception as exc:
         LOGGER.warning("Forgot-password request failed: %s", exc)
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=server_error", status_code=303)
 
 
 @admin_router.get("/reset-password/{token}")
@@ -4054,9 +4066,9 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
     """
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=password_reset_disabled", status_code=303)
 
     auth_service = EmailAuthService(db)
     token_valid = False
@@ -4099,34 +4111,34 @@ async def admin_reset_password_handler(token: str, request: Request, db: Session
     """
     root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=password_reset_disabled", status_code=303)
 
     try:
         form = await request.form()
         password = str(form.get("password", ""))
         confirm_password = str(form.get("confirm_password", ""))
         if not password or not confirm_password:
-            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=missing_fields", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/reset-password/{urllib.parse.quote(token)}?error=missing_fields", status_code=303)
         if password != confirm_password:
-            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=password_mismatch", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/reset-password/{urllib.parse.quote(token)}?error=password_mismatch", status_code=303)
 
         auth_service = EmailAuthService(db)
         await auth_service.reset_password_with_token(token=token, new_password=password, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
-        return RedirectResponse(url=f"{root_path}/admin/login?notice=password_reset_success", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?notice=password_reset_success", status_code=303)
     except PasswordValidationError as exc:
-        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error={urllib.parse.quote(str(exc))}", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/reset-password/{urllib.parse.quote(token)}?error={urllib.parse.quote(str(exc))}", status_code=303)
     except AuthenticationError as exc:
         msg = str(exc).lower()
         if "expired" in msg:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_expired", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=reset_link_expired", status_code=303)
         if "used" in msg:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_used", status_code=303)
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_invalid", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=reset_link_used", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/forgot-password?error=reset_link_invalid", status_code=303)
     except Exception as exc:
         LOGGER.warning("Password reset failed: %s", exc)
-        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/reset-password/{urllib.parse.quote(token)}?error=server_error", status_code=303)
 
 
 async def _admin_logout(request: Request) -> Response:
@@ -4217,7 +4229,7 @@ async def _admin_logout(request: Request) -> Response:
         Returns:
             Optional[str]: Absolute login URL when resolvable, otherwise ``None``.
         """
-        login_path = f"{root_path}/admin/login"
+        login_path = f"{root_path}{settings.mcpgateway_ui_base_path}/login"
         request_url = getattr(request, "url", None)
         scheme = getattr(request_url, "scheme", None) if request_url is not None else None
         netloc = getattr(request_url, "netloc", None) if request_url is not None else None
@@ -4303,8 +4315,7 @@ async def _admin_logout(request: Request) -> Response:
             # The RP must clear the session and return HTTP 200 to acknowledge logout
             response = Response(content="Logged out", status_code=200)
     else:
-        # POST requests (user-initiated) - redirect to login (cookies cleared below)
-        response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        response = RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login", status_code=303)
 
         auth_provider = await _extract_auth_provider_from_jwt_cookie()
         if auth_provider == "keycloak":
@@ -4389,7 +4400,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}", status_code=303)
 
     # Get root path for template
     root_path = _resolve_root_path(request)
@@ -4458,7 +4469,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}", status_code=303)
 
     try:
         form = await request.form()
@@ -4472,11 +4483,11 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 
         if not all([current_password, new_password, confirm_password]):
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=missing_fields", status_code=303)
 
         if new_password != confirm_password:
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=mismatch", status_code=303)
 
         # Get user from JWT token in cookie
         try:
@@ -4491,7 +4502,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 
         if not current_user:
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=session_expired", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -4521,26 +4532,26 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         if current_user is None:
                             LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
                             root_path = _resolve_root_path(request)
-                            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+                            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=server_error", status_code=303)
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
                     root_path = _resolve_root_path(request)
-                    return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
+                    return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
 
                 # Create redirect response to admin panel
                 root_path = _resolve_root_path(request)
-                response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                response = RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}", status_code=303)
 
                 # Update JWT token cookie
                 try:
                     set_auth_cookie(response, token, remember_me=False)
                 except CookieTooLargeError:
                     return RedirectResponse(
-                        url=f"{root_path}/admin/login?error=token_too_large",
+                        url=f"{root_path}{settings.mcpgateway_ui_base_path}/login?error=token_too_large",
                         status_code=303,
                     )
 
@@ -4548,24 +4559,24 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 return response
 
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=change_failed", status_code=303)
 
         except AuthenticationError:
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=weak_password", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
             root_path = _resolve_root_path(request)
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=server_error", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Password change handler error: {e}")
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/change-password-required?error=server_error", status_code=303)
 
 
 # ============================================================================ #
@@ -4924,7 +4935,7 @@ async def admin_teams_partial_html(
     root_path = _resolve_root_path(request)
 
     # Base URL for pagination links - preserve search query and relationship filter
-    base_url = f"{root_path}/admin/teams/partial"
+    base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/teams/partial"
     query_parts = []
     if q:
         query_parts.append(f"q={urllib.parse.quote(q, safe='')}")
@@ -5162,7 +5173,7 @@ async def admin_list_teams(
         # Call list_teams logic (similar to admin_teams_partial_html but inline)
         if current_user.is_admin:
             # Default first page
-            base_url = f"{root_path}/admin/teams/partial"
+            base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/teams/partial"
             if q:
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
@@ -5387,7 +5398,7 @@ async def admin_view_team_members(
                 </div>
 
                 <form id="team-members-form-{team.id}" data-team-id="{team.id}"
-                      hx-post="{root_path}/admin/teams/{team.id}/add-member"
+                      hx-post="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/add-member"
                       hx-target="#team-edit-modal-content"
                       hx-swap="innerHTML"
                       class="px-6 py-4">
@@ -5412,7 +5423,7 @@ async def admin_view_team_members(
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
+                            hx-get="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5428,7 +5439,7 @@ async def admin_view_team_members(
                             id="team-non-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
+                            hx-get="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
                             hx-trigger="load delay:200ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5542,7 +5553,7 @@ async def admin_add_team_members_view(
                 </div>
 
                 <div class="px-6 py-4">
-                    <form id="add-members-form-{team.id}" data-team-id="{team.id}" hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
+                    <form id="add-members-form-{team.id}" data-team-id="{team.id}" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
                         <!-- Search box -->
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Search Users</label>
@@ -5550,7 +5561,7 @@ async def admin_add_team_members_view(
                                 type="text"
                                 id="user-search-{team.id}"
                                 data-team-id="{team.id}"
-                                data-search-url="{root_path}/admin/users/search"
+                                data-search-url="{root_path}{settings.mcpgateway_ui_base_path}/users/search"
                                 data-search-limit="10"
                                 placeholder="Search by name or email..."
                                 class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -5566,7 +5577,7 @@ async def admin_add_team_members_view(
                             <div
                                 id="user-selector-container-{team.id}"
                                 class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                                hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
+                                hx-get="{root_path}{settings.mcpgateway_ui_base_path}/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
                                 hx-target="#user-selector-container-{team.id}"
@@ -5642,7 +5653,7 @@ async def admin_get_team_edit(
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <div id="edit-team-error"></div>
-            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
+            <form method="post" action="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team_id}/update" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input type="text" name="name" value="{safe_team_name}" required
@@ -5746,7 +5757,7 @@ async def admin_update_team(
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
             error_msg = urllib.parse.quote("Team name is required")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/?error={error_msg}#teams", status_code=303)
 
         # Validate name and description for XSS (same validation as schema)
         if not re.match(settings.validation_name_pattern, name):
@@ -5760,7 +5771,7 @@ async def admin_update_team(
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
             error_msg = urllib.parse.quote("Team name contains invalid characters")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/?error={error_msg}#teams", status_code=303)
 
         try:
             SecurityValidator.validate_no_xss(name, "Team name")
@@ -5781,7 +5792,7 @@ async def admin_update_team(
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
             error_msg = urllib.parse.quote(str(ve))
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/?error={error_msg}#teams", status_code=303)
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
@@ -5812,7 +5823,7 @@ async def admin_update_team(
             response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshUnifiedTeamsList": True, "delayMs": 1500}}).decode()
             return response
         # For regular form submission, redirect to admin page with teams section
-        return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/#teams", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Error updating team {team_id}: {e}")
@@ -5824,7 +5835,7 @@ async def admin_update_team(
             return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=400)
         # For regular form submission, redirect to admin page with error parameter
         error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
-        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/?error={error_msg}#teams", status_code=303)
 
 
 @admin_router.delete("/teams/{team_id}")
@@ -6708,7 +6719,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
         f'<button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 '
         f"dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 "
         f"dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-        f'focus:ring-blue-500" hx-get="{root_path}/admin/users/{encoded_email}/edit" '
+        f'focus:ring-blue-500" hx-get="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/edit" '
         f'hx-target="#user-edit-modal-content">Edit</button>'
     ]
 
@@ -6718,7 +6729,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 '
                 f"dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 "
                 f"dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-indigo-500" hx-post="{root_path}/admin/users/{encoded_email}/unlock" '
+                f'focus:ring-indigo-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/unlock" '
                 f'hx-confirm="Unlock this user account?" hx-target="closest .user-card" hx-swap="outerHTML">Unlock</button>'
             )
 
@@ -6727,7 +6738,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
                 f"dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 "
                 f"dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-orange-500" hx-post="{root_path}/admin/users/{encoded_email}/deactivate" '
+                f'focus:ring-orange-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/deactivate" '
                 f'hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
             )
         else:
@@ -6735,7 +6746,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 '
                 f"dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 "
                 f"dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-green-500" hx-post="{root_path}/admin/users/{encoded_email}/activate" '
+                f'focus:ring-green-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/activate" '
                 f'hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
             )
 
@@ -6749,7 +6760,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
                 f'<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 '
                 f"dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 "
                 f"dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-yellow-500" hx-post="{root_path}/admin/users/{encoded_email}/force-password-change" '
+                f'focus:ring-yellow-500" hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}/force-password-change" '
                 f'hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" '
                 f'hx-swap="outerHTML">Force Password Change</button>'
             )
@@ -6758,7 +6769,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
             f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 '
             f"dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 "
             f"dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-            f'focus:ring-red-500" hx-delete="{root_path}/admin/users/{encoded_email}" '
+            f'focus:ring-red-500" hx-delete="{root_path}{settings.mcpgateway_ui_base_path}/users/{encoded_email}" '
             f'hx-confirm="Are you sure you want to delete this user? This action cannot be undone." '
             f'hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
         )
@@ -6968,7 +6979,7 @@ async def admin_users_partial_html(
                 },
             )
         elif render == "controls":
-            base_url = f"{_resolve_root_path(request)}/admin/users/partial"
+            base_url = f"{_resolve_root_path(request)}{settings.mcpgateway_ui_base_path}/users/partial"
             response = request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -7066,7 +7077,7 @@ async def admin_team_members_partial_html(
         db.commit()
 
         root_path = _resolve_root_path(request)
-        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        next_page_url = f"{root_path}{settings.mcpgateway_ui_base_path}/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -7151,7 +7162,7 @@ async def admin_team_non_members_partial_html(
         db.commit()
 
         root_path = _resolve_root_path(request)
-        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        next_page_url = f"{root_path}{settings.mcpgateway_ui_base_path}/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -7398,7 +7409,7 @@ async def admin_get_user_edit(
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
             <div id="edit-user-error"></div>
-            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
+            <form hx-post="{root_path}{settings.mcpgateway_ui_base_path}/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                     <input type="email" name="email" value="{user_obj.email}" readonly
@@ -8002,7 +8013,7 @@ async def admin_tools_partial_html(
 
     # Use unified pagination function (offset-based for UI compatibility)
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/tools/partial"
+    base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/tools/partial"
     query_params_dict = {}
     if include_inactive:
         query_params_dict["include_inactive"] = "true"
@@ -8191,7 +8202,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{_resolve_root_path(request)}/admin/tool-ops/partial",
+        base_url=f"{_resolve_root_path(request)}{settings.mcpgateway_ui_base_path}/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",
@@ -8589,7 +8600,7 @@ async def admin_prompts_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/prompts/partial"
+    base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/prompts/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -8805,7 +8816,7 @@ async def admin_gateways_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/gateways/partial"
+    base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/gateways/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -9375,7 +9386,7 @@ async def admin_resources_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/resources/partial"
+    base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/resources/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -9968,7 +9979,7 @@ async def admin_tokens_partial_html(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{settings.app_root_path}/admin/tokens/partial",
+        base_url=f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/tokens/partial",
         query_params=query_params,
         use_cursor_threshold=False,
     )
@@ -9977,7 +9988,7 @@ async def admin_tokens_partial_html(
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    base_url = f"{settings.app_root_path}/admin/tokens/partial"
+    base_url = f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/tokens/partial"
 
     if render == "controls":
         db.commit()
@@ -10256,7 +10267,7 @@ async def admin_a2a_partial_html(
 
     # Use unified pagination function
     root_path = _resolve_root_path(request)
-    base_url = f"{root_path}/admin/a2a/partial"
+    base_url = f"{root_path}{settings.mcpgateway_ui_base_path}/a2a/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
@@ -12895,7 +12906,7 @@ async def admin_metrics_partial_html(
     """
     Return HTML partial for paginated top performers (HTMX endpoint).
 
-    Matches the /admin/tools/partial pattern for consistent pagination UX.
+    Matches the /ui/tools/partial pattern for consistent pagination UX.
 
     Args:
         request: FastAPI request object
@@ -14975,7 +14986,7 @@ async def admin_set_a2a_agent_state(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}{settings.mcpgateway_ui_base_path}#a2a-agents", status_code=303)
 
     user_email = get_user_email(user)
     error_message = None
@@ -15029,7 +15040,7 @@ async def admin_delete_a2a_agent(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}{settings.mcpgateway_ui_base_path}#a2a-agents", status_code=303)
 
     error_message = None
     is_inactive_checked = "false"
@@ -16128,7 +16139,7 @@ async def register_catalog_server(
         <button
             id="{safe_server_id}-register-btn"
             class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
-            hx-post="{settings.app_root_path}/admin/mcp-registry/{safe_server_id}/register"
+            hx-post="{settings.app_root_path}{settings.mcpgateway_ui_base_path}/mcp-registry/{safe_server_id}/register"
             hx-target="#{safe_server_id}-button-container"
             hx-swap="innerHTML"
             hx-disabled-elt="this"
@@ -16328,7 +16339,7 @@ async def get_system_stats(
 
     Examples:
         >>> # Request system metrics via API
-        >>> # GET /admin/system/stats
+        >>> # GET /ui/system/stats
         >>> # Returns JSON with users, teams, mcp_resources, tokens, sessions, metrics, security, workflow
     """
     try:
@@ -16402,7 +16413,7 @@ async def admin_generate_support_bundle(
 
     Examples:
         >>> # Request support bundle via API
-        >>> # GET /admin/support-bundle/generate?log_lines=500
+        >>> # GET /ui/support-bundle/generate?log_lines=500
         >>> # Returns: mcpgateway-support-YYYY-MM-DD-HHMMSS.zip
     """
     try:

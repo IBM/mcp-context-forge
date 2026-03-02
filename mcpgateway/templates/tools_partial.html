@@ -58,7 +58,7 @@
               {% if tool.enabled %}
               <form
                 method="POST"
-                action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
+                action="{{ root_path }}{{ ui_base_path }}/tools/{{ tool.id }}/state"
                 class="contents"
                 onsubmit="return handleToggleSubmit(event, 'tools')"
               >
@@ -74,7 +74,7 @@
               {% else %}
               <form
                 method="POST"
-                action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
+                action="{{ root_path }}{{ ui_base_path }}/tools/{{ tool.id }}/state"
                 class="contents"
                 onsubmit="return handleToggleSubmit(event, 'tools')"
               >
@@ -91,7 +91,7 @@
 
               <form
                 method="POST"
-                action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
+                action="{{ root_path }}{{ ui_base_path }}/tools/{{ tool.id }}/delete"
                 class="contents"
                 onsubmit="return handleDeleteSubmit(event, 'tool', {{ tool.name|tojson_attr }}, 'tools')"
               >
@@ -214,7 +214,7 @@
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="tools-pagination-controls" hx-swap-oob="true">
-  {% set base_url = root_path + '/admin/tools/partial' %}
+  {% set base_url = root_path + ui_base_path + '/tools/partial' %}
   {% set hx_target = '#tools-table' %}
   {% set hx_swap = 'outerHTML' %}
   {% set hx_indicator = '#tools-loading' %}

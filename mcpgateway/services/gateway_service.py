@@ -1602,7 +1602,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             per_page=per_page,
             cursor=cursor,
             limit=limit,
-            base_url="/admin/gateways",  # Used for page-based links
+            base_url=f"{settings.mcpgateway_ui_base_path}/gateways",  # Used for page-based links
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 

@@ -68,7 +68,7 @@
 <!-- Infinite scroll trigger -->
 <div
   id="user-selector-scroll-trigger-{{ pagination.page }}"
-  hx-get="{{ root_path }}/admin/users/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if team_id %}&team_id={{ team_id }}{% endif %}"
+  hx-get="{{ root_path }}{{ ui_base_path }}/users/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if team_id %}&team_id={{ team_id }}{% endif %}"
   hx-trigger="intersect once"
   hx-swap="outerHTML"
   class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
