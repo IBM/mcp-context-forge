@@ -76,6 +76,7 @@ def _make_request(
     headers: dict | None = None,
     cookies: dict | None = None,
     root_path: str = "",
+    query_params: dict | None = None,
 ) -> MagicMock:
     request = MagicMock(spec=Request)
     request.method = method
@@ -83,6 +84,7 @@ def _make_request(
     request.scope = {"path": path, "root_path": root_path}
     request.headers = headers or {}
     request.cookies = cookies or {}
+    request.query_params = query_params or {}
     return request
 
 
@@ -1022,6 +1024,127 @@ class TestAdminAuthMiddleware:
         ):
             response = await middleware.dispatch(request, call_next)
             assert response.status_code == 500
+
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_team_scoped_request_passes_with_team_role(self, monkeypatch):
+        """User with only team-scoped admin.dashboard should pass when request has valid team_id."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+            query_params={"team_id": "team-abc-123"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+            ),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123", "team-xyz-456"])),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # Verify has_admin_permission was called with the validated team_id
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-abc-123")
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_team_scoped_request_ignores_invalid_team_id(self, monkeypatch):
+        """team_id not in user's teams should be ignored (falls back to global check)."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+            query_params={"team_id": "team-not-mine"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        # Return False to simulate no global admin permission either
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+            ),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 403
+        # team_id was not in token_teams, so should pass None
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_no_team_id_uses_global_check(self, monkeypatch):
+        """Request without team_id should check global permissions only (original behavior)."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+            ),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # No team_id in request, so should pass None
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
 
 
 class TestMCPPathRewriteMiddleware:
