@@ -32947,6 +32947,21 @@ function selectTeamFromSelector(button) {
     }
 }
 
+// Event delegation for team selector items.
+// Inline onclick attributes are stripped by the innerHTML sanitizer guard,
+// so we use a delegated click listener on the container instead.
+document.addEventListener("DOMContentLoaded", function () {
+    const container = document.getElementById("team-selector-items");
+    if (container) {
+        container.addEventListener("click", function (event) {
+            const button = event.target.closest(".team-selector-item");
+            if (button) {
+                selectTeamFromSelector(button);
+            }
+        });
+    }
+});
+
 // Make team functions globally available
 window.serverSideTeamSearch = serverSideTeamSearch;
 window.filterByRelationship = filterByRelationship;

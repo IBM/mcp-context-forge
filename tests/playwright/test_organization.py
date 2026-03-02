@@ -198,6 +198,58 @@ class TestTeams:
         team_page.wait_for_team_hidden(team_name)
 
 
+class TestTeamSelectorDropdown:
+    """Tests for the team selector dropdown in the admin header."""
+
+    def test_team_selector_click_navigates(self, team_page):
+        """Clicking a team in the header dropdown should navigate with ?team_id=X."""
+        page = team_page.page
+        team_name = f"Test Team {uuid.uuid4().hex[:8]}"
+
+        # Create a team first
+        team_page.navigate_to_teams_tab()
+        with page.expect_response(lambda r: "/admin/teams" in r.url and r.request.method == "POST"):
+            team_page.create_team(team_name)
+        page.wait_for_load_state("domcontentloaded")
+        page.reload(wait_until="domcontentloaded")
+
+        # Click the team selector dropdown button in the header
+        selector_btn = page.locator("#team-selector-button")
+        expect(selector_btn).to_be_visible(timeout=10000)
+        selector_btn.click()
+
+        # Wait for team items to load in the dropdown
+        items_container = page.locator("#team-selector-items")
+        expect(items_container).to_be_visible(timeout=10000)
+
+        # Wait for the loading message to be replaced with actual team buttons
+        page.wait_for_function(
+            "() => document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
+            timeout=15000,
+        )
+
+        # Find and click our team in the dropdown
+        team_item = items_container.locator(f".team-selector-item:has-text('{team_name}')")
+        expect(team_item).to_be_visible(timeout=10000)
+
+        # Click the team and expect navigation with ?team_id=
+        with page.expect_navigation(timeout=15000):
+            team_item.click()
+
+        # Verify the URL now contains team_id
+        assert "team_id=" in page.url, f"Expected team_id in URL after clicking team, got: {page.url}"
+
+        # Cleanup: switch back to All Teams, then delete
+        page.goto(page.url.split("?")[0])
+        page.wait_for_load_state("domcontentloaded")
+        team_page.navigate_to_teams_tab()
+        team_search = page.locator("#team-search")
+        team_search.wait_for(state="visible", timeout=30000)
+        team_search.fill(team_name)
+        team_page.wait_for_team_visible(team_name)
+        team_page.delete_team(team_name)
+
+
 class TestTokens:
     """Tests for API Token management features."""
 
