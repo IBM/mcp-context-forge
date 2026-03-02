@@ -3228,21 +3228,22 @@ async def admin_ui(
 
     # --------------------------------------------------------------------------------
     # Validate team_id if provided (only when email-based teams are enabled)
-    # If invalid, we currently *ignore* it and fall back to default behavior.
-    # Optionally you can raise HTTPException(403) if you prefer strict rejection.
+    # Reject with 403 when the caller supplies a team_id they do not belong to
+    # rather than silently falling back to unscoped (public) visibility.
+    # When team_id is None (not sent), selected_team_id stays None and the
+    # unscoped/public path works as expected.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
     user_email = get_user_email(user)
     if team_id and getattr(settings, "email_auth_enabled", False):
-        # If team list failed to load for some reason, be conservative and drop selection
         if not user_teams:
-            LOGGER.warning("team_id requested but user_teams not available; ignoring team filter")
-            selected_team_id = None
+            LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
+            raise HTTPException(status_code=403, detail="Unable to verify team membership")
         else:
             valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
             if str(team_id) not in valid_team_ids:
-                LOGGER.warning("Requested team_id is not in user's teams; ignoring team filter (team_id=%s)", team_id)
-                selected_team_id = None
+                LOGGER.warning("Requested team_id is not in user's teams; rejecting (team_id=%s)", team_id)
+                raise HTTPException(status_code=403, detail="Not a member of the requested team")
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
