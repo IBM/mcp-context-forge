@@ -646,6 +646,55 @@ class TestAdminProxyUrlContext:
         nav_url = _build_navigate_admin_url(page, "gateways")
         _assert_url_params(nav_url, proxy_prefix=True, team_id=False, include_inactive=True)
 
+    # ------------------------------------------------------------------
+    # Same-URL reload regression (#3351, root cause of #3324)
+    # ------------------------------------------------------------------
+
+    def test_proxy_navigate_admin_reloads_when_url_unchanged(
+        self, page: Page, base_url: str
+    ):
+        """_navigateAdmin must reload even when target URL equals the current URL.
+
+        Regression for #3351 (root cause of #3324): in proxy/iframe mode the
+        URL path has no trailing slash (``/proxy/mcp/admin``), so
+        ``_navigateAdmin`` computes the exact same URL as the current one.
+        Browsers treat ``location.href = sameURL#sameHash`` as an in-page
+        anchor scroll and skip the network reload, leaving stale data on
+        screen.
+
+        In direct mode the bug is masked because FastAPI redirects ``/admin`` →
+        ``/admin/`` (trailing slash), creating a URL difference that triggers a
+        real reload.
+        """
+        _ensure_admin_logged_in(page, base_url)
+
+        # Navigate to proxy admin WITHOUT trailing slash (matches iframe behavior).
+        page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, fragment="gateways"))
+        page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
+
+        # Plant a marker variable — a real page reload will wipe it.
+        page.evaluate("window.__reload_test_marker = Date.now()")
+
+        # Call the real _navigateAdmin from admin.js with the current fragment.
+        # Because the target URL matches the current URL (proxy path without
+        # trailing slash), the fix should trigger window.location.reload().
+        try:
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=10000):
+                page.evaluate("_navigateAdmin('gateways', new URLSearchParams())")
+        except PlaywrightTimeoutError:
+            pytest.fail(
+                "Page did NOT reload after _navigateAdmin to same URL — "
+                "this is the #3351 bug: proxy/iframe URLs have no "
+                "trailing-slash difference to trigger a browser reload."
+            )
+
+        marker = page.evaluate("window.__reload_test_marker")
+        assert marker is None, (
+            "Navigation occurred but page was not fully reloaded — "
+            "window.__reload_test_marker survived."
+        )
+
 
 # ===================================================================
 # TEST CLASS 3: Iframe-embedded mode
