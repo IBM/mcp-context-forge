@@ -433,6 +433,21 @@ def extract_using_jq(data, jq_filter=""):
 
     return result
 
+def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_obj=None) -> dict:
+    if target_obj is None:
+        target_obj = {}
+
+    if not mapping_obj:
+        return target_obj
+
+    return {
+        **target_obj,
+        **{
+            mapping_obj[k]: v
+            for k, v in data_obj.items()
+            if k in mapping_obj
+        }
+    }
 
 class ToolError(Exception):
     """Base class for tool-related errors.
@@ -681,6 +696,8 @@ class ToolService(BaseService):
             "team_id": tool.team_id,
             "owner_email": tool.owner_email,
             "visibility": tool.visibility,
+            "query_mapping": tool.query_mapping,
+            "header_mapping": tool.header_mapping,
         }
 
         gateway_payload = None
@@ -2992,6 +3009,8 @@ class ToolService(BaseService):
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
+        tool_query_mapping = tool_payload.get("query_mapping")
+        tool_header_mapping = tool_payload.get("header_mapping")
 
         # Get effective timeout: per-tool timeout_ms (in seconds) or global fallback
         # timeout_ms is stored in milliseconds, convert to seconds
@@ -3280,8 +3299,11 @@ class ToolService(BaseService):
 
                     query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-                    # Merge leftover payload + query params
-                    payload.update(query_params)
+                    # Apply query mapping and merge into parsed query params from url
+                    payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+
+                    # Apply headers mapping and merge into already existing headers
+                    headers = apply_mapping_into_target(payload, tool_header_mapping, headers)
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
