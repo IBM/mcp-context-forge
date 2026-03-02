@@ -12125,11 +12125,15 @@ async function loadTools() {
 
 document.addEventListener("DOMContentLoaded", loadTools);
 
-// Event delegation for tool table action buttons (inline onclick stripped by innerHTML sanitizer)
+// Event delegation for tool table action buttons (inline onclick stripped by innerHTML sanitizer).
+// Bind to #tool-ops-main-content-wrapper (exists in admin.html at DOMContentLoaded) rather than
+// #toolBody (injected later via HTMX partial) so the listener survives HTMX content swaps.
 document.addEventListener("DOMContentLoaded", function () {
-    const toolBody = document.getElementById("toolBody");
-    if (toolBody) {
-        toolBody.addEventListener("click", function (e) {
+    const wrapper =
+        document.getElementById("tool-ops-main-content-wrapper") ||
+        document.getElementById("toolBody");
+    if (wrapper) {
+        wrapper.addEventListener("click", function (e) {
             const btn = e.target.closest("[data-action]");
             if (!btn) return;
             const toolId = btn.dataset.toolId;
@@ -12178,7 +12182,7 @@ async function enrichTool(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const enrichButton = document.querySelector(
-            `[onclick*="enrichTool('${toolId}')"]`,
+            `[data-action="enrich-tool"][data-tool-id="${toolId}"]`,
         );
         if (enrichButton) {
             if (enrichButton.disabled) {
@@ -12241,9 +12245,11 @@ async function enrichTool(toolId) {
         }
 
         const data = await response.json();
-        enrichButton.disabled = false;
-        enrichButton.textContent = "Enrich";
-        enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        if (enrichButton) {
+            enrichButton.disabled = false;
+            enrichButton.textContent = "Enrich";
+            enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
         console.log(`Tool ${toolId} enriched successfully`, data);
         // showSuccessMessage(`Tool ${toolId} enriched successfully`);
 
@@ -12265,7 +12271,7 @@ async function enrichTool(toolId) {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="enrichTool('${toolId}')"]`,
+            `[data-action="enrich-tool"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -12513,7 +12519,7 @@ async function generateToolTestCases(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const tcgButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (tcgButton) {
             if (tcgButton.disabled) {
@@ -12549,15 +12555,17 @@ async function generateToolTestCases(toolId) {
 
         openModal("testcase-gen-modal");
 
-        tcgButton.disabled = false;
-        tcgButton.textContent = "Generate Test Cases";
-        tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+        if (tcgButton) {
+            tcgButton.disabled = false;
+            tcgButton.textContent = "Generate Test Cases";
+            tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -12625,7 +12633,7 @@ async function generateTestCases() {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -12666,7 +12674,7 @@ async function validateTool(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const validateButton = document.querySelector(
-            `[onclick*="validateTool('${toolId}')"]`,
+            `[data-action="validate-tool"][data-tool-id="${toolId}"]`,
         );
         if (validateButton) {
             if (validateButton.disabled) {
@@ -13341,7 +13349,7 @@ async function validateTool(toolId) {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="validateTool('${toolId}')"]`,
+            `[data-action="validate-tool"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -33246,7 +33254,7 @@ document.addEventListener("htmx:afterSettle", function (_evt) {
             if (!canModify) {
                 // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate
                 const buttons = row.querySelectorAll(
-                    "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
+                    '[data-action="edit-tool"], [data-action="enrich-tool"], [data-action="validate-tool"], [data-action="generate-tool-tests"]',
                 );
                 for (let b = 0; b < buttons.length; b++) {
                     buttons[b].remove();
