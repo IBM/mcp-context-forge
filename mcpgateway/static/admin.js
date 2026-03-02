@@ -3901,6 +3901,7 @@ async function viewAgent(agentId) {
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
 
             const fields = [
+                { label: "ID", value: agent.id },
                 { label: "Name", value: agent.name },
                 { label: "Slug", value: agent.slug },
                 { label: "Endpoint URL", value: agent.endpointUrl },
@@ -5787,6 +5788,7 @@ async function viewGateway(gatewayId) {
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
 
             const fields = [
+                { label: "ID", value: gateway.id },
                 { label: "Name", value: gateway.name },
                 { label: "URL", value: gateway.url },
                 {
@@ -15021,6 +15023,10 @@ async function viewTool(toolId) {
             <!-- Left Column -->
             <div class="space-y-3">
               <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">ID:</span>
+                <div class="mt-1 tool-id text-sm font-mono"></div>
+              </div>
+              <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
                 <div class="mt-1 tool-display-name font-medium"></div>
               </div>
@@ -15184,6 +15190,7 @@ async function viewTool(toolId) {
                 }
             };
 
+            setTextSafely(".tool-id", tool.id);
             setTextSafely(
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
