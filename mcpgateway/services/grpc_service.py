@@ -65,9 +65,6 @@ def _validate_grpc_target(target: str) -> None:
     Raises:
         GrpcServiceError: If the target resolves to a blocked address.
     """
-    # First-Party
-    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
     # Extract host (strip port)
     host = target.rsplit(":", 1)[0].strip("[]")
     if not host:

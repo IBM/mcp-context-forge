@@ -17575,6 +17575,9 @@ class TestTemplateButtonGating:
             return s
 
         env.filters["tojson_attr"] = tojson_attr
+
+        # Add global variables (same as in main.py)
+        env.globals["ui_base_path"] = settings.mcpgateway_ui_base_path
         return env
 
     def _render_tools_partial(self, jinja_env, tool_data, current_user_email, is_admin=False, user_team_roles=None):
