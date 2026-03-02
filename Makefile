@@ -1540,6 +1540,71 @@ benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
 
 # =============================================================================
+# 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
+# =============================================================================
+# help: 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK
+# help: embedded-up              - Start embedded stack (iframe mode + benchmark servers)
+# help: embedded-down            - Stop embedded stack
+# help: embedded-clean           - Stop and remove all embedded data (volumes)
+# help: embedded-status          - Show status of embedded services
+# help: embedded-logs            - Show embedded stack logs
+# help:
+# help: Environment variables:
+# help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
+
+EMBEDDED_COMPOSE := $(COMPOSE_CMD) -f docker-compose.yml -f docker-compose-embedded.yml --profile benchmark
+
+.PHONY: embedded-up
+embedded-up:                               ## Start embedded stack (iframe mode + benchmark servers)
+	@if [ ! -f "docker-compose-embedded.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose-embedded.yml"; \
+		exit 1; \
+	fi
+	@echo "🖼️  Starting embedded stack (iframe mode + $(BENCHMARK_SERVER_COUNT) benchmark servers)..."
+	BENCHMARK_SERVER_COUNT=$(BENCHMARK_SERVER_COUNT) BENCHMARK_START_PORT=$(BENCHMARK_START_PORT) \
+		$(EMBEDDED_COMPOSE) up -d
+	@echo ""
+	@echo "✅ Embedded stack started!"
+	@echo ""
+	@echo "Service              URL                           Purpose"
+	@echo "──────────────────────────────────────────────────────────────────────────"
+	@echo "iframe Harness       http://localhost:8889         UI inside iframe"
+	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@echo "Gateway Admin UI     http://localhost:8080/admin/  Direct admin access"
+	@echo "Benchmark Servers    http://localhost:9000-9099    MCP benchmark targets"
+	@echo ""
+	@echo "   📝 $(BENCHMARK_SERVER_COUNT) benchmark servers auto-registered (50 tools each = $$(($(BENCHMARK_SERVER_COUNT) * 50)) tools)"
+	@echo ""
+	@echo "   🔧 Embedded settings:"
+	@echo "      • UI mode:       embedded (iframe-safe)"
+	@echo "      • Default role:  developer"
+	@echo "      • Public visibility: disabled"
+	@echo ""
+	@echo "   💡 Configure: BENCHMARK_SERVER_COUNT=50 make embedded-up"
+
+.PHONY: embedded-down
+embedded-down:                             ## Stop embedded stack
+	@echo "🖼️  Stopping embedded stack..."
+	$(EMBEDDED_COMPOSE) down --remove-orphans
+	@echo "✅ Embedded stack stopped."
+
+.PHONY: embedded-clean
+embedded-clean:                            ## Stop and remove all embedded data (volumes)
+	@echo "🖼️  Stopping and cleaning embedded stack..."
+	$(EMBEDDED_COMPOSE) down -v --remove-orphans
+	@echo "✅ Embedded stack stopped and volumes removed."
+
+.PHONY: embedded-status
+embedded-status:                           ## Show status of embedded services
+	@echo "🖼️  Embedded stack status:"
+	@$(EMBEDDED_COMPOSE) ps || \
+		echo "   No embedded services running. Start with 'make embedded-up'"
+
+.PHONY: embedded-logs
+embedded-logs:                             ## Show embedded stack logs
+	$(EMBEDDED_COMPOSE) logs -f --tail=100
+
+# =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
 # =============================================================================
 # help: 🚀 PERFORMANCE TESTING STACK
@@ -5131,7 +5196,8 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
-	monitoring-lite-up monitoring-lite-down
+	monitoring-lite-up monitoring-lite-down \
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs
 
 # Validate compose file
 .PHONY: compose-validate
