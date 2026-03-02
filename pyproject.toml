@@ -78,8 +78,8 @@ dependencies = [
     "starlette-compress>=1.7.0",
     "typer>=0.24.1",
     "uvicorn[standard]>=0.41.0",
-    "urllib3>=2.6.3",
-    "python-multipart>=0.0.22",
+    "urllib3>=2.6.3",               # Pinned to ensure latest security patches for transitive dependencies
+    "python-multipart>=0.0.22",     # Pinned to ensure latest security patches for transitive dependencies
 ]
 
 # ----------------------------------------------------------------
