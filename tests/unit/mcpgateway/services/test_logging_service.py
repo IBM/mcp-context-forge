@@ -204,3 +204,79 @@ async def test_subscribe_cleanup_removes_queue_on_cancel():
         await task
 
     assert len(service._subscribers) == 0
+
+
+# ---------------------------------------------------------------------------
+# httpx URL sanitize filter
+# ---------------------------------------------------------------------------
+
+
+class TestHttpxUrlSanitizeFilter:
+    """Tests for the httpx/httpcore URL sanitization filter."""
+
+    @staticmethod
+    def _get_filter():
+        """Install the filter and return it."""
+        LoggingService._install_httpx_url_sanitize_filter()
+        httpx_logger = logging.getLogger("httpx")
+        return [f for f in httpx_logger.filters if f.__class__.__name__ == "_HttpxUrlSanitizeFilter"][-1]
+
+    def test_redacts_api_key_in_httpx_message(self):
+        filt = self._get_filter()
+        record = logging.makeLogRecord(
+            {
+                "name": "httpx",
+                "msg": 'HTTP Request: GET https://example.mcp.server.com/sse?api_key=secret-value "HTTP/1.1 200 OK"',
+            }
+        )
+        result = filt.filter(record)
+        assert result is True
+        assert "secret-value" not in record.getMessage()
+        assert "api_key=REDACTED" in record.getMessage()
+
+    def test_redacts_token_in_httpx_message(self):
+        filt = self._get_filter()
+        record = logging.makeLogRecord(
+            {
+                "name": "httpx",
+                "msg": "HTTP Request: GET https://api.example.com/path?token=my-secret&q=search \"HTTP/1.1 200 OK\"",
+            }
+        )
+        filt.filter(record)
+        assert "my-secret" not in record.getMessage()
+        assert "token=REDACTED" in record.getMessage()
+        assert "q=search" in record.getMessage()
+
+    def test_no_modification_when_no_sensitive_params(self):
+        filt = self._get_filter()
+        original_msg = 'HTTP Request: GET https://example.mcp.server.com/sse?page=1&limit=10 "HTTP/1.1 200 OK"'
+        record = logging.makeLogRecord({"name": "httpx", "msg": original_msg})
+        filt.filter(record)
+        assert record.getMessage() == original_msg
+
+    def test_no_modification_when_no_url(self):
+        filt = self._get_filter()
+        original_msg = "Connection pool established"
+        record = logging.makeLogRecord({"name": "httpx", "msg": original_msg})
+        filt.filter(record)
+        assert record.getMessage() == original_msg
+
+    def test_filter_installed_on_httpcore(self):
+        LoggingService._install_httpx_url_sanitize_filter()
+        httpcore_logger = logging.getLogger("httpcore")
+        filter_names = [f.__class__.__name__ for f in httpcore_logger.filters]
+        assert "_HttpxUrlSanitizeFilter" in filter_names
+
+    def test_handles_format_args_gracefully(self):
+        filt = self._get_filter()
+        record = logging.makeLogRecord(
+            {
+                "name": "httpx",
+                "msg": "Request to %s completed with status %d",
+                "args": ("https://example.mcp.server.com/sse?api_key=secret123", 200),
+            }
+        )
+        filt.filter(record)
+        msg = record.getMessage()
+        assert "secret123" not in msg
+        assert "api_key=REDACTED" in msg
