@@ -97,11 +97,11 @@ async def test_form_field_parsing_multipart(csrf_middleware, mock_settings):
         "authorization": "Bearer token",
     }.get(key.lower(), default))
     mock_request.cookies.get = Mock(return_value=csrf_token)
-    
+
     # Mock form() to return csrf_token
     async def mock_form():
         return {"csrf_token": csrf_token}
-    
+
     mock_request.form = mock_form
     mock_request.state.user = Mock(email=user_id)
     mock_request.state.jti = session_id
@@ -284,9 +284,9 @@ async def test_token_rotation_on_login():
     with patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service_class, \
          patch("mcpgateway.routers.auth.create_access_token") as mock_create_token, \
          patch("mcpgateway.routers.auth.settings") as mock_settings, \
-         patch("mcpgateway.routers.auth.jwt") as mock_jwt, \
-         patch("mcpgateway.routers.auth.generate_csrf_token") as mock_gen_csrf, \
-         patch("mcpgateway.routers.auth.set_csrf_cookie") as mock_set_cookie:
+         patch("jwt.decode") as mock_jwt_decode, \
+         patch("mcpgateway.services.csrf_service.generate_csrf_token") as mock_gen_csrf, \
+         patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie:
 
         # Setup mocks
         mock_settings.csrf_rotate_on_login = True
@@ -294,16 +294,26 @@ async def test_token_rotation_on_login():
         mock_settings.csrf_token_expiry = 3600
         mock_settings.sso_enabled = False
 
+        from datetime import datetime
+
         mock_user = Mock()
         mock_user.email = "test@example.com"
         mock_user.is_admin = False
+        mock_user.full_name = "Test User"
+        mock_user.is_active = True
+        mock_user.auth_provider = "email"
+        mock_user.created_at = datetime(2024, 1, 1)
+        mock_user.last_login = datetime(2024, 1, 1)
+        mock_user.email_verified = True
+        mock_user.password_change_required = False
+        mock_user.is_email_verified = Mock(return_value=True)
 
         mock_auth_service = Mock()
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
         mock_auth_service_class.return_value = mock_auth_service
 
         mock_create_token.return_value = ("test-jwt-token", 3600)
-        mock_jwt.decode.return_value = {"jti": "test-jti-123"}
+        mock_jwt_decode.return_value = {"jti": "test-jti-123"}
         mock_gen_csrf.return_value = "test-csrf-token"
 
         # Execute login

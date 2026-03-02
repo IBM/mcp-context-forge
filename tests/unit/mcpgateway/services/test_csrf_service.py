@@ -175,7 +175,8 @@ class TestSetCSRFCookie:
             csrf_cookie_name="csrf_token",
             csrf_cookie_secure=True,
             csrf_cookie_samesite="Strict",
-            csrf_token_expiry=3600
+            csrf_token_expiry=3600,
+            csrf_cookie_httponly=False,
         )
         token = "a" * 64
 
@@ -199,7 +200,8 @@ class TestSetCSRFCookie:
             csrf_cookie_name="csrf_token",
             csrf_cookie_secure=False,
             csrf_cookie_samesite="Lax",
-            csrf_token_expiry=7200
+            csrf_token_expiry=7200,
+            csrf_cookie_httponly=False,
         )
         token = "b" * 64
 

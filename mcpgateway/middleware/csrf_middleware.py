@@ -107,30 +107,31 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         # 5. Extract CSRF token from header or form field
         csrf_token = request.headers.get(settings.csrf_token_name)
-        
+
         # If header is missing, try to parse form field (for classic HTML form submits)
         if not csrf_token:
             content_type = request.headers.get("content-type", "")
-            
+
             # Parse application/x-www-form-urlencoded
             if "application/x-www-form-urlencoded" in content_type:
                 try:
                     body = await request.body()
+                    # Standard
                     from urllib.parse import parse_qs
+
                     form_data = parse_qs(body.decode("utf-8"))
                     csrf_token = form_data.get("csrf_token", [None])[0]
                 except Exception as e:
                     logger.error(f"Failed to parse form data for CSRF token: {e}")
-            
+
             # Parse multipart/form-data
             elif "multipart/form-data" in content_type:
                 try:
-                    from starlette.formparsers import MultiPartParser
                     async with request.form() as form:
                         csrf_token = form.get("csrf_token")
                 except Exception as e:
                     logger.error(f"Failed to parse multipart form data for CSRF token: {e}")
-        
+
         if not csrf_token:
             logger.warning(f"CSRF token missing for {request.method} {request.url.path}")
             return JSONResponse(status_code=403, content={"detail": "CSRF token missing", "code": "CSRF_TOKEN_MISSING"})
@@ -173,17 +174,19 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # 7. Double-submit cookie validation: compare cookie token with header/form token
         cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
         cookie_token = request.cookies.get(cookie_name)
-        
+
         if not cookie_token:
             logger.warning(f"CSRF cookie missing for {request.method} {request.url.path}")
             return JSONResponse(status_code=403, content={"detail": "CSRF token invalid, no cookie token", "code": "CSRF_TOKEN_INVALID"})
-        
+
         # Constant-time comparison to prevent timing attacks
+        # Standard
         import hmac
+
         if not hmac.compare_digest(csrf_token, cookie_token):
-            logger.warning(f"CSRF double-submit validation failed: cookie and header/form tokens do not match")
+            logger.warning("CSRF double-submit validation failed: cookie and header/form tokens do not match")
             return JSONResponse(status_code=403, content={"detail": "CSRF token invalid, time issue", "code": "CSRF_TOKEN_INVALID"})
-        
+
         # 8. Validate CSRF token HMAC
         csrf_service = get_csrf_service()
         if not csrf_service.validate_csrf_token(csrf_token, user_id, session_id):
@@ -198,7 +201,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if not referer:
                 logger.warning(f"CSRF referer check failed: Referer/Origin header missing for {request.method} {request.url.path}")
                 return JSONResponse(status_code=403, content={"detail": "CSRF token invalid origin header issue", "code": "CSRF_TOKEN_INVALID"})
-            
+
             # Parse the referer/origin
             parsed_referer = urlparse(referer)
             referer_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"

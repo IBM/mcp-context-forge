@@ -145,7 +145,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
-from mcpgateway.utils.create_jwt_token import get_jwt_token
+from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -446,6 +446,156 @@ def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str]
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""
     sep = "/?" if query else ""
     return f"{root_path}/admin{sep}{query}#{fragment}"
+
+
+# CSRF constants used by the admin UI double-submit cookie pattern.
+ADMIN_CSRF_COOKIE_NAME: str = "csrf_token"
+ADMIN_CSRF_FORM_FIELD: str = "csrf_token"
+
+
+def _resolve_root_path(request: Optional[Request]) -> str:
+    """Resolve root path from request scope with config fallback.
+
+    Normalises the value: strips trailing slashes, ensures a leading slash,
+    collapses scheme-relative ``//`` prefixes, and treats whitespace-only
+    strings as empty (falling back to settings).
+
+    Args:
+        request: Optional request object.
+
+    Returns:
+        Root path prefix (or empty string when not set).
+    """
+    if request is None:
+        return _normalise_root_path(settings.app_root_path or "")
+
+    try:
+        scope = request.scope if isinstance(request.scope, dict) else {}
+    except Exception:
+        scope = {}
+
+    root_path = scope.get("root_path")
+    if isinstance(root_path, str) and root_path.strip():
+        return _normalise_root_path(root_path)
+
+    return _normalise_root_path(settings.app_root_path or "")
+
+
+def _normalise_root_path(path: str) -> str:
+    """Normalise a root-path string.
+
+    * Strips leading/trailing whitespace.
+    * Returns empty string for blank input.
+    * Strips trailing slashes.
+    * Collapses leading ``//`` to ``/``.
+    * Ensures a single leading ``/`` when the path is non-empty.
+
+    Args:
+        path: Raw root path string.
+
+    Returns:
+        Normalised path string.
+    """
+    path = path.strip()
+    if not path:
+        return ""
+    # Strip trailing slashes
+    path = path.rstrip("/")
+    # Collapse scheme-relative double-slash prefix
+    while path.startswith("//"):
+        path = path[1:]
+    # Ensure leading slash
+    if path and not path.startswith("/"):
+        path = "/" + path
+    return path
+
+
+def _admin_cookie_path(request: Optional[Request] = None) -> str:
+    """Return the cookie path for admin session cookies.
+
+    Combines the resolved root path with ``/admin`` so that cookies are
+    scoped correctly when the gateway is mounted under a sub-path.
+
+    Args:
+        request: Optional request object used to resolve the root path.
+
+    Returns:
+        Cookie path string (e.g. ``/admin`` or ``/proxy/mcp/admin``).
+    """
+    root = _resolve_root_path(request)
+    return f"{root}/admin"
+
+
+async def enforce_admin_csrf(request: Request) -> None:
+    """Enforce CSRF protection for admin state-mutating requests.
+
+    Implements a double-submit cookie pattern:
+
+    1. Safe HTTP methods (GET, HEAD, OPTIONS) are always allowed.
+    2. Requests without a ``jwt_token`` cookie are allowed (not a
+       cookie-authenticated session – Bearer tokens are CSRF-safe).
+    3. Origin / Referer header must match the request host.
+    4. The CSRF token in the ``X-CSRF-Token`` header (or form field) must
+       match the value stored in the ``csrf_token`` cookie.
+
+    Args:
+        request: Incoming FastAPI request.
+
+    Raises:
+        HTTPException: 403 when CSRF validation fails.
+        ValueError: If the origin/referer URL cannot be parsed (caught internally and re-raised as HTTPException).
+    """
+    # Standard
+    import hmac  # pylint: disable=import-outside-toplevel
+
+    # Safe methods are not vulnerable to CSRF
+    if request.method in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+        return
+
+    # Only enforce for cookie-authenticated sessions
+    if not request.cookies.get("jwt_token"):
+        return
+
+    # --- Origin / Referer validation ---
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    host = request.headers.get("host", "")
+
+    if not origin:
+        raise HTTPException(status_code=403, detail="CSRF origin validation failed: missing origin/referer header")
+
+    try:
+        parsed = urllib.parse.urlparse(origin)
+        origin_netloc = parsed.netloc or parsed.path  # origin header has no path
+        if not origin_netloc:
+            raise ValueError("empty netloc")
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail=f"CSRF origin validation failed: {exc}") from exc
+
+    # Strip port from host for comparison
+    host_without_port = host.split(":")[0]
+    origin_host = origin_netloc.split(":")[0]
+
+    if origin_host != host_without_port:
+        raise HTTPException(status_code=403, detail=f"CSRF origin validation failed: {origin_netloc!r} != {host!r}")
+
+    # --- Double-submit cookie check ---
+    cookie_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+    if not cookie_token:
+        raise HTTPException(status_code=403, detail="CSRF token cookie missing")
+
+    # Try header first, then form field
+    submitted_token: Optional[str] = request.headers.get("x-csrf-token")
+    if not submitted_token:
+        content_type = request.headers.get("content-type", "")
+        if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+            try:
+                form = await request.form()
+                submitted_token = form.get(ADMIN_CSRF_FORM_FIELD)
+            except Exception:
+                submitted_token = None
+
+    if not submitted_token or not hmac.compare_digest(submitted_token, cookie_token):
+        raise HTTPException(status_code=403, detail="CSRF token validation failed")
 
 
 def get_client_ip(request: Request) -> str:
@@ -3342,8 +3492,8 @@ async def admin_ui(
     db.commit()
 
     # Determine the admin user email for CSRF token generation
-    admin_email = get_user_email(user)
-    session_id = getattr(request.state, "jti", None)
+    get_user_email(user)
+    getattr(request.state, "jti", None)
 
     # Read existing CSRF token (generated during login flow) for template rendering.
     csrf_cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
@@ -3403,10 +3553,66 @@ async def admin_ui(
         },
     )
 
-    # Do not rotate JWT during admin UI rendering.
-    # CSRF tokens are bound to JWT jti and are issued during login flow.
-    # Reissuing JWTs here would desynchronize CSRF/JWT bindings and break
-    # state-changing requests.
+    # Refresh JWT token with up-to-date auth_provider so the UI cookie stays
+    # current across SSO provider changes.  We do NOT rotate the jti here to
+    # avoid desynchronising CSRF/JWT bindings; we only update the payload
+    # metadata (auth_provider, full_name, etc.).
+    try:
+        # Determine auth_provider from user object/dict first
+        _auth_provider: str = ""
+        if isinstance(user, dict):
+            _auth_provider = str(user.get("auth_provider") or "").strip()
+        else:
+            _auth_provider = str(getattr(user, "auth_provider", "") or "").strip()
+
+        # Fall back to existing JWT cookie if not found on user
+        if not _auth_provider:
+            _existing_jwt = request.cookies.get("jwt_token")
+            if _existing_jwt:
+                try:
+                    _existing_payload = await verify_jwt_token_cached(_existing_jwt, request)
+                    _auth_provider = str(_existing_payload.get("auth_provider") or (_existing_payload.get("user") or {}).get("auth_provider") or "").strip()
+                except Exception:
+                    pass  # nosec B110 - JWT decode failure is non-critical; fall back to "local" provider
+
+        if not _auth_provider:
+            _auth_provider = "local"
+
+        # Build refreshed payload
+        _full_name: str = ""
+        if isinstance(user, dict):
+            _full_name = str(user.get("full_name") or "").strip()
+        else:
+            _full_name = str(getattr(user, "full_name", "") or "").strip()
+
+        _is_admin: bool = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+
+        _refreshed_payload: dict = {
+            "sub": user_email,
+            "auth_provider": _auth_provider,
+            "user": {
+                "email": user_email,
+                "full_name": _full_name,
+                "is_admin": _is_admin,
+                "auth_provider": _auth_provider,
+            },
+        }
+
+        _new_jwt = await create_jwt_token(_refreshed_payload, expires_in_minutes=getattr(settings, "token_expiry", 60))
+        _use_secure = (settings.environment == "production") or settings.secure_cookies
+        _samesite = settings.cookie_samesite
+        _scope_root = _resolve_root_path(request)
+        _cookie_path = f"{_scope_root}/admin" if _scope_root else "/admin"
+        response.set_cookie(
+            key="jwt_token",
+            value=_new_jwt,
+            httponly=True,
+            secure=_use_secure,
+            samesite=_samesite,
+            path=_cookie_path,
+        )
+    except Exception as _jwt_refresh_err:
+        LOGGER.debug("JWT refresh skipped during admin_ui render: %s", _jwt_refresh_err)
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
@@ -3546,7 +3752,13 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     def _set_login_csrf_cookie(response: RedirectResponse, jwt_token: str, user_email: str) -> None:
-        """Generate and set CSRF token cookie for a newly created login JWT."""
+        """Generate and set CSRF token cookie for a newly created login JWT.
+
+        Args:
+            response: Redirect response to receive the CSRF cookie.
+            jwt_token: Login JWT used to derive the session identifier.
+            user_email: Authenticated user email used as CSRF user binding.
+        """
         if not getattr(settings, "csrf_enabled", True):
             return
 

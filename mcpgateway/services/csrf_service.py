@@ -235,7 +235,7 @@ def set_csrf_cookie(response: Any, token: str, settings: Any) -> None:
     Examples:
         >>> from unittest.mock import Mock
         >>> response = Mock()
-        >>> settings = Mock(csrf_cookie_secure=True, csrf_cookie_samesite="Strict", csrf_token_expiry=3600)
+        >>> settings = Mock(csrf_cookie_httponly=False, csrf_cookie_secure=True, csrf_cookie_samesite="Strict", csrf_token_expiry=3600)
         >>> set_csrf_cookie(response, "a" * 64, settings)
         >>> response.set_cookie.called
         True

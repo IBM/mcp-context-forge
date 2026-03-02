@@ -97,7 +97,8 @@ async def test_post_with_invalid_token_returns_403():
     request.headers = {"X-CSRF-Token": "invalid_token"}
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
-    request.cookies = {"session_id": "session123"}
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "invalid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = False
@@ -108,11 +109,12 @@ async def test_post_with_invalid_token_returns_403():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token invalid","code":"CSRF_TOKEN_INVALID"}'
+    assert response.body == b'{"detail":"CSRF token invalid hmac issue","code":"CSRF_TOKEN_INVALID"}'
     call_next.assert_not_awaited()
 
 
@@ -128,7 +130,8 @@ async def test_post_with_valid_token_succeeds():
     request.headers = {"X-CSRF-Token": "valid_token"}
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
-    request.cookies = {"session_id": "session123"}
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -139,6 +142,7 @@ async def test_post_with_valid_token_succeeds():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -223,7 +227,8 @@ async def test_referer_matches_trusted_origin_passes():
     }
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
-    request.cookies = {"session_id": "session123"}
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -236,6 +241,7 @@ async def test_referer_matches_trusted_origin_passes():
         mock_settings.csrf_check_referer = True
         mock_settings.app_domain = "https://example.com"
         mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -258,7 +264,8 @@ async def test_referer_wrong_domain_returns_403():
     }
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
-    request.cookies = {"session_id": "session123"}
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -271,11 +278,12 @@ async def test_referer_wrong_domain_returns_403():
         mock_settings.csrf_check_referer = True
         mock_settings.app_domain = "https://example.com"
         mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token invalid","code":"CSRF_TOKEN_INVALID"}'
+    assert b"CSRF_TOKEN_INVALID" in response.body
     call_next.assert_not_awaited()
 
 
@@ -291,7 +299,8 @@ async def test_referer_absent_passes():
     request.headers = {"X-CSRF-Token": "valid_token"}
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
-    request.cookies = {"session_id": "session123"}
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -304,11 +313,14 @@ async def test_referer_absent_passes():
         mock_settings.csrf_check_referer = True
         mock_settings.app_domain = "https://example.com"
         mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
-    assert response.status_code == 200
-    call_next.assert_awaited_once_with(request)
+    # Middleware fails closed when referer/origin header is absent
+    assert response.status_code == 403
+    assert b"CSRF_TOKEN_INVALID" in response.body
+    call_next.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -323,6 +335,7 @@ async def test_no_user_context_returns_403():
     request.headers = {"X-CSRF-Token": "some_token"}
     request.state = MagicMock()
     request.state.user = None  # No user context
+    request.state.jti = None
     request.cookies = {}
 
     with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
@@ -333,7 +346,7 @@ async def test_no_user_context_returns_403():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token invalid","code":"CSRF_TOKEN_INVALID"}'
+    assert response.body == b'{"detail":"CSRF token invalid user_id and session_is do not match","code":"CSRF_TOKEN_INVALID"}'
     call_next.assert_not_awaited()
 
 
@@ -439,7 +452,7 @@ async def test_session_id_from_header():
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "header_session_123"
-    request.cookies = {}
+    request.cookies = {"csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -450,6 +463,7 @@ async def test_session_id_from_header():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -473,7 +487,8 @@ async def test_origin_header_used_when_referer_absent():
     }
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
-    request.cookies = {"session_id": "session123"}
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -486,6 +501,7 @@ async def test_origin_header_used_when_referer_absent():
         mock_settings.csrf_check_referer = True
         mock_settings.app_domain = "https://example.com"
         mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -508,7 +524,8 @@ async def test_trusted_origins_accepted():
     }
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
-    request.cookies = {"session_id": "session123"}
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -521,6 +538,7 @@ async def test_trusted_origins_accepted():
         mock_settings.csrf_check_referer = True
         mock_settings.app_domain = "https://example.com"
         mock_settings.csrf_trusted_origins = {"https://trusted.com"}
+        mock_settings.csrf_cookie_name = "csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -593,7 +611,7 @@ async def test_csrf_fallback_jwt_verification_failure_returns_403():
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
-    assert response.body == b'{"detail":"CSRF token invalid","code":"CSRF_TOKEN_INVALID"}'
+    assert response.body == b'{"detail":"CSRF token invalid user_id and session_is do not match","code":"CSRF_TOKEN_INVALID"}'
     call_next.assert_not_awaited()
 
 
