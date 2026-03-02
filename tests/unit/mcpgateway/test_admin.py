@@ -8215,6 +8215,18 @@ async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped
     assert isinstance(response, HTMLResponse)
     assert server_service.convert_server_to_read.called
 
+@pytest.mark.asyncio
+async def test_admin_servers_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
+    """Test that include_inactive defaults to True for servers (issue #3234)."""
+    # Import the function to get the default value
+    import inspect
+    sig = inspect.signature(admin_servers_partial_html)
+    default_value = sig.parameters['include_inactive'].default
+
+    # Verify the default is True (this is what we're testing)
+    assert default_value is True, f"Expected include_inactive default to be True, but got {default_value}"
+
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("render", [None, "controls", "selector"])
@@ -8806,6 +8818,17 @@ async def test_admin_gateways_partial_html_team_filter_denied(monkeypatch, mock_
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
+    """Test that include_inactive defaults to True for gateways (issue #3234)."""
+    # Import the function to get the default value
+    import inspect
+    sig = inspect.signature(admin_gateways_partial_html)
+    default_value = sig.parameters['include_inactive'].default
+
+    # Verify the default is True (this is what we're testing)
+    assert default_value is True, f"Expected include_inactive default to be True, but got {default_value}"
 
 
 @pytest.mark.asyncio
