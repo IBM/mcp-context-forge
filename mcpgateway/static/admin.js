@@ -30240,23 +30240,29 @@ function displayLogResults(data) {
         .join("");
 
     // Attach click listeners via event delegation (inline onclick stripped by innerHTML sanitizer).
-    // Remove previous handler to avoid stacking on repeated calls.
-    if (tbody._logClickHandler) {
-        tbody.removeEventListener("click", tbody._logClickHandler);
+    // Abort previous controller to remove stale handler on repeated calls.
+    if (tbody._logClickAC) {
+        tbody._logClickAC.abort();
     }
-    tbody._logClickHandler = function (e) {
-        const corrBtn = e.target.closest('[data-action="show-correlation"]');
-        if (corrBtn) {
-            e.stopPropagation();
-            showCorrelationTrace(corrBtn.dataset.correlationId);
-            return;
-        }
-        const row = e.target.closest('[data-action="show-log"]');
-        if (row) {
-            showLogDetails(row.dataset.logId, row.dataset.correlationId);
-        }
-    };
-    tbody.addEventListener("click", tbody._logClickHandler);
+    tbody._logClickAC = new AbortController();
+    tbody.addEventListener(
+        "click",
+        function (e) {
+            const corrBtn = e.target.closest(
+                '[data-action="show-correlation"]',
+            );
+            if (corrBtn) {
+                e.stopPropagation();
+                showCorrelationTrace(corrBtn.dataset.correlationId);
+                return;
+            }
+            const row = e.target.closest('[data-action="show-log"]');
+            if (row) {
+                showLogDetails(row.dataset.logId, row.dataset.correlationId);
+            }
+        },
+        { signal: tbody._logClickAC.signal },
+    );
 }
 
 /**
