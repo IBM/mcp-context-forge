@@ -604,6 +604,14 @@ class TestProtocolEndpoints:
         assert body["error"]["code"] == -32600
         assert body["error"]["message"] == "Invalid Request"
 
+    def test_ping_non_dict_body_returns_invalid_request(self, test_client, auth_headers):
+        """Ping endpoint should return -32600 when body is not a JSON object."""
+        response = test_client.post("/protocol/ping", json=[1, 2, 3], headers=auth_headers)
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"]["code"] == -32600
+        assert body["id"] is None
+
     @patch("mcpgateway.main.logging_service.notify")
     def test_handle_notification_initialized(self, mock_notify, test_client, auth_headers):
         """Test handling client initialized notification."""
@@ -2204,6 +2212,25 @@ class TestRPCEndpoints:
         assert response.json()["result"]["messageId"] == "abc"
         mock_sampling.assert_called_once()
 
+    @patch("mcpgateway.main.sampling_handler.create_message", new_callable=AsyncMock)
+    def test_rpc_sampling_create_message_maps_sampling_error(self, mock_sampling, test_client, auth_headers):
+        """RPC sampling/createMessage should map SamplingError to JSON-RPC -32602."""
+        from mcpgateway.handlers.sampling import SamplingError
+
+        mock_sampling.side_effect = SamplingError("bad payload")
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "sampling/createMessage",
+            "params": {"messages": []},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32602
+        assert "bad payload" in body["error"]["message"]
+
     def test_rpc_sampling_other_method(self, test_client, auth_headers):
         """Test sampling/* catch-all JSON-RPC method."""
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "sampling/unknown", "params": {}}
@@ -2252,6 +2279,23 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="viewer@example.com", token_teams=[])
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
+    def test_rpc_completion_complete_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """RPC completion/complete should map CompletionError to JSON-RPC -32602."""
+        from mcpgateway.services.completion_service import CompletionError
+
+        mock_filter_context.return_value = ("user@example.com", ["t1"], False)
+        mock_completion.side_effect = CompletionError("invalid ref")
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32602
+        assert "invalid ref" in body["error"]["message"]
 
     def test_rpc_completion_other_method(self, test_client, auth_headers):
         """Test completion/* catch-all JSON-RPC method."""

@@ -404,6 +404,39 @@ async def test_close_streamable_http_session_denied(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_close_streamable_http_session_registry_none(monkeypatch):
+    """Session close should return 403 when session registry is unavailable."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: None)
+
+    status_code, payload = await tr._close_streamable_http_session(
+        mcp_session_id="sess-abc",
+        user_context={"email": "user@example.com", "is_authenticated": True},
+    )
+
+    assert status_code == 403
+    assert payload == {"detail": "Session ownership unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_close_streamable_http_session_remove_fails(monkeypatch):
+    """Session close should return 500 when remove_session raises."""
+    session_registry = MagicMock()
+    session_registry.remove_session = AsyncMock(side_effect=RuntimeError("redis down"))
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    status_code, payload = await tr._close_streamable_http_session(
+        mcp_session_id="sess-abc",
+        user_context={"email": "user@example.com", "is_authenticated": True},
+    )
+
+    assert status_code == 500
+    assert payload == {"detail": "Failed to close session"}
+
+
+@pytest.mark.asyncio
 async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
     # First-Party
