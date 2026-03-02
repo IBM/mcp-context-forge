@@ -832,7 +832,63 @@ class TestChatServerSelection:
             assert result["selectCalled"]["active"] is True, "isActive should be parsed as boolean true"
             assert result["selectCalled"]["token"] is False, "requiresToken should be parsed as boolean false"
         finally:
-            page.unroute("**/admin/servers")
+            page.unroute("**/admin/servers**")
+
+    def test_chat_server_real_select_no_runtime_error(self, admin_page):
+        """Clicking a server item through real selectServerForChat should not throw."""
+        page = admin_page.page
+
+        # Intercept /admin/servers to return mock data with 2 servers
+        page.route("**/admin/servers**", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"data": [{"id": "srv-a", "name": "Server A", "isActive": true, "visibility": "public", "description": "A", "associatedTools": []}, {"id": "srv-b", "name": "Server B", "isActive": true, "visibility": "public", "description": "B", "associatedTools": []}]}',
+        ))
+
+        try:
+            result = page.evaluate("""
+                async () => {
+                    let serversList = document.getElementById('llm-chat-servers-list');
+                    if (!serversList) {
+                        serversList = document.createElement('div');
+                        serversList.id = 'llm-chat-servers-list';
+                        document.body.appendChild(serversList);
+                    }
+                    if (!window.llmChatState) {
+                        window.llmChatState = { selectedServerId: null };
+                    }
+
+                    await loadVirtualServersForChat();
+
+                    const items = serversList.querySelectorAll('[data-action="select-server"]');
+                    if (items.length < 2) return { skip: 'need 2 servers', count: items.length };
+
+                    // Click the first server using the REAL selectServerForChat (no stub)
+                    let error = null;
+                    try {
+                        items[0].click();
+                    } catch (e) {
+                        error = e.message;
+                    }
+
+                    // Check: selected server has highlight classes, other doesn't
+                    const aHasHighlight = items[0].classList.contains('border-indigo-500');
+                    const bNoHighlight = !items[1].classList.contains('border-indigo-500');
+                    const stateUpdated = window.llmChatState.selectedServerId === 'srv-a';
+
+                    return { error, aHasHighlight, bNoHighlight, stateUpdated };
+                }
+            """)
+
+            if "skip" in (result or {}):
+                pytest.skip(result.get("skip", "unknown"))
+
+            assert result["error"] is None, f"selectServerForChat threw: {result['error']}"
+            assert result["aHasHighlight"], "Selected server should have highlight class"
+            assert result["bNoHighlight"], "Non-selected server should not have highlight class"
+            assert result["stateUpdated"], "llmChatState.selectedServerId should be updated"
+        finally:
+            page.unroute("**/admin/servers**")
 
 
 class TestTokenListRetryButton:

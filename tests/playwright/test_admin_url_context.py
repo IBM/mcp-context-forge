@@ -1025,22 +1025,45 @@ class TestAdminIframeContext:
                 timeout=15000,
             )
 
-            # PROOF 1: Verify inline onclick IS stripped by the guard
+            # PROOF 1: Verify the innerHTML guard is active inside the iframe
+            # by injecting a synthetic element with onclick via innerHTML and
+            # confirming it is stripped while data-* attributes survive.
+            # (The team selector template no longer emits onclick, so checking
+            # the template button alone would be tautological.)
+            guard_check = frame_obj.evaluate("""
+                () => {
+                    const div = document.createElement('div');
+                    document.body.appendChild(div);
+                    // Use innerHTML to trigger the guard (this is a test, not production code)
+                    div.innerHTML = '<button onclick="alert(1)" data-action="test" data-id="x">X</button>';
+                    const btn = div.querySelector('button');
+                    const result = {
+                        guardActive: !btn.hasAttribute('onclick'),
+                        dataActionSurvived: btn.getAttribute('data-action') === 'test',
+                    };
+                    div.remove();
+                    return result;
+                }
+            """)
+            assert guard_check["guardActive"], (
+                "innerHTML guard should strip onclick inside iframe"
+            )
+            assert guard_check["dataActionSurvived"], (
+                "data-action should survive innerHTML guard inside iframe"
+            )
+
+            # Also verify team selector items have data-team-id (template correctness)
             onclick_check = frame_obj.evaluate("""
                 () => {
                     const btn = document.querySelector('#team-selector-items .team-selector-item');
                     if (!btn) return { found: false };
                     return {
                         found: true,
-                        hasOnclick: btn.hasAttribute('onclick'),
                         hasDataTeamId: btn.hasAttribute('data-team-id'),
                     };
                 }
             """)
             assert onclick_check["found"], "No team-selector-item found in iframe"
-            assert onclick_check["hasOnclick"] is False, (
-                "innerHTML guard should strip onclick inside iframe"
-            )
             assert onclick_check["hasDataTeamId"] is True, (
                 "data-team-id should survive innerHTML guard"
             )

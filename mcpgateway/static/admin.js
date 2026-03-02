@@ -33252,9 +33252,12 @@ document.addEventListener("htmx:afterSettle", function (_evt) {
             }
 
             if (!canModify) {
-                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate
+                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate.
+                // Match both data-action (tool-ops converted buttons) and inline onclick
+                // (other entity tables that still use server-rendered handlers).
                 const buttons = row.querySelectorAll(
-                    '[data-action="edit-tool"], [data-action="enrich-tool"], [data-action="validate-tool"], [data-action="generate-tool-tests"]',
+                    "[data-action='edit-tool'], [data-action='enrich-tool'], [data-action='validate-tool'], [data-action='generate-tool-tests'], " +
+                        "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
                 );
                 for (let b = 0; b < buttons.length; b++) {
                     buttons[b].remove();
