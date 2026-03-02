@@ -855,40 +855,7 @@
                     }
                   },
                   loadTeams() {
-                    // Load teams when dropdown opens; uses fetch() for reliable error handling.
-                    // htmx.ajax() does not reject on HTTP 5xx, so fetch gives us proper error state.
-                    if (this.open) {
-                      const container = document.getElementById('team-selector-items');
-                      if (container && !container.dataset.loaded) {
-                        container.innerHTML = '<div class=\x22px-4 py-2 text-sm text-gray-500 dark:text-gray-400\x22>Loading teams\u2026</div>';
-                        const rootPath = window.ROOT_PATH || '';
-                        fetch(rootPath + '/admin/teams/partial?page=1&per_page=10&render=selector', { credentials: 'same-origin' })
-                          .then(function(resp) {
-                            if (!resp.ok) { throw new Error('HTTP ' + resp.status); }
-                            return resp.text();
-                          })
-                          .then(function(html) {
-                            container.innerHTML = html;
-                            container.dataset.loaded = 'true';
-                            if (window.htmx) { window.htmx.process(container); }
-                          })
-                          .catch(function() {
-                            delete container.dataset.loaded;
-                            container.innerHTML =
-                              '<div class=\x22px-4 py-2 text-sm text-red-600 dark:text-red-400\x22>' +
-                              'Failed to load teams. Backend may be temporarily unavailable. ' +
-                              '<button type=\x22button\x22 data-action=\x22retry-load-teams\x22 ' +
-                              'class=\x22underline font-medium\x22>Retry<\/button><\/div>';
-                            var retryBtn = container.querySelector('[data-action=\x22retry-load-teams\x22]');
-                            if (retryBtn) {
-                              retryBtn.addEventListener('click', function() {
-                                delete container.dataset.loaded;
-                                searchTeamSelector('');
-                              });
-                            }
-                          });
-                      }
-                    }
+                    if (this.open) { window.loadTeamSelectorDropdown(); }
                   }
                 }"
                 @click.away="open = false"

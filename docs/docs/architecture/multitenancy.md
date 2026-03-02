@@ -410,7 +410,7 @@ Request: POST /tools/{id}/execute
 | Admin UI | ✅ | ✅ | Permission-based rendering |
 | Service Layer | ✅ | N/A | Database query filtering |
 | WebSocket | ✅ | ✅ | Forwards auth to /rpc |
-| MCP Transport | ✅ | N/A | Streamable HTTP filtering |
+| MCP Transport | ✅ | N/A | Streamable HTTP filtering + per-server OAuth enforcement |
 
 ---
 
