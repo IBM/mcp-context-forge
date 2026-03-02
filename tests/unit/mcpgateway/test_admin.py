@@ -440,6 +440,7 @@ class TestAdminServerRoutes:
         # Mock team service
         mock_team_service = AsyncMock()
         mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.get_user_personal_team = AsyncMock(return_value=None)
         mock_team_service_class.return_value = mock_team_service
 
         # Setup servers with different states
@@ -2126,6 +2127,7 @@ class TestAdminPromptRoutes:
         # Mock team service
         mock_team_service = AsyncMock()
         mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.get_user_personal_team = AsyncMock(return_value=None)
         mock_team_service_class.return_value = mock_team_service
 
         # Mock prompt object with model_dump method
@@ -2390,6 +2392,7 @@ class TestAdminGatewayRoutes:
         # Mock team service
         mock_team_service = AsyncMock()
         mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.get_user_personal_team = AsyncMock(return_value=None)
         mock_team_service_class.return_value = mock_team_service
 
         # Create a mock gateway object with model_dump method
@@ -5805,6 +5808,7 @@ async def test_admin_list_teams_admin_view(monkeypatch, mock_request, mock_db, a
     team_service = MagicMock()
     team_service.list_teams = AsyncMock(return_value={"data": [team], "pagination": pagination, "links": links})
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 3})
+    team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_list_teams(request=mock_request, page=1, per_page=5, q="t", db=mock_db, user={"email": "u@example.com", "db": mock_db})
@@ -5823,6 +5827,7 @@ async def test_admin_list_teams_non_admin_view(monkeypatch, mock_request, mock_d
     team_service = MagicMock()
     team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="t1"), SimpleNamespace(id="t2")])
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"t1": 1, "t2": 2})
+    team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "db": mock_db})
@@ -6790,6 +6795,7 @@ async def test_admin_teams_partial_html_controls_admin(monkeypatch, mock_request
     team_service.discover_public_teams = AsyncMock(return_value=[])
     team_service.get_pending_join_requests_batch.return_value = {}
     team_service.list_teams = AsyncMock(return_value={"data": [team], "pagination": pagination, "links": links})
+    team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_teams_partial_html(
@@ -6822,6 +6828,7 @@ async def test_admin_teams_partial_html_selector_public(monkeypatch, mock_reques
     team_service.discover_public_teams = AsyncMock(return_value=[public_team])
     team_service.get_pending_join_requests_batch.return_value = {}
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-2": 5})
+    team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_teams_partial_html(
@@ -6911,6 +6918,7 @@ async def test_admin_teams_partial_html_admin_relationship_none(monkeypatch, moc
     team_service.get_pending_join_requests_batch.return_value = {}
     team_service.list_teams = AsyncMock(return_value={"data": [other_team], "pagination": pagination, "links": links})
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-2": 0})
+    team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_teams_partial_html(
@@ -9421,6 +9429,7 @@ def test_escape_like_escapes_wildcards():
 async def test_get_user_team_ids_prefers_token_teams_strings(monkeypatch, mock_db):
     mock_team_service = MagicMock()
     mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team")])
+    mock_team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
 
     result = await _get_user_team_ids({"email": "user@example.com", "token_teams": ["team-1", "team-2"]}, mock_db)
@@ -9433,6 +9442,7 @@ async def test_get_user_team_ids_prefers_token_teams_strings(monkeypatch, mock_d
 async def test_get_user_team_ids_normalizes_dict_token_teams(monkeypatch, mock_db):
     mock_team_service = MagicMock()
     mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team")])
+    mock_team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
 
     result = await _get_user_team_ids({"email": "user@example.com", "token_teams": [{"id": "team-1"}, {"id": "team-2"}, {"name": "missing-id"}]}, mock_db)
@@ -9445,6 +9455,7 @@ async def test_get_user_team_ids_normalizes_dict_token_teams(monkeypatch, mock_d
 async def test_get_user_team_ids_empty_token_teams_returns_empty(monkeypatch, mock_db):
     mock_team_service = MagicMock()
     mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team")])
+    mock_team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
 
     result = await _get_user_team_ids({"email": "user@example.com", "token_teams": []}, mock_db)
@@ -9457,6 +9468,7 @@ async def test_get_user_team_ids_empty_token_teams_returns_empty(monkeypatch, mo
 async def test_get_user_team_ids_admin_bypass_falls_back_to_db(monkeypatch, mock_db):
     mock_team_service = MagicMock()
     mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team-1"), SimpleNamespace(id="db-team-2")])
+    mock_team_service.get_user_personal_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
 
     result = await _get_user_team_ids({"email": "user@example.com", "token_teams": None}, mock_db)
@@ -14390,6 +14402,7 @@ class TestTeamLookups:
 
         ts = MagicMock()
         ts.get_all_team_ids = AsyncMock(return_value=["id-1", "id-2"])
+        ts.get_user_personal_team = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@test.com"})
@@ -14406,6 +14419,7 @@ class TestTeamLookups:
         team1 = SimpleNamespace(id="t1", name="Team1", slug="team1", is_active=True, visibility="public")
         ts = MagicMock()
         ts.get_user_teams = AsyncMock(return_value=[team1])
+        ts.get_user_personal_team = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "user@test.com"})
@@ -14451,6 +14465,7 @@ class TestTeamLookups:
         team = SimpleNamespace(id="t1", name="Alpha", slug="alpha", description="desc", visibility="public", is_active=True)
         ts = MagicMock()
         ts.list_teams = AsyncMock(return_value={"data": [team]})
+        ts.get_user_personal_team = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="Alpha", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@test.com"})
@@ -14470,6 +14485,7 @@ class TestTeamLookups:
         team3 = SimpleNamespace(id="t3", name="Zzz Team", slug="zzz", description="", visibility="public", is_active=True)
         ts = MagicMock()
         ts.get_user_teams = AsyncMock(return_value=[team1, team2, team3])
+        ts.get_user_personal_team = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="zzz", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
