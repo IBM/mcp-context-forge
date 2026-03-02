@@ -676,6 +676,38 @@ function decodeHtml(html) {
 }
 
 /**
+ * Create a copy-to-clipboard button for an ID value.
+ * Returns a <button> element that copies the given id string to the clipboard.
+ * @param {string|number} id - The ID value to copy
+ * @returns {HTMLButtonElement}
+ */
+function makeCopyIdButton(id) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = "Copy ID to clipboard";
+    btn.className =
+        "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
+    btn.textContent = "📋 Copy";
+    btn.addEventListener("click", () => {
+        navigator.clipboard
+            .writeText(String(id))
+            .then(() => {
+                btn.textContent = "✅ Copied!";
+                setTimeout(() => {
+                    btn.textContent = "📋 Copy";
+                }, 2000);
+            })
+            .catch(() => {
+                btn.textContent = "❌ Failed";
+                setTimeout(() => {
+                    btn.textContent = "📋 Copy";
+                }, 2000);
+            });
+    });
+    return btn;
+}
+
+/**
  * Extract a human-readable error message from an API error response.
  * Handles both string errors and Pydantic validation error arrays.
  * @param {Object} error - The parsed JSON error response
@@ -3900,8 +3932,19 @@ async function viewAgent(agentId) {
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
 
+            // ID field with copy button
+            const agentIdP = document.createElement("p");
+            const agentIdStrong = document.createElement("strong");
+            agentIdStrong.textContent = "Agent ID: ";
+            agentIdP.appendChild(agentIdStrong);
+            const agentIdSpan = document.createElement("span");
+            agentIdSpan.className = "font-mono text-sm";
+            agentIdSpan.textContent = agent.id;
+            agentIdP.appendChild(agentIdSpan);
+            agentIdP.appendChild(makeCopyIdButton(agent.id));
+            container.appendChild(agentIdP);
+
             const fields = [
-                { label: "ID", value: agent.id },
                 { label: "Name", value: agent.name },
                 { label: "Slug", value: agent.slug },
                 { label: "Endpoint URL", value: agent.endpointUrl },
@@ -4814,6 +4857,18 @@ async function viewResource(resourceId) {
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
 
+            // ID field with copy button
+            const resourceIdP = document.createElement("p");
+            const resourceIdStrong = document.createElement("strong");
+            resourceIdStrong.textContent = "Resource ID: ";
+            resourceIdP.appendChild(resourceIdStrong);
+            const resourceIdSpan = document.createElement("span");
+            resourceIdSpan.className = "font-mono text-sm";
+            resourceIdSpan.textContent = resource.id;
+            resourceIdP.appendChild(resourceIdSpan);
+            resourceIdP.appendChild(makeCopyIdButton(resource.id));
+            container.appendChild(resourceIdP);
+
             // Add each piece of information safely
             const fields = [
                 { label: "URI", value: resource.uri },
@@ -5427,6 +5482,11 @@ async function viewPrompt(promptName) {
             };
 
             setText(".prompt-id", prompt.id || "N/A");
+            // Inject copy button next to prompt ID
+            const promptIdEl = promptDetailsDiv.querySelector(".prompt-id");
+            if (promptIdEl && prompt.id) {
+                promptIdEl.appendChild(makeCopyIdButton(prompt.id));
+            }
             setText(".prompt-display-name", promptLabel);
             setText(".prompt-name", prompt.name || "N/A");
             setText(".prompt-original-name", prompt.originalName || "N/A");
@@ -5787,8 +5847,41 @@ async function viewGateway(gatewayId) {
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
 
+            // ID field with copy-to-clipboard button
+            const idP = document.createElement("p");
+            const idStrong = document.createElement("strong");
+            idStrong.textContent = "Gateway ID: ";
+            idP.appendChild(idStrong);
+            const idSpan = document.createElement("span");
+            idSpan.className = "font-mono text-sm";
+            idSpan.textContent = gateway.id;
+            idP.appendChild(idSpan);
+            const copyBtn = document.createElement("button");
+            copyBtn.type = "button";
+            copyBtn.title = "Copy ID to clipboard";
+            copyBtn.className =
+                "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
+            copyBtn.textContent = "📋 Copy";
+            copyBtn.addEventListener("click", () => {
+                navigator.clipboard
+                    .writeText(String(gateway.id))
+                    .then(() => {
+                        copyBtn.textContent = "✅ Copied!";
+                        setTimeout(() => {
+                            copyBtn.textContent = "📋 Copy";
+                        }, 2000);
+                    })
+                    .catch(() => {
+                        copyBtn.textContent = "❌ Failed";
+                        setTimeout(() => {
+                            copyBtn.textContent = "📋 Copy";
+                        }, 2000);
+                    });
+            });
+            idP.appendChild(copyBtn);
+            container.appendChild(idP);
+
             const fields = [
-                { label: "ID", value: gateway.id },
                 { label: "Name", value: gateway.name },
                 { label: "URL", value: gateway.url },
                 {
@@ -6411,8 +6504,21 @@ async function viewServer(serverId) {
                 "block text-gray-900 dark:text-gray-100 mb-3";
             basicInfoDiv.appendChild(basicInfoTitle);
 
+            // Server ID field with copy button
+            const serverIdP = document.createElement("p");
+            serverIdP.className = "text-sm";
+            const serverIdStrong = document.createElement("strong");
+            serverIdStrong.textContent = "Server ID: ";
+            serverIdStrong.className = "font-medium text-gray-700 dark:text-gray-300";
+            serverIdP.appendChild(serverIdStrong);
+            const serverIdSpan = document.createElement("span");
+            serverIdSpan.className = "font-mono text-gray-600 dark:text-gray-400";
+            serverIdSpan.textContent = server.id;
+            serverIdP.appendChild(serverIdSpan);
+            serverIdP.appendChild(makeCopyIdButton(server.id));
+            basicInfoDiv.appendChild(serverIdP);
+
             const fields = [
-                { label: "Server ID", value: server.id },
                 { label: "URL", value: getCatalogUrl(server) || "N/A" },
                 { label: "Type", value: "Virtual Server" },
                 { label: "Visibility", value: server.visibility || "private" },
@@ -15023,7 +15129,7 @@ async function viewTool(toolId) {
             <!-- Left Column -->
             <div class="space-y-3">
               <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">ID:</span>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Tool ID:</span>
                 <div class="mt-1 tool-id text-sm font-mono"></div>
               </div>
               <div>
@@ -15191,6 +15297,11 @@ async function viewTool(toolId) {
             };
 
             setTextSafely(".tool-id", tool.id);
+            // Inject copy button next to tool ID
+            const toolIdEl = toolDetailsDiv.querySelector(".tool-id");
+            if (toolIdEl && tool.id) {
+                toolIdEl.appendChild(makeCopyIdButton(tool.id));
+            }
             setTextSafely(
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
