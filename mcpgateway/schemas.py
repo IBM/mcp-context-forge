@@ -627,10 +627,8 @@ class ToolCreate(BaseModel):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 
@@ -1046,10 +1044,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 

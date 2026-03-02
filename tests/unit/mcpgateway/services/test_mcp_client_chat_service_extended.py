@@ -590,6 +590,7 @@ async def test_mcpclient_connect_with_headers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcpclient_connect_stdio_args(monkeypatch):
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     cfg = svc.MCPServerConfig(command="python", args=["server.py"], transport="stdio")
     client = svc.MCPClient(cfg)
     captured = {}
@@ -783,7 +784,8 @@ def test_mcpserverconfig_invalid_url(monkeypatch):
     assert isinstance(cfg.url, str)
     assert cfg.url.startswith("ftp://")
 
-def test_mcpserverconfig_command_required_for_stdio():
+def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     cfg = svc.MCPServerConfig(command="python", args=["main.py"], transport="stdio")
     assert cfg.command == "python"
     assert isinstance(cfg.args, list)
@@ -1522,19 +1524,21 @@ def test_mcpserverconfig_auth_token_no_override():
     assert cfg.headers["Authorization"] == "Basic abc"
 
 
-def test_mcpserverconfig_stdio_no_url_required():
+def test_mcpserverconfig_stdio_no_url_required(monkeypatch):
     """stdio transport should not require URL."""
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     cfg = svc.MCPServerConfig(command="python", args=["s.py"], transport="stdio")
     assert cfg.url is None
 
 
 def test_mcpserverconfig_sse_without_url():
-    """SSE transport without URL sets url=None."""
-    cfg = svc.MCPServerConfig(transport="sse")
-    assert cfg.url is None
+    """SSE transport without URL should fail validation."""
+    with pytest.raises(ValueError, match="URL is required"):
+        svc.MCPServerConfig(transport="sse")
 
 
-def test_mcpserverconfig_stdio_without_command():
-    """stdio transport without command sets command=None."""
-    cfg = svc.MCPServerConfig(transport="stdio")
-    assert cfg.command is None
+def test_mcpserverconfig_stdio_without_command(monkeypatch):
+    """stdio transport without command should fail validation."""
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
+    with pytest.raises(ValueError, match="Command is required"):
+        svc.MCPServerConfig(transport="stdio")

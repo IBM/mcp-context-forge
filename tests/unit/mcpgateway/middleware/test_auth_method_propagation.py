@@ -12,6 +12,7 @@ the system correctly:
 """
 
 # Standard
+from datetime import datetime, timezone
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,6 +26,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.db import EmailUser
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.plugins.framework import PluginResult
 
@@ -65,18 +67,31 @@ async def test_auth_method_propagation_from_plugin():
     # Patch both the framework module and auth module since auth imports from framework
     with patch("mcpgateway.plugins.framework.get_plugin_manager") as mock_get_pm_framework:
         with patch("mcpgateway.auth.get_plugin_manager") as mock_get_pm_auth:
+            mock_db_user = EmailUser(
+                email="test@example.com",
+                password_hash="hash",
+                full_name="Test User",
+                is_admin=False,
+                is_active=True,
+                email_verified_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
             mock_pm = MagicMock()
             mock_pm.invoke_hook = AsyncMock(return_value=(mock_plugin_result, None))
             mock_pm.has_hooks_for = MagicMock(return_value=True)  # Enable hook invocation
             mock_get_pm_framework.return_value = mock_pm
             mock_get_pm_auth.return_value = mock_pm
 
-            # Call get_current_user - should authenticate via plugin
-            # Note: get_current_user no longer takes db parameter (uses fresh sessions internally)
-            user = await get_current_user(
-                credentials=mock_credentials,
-                request=mock_request,
-            )
+            # Plugin auth now resolves user identity through DB-backed lookup.
+            # Mock this lookup to keep this unit test isolated from DB tables.
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
+                # Call get_current_user - should authenticate via plugin
+                # Note: get_current_user no longer takes db parameter (uses fresh sessions internally)
+                user = await get_current_user(
+                    credentials=mock_credentials,
+                    request=mock_request,
+                )
 
             # Verify user was created
             assert user.email == "test@example.com"

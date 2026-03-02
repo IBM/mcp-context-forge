@@ -759,6 +759,49 @@ class TestServerService:
         assert "Server not found" in str(exc.value)
 
     @pytest.mark.asyncio
+    async def test_update_server_ignores_client_owner_email(self, server_service, mock_server):
+        """Client-supplied owner_email must not transfer server ownership."""
+        db = MagicMock()
+        db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=mock_server))])
+        db.get = Mock(return_value=None)
+        db.commit = Mock()
+        db.refresh = Mock()
+        db.rollback = Mock()
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="updated",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        original_owner = mock_server.owner_email
+        update = ServerUpdate(description="updated", owner_email="attacker@example.com")
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(db, "1", update, "user@example.com")
+
+        assert mock_server.owner_email == original_owner
+
+    @pytest.mark.asyncio
     async def test_update_server_name_conflict(self, server_service, mock_server, test_db):
         # Standard
         import types

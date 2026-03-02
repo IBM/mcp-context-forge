@@ -5985,7 +5985,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         # 1. MCP-Session-Id (mcp-session-id) - MCP protocol header from Streamable HTTP clients
         # 2. x-mcp-session-id - our internal header from SSE session_registry calls
         mcp_session_id = headers.get("mcp-session-id") or headers.get("x-mcp-session-id")
-        is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
+        # Only trust x-forwarded-internally from loopback to prevent external spoofing
+        _rpc_client_host = request.client.host if request.client else None
+        _rpc_from_loopback = _rpc_client_host in ("127.0.0.1", "::1") if _rpc_client_host else False
+        is_internally_forwarded = _rpc_from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
             # First-Party
@@ -7366,6 +7369,9 @@ async def export_configuration(
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
 
+        # Derive team-scoped visibility from the requesting user's token
+        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+
         # Perform export
         export_data = await export_service.export_configuration(
             db=db,
@@ -7376,6 +7382,8 @@ async def export_configuration(
             include_dependencies=include_dependencies,
             exported_by=username or "unknown",
             root_path=root_path,
+            user_email=scoped_user_email,
+            token_teams=scoped_token_teams,
         )
 
         return export_data
@@ -7391,12 +7399,13 @@ async def export_configuration(
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_selective_configuration(
-    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
+    request: Request, entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
 ) -> Dict[str, Any]:
     """
     Export specific entities by their IDs/names.
 
     Args:
+        request: FastAPI request object for token scope context
         entity_selections: Dict mapping entity types to lists of IDs/names to export
         include_dependencies: Whether to include dependent entities
         db: Database session
@@ -7428,8 +7437,17 @@ async def export_selective_configuration(
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
 
+        # Derive team-scoped visibility from the requesting user's token
+        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+
         export_data = await export_service.export_selective(
-            db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown", root_path=root_path
+            db=db,
+            entity_selections=entity_selections,
+            include_dependencies=include_dependencies,
+            exported_by=username or "unknown",
+            root_path=root_path,
+            user_email=scoped_user_email,
+            token_teams=scoped_token_teams,
         )
 
         return export_data

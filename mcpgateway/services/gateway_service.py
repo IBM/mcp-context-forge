@@ -388,16 +388,36 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self._active_gateways: Set[str] = set()  # Track active gateway URLs
         self._stream_response = None
         self._pending_responses = {}
-        # Prefer using the globally-initialized singletons from mcpgateway.main
-        # (created at application startup). Import lazily to avoid circular
-        # import issues during module import time. Fall back to creating
-        # local instances if the singletons are not available.
-        # Use the globally-exported singletons from the service modules so
-        # events propagate via their initialized EventService/Redis clients.
+        # Prefer using the globally-initialized singletons from the service modules
+        # so events propagate via their initialized EventService/Redis clients.
+        # Import lazily and fall back to creating local instances when the module-level
+        # __getattr__ singletons are not yet available (e.g. circular import during
+        # Gunicorn --preload).
         # First-Party
-        from mcpgateway.services.prompt_service import prompt_service
-        from mcpgateway.services.resource_service import resource_service
-        from mcpgateway.services.tool_service import tool_service
+        try:
+            # First-Party
+            from mcpgateway.services.prompt_service import prompt_service
+        except ImportError:
+            # First-Party
+            from mcpgateway.services.prompt_service import PromptService
+
+            prompt_service = PromptService()
+        try:
+            # First-Party
+            from mcpgateway.services.resource_service import resource_service
+        except ImportError:
+            # First-Party
+            from mcpgateway.services.resource_service import ResourceService
+
+            resource_service = ResourceService()
+        try:
+            # First-Party
+            from mcpgateway.services.tool_service import tool_service
+        except ImportError:
+            # First-Party
+            from mcpgateway.services.tool_service import ToolService
+
+            tool_service = ToolService()
 
         self.tool_service = tool_service
         self.prompt_service = prompt_service

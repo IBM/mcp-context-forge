@@ -907,21 +907,25 @@ class TestEmailAuthServiceUserManagement:
             mock_user.reset_failed_attempts.assert_called()
 
     @pytest.mark.asyncio
-    async def test_authenticate_admin_no_increment_when_protected(self, service, mock_db, mock_user, mock_password_service):
-        """Test that a protected admin's failed attempts are not incremented on wrong password."""
+    async def test_authenticate_admin_increment_tracked_when_protected(self, service, mock_db, mock_user, mock_password_service):
+        """Test that a protected admin's failed attempts ARE tracked (hardening) even though lockout bypass is preserved."""
         service.password_service = mock_password_service
         mock_user.is_admin = True
         mock_user.is_account_locked.return_value = False
+        mock_user.increment_failed_attempts.return_value = False
         mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.protect_all_admins = True
+            mock_settings.max_failed_login_attempts = 5
+            mock_settings.account_lockout_duration_minutes = 30
 
             result = await service.authenticate_user(email="admin@example.com", password="wrong_password")
 
             assert result is None
-            mock_user.increment_failed_attempts.assert_not_called()
+            # Failed attempts are now always tracked for audit purposes
+            mock_user.increment_failed_attempts.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_authenticate_admin_still_locked_when_not_protected(self, service, mock_db, mock_user, mock_password_service):

@@ -1201,7 +1201,7 @@ postgres:
   probes:
     readiness:
       type: exec
-      command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+      command: ["/bin/sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
       initialDelaySeconds: 15
       periodSeconds: 15
       timeoutSeconds: 10
@@ -1210,7 +1210,7 @@ postgres:
 
     liveness:
       type: exec
-      command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+      command: ["/bin/sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
       initialDelaySeconds: 10
       periodSeconds: 20
       timeoutSeconds: 10

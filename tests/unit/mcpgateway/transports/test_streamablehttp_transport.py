@@ -1095,14 +1095,17 @@ async def test_read_resource_outer_exception(monkeypatch, caplog):
 #     }
 
 
-def _make_scope(path: str, headers: list[tuple[bytes, bytes]] | None = None, method: str = "POST") -> Scope:
-    return {
+def _make_scope(path: str, headers: list[tuple[bytes, bytes]] | None = None, method: str = "POST", client: tuple[str, int] | None = ("127.0.0.1", 0)) -> Scope:
+    scope: dict = {
         "type": "http",
         "method": method,
         "path": path,
         "headers": headers or [],
         "modified_path": path,
     }
+    if client is not None:
+        scope["client"] = client
+    return scope
 
 
 @pytest.mark.asyncio

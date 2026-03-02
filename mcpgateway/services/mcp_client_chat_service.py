@@ -124,7 +124,8 @@ class MCPServerConfig(BaseModel):
         >>> config.transport
         'streamable_http'
 
-        >>> # Stdio transport
+        >>> # Stdio transport (requires explicit feature flag)
+        >>> settings.mcpgateway_stdio_transport_enabled = True
         >>> config = MCPServerConfig(
         ...     command="python",
         ...     args=["server.py"],
@@ -181,64 +182,26 @@ class MCPServerConfig(BaseModel):
 
         return values
 
-    @field_validator("url")
-    @classmethod
-    def validate_url_for_transport(cls, v: Optional[str], info) -> Optional[str]:
-        """
-        Validate that URL is provided for HTTP-based transports.
-
-        Args:
-            v: The URL value to validate.
-            info: Validation context containing other field values.
+    @model_validator(mode="after")
+    def validate_transport_requirements(self):
+        """Validate transport-specific requirements and feature flags.
 
         Returns:
-            Optional[str]: The validated URL.
+            MCPServerConfig: Validated config instance.
 
         Raises:
-            ValueError: If URL is missing for streamable_http or sse transport.
-
-        Examples:
-            >>> # Valid case
-            >>> MCPServerConfig(
-            ...     url="https://example.com",
-            ...     transport="streamable_http"
-            ... ).url
-            'https://example.com'
+            ValueError: If transport requirements or feature flags are violated.
         """
-        transport = info.data.get("transport")
-        if transport in ["streamable_http", "sse"] and not v:
-            raise ValueError(f"URL is required for {transport} transport")
-        return v
+        if self.transport in ["streamable_http", "sse"] and not self.url:
+            raise ValueError(f"URL is required for {self.transport} transport")
 
-    @field_validator("command")
-    @classmethod
-    def validate_command_for_stdio(cls, v: Optional[str], info) -> Optional[str]:
-        """
-        Validate that command is provided for stdio transport.
+        if self.transport == "stdio":
+            if not settings.mcpgateway_stdio_transport_enabled:
+                raise ValueError("stdio transport is disabled by default; set MCPGATEWAY_STDIO_TRANSPORT_ENABLED=true to enable it")
+            if not self.command:
+                raise ValueError("Command is required for stdio transport")
 
-        Args:
-            v: The command value to validate.
-            info: Validation context containing other field values.
-
-        Returns:
-            Optional[str]: The validated command.
-
-        Raises:
-            ValueError: If command is missing for stdio transport.
-
-        Examples:
-            >>> config = MCPServerConfig(
-            ...     command="python",
-            ...     args=["server.py"],
-            ...     transport="stdio"
-            ... )
-            >>> config.command
-            'python'
-        """
-        transport = info.data.get("transport")
-        if transport == "stdio" and not v:
-            raise ValueError("Command is required for stdio transport")
-        return v
+        return self
 
     model_config = {
         "json_schema_extra": {

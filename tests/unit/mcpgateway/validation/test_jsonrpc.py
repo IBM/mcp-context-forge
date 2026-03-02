@@ -137,6 +137,23 @@ class TestJSONRPCValidation:
         valid_null_id_response = {"jsonrpc": "2.0", "result": "success", "id": None}
         validate_response(valid_null_id_response)  # Should not raise
 
+    @pytest.mark.parametrize(
+        "response,expected_error",
+        [
+            ({"jsonrpc": "2.0", "id": 1}, "either result or error"),
+            ({"jsonrpc": "2.0", "result": "ok", "error": {"code": -1, "message": "x"}, "id": 1}, "both result and error"),
+            ({"jsonrpc": "2.0", "error": "bad", "id": 1}, "Invalid error object type"),
+            ({"jsonrpc": "2.0", "error": {"code": -32600}, "id": 1}, "contain code and message"),
+            ({"jsonrpc": "2.0", "error": {"code": "bad", "message": "x"}, "id": 1}, "code must be integer"),
+            ({"jsonrpc": "2.0", "error": {"code": -32600, "message": 123}, "id": 1}, "message must be string"),
+        ],
+    )
+    def test_validate_invalid_response_shapes(self, response, expected_error):
+        """Test response validation error branches for malformed result/error structures."""
+        with pytest.raises(JSONRPCError) as exc:
+            validate_response(response)
+        assert expected_error in exc.value.message
+
     def test_jsonrpc_error_to_dict(self):
         """Test conversion of JSONRPCError to dict."""
         # Basic error

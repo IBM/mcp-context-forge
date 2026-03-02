@@ -78,6 +78,15 @@ def temp_user(admin_api: APIRequestContext):
         "/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": "Temp Test User"},
     )
+    if resp.status == 401:
+        # Transient auth race — retry once
+        import time
+
+        time.sleep(0.5)
+        resp = admin_api.post(
+            "/auth/email/admin/users",
+            data={"email": email, "password": TEST_PASSWORD, "full_name": "Temp Test User"},
+        )
     assert resp.status in (200, 201), f"Failed to create temp user: {resp.status}"
     yield email
     try:

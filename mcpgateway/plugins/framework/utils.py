@@ -113,9 +113,29 @@ def coerce_nested(v: Any, *, _depth: int = 0) -> Any:
     return v
 
 
+_BLOCKED_MODULE_PREFIXES = (
+    "os",
+    "sys",
+    "subprocess",
+    "shutil",
+    "socket",
+    "http.server",
+    "ctypes",
+    "importlib",
+    "builtins",
+    "code",
+    "codeop",
+    "compileall",
+    "runpy",
+)
+
+
 @cache  # noqa
 def import_module(mod_name: str) -> ModuleType:
-    """Import a module.
+    """Import a module after validating the name is safe for dynamic loading.
+
+    Blocks dangerous stdlib modules that could enable arbitrary code
+    execution if an attacker controls the plugin ``kind`` field.
 
     Args:
         mod_name: fully qualified module name
@@ -123,15 +143,21 @@ def import_module(mod_name: str) -> ModuleType:
     Returns:
         A module.
 
+    Raises:
+        ImportError: If the module name is blocked or contains path traversal.
+
     Examples:
-        >>> import sys
-        >>> mod = import_module('sys')
-        >>> mod is sys
-        True
-        >>> os_mod = import_module('os')
-        >>> hasattr(os_mod, 'path')
+        >>> mod = import_module('mcpgateway.plugins.framework.utils')
+        >>> hasattr(mod, 'import_module')
         True
     """
+    # Block path-traversal-style names and names with dangerous characters
+    if ".." in mod_name or "/" in mod_name or "\\" in mod_name:
+        raise ImportError(f"Plugin module name '{mod_name}' contains invalid characters.")
+    # Block dangerous stdlib modules
+    for blocked in _BLOCKED_MODULE_PREFIXES:
+        if mod_name == blocked or mod_name.startswith(blocked + "."):
+            raise ImportError(f"Plugin module '{mod_name}' is blocked for security reasons.")
     return importlib.import_module(mod_name)
 
 
