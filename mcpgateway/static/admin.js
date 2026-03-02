@@ -25865,7 +25865,7 @@ async function selectServerForChat(
     // Update UI to show selected server in dropdown list
     const serverItems = document.querySelectorAll(".server-item");
     serverItems.forEach((item) => {
-        if (item.onclick.toString().includes(serverId)) {
+        if (item.dataset.serverId === serverId) {
             item.classList.add(
                 "border-indigo-500",
                 "bg-indigo-50",
