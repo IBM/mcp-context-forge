@@ -8029,5 +8029,5 @@ linting-workflow-commitlint:         ## 📝  Conventional Commits linting (togg
 			--to '$(COMMITLINT_TO)'"
 
 .PHONY: conc-01-gateways
-conc-01-gateways:                    ## Run CONC-01 gateways manual matrix with preflight/token automation
+conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh

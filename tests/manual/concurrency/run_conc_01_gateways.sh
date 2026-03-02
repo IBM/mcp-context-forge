@@ -11,48 +11,30 @@ cd "${ROOT_DIR}"
 : "${CONC_TOKEN_USER:=admin@example.com}"
 : "${CONC_TOKEN_EXP_MIN:=120}"
 
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -z "${PYTHON_BIN}" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  else
+    echo "ERROR: python3/python not found in PATH." >&2
+    exit 2
+  fi
+fi
+
 export CONC_BASE_URL
 export CONC_GATEWAY_URL
 export DATABASE_URL
 export REDIS_URL
 
-if [[ -z "${CONC_TOKEN:-}" || "${CONC_REFRESH_TOKEN:-0}" == "1" ]]; then
-  if [[ -z "${JWT_SECRET_KEY:-}" ]]; then
-    echo "ERROR: JWT_SECRET_KEY is not set; cannot generate CONC_TOKEN." >&2
-    echo "Set JWT_SECRET_KEY (or provide CONC_TOKEN) and rerun." >&2
-    exit 2
-  fi
-  echo "Generating CONC_TOKEN (user=${CONC_TOKEN_USER}, exp=${CONC_TOKEN_EXP_MIN}m)..."
-  export CONC_TOKEN="$(
-    python -m mcpgateway.utils.create_jwt_token \
-      --username "${CONC_TOKEN_USER}" \
-      --exp "${CONC_TOKEN_EXP_MIN}" \
-      --secret "${JWT_SECRET_KEY}"
-  )"
-fi
-
-echo "Preflight: gateway health at ${CONC_BASE_URL}/health"
-curl -fsS "${CONC_BASE_URL}/health" >/dev/null
-
-echo "Preflight: auth token at ${CONC_BASE_URL}/servers?limit=1"
-curl -fsS \
-  -H "Authorization: Bearer ${CONC_TOKEN}" \
-  "${CONC_BASE_URL}/servers?limit=1" >/dev/null
-
-gateway_no_scheme="${CONC_GATEWAY_URL#*://}"
-host_port_path="${gateway_no_scheme%%/*}"
-gateway_host="${host_port_path%%:*}"
-gateway_port="${host_port_path##*:}"
-if [[ "${gateway_host}" == "${gateway_port}" ]]; then
-  gateway_port=80
-fi
-
-if command -v nc >/dev/null 2>&1; then
-  echo "Preflight: translator tcp check at ${gateway_host}:${gateway_port}"
-  nc -z "${gateway_host}" "${gateway_port}" >/dev/null
-else
-  echo "WARN: nc not found; skipping translator tcp preflight."
+if [[ -z "${CONC_TOKEN:-}" ]]; then
+  echo "ERROR: CONC_TOKEN is not set." >&2
+  echo "Generate and export it manually before running this script." >&2
+  echo "Example:" >&2
+  echo "  export CONC_TOKEN=\"\$(${PYTHON_BIN} -m mcpgateway.utils.create_jwt_token --username ${CONC_TOKEN_USER} --exp ${CONC_TOKEN_EXP_MIN} --secret <jwt-secret>)\"" >&2
+  exit 2
 fi
 
 echo "Running CONC-01 gateway matrix..."
-python tests/manual/concurrency/conc_01_gateways_parallel_create_pg_redis.py
+"${PYTHON_BIN}" tests/manual/concurrency/conc_01_gateways_parallel_create_pg_redis.py
