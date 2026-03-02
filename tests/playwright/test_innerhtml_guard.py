@@ -230,12 +230,18 @@ class TestMetricsRetryButtons:
 
         result = page.evaluate("""
             () => {
-                // Ensure required container exists
+                // displayMetrics needs aggregated-metrics-section as parent
+                let section = document.getElementById('aggregated-metrics-section');
+                if (!section) {
+                    section = document.createElement('div');
+                    section.id = 'aggregated-metrics-section';
+                    document.body.appendChild(section);
+                }
                 let container = document.getElementById('aggregated-metrics-content');
                 if (!container) {
                     container = document.createElement('div');
                     container.id = 'aggregated-metrics-content';
-                    document.body.appendChild(container);
+                    section.appendChild(container);
                 }
 
                 let retryCalled = false;
@@ -243,8 +249,8 @@ class TestMetricsRetryButtons:
                 window.retryLoadMetrics = () => { retryCalled = true; };
 
                 try {
-                    // Empty data triggers the empty-state path
-                    displayMetrics({ tools: [], resources: [], prompts: [] });
+                    // Null/empty object triggers the empty-state path
+                    displayMetrics({});
                     const btn = container.querySelector('[data-action="retry-metrics"]');
                     if (!btn) return { found: false };
                     btn.click();
@@ -365,15 +371,15 @@ class TestTagFilterClearButton:
 
         result = page.evaluate("""
             () => {
-                // Create the table container the function expects
-                const entityType = 'tools';
-                const containerId = entityType + '-table-container';
-                let container = document.getElementById(containerId);
-                if (!container) {
-                    container = document.createElement('div');
-                    container.id = containerId;
-                    document.body.appendChild(container);
-                }
+                // updateFilterEmptyState looks for #${entityType}-panel .overflow-x-auto
+                // Use a unique entity name to avoid collisions with existing DOM
+                const entityType = 'testfilter';
+                const panel = document.createElement('div');
+                panel.id = entityType + '-panel';
+                document.body.appendChild(panel);
+                const tableContainer = document.createElement('div');
+                tableContainer.className = 'overflow-x-auto';
+                panel.appendChild(tableContainer);
 
                 let clearCalled = false;
                 const orig = window.clearTagFilter;
@@ -381,19 +387,19 @@ class TestTagFilterClearButton:
 
                 try {
                     updateFilterEmptyState(entityType, 0, true);
-                    const btn = container.querySelector('[data-action="clear-tag-filter"]');
+                    const btn = tableContainer.querySelector('[data-action="clear-tag-filter"]');
                     if (!btn) return { found: false };
                     btn.click();
                     return { found: true, clearCalled };
                 } finally {
                     window.clearTagFilter = orig;
-                    container.remove();
+                    panel.remove();
                 }
             }
         """)
 
         assert result["found"], "Clear button with data-action='clear-tag-filter' not found"
-        assert result["clearCalled"] == "tools", "Clicking clear should call clearTagFilter with entity type"
+        assert result["clearCalled"] == "testfilter", "Clicking clear should call clearTagFilter with entity type"
 
 
 class TestImportPreviewControls:
@@ -405,18 +411,25 @@ class TestImportPreviewControls:
 
         result = page.evaluate("""
             () => {
-                // Create the container and parent that displayImportPreview expects
+                // displayImportPreview navigates: #import-drop-zone -> parentElement -> parentElement
+                // Create the full structure: grandparent > parent > drop-zone
                 let previewContainer = document.getElementById('import-preview-container');
+                let dropZone = document.getElementById('import-drop-zone');
+                const created = [];
+                if (!dropZone) {
+                    const grandparent = document.createElement('div');
+                    const parent = document.createElement('div');
+                    dropZone = document.createElement('div');
+                    dropZone.id = 'import-drop-zone';
+                    parent.appendChild(dropZone);
+                    grandparent.appendChild(parent);
+                    document.body.appendChild(grandparent);
+                    created.push(grandparent);
+                }
                 if (!previewContainer) {
-                    const dropZone = document.getElementById('import-drop-zone')
-                        || document.createElement('div');
-                    if (!dropZone.id) {
-                        dropZone.id = 'import-drop-zone';
-                        document.body.appendChild(dropZone);
-                    }
                     previewContainer = document.createElement('div');
                     previewContainer.id = 'import-preview-container';
-                    dropZone.parentNode.insertBefore(previewContainer, dropZone.nextSibling);
+                    dropZone.parentElement.parentElement.appendChild(previewContainer);
                 }
 
                 // Spy on handler functions
@@ -442,14 +455,22 @@ class TestImportPreviewControls:
                 try {
                     displayImportPreview({
                         version: '1.0',
+                        summary: { total_items: 1, by_type: { tools: 1 } },
                         bundles: {
                             'gw1': {
-                                gateway: { name: 'Test Gateway', url: 'http://test', transport: 'sse' },
+                                gateway: { name: 'Test Gateway', url: 'http://test', transport: 'sse', description: 'A gateway' },
+                                total_items: 1,
+                                items: {
+                                    tools: [{ id: 't1', name: 'Tool 1', type: 'custom', description: 'desc' }],
+                                    resources: [],
+                                    prompts: [],
+                                },
                                 tools: [{ id: 't1', name: 'Tool 1', type: 'custom', description: 'desc' }],
                                 resources: [],
                                 prompts: [],
                             }
-                        }
+                        },
+                        standalone_items: {},
                     });
 
                     const actions = {};
@@ -595,8 +616,9 @@ class TestLogViewerDelegation:
                             message: 'Test log',
                             correlation_id: 'corr-abc',
                             source: 'test',
+                            component: 'test',
                         }],
-                        count: 1,
+                        total: 1,
                     });
 
                     const tbody = document.getElementById('logs-tbody');
@@ -759,20 +781,21 @@ class TestChatServerSelection:
         page = admin_page.page
 
         # Intercept /admin/servers to return mock server data
-        page.route("**/admin/servers", lambda route: route.fulfill(
+        page.route("**/admin/servers**", lambda route: route.fulfill(
             status=200,
             content_type="application/json",
-            body='{"data": [{"id": "srv-1", "name": "Test Server", "status": "active", "visibility": "public", "require_token": false, "description": "A test server", "tools": [], "resources": [], "prompts": []}]}',
+            body='{"data": [{"id": "srv-1", "name": "Test Server", "isActive": true, "enabled": true, "visibility": "public", "description": "A test server", "associatedTools": ["t1"], "tools": [], "resources": [], "prompts": []}]}',
         ))
 
         try:
             # Ensure container and state exist, then call the real function
             result = page.evaluate("""
                 async () => {
-                    let serversList = document.getElementById('chat-servers-list');
+                    // Function expects llm-chat-servers-list
+                    let serversList = document.getElementById('llm-chat-servers-list');
                     if (!serversList) {
                         serversList = document.createElement('div');
-                        serversList.id = 'chat-servers-list';
+                        serversList.id = 'llm-chat-servers-list';
                         document.body.appendChild(serversList);
                     }
                     if (!window.llmChatState) {
