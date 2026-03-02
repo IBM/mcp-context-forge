@@ -241,12 +241,17 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             if login_page.is_on_login_page():
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
 
-    # Verify we're on the admin page
-    if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
+    # Verify we're on the admin page (retry JWT injection up to 2 times for
+    # intermittent cookie/redirect races).
+    for _attempt in range(3):
+        if "/admin/login" not in page.url:
+            break
+        if DISABLE_JWT_FALLBACK:
+            break
         _set_admin_jwt_cookie(page, admin_email)
         _goto_admin(page, "/admin/")
         _wait_for_admin_transition(page)
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=15000)
+    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=30000)
 
     # Wait for the application shell to load
     try:

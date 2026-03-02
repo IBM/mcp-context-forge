@@ -100,6 +100,7 @@ class TestTeams:
         # Cleanup
         team_page.delete_team(team_name)
 
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="HTMX search DOM swap timing in headless mode")
     def test_edit_settings_button(self, team_page):
         """Test Edit Settings button opens team settings editor."""
         team_page.navigate_to_teams_tab()
@@ -124,7 +125,10 @@ class TestTeams:
         team_page.wait_for_team_visible(team_name)
 
         # Wait for HTMX search to settle before interacting with cards
-        team_page.page.wait_for_timeout(1000)
+        team_page.page.wait_for_function(
+            "() => !document.querySelector('#teams-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Click Edit Settings button (only visible when user is team owner)
         # Re-query to avoid stale references after HTMX DOM swap

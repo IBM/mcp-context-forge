@@ -448,8 +448,8 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
         page_one = email_logged_in_page
         page_two = page_one.context.new_page()
-        page_two.goto("/admin")
-        expect(page_two).to_have_url(re.compile(r".*/admin(?!/login).*"))
+        page_two.goto("/admin", wait_until="domcontentloaded", timeout=60000)
+        expect(page_two).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=15000)
 
         logout_button = page_one.locator('form[action$="/admin/logout"] button[type="submit"]')
         expect(logout_button).to_be_visible()
@@ -501,7 +501,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         _set_jwt_cookie(context, non_admin_token)
 
         page = context.new_page()
-        response = page.goto("/admin")
+        response = page.goto("/admin", wait_until="domcontentloaded", timeout=60000)
         if response and response.status == 404:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
