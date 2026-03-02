@@ -15854,6 +15854,7 @@ async function handleEditPromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.append("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -16265,6 +16266,7 @@ async function handleEditToolFormSubmit(event) {
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.append("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -16360,6 +16362,7 @@ async function handleEditGatewayFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.append("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16513,6 +16516,7 @@ async function handleEditServerFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.append("visibility", formData.get("visibility"));
 
         // Merge persistent selection store into FormData so off-screen selections are included
         [
@@ -16622,6 +16626,7 @@ async function handleEditResFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.append("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
