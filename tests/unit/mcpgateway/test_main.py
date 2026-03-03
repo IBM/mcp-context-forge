@@ -4239,3 +4239,26 @@ class TestLegacyAdminRedirect:
         # When registered, it returns 301 to the new path
         if response.status_code == 301:
             assert "/ui/tools" in response.headers.get("location", "")
+
+    def test_legacy_admin_redirect_preserves_query_params(self, test_client, monkeypatch):
+        """Legacy redirect should preserve query parameters."""
+        monkeypatch.setattr(settings, "mcpgateway_ui_legacy_redirect", True)
+        monkeypatch.setattr(settings, "mcpgateway_ui_base_path", "/ui")
+
+        response = test_client.get("/admin/tools?team_id=abc&include_inactive=true", follow_redirects=False)
+        if response.status_code == 301:
+            location = response.headers.get("location", "")
+            assert "/ui/tools" in location
+            assert "team_id=abc" in location
+            assert "include_inactive=true" in location
+
+    def test_legacy_admin_redirect_handles_all_http_methods(self, test_client, monkeypatch):
+        """Legacy redirect should handle GET, POST, PUT, DELETE, PATCH methods."""
+        monkeypatch.setattr(settings, "mcpgateway_ui_legacy_redirect", True)
+        monkeypatch.setattr(settings, "mcpgateway_ui_base_path", "/ui")
+
+        for method in ["get", "post", "put", "delete", "patch"]:
+            response = getattr(test_client, method)("/admin/test-path", follow_redirects=False)
+            # Either redirects to new path or returns 404 if route not registered at startup
+            if response.status_code == 301:
+                assert "/ui/test-path" in response.headers.get("location", "")

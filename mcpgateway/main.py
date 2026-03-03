@@ -7998,13 +7998,17 @@ if UI_ENABLED:
 
         @app.get("/admin/{path:path}", include_in_schema=False)
         @app.post("/admin/{path:path}", include_in_schema=False)
-        async def admin_legacy_redirect(path: str = ""):
+        @app.put("/admin/{path:path}", include_in_schema=False)
+        @app.delete("/admin/{path:path}", include_in_schema=False)
+        @app.patch("/admin/{path:path}", include_in_schema=False)
+        async def admin_legacy_redirect(request: Request, path: str = ""):
             """Redirect deprecated /admin/* routes to the configured UI base path.
 
             This backward compatibility redirect will be removed in the next major version.
             The UI is now served from the MCPGATEWAY_UI_BASE_PATH (default: /ui).
 
             Args:
+                request: The incoming request to preserve query parameters.
                 path: The path segment after /admin/
 
             Returns:
@@ -8013,6 +8017,9 @@ if UI_ENABLED:
             ui_base = settings.mcpgateway_ui_base_path
             root_path = settings.app_root_path
             new_path = f"{root_path}{ui_base}/{path}" if path else f"{root_path}{ui_base}/"
+            # Preserve query string
+            if request.url.query:
+                new_path = f"{new_path}?{request.url.query}"
             logger.warning(
                 "Deprecated: /admin is now %s. Update your bookmarks/links.",
                 ui_base,
