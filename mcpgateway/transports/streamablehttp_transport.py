@@ -627,6 +627,24 @@ async def _check_streamable_permission(
         return False
 
 
+def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> bool:
+    """Check if token scoped permissions allow this operation.
+
+    Args:
+        user_context: User context dict (may contain 'scoped_permissions' key).
+        permission: Permission to check.
+
+    Returns:
+        True if allowed (no scope cap, wildcard, or permission present).
+    """
+    scoped = user_context.get("scoped_permissions")
+    if not scoped:  # None or empty list = defer to RBAC
+        return True
+    if "*" in scoped:
+        return True
+    return permission in scoped
+
+
 def set_shared_session_registry(session_registry: Any) -> None:
     """Set the process-wide session registry used by Streamable HTTP helpers.
 
@@ -962,6 +980,10 @@ async def call_tool(name: str, arguments: dict) -> Union[
         await _check_server_oauth_enforcement(server_id, user_context)
 
     if _should_enforce_streamable_rbac(user_context):
+        # Layer 1: Token scope cap
+        if not _check_scoped_permission(user_context, "tools.execute"):
+            raise PermissionError("Insufficient permissions. Required: tools.execute")
+        # Layer 2: RBAC check
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
@@ -1348,12 +1370,18 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
         final_teams = normalize_token_teams(payload)
 
-    return {
+    user_ctx: dict[str, Any] = {
         "email": email,
         "teams": final_teams,
         "is_admin": is_admin,
         "is_authenticated": True,
     }
+    # Extract scoped permissions from JWT for per-method enforcement
+    scopes = payload.get("scopes") or {}
+    scoped_perms = scopes.get("permissions") or [] if isinstance(scopes, dict) else []
+    if scoped_perms:
+        user_ctx["scoped_permissions"] = scoped_perms
+    return user_ctx
 
 
 @mcp_app.list_tools()
@@ -1369,6 +1397,9 @@ async def list_tools() -> List[types.Tool]:
         A list of Tool objects containing metadata such as name, description, and input schema.
         Logs and returns an empty list on failure.
 
+    Raises:
+        PermissionError: If the caller lacks ``tools.read`` permission.
+
     Examples:
         >>> # Test list_tools function signature
         >>> import inspect
@@ -1379,6 +1410,11 @@ async def list_tools() -> List[types.Tool]:
         typing.List[mcp.types.Tool]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude tools.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "tools.read"):
+            raise PermissionError("Insufficient permissions. Required: tools.read")
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1483,6 +1519,9 @@ async def list_prompts() -> List[types.Prompt]:
         A list of Prompt objects containing metadata such as name, description, and arguments.
         Logs and returns an empty list on failure.
 
+    Raises:
+        PermissionError: If the user context indicates insufficient permissions (e.g., missing "prompts.read" scope).
+
     Examples:
         >>> import inspect
         >>> sig = inspect.signature(list_prompts)
@@ -1492,6 +1531,11 @@ async def list_prompts() -> List[types.Prompt]:
         typing.List[mcp.types.Prompt]
     """
     server_id, _, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude prompts.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "prompts.read"):
+            raise PermissionError("Insufficient permissions. Required: prompts.read")
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1547,6 +1591,9 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         GetPromptResult: Object containing the prompt messages and description.
         Returns an empty list on failure or if no prompt content is found.
 
+    Raises:
+        PermissionError: If the user context indicates insufficient permissions (e.g., missing "prompts.read" scope).
+
     Logs exceptions if any errors occur during retrieval.
 
     Examples:
@@ -1558,6 +1605,11 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         'GetPromptResult'
     """
     server_id, _, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude prompts.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "prompts.read"):
+            raise PermissionError("Insufficient permissions. Required: prompts.read")
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -1624,6 +1676,9 @@ async def list_resources() -> List[types.Resource]:
         A list of Resource objects containing metadata such as uri, name, description, and mimeType.
         Logs and returns an empty list on failure.
 
+    Raises:
+        PermissionError: If the user context indicates insufficient permissions (e.g., missing "resources.read" scope).
+
     Examples:
         >>> import inspect
         >>> sig = inspect.signature(list_resources)
@@ -1633,6 +1688,11 @@ async def list_resources() -> List[types.Resource]:
         typing.List[mcp.types.Resource]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude resources.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "resources.read"):
+            raise PermissionError("Insufficient permissions. Required: resources.read")
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1728,6 +1788,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         Union[str, bytes]: The content of the resource as text or binary data.
         Returns empty string on failure or if no content is found.
 
+    Raises:
+        PermissionError: If the user does not have the required permissions to read resources.
+
     Logs exceptions if any errors occur during reading.
 
     Examples:
@@ -1739,6 +1802,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         typing.Union[str, bytes]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude resources.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "resources.read"):
+            raise PermissionError("Insufficient permissions. Required: resources.read")
 
     # Extract authorization parameters from user context (same pattern as list_resources)
     user_email = user_context.get("email") if user_context else None
@@ -1860,6 +1928,9 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     Returns:
         List[types.ResourceTemplate]: A list of resource templates with their URIs and metadata.
 
+    Raises:
+        PermissionError: If the caller lacks ``resources.read`` permission.
+
     Examples:
         >>> import inspect
         >>> sig = inspect.signature(list_resource_templates)
@@ -1870,6 +1941,12 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     """
     # Extract filtering parameters from user context (same pattern as list_resources)
     server_id, _, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude resources.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "resources.read"):
+            raise PermissionError("Insufficient permissions. Required: resources.read")
+
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
@@ -1940,6 +2017,10 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         await _check_server_oauth_enforcement(server_id, user_context)
 
     if _should_enforce_streamable_rbac(user_context):
+        # Layer 1: Token scope cap
+        if not _check_scoped_permission(user_context, "admin.system_config"):
+            raise PermissionError("Insufficient permissions. Required: admin.system_config")
+        # Layer 2: RBAC check
         has_admin_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="admin.system_config",
@@ -1992,11 +2073,17 @@ async def complete(
         MCP-compliant completion fields.
 
     Raises:
+        PermissionError: If the caller lacks ``tools.read`` permission.
         Exception: If completion handling fails internally. The method
             logs the exception and returns an empty completion structure.
     """
     # Derive caller visibility scope from the current request context.
     server_id, _, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude tools.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "tools.read"):
+            raise PermissionError("Insufficient permissions. Required: tools.read")
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2886,14 +2973,18 @@ class _StreamableHttpAuthHandler:
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
 
-            user_context_var.set(
-                {
-                    "email": user_email,
-                    "teams": final_teams,
-                    "is_authenticated": True,
-                    "is_admin": is_admin,
-                }
-            )
+            auth_user_ctx: dict[str, Any] = {
+                "email": user_email,
+                "teams": final_teams,
+                "is_authenticated": True,
+                "is_admin": is_admin,
+            }
+            # Extract scoped permissions from JWT for per-method enforcement
+            jwt_scopes = user_payload.get("scopes") or {}
+            jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
+            if jwt_scoped_perms:
+                auth_user_ctx["scoped_permissions"] = jwt_scoped_perms
+            user_context_var.set(auth_user_ctx)
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
