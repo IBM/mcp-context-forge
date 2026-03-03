@@ -2729,6 +2729,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "python-json-logger" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "requests-oauthlib" },
     { name = "sqlalchemy" },
@@ -2736,6 +2737,7 @@ dependencies = [
     { name = "starlette" },
     { name = "starlette-compress" },
     { name = "typer" },
+    { name = "urllib3" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -2950,6 +2952,7 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'playwright'", specifier = ">=2.4.0" },
     { name = "pytest-xdist", marker = "extra == 'fuzz'", specifier = ">=3.8.0" },
     { name = "python-json-logger", specifier = ">=4.0.0" },
+    { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", marker = "extra == 'redis-pure'", specifier = ">=7.2.1" },
     { name = "redis", extras = ["hiredis"], marker = "extra == 'redis'", specifier = ">=7.2.1" },
@@ -2960,6 +2963,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=0.52.1" },
     { name = "starlette-compress", specifier = ">=1.7.0" },
     { name = "typer", specifier = ">=0.24.1" },
+    { name = "urllib3", specifier = ">=2.6.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.41.0" },
 ]
 provides-extras = ["redis", "redis-pure", "postgres", "mysql", "mariadb", "llmchat", "fuzz", "fuzz-atheris", "observability", "granian", "aiosqlite", "asyncpg", "profiling", "templating", "grpc", "playwright", "all", "dev-all"]
