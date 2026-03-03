@@ -618,7 +618,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -636,6 +636,14 @@ test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
 			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
 		echo "✅ mcp-cli protocol tests passed!"'
 
+test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
+	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack with SSE gateway registered"
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		uv run --active pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
+			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
+		echo "✅ MCP RBAC transport tests passed!"'
+
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -646,7 +654,8 @@ test:
 		export ARGON2ID_MEMORY_COST=1024 && \
 		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
 			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
-			--ignore=tests/e2e/test_mcp_cli_protocol.py"
+			--ignore=tests/e2e/test_mcp_cli_protocol.py \
+			--ignore=tests/e2e/test_mcp_rbac_transport.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
