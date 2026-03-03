@@ -20089,6 +20089,8 @@ class TestAdminPersonalTeamFiltering:
             "links": None
         })
         mock_team_service.get_user_personal_team = AsyncMock(return_value=mock_personal_team)
+        # Mock should_include_personal_team to return False when visibility doesn't match
+        mock_team_service.should_include_personal_team = MagicMock(return_value=False)
 
         with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
              patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
@@ -20105,6 +20107,10 @@ class TestAdminPersonalTeamFiltering:
             )
 
             assert not any(t["id"] == "personal-team-123" for t in result)
+            # Verify should_include_personal_team was called with correct arguments
+            mock_team_service.should_include_personal_team.assert_called_once_with(
+                mock_personal_team, False, "public", "admin"
+            )
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_excludes_personal_team_no_search_match(self, mock_admin_user, mock_personal_team):
