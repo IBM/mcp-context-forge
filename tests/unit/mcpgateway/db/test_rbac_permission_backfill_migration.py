@@ -255,6 +255,36 @@ class TestUpgradeLogic:
             final_perms = _get_role_permissions(conn, "platform_admin")
             assert final_perms == original_perms
 
+    def test_upgrade_adds_servers_use_to_viewer(self, migration_db, migration_module):
+        """Viewer gains servers.use after upgrade (required for tool testing via transport)."""
+        with migration_db.connect() as conn:
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
+            conn.commit()
+
+            perms = _get_role_permissions(conn, "viewer")
+            assert "servers.use" in perms
+
+    def test_upgrade_adds_servers_use_to_platform_viewer(self, migration_db, migration_module):
+        """Platform viewer gains servers.use after upgrade."""
+        with migration_db.connect() as conn:
+            migration_module._update_role_permissions(conn, "platform_viewer", ROLE_PERMISSION_ADDITIONS["platform_viewer"], add=True)
+            conn.commit()
+
+            perms = _get_role_permissions(conn, "platform_viewer")
+            assert "servers.use" in perms
+
+    def test_upgrade_adds_all_expected_permissions_per_role(self, migration_db, migration_module):
+        """Each role receives exactly the permissions defined in ROLE_PERMISSION_ADDITIONS."""
+        with migration_db.connect() as conn:
+            for role_name, expected_additions in ROLE_PERMISSION_ADDITIONS.items():
+                migration_module._update_role_permissions(conn, role_name, expected_additions, add=True)
+            conn.commit()
+
+            for role_name, expected_additions in ROLE_PERMISSION_ADDITIONS.items():
+                perms = _get_role_permissions(conn, role_name)
+                for perm in expected_additions:
+                    assert perm in perms, f"Role '{role_name}' missing expected permission '{perm}'"
+
     def test_upgrade_sets_updated_at(self, migration_db, migration_module):
         """Upgrade sets the updated_at timestamp."""
         with migration_db.connect() as conn:
@@ -295,6 +325,33 @@ class TestDowngradeLogic:
 
             final_perms = _get_role_permissions(conn, "viewer")
             assert sorted(final_perms) == sorted(original_perms)
+
+    def test_downgrade_removes_servers_use_from_viewer(self, migration_db, migration_module):
+        """Downgrade removes servers.use from viewer."""
+        with migration_db.connect() as conn:
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
+            conn.commit()
+            assert "servers.use" in _get_role_permissions(conn, "viewer")
+
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=False)
+            conn.commit()
+            assert "servers.use" not in _get_role_permissions(conn, "viewer")
+
+    def test_downgrade_all_roles(self, migration_db, migration_module):
+        """Downgrade removes all added permissions from all four roles."""
+        with migration_db.connect() as conn:
+            for role_name, permissions in ROLE_PERMISSION_ADDITIONS.items():
+                migration_module._update_role_permissions(conn, role_name, permissions, add=True)
+            conn.commit()
+
+            for role_name, permissions in ROLE_PERMISSION_ADDITIONS.items():
+                migration_module._update_role_permissions(conn, role_name, permissions, add=False)
+            conn.commit()
+
+            for role_name, permissions in ROLE_PERMISSION_ADDITIONS.items():
+                perms = _get_role_permissions(conn, role_name)
+                for perm in permissions:
+                    assert perm not in perms, f"Role '{role_name}' still has '{perm}' after downgrade"
 
     def test_downgrade_idempotent(self, migration_db, migration_module):
         """Running downgrade twice produces the same result."""
