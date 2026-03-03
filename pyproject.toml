@@ -70,7 +70,7 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "pyjwt>=2.11.0",
     "python-json-logger>=4.0.0",
-    "python-multipart>=0.0.22",  # Transitive pin (mcp, fastapi); CVE-2026-24486; dependabot/81
+    "python-multipart>=0.0.22", # Transitive pin (mcp, fastapi); CVE-2026-24486; dependabot/81
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.48",
@@ -78,7 +78,7 @@ dependencies = [
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
     "typer>=0.24.1",
-    "urllib3>=2.6.3",  # Transitive pin (requests); CVE-2026-21441; dependabot/76
+    "urllib3>=2.6.3", # Transitive pin (requests); CVE-2026-21441; dependabot/76
     "uvicorn[standard]>=0.41.0",
 ]
 
