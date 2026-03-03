@@ -1,0 +1,219 @@
+###############################################################################
+#  Docker Compose Override - Embedded Mode Embedded iframe Mode
+#
+#  This is an OVERRIDE file. Use it with docker-compose.yml:
+#
+#    docker compose -f docker-compose.yml -f docker-compose-embedded.yml --profile benchmark up -d
+#    docker compose -f docker-compose.yml -f docker-compose-embedded.yml --profile benchmark down
+#
+#  Or simply:
+#    make embedded-up
+#    make embedded-down
+#
+#  What this adds / overrides:
+#    - Gateway env overrides for embedded iframe mode (proxy auth, hidden sections,
+#      CORS, CSP, cookie settings, visibility controls)
+#    - Benchmark servers (10 servers x 50 tools = 500 tools for pagination testing)
+#    - Auto-registration of benchmark servers with gateway
+#    - iframe test harness at http://localhost:8889
+#
+#  Access:
+#    iframe harness: http://localhost:8889         (loads gateway UI inside iframe)
+#    Gateway UI:     http://localhost:8080/admin/   (via nginx, direct access)
+#    Gateway API:    http://localhost:8080           (via nginx)
+#
+#  Test checklist:
+#    - Team member role = developer (DEFAULT_USER_ROLE=developer)
+#    - Embedded UI hides: overview, logs, maintenance, mcp-registry, plugins,
+#      roots, llm-settings, teams, tokens, users
+#    - View Public checkbox visible in team scope
+#    - Public visibility selection disabled (ALLOW_PUBLIC_VISIBILITY=false)
+#    - Virtual server search with multi-select, edit in Add/Edit screens
+#    - Pagination with 500+ tools across 10 benchmark servers
+###############################################################################
+
+services:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Gateway overrides for embedded iframe mode
+  # ──────────────────────────────────────────────────────────────────────
+  # Override nginx to use iframe-friendly config (removes hardcoded X-Frame-Options: SAMEORIGIN,
+  # lets the gateway's own X_FRAME_OPTIONS=ALLOW-ALL header pass through for iframe embedding)
+  nginx:
+    volumes:
+      - nginx_cache:/var/cache/nginx
+      - ./infra/iframe-test/nginx-embedded.conf:/etc/nginx/nginx.conf:ro
+
+  gateway:
+    image: ghcr.io/ibm/mcp-context-forge:1ba8130f7fb82e6f393435be8d064879f234ace1
+    environment:
+      # ── Embedded UI ──
+      - MCPGATEWAY_UI_EMBEDDED=true
+      - MCPGATEWAY_UI_HIDE_SECTIONS=overview,logs,maintenance,mcp-registry,plugins,roots,llm-settings,teams,tokens,users
+
+      # ── CORS & iframe embedding ──
+      - CORS_ENABLED=true
+      - "ALLOWED_ORIGINS=[\"*\"]"
+      - CORS_ALLOW_CREDENTIALS=true
+      # X_FRAME_OPTIONS controls both the header and CSP frame-ancestors directive:
+      #   SAMEORIGIN  -> frame-ancestors 'self'  (same-origin only)
+      #   ALLOW-ALL   -> frame-ancestors * file: http: https:  (any origin)
+      #   empty/null  -> no X-Frame-Options or frame-ancestors (fully open)
+      - X_FRAME_OPTIONS=ALLOW-ALL
+      - SECURITY_HEADERS_ENABLED=true
+      - SECURE_COOKIES=false
+      # SameSite=lax for HTTP; use 'none' only with HTTPS (SameSite=None requires Secure flag)
+      - COOKIE_SAMESITE=lax
+
+      # ── Proxy auth (Embedded Mode forwards identity via header) ──
+      - TRUST_PROXY_AUTH=true
+      - PROXY_USER_HEADER=X-Authenticated-User
+
+      # ── Auth & platform admin ──
+      - AUTH_REQUIRED=true
+      - EMAIL_AUTH_ENABLED=true
+      - MCP_CLIENT_AUTH_ENABLED=true
+      - JWT_SECRET_KEY=jwt-secret-key
+      - PLATFORM_ADMIN_EMAIL=admin@example.com
+      - PLATFORM_ADMIN_PASSWORD=Changeme123!
+      - PLATFORM_ADMIN_FULL_NAME=Platform Administrator
+      - TOKEN_EXPIRY=1008000
+
+      # ── Password policy (relaxed for dev) ──
+      - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false
+      - PASSWORD_MIN_LENGTH=12
+      - PASSWORD_REQUIRE_LOWERCASE=true
+      - PASSWORD_REQUIRE_UPPERCASE=true
+      - PASSWORD_REQUIRE_NUMBERS=true
+      - PASSWORD_REQUIRE_SPECIAL=true
+      - ACCOUNT_LOCKOUT_DURATION_MINUTES=30
+      - MAX_FAILED_LOGIN_ATTEMPTS=5
+
+      # ── RBAC & visibility ──
+      - DEFAULT_USER_ROLE=developer
+      - ALLOW_PUBLIC_VISIBILITY=false
+      - PAGINATION_DEFAULT_PAGE_SIZE=350
+
+      # ── Header passthrough ──
+      - ENABLE_HEADER_PASSTHROUGH=true
+      - ENABLE_OVERWRITE_BASE_HEADERS=false
+      - "DEFAULT_PASSTHROUGH_HEADERS=[\"X-Tenant-Id\", \"X-Team-Id\", \"X-Trace-Id\", \"Authorization\"]"
+
+      # ── SSE / WebSocket ──
+      - SSE_KEEPALIVE_ENABLED=true
+      - SSE_KEEPALIVE_INTERVAL=30
+      - SSE_RETRY_TIMEOUT=5000
+      - WEBSOCKET_PING_INTERVAL=30
+
+      # ── SSRF (disabled for dev) ──
+      - SSRF_PROTECTION_ENABLED=false
+
+      # ── LLM Chat (disabled for embedded) ──
+      - LLMCHAT_ENABLED=false
+
+      # ── Federation (disabled) ──
+      - FEDERATION_ENABLED=false
+      - FEDERATION_DISCOVERY=false
+
+      # ── App root path (behind reverse proxy) ──
+      # Uncomment if Embedded Mode proxies at /api/proxy/mcp
+      # - APP_ROOT_PATH=/api/proxy/mcp
+
+      # ── Logging ──
+      - LOG_LEVEL=DEBUG
+      - LOG_FORMAT=json
+      - LOG_REQUESTS=false
+
+  # ──────────────────────────────────────────────────────────────────────
+  # iframe Test Harness - serves a simple page that embeds the gateway UI
+  # Access: http://localhost:8889
+  # ──────────────────────────────────────────────────────────────────────
+  iframe_harness:
+    image: nginx:alpine
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8889:80"
+    volumes:
+      - ./infra/iframe-test/index.html:/usr/share/nginx/html/index.html:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  ###############################################################################
+  # Benchmark Server - 10 MCP servers with 50 tools each = 500 tools
+  # For pagination testing with large numbers of items
+  ###############################################################################
+  # Benchmark services: inherited from base compose (profiles: ["benchmark"])
+  # Activated via --profile benchmark in Makefile targets
+  register_benchmark:
+    image: ghcr.io/ibm/mcp-context-forge:1ba8130f7fb82e6f393435be8d064879f234ace1
+    environment:
+      - JWT_SECRET_KEY=jwt-secret-key
+      - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
+      - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
+    command:
+      - |
+        echo "Registering benchmark servers with gateway..."
+
+        # Wait for benchmark servers to start (no healthcheck available)
+        echo "Waiting for benchmark servers to start..."
+        sleep 5
+
+        # Generate JWT token (uses overridden jwt-secret-key)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret jwt-secret-key --algo HS256 2>/dev/null)
+
+        # Register benchmark servers
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        server_count = int(os.environ.get('BENCHMARK_SERVER_COUNT', '10'))
+        start_port = int(os.environ.get('BENCHMARK_START_PORT', '9000'))
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            body = json.dumps(data).encode() if data else None
+            req = urllib.request.Request(url, data=body, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+
+        print(f'Registering {server_count} benchmark servers (ports {start_port}-{start_port + server_count - 1})...')
+        registered = 0
+        for port in range(start_port, start_port + server_count):
+            name = f'benchmark-{port}'
+            try:
+                result = api_request('POST', '/gateways', {
+                    'name': name,
+                    'url': f'http://benchmark_server:{port}/mcp',
+                    'transport': 'STREAMABLEHTTP'
+                })
+                print(f'Registered {name}: {result.get(\"id\", \"unknown\")}')
+                registered += 1
+            except urllib.error.HTTPError as e:
+                if e.code == 409:
+                    print(f'{name} already registered')
+                    registered += 1
+                else:
+                    print(f'Failed to register {name}: HTTP {e.code}')
+            except Exception as e:
+                print(f'Failed to register {name}: {e}')
+
+        print(f'Registration complete: {registered}/{server_count} benchmark servers')
+        "
+
+  # NOTE: register_fast_time uses hardcoded secret in its command script.
+  # It will fail with 401 when JWT_SECRET_KEY differs from base compose.
+  # This is non-critical — benchmark servers provide the bulk test data.
+  # To also register fast_time, manually run:
+  #   curl -X POST http://localhost:8080/gateways \
+  #     -H "Authorization: Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret jwt-secret-key --algo HS256)" \
+  #     -H "Content-Type: application/json" \
+  #     -d '{"name":"fast_time","url":"http://fast_time_server:8080/http","transport":"STREAMABLEHTTP"}'

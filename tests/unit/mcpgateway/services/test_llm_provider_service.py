@@ -33,6 +33,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMProviderNameConflictError,
     LLMProviderNotFoundError,
     LLMProviderService,
+    LLMProviderValidationError,
     protect_provider_config_for_storage,
     sanitize_provider_config_for_response,
 )
@@ -74,6 +75,31 @@ def test_create_provider_success(service, db, monkeypatch: pytest.MonkeyPatch):
     db.add.assert_called_once()
     db.commit.assert_called_once()
     db.refresh.assert_called_once()
+
+
+def test_create_provider_rejects_ssrf_unsafe_api_base(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Service-level validation should reject unsafe api_base even if schema is bypassed."""
+    db.execute.return_value = _mock_execute_scalar(None)
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+    monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
+
+    provider_data = LLMProviderCreate.model_construct(
+        name="Provider",
+        description=None,
+        provider_type=LLMProviderType.OPENAI,
+        api_key=None,
+        api_base="http://127.0.0.1",
+        api_version=None,
+        config={},
+        default_model=None,
+        default_temperature=0.7,
+        default_max_tokens=None,
+        enabled=True,
+        plugin_ids=[],
+    )
+
+    with pytest.raises(LLMProviderValidationError):
+        service.create_provider(db, provider_data, created_by="user")
 
 
 def test_create_provider_encrypts_sensitive_config(service, db, monkeypatch: pytest.MonkeyPatch):
@@ -189,6 +215,35 @@ def test_update_provider_fields(service, db, monkeypatch: pytest.MonkeyPatch):
     assert updated.plugin_ids == ["plugin-1"]
     db.commit.assert_called_once()
     db.refresh.assert_called_once()
+
+
+def test_update_provider_rejects_ssrf_unsafe_api_base(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Service-level validation should reject unsafe api_base on updates."""
+    provider = SimpleNamespace(
+        id="p1",
+        name="Old",
+        slug="old",
+        description=None,
+        provider_type=LLMProviderType.OPENAI,
+        api_key=None,
+        api_base=None,
+        api_version=None,
+        config={},
+        default_model=None,
+        default_temperature=None,
+        default_max_tokens=None,
+        enabled=True,
+        plugin_ids=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+    db.execute.return_value = _mock_execute_scalar(None)
+
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+    monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
+    update = LLMProviderUpdate.model_construct(api_base="http://127.0.0.1")
+
+    with pytest.raises(LLMProviderValidationError):
+        service.update_provider(db, "p1", update, modified_by="editor")
 
 
 def test_update_provider_preserves_masked_sensitive_config(service, db):
@@ -883,7 +938,7 @@ async def test_check_provider_health_generic_exception(service, db, monkeypatch:
     result = await service.check_provider_health(db, "p1")
 
     assert result.status.value == "unhealthy"
-    assert "Error:" in result.error
+    assert "Error:" in result.error or result.error == "unexpected error"
 
 
 @pytest.mark.asyncio
@@ -940,3 +995,34 @@ async def test_check_provider_health_generic_type_status_ok(service, db, monkeyp
     result = await service.check_provider_health(db, "p1")
 
     assert result.status.value == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_check_provider_health_rejects_ssrf_unsafe_api_base(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Health check must enforce SSRF-safe destination validation."""
+    provider = SimpleNamespace(
+        id="p1",
+        name="Provider",
+        provider_type="custom",
+        api_key=None,
+        api_base="http://127.0.0.1",
+        health_status=None,
+        last_health_check=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+
+    class DummyClient:
+        async def get(self, url, timeout=5.0):
+            raise AssertionError("HTTP request should not be attempted for SSRF-blocked URL")
+
+    async def fake_get_http_client():
+        return DummyClient()
+
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+    monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", fake_get_http_client)
+
+    result = await service.check_provider_health(db, "p1")
+
+    assert result.status.value == "unhealthy"
+    assert "ssrf" in result.error.lower() or "blocked" in result.error.lower()

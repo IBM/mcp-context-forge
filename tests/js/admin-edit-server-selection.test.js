@@ -1547,7 +1547,7 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
             input.type = "radio";
             input.name = "visibility";
             input.value = val;
-            input.id = `edit-visibility-${val}`;
+            input.id = `edit-server-visibility-${val}`;
             if (val === "public") input.disabled = true;
             form.appendChild(input);
         });
@@ -1608,8 +1608,10 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
             // editServer may throw on missing DOM elements (modal etc.)
         }
 
-        const teamRadio = flagDoc.getElementById("edit-visibility-team");
-        const publicRadio = flagDoc.getElementById("edit-visibility-public");
+        const teamRadio = flagDoc.getElementById("edit-server-visibility-team");
+        const publicRadio = flagDoc.getElementById(
+            "edit-server-visibility-public",
+        );
         expect(teamRadio.checked).toBe(true);
         expect(publicRadio.checked).toBe(false);
     });
@@ -1630,8 +1632,12 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
         await flagWin.editServer("srv-2");
 
         // No team_id in URL → no coercion, public radio remains selected.
-        const privateRadio = flagDoc.getElementById("edit-visibility-private");
-        const publicRadio = flagDoc.getElementById("edit-visibility-public");
+        const privateRadio = flagDoc.getElementById(
+            "edit-server-visibility-private",
+        );
+        const publicRadio = flagDoc.getElementById(
+            "edit-server-visibility-public",
+        );
         expect(publicRadio.checked).toBe(true);
         expect(privateRadio.checked).toBe(false);
     });
@@ -1651,7 +1657,7 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
 
         await flagWin.editServer("srv-3");
 
-        const teamRadio = flagDoc.getElementById("edit-visibility-team");
+        const teamRadio = flagDoc.getElementById("edit-server-visibility-team");
         expect(teamRadio.checked).toBe(true);
     });
 });

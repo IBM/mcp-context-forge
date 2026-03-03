@@ -36,6 +36,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMProviderNameConflictError,
     LLMProviderNotFoundError,
     LLMProviderService,
+    LLMProviderValidationError,
 )
 from mcpgateway.services.logging_service import LoggingService
 
@@ -94,6 +95,8 @@ async def create_provider(
         return result
     except LLMProviderNameConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except LLMProviderValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create LLM provider: {e}")
         raise HTTPException(
@@ -227,6 +230,8 @@ async def update_provider(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except LLMProviderNameConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except LLMProviderValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e))
 
 
 @llm_config_router.delete(

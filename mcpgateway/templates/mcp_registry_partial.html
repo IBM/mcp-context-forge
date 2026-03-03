@@ -2,7 +2,7 @@
 <script>
   // Set global ROOT_PATH for consistency across all JavaScript
   if (typeof window.ROOT_PATH === 'undefined') {
-    window.ROOT_PATH = '{{ root_path }}';
+    window.ROOT_PATH = {{ root_path|tojson }};
   }
 
   // Filter badge click handlers - these trigger the HTMX selects in the partial
@@ -190,7 +190,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if is_selected %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %} cursor-pointer hover:bg-blue-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="category"
           data-filter-value="{{ category }}"
-          onclick="filterByCategory('{{ category }}')" onkeydown="handleKeydown(event, () => filterByCategory('{{ category }}'))" role="button" tabindex="0"
+          onclick="filterByCategory({{ category|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByCategory({{ category|tojson_attr }}))" role="button" tabindex="0"
         >
           {{ category }}
           <span class="ml-1 text-xs {% if is_selected %}text-blue-600 dark:text-blue-300{% else %}text-gray-500 dark:text-gray-400{% endif %}"
@@ -245,7 +245,7 @@
           class="flex justify-between items-center p-2 {% if is_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="auth"
           data-filter-value="{{ auth_type }}"
-          onclick="filterByAuthType('{{ auth_type }}')" onkeydown="handleKeydown(event, () => filterByAuthType('{{ auth_type }}'))" role="button" tabindex="0"
+          onclick="filterByAuthType({{ auth_type|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByAuthType({{ auth_type|tojson_attr }}))" role="button" tabindex="0"
         >
           <span class="text-sm font-medium {% if is_auth_selected %}text-blue-700 dark:text-blue-300{% else %}text-gray-700 dark:text-gray-300{% endif %}"
             >{{ auth_type }}</span
@@ -297,7 +297,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="provider"
           data-filter-value="{{ provider | lower }}"
-          onclick="filterByProvider('{{ provider | lower }}')" onkeydown="handleKeydown(event, () => filterByProvider('{{ provider | lower }}'))" role="button" tabindex="0"
+          onclick="filterByProvider({{ provider | lower|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByProvider({{ provider | lower|tojson_attr }}))" role="button" tabindex="0"
         >
           {{ provider }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -512,7 +512,7 @@
       Key", "OAuth2.1 & API Key"] %}
       <button
         class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-        onclick="showApiKeyModal('{{ server.id }}', '{{ server.name }}', '{{ server.url }}')"
+        onclick="showApiKeyModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }}, {{ server.url|tojson_attr }})"
       >
         Add Server
       </button>
