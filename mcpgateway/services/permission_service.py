@@ -160,15 +160,22 @@ class PermissionService:
             # Default to deny on error
             return False
 
-    async def has_admin_permission(self, user_email: str) -> bool:
+    async def has_admin_permission(self, user_email: str, team_id: Optional[str] = None) -> bool:
         """Check if user has any admin-level permission.
 
         This is used by AdminAuthMiddleware to allow access to /admin/* routes
         for users who have admin permissions via RBAC, even if they're not
         marked as is_admin in the database.
 
+        When team_id is provided (team-scoped request), team-scoped roles are
+        included in the permission check.  When team_id is None, only global
+        and personal roles are evaluated (original behavior).
+
         Args:
             user_email: Email of the user to check
+            team_id: Optional team ID for team-scoped permission checks.
+                Must be pre-validated against the user's DB-resolved teams
+                before passing here.
 
         Returns:
             bool: True if user is an admin OR has any admin.* permission
@@ -178,8 +185,11 @@ class PermissionService:
             if await self._is_user_admin(user_email):
                 return True
 
-            # Get user's permissions and check for any admin.* permission
-            user_permissions = await self.get_user_permissions(user_email)
+            # Get user's permissions and check for any admin.* permission.
+            # When team_id is provided, this includes team-scoped roles for
+            # that team, allowing team members with admin.dashboard to access
+            # the admin UI in their team context.
+            user_permissions = await self.get_user_permissions(user_email, team_id=team_id)
 
             # Check for wildcard or any admin permission
             if Permissions.ALL_PERMISSIONS in user_permissions:

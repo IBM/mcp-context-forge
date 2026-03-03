@@ -1821,9 +1821,21 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
 
                     # Check if user has admin permissions (either is_admin flag OR admin.* RBAC permissions)
-                    # This allows granular admin access for users with specific admin permissions
+                    # This allows granular admin access for users with specific admin permissions.
+                    # When the request is team-scoped (?team_id=...), include team-scoped roles
+                    # so that developer/viewer roles with admin.dashboard can access the UI.
                     permission_service = PermissionService(db)
-                    has_admin_access = await permission_service.has_admin_permission(username)
+                    request_team_id = request.query_params.get("team_id")
+                    # Normalize to hex so hyphenated UUIDs match DB-stored hex IDs.
+                    # Fall back to raw value for non-UUID team IDs (e.g. from legacy tokens).
+                    if request_team_id:
+                        try:
+                            request_team_id = uuid.UUID(request_team_id).hex
+                        except (ValueError, AttributeError):
+                            pass  # keep raw value for non-UUID token_teams
+                    # Only trust team_id if it is in the user's DB-resolved teams
+                    validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
+                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id)
                     if not has_admin_access:
                         logger.warning(f"Admin access denied for user without admin permissions: {username}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
