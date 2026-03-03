@@ -1931,6 +1931,11 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
     server_id, _, user_context = await _get_request_context_or_default()
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
     if not settings.mcp_require_auth:
         await _check_server_oauth_enforcement(server_id, user_context)
 
@@ -2896,6 +2901,10 @@ class _StreamableHttpAuthHandler:
             # DB failure during team resolution or membership validation
             logger.exception("Database error during MCP authentication")
             return await self._send_error(detail="Service unavailable — unable to verify authentication", status_code=503)
+        except Exception:
+            # Unexpected error during authentication — fail closed with 401.
+            logger.exception("Unexpected error during MCP JWT authentication")
+            return await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
 
         return True
 

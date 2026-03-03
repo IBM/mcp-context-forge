@@ -5899,6 +5899,7 @@ async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
 @pytest.mark.asyncio
 async def test_forwarded_post_denies_non_owner_session_access(monkeypatch):
     """Internally forwarded requests must deny when session owner does not match requester."""
+
     class DummySessionManager:
         @asynccontextmanager
         async def run(self):
@@ -6396,6 +6397,7 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
 @pytest.mark.asyncio
 async def test_local_affinity_post_denies_non_owner_session_access(monkeypatch):
     """Local affinity /rpc routing must deny cross-user stateful session replay."""
+
     class DummySessionManager:
         @asynccontextmanager
         async def run(self):
@@ -9045,8 +9047,7 @@ async def test_get_request_context_header_wins_over_cookie(monkeypatch):
 
             assert captured_tokens, "verify_credentials_cached was never called"
             assert captured_tokens[0] == "header-token-value", (
-                f"Expected header token to be used, got {captured_tokens[0]!r}. "
-                "Cookie-first bug: cookie token was used instead of Authorization header."
+                f"Expected header token to be used, got {captured_tokens[0]!r}. " "Cookie-first bug: cookie token was used instead of Authorization header."
             )
             assert user == normalized
     finally:
@@ -9340,13 +9341,15 @@ async def test_call_tool_rehydrate_unknown_type_produces_valid_json(monkeypatch)
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(return_value={
-        "result": {
-            "content": [
-                {"type": "custom_widget", "data": {"enabled": False, "count": 42}},
-            ],
-        },
-    })
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={
+            "result": {
+                "content": [
+                    {"type": "custom_widget", "data": {"enabled": False, "count": 42}},
+                ],
+            },
+        }
+    )
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -9391,13 +9394,15 @@ async def test_call_tool_rehydrate_fallback_on_validation_error(monkeypatch):
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(return_value={
-        "result": {
-            "content": [
-                {"type": "image", "invalid_field": True, "nested": {"active": False}},
-            ],
-        },
-    })
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={
+            "result": {
+                "content": [
+                    {"type": "image", "invalid_field": True, "nested": {"active": False}},
+                ],
+            },
+        }
+    )
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -10524,3 +10529,29 @@ async def test_streamable_http_auth_sqlalchemy_error_returns_503(monkeypatch):
     assert result is False
     assert sent and sent[0]["type"] == "http.response.start"
     assert sent[0]["status"] == 503
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_unexpected_exception_returns_401(monkeypatch):
+    """Unexpected (non-HTTPException, non-SQLAlchemy) error during JWT auth returns 401."""
+
+    async def fake_verify(token):
+        raise RuntimeError("Something completely unexpected")
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    scope = _make_scope(
+        "/servers/1/mcp",
+        headers=[(b"authorization", b"Bearer bad-token")],
+    )
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 401
