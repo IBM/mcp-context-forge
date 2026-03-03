@@ -10555,3 +10555,88 @@ async def test_streamable_http_auth_unexpected_exception_returns_401(monkeypatch
     assert result is False
     assert sent and sent[0]["type"] == "http.response.start"
     assert sent[0]["status"] == 401
+
+
+# ── Token scope enforcement tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_call_tool_denied_by_token_scope(monkeypatch):
+    """Token with tools.read but not tools.execute should be denied call_tool via scope check."""
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True, "scoped_permissions": ["servers.use", "tools.read"]},
+            )
+        ),
+    )
+    # RBAC would allow, but token scope should deny
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock())
+
+    with pytest.raises(PermissionError, match="tools.execute"):
+        await call_tool("mytool", {"foo": "bar"})
+
+    tool_service.invoke_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_allowed_by_token_scope(monkeypatch):
+    """Token with tools.execute in scope should be allowed."""
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True, "scoped_permissions": ["servers.use", "tools.execute"]},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    from mcp import types as mcp_types
+
+    tool_result = MagicMock()
+    tool_result.content = [mcp_types.TextContent(type="text", text="ok")]
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=tool_result))
+
+    await call_tool("mytool", {"foo": "bar"})
+    tool_service.invoke_tool.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_allowed_with_empty_scoped_permissions(monkeypatch):
+    """Token with no scoped permissions (defer to RBAC) should be allowed if RBAC passes."""
+    from mcp import types as mcp_types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    tool_result = MagicMock()
+    tool_result.content = [mcp_types.TextContent(type="text", text="ok")]
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=tool_result))
+
+    await call_tool("mytool", {"foo": "bar"})
+    tool_service.invoke_tool.assert_called_once()

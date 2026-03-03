@@ -627,6 +627,24 @@ async def _check_streamable_permission(
         return False
 
 
+def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> bool:
+    """Check if token scoped permissions allow this operation.
+
+    Args:
+        user_context: User context dict (may contain 'scoped_permissions' key).
+        permission: Permission to check.
+
+    Returns:
+        True if allowed (no scope cap, wildcard, or permission present).
+    """
+    scoped = user_context.get("scoped_permissions")
+    if not scoped:  # None or empty list = defer to RBAC
+        return True
+    if "*" in scoped:
+        return True
+    return permission in scoped
+
+
 def set_shared_session_registry(session_registry: Any) -> None:
     """Set the process-wide session registry used by Streamable HTTP helpers.
 
@@ -962,6 +980,10 @@ async def call_tool(name: str, arguments: dict) -> Union[
         await _check_server_oauth_enforcement(server_id, user_context)
 
     if _should_enforce_streamable_rbac(user_context):
+        # Layer 1: Token scope cap
+        if not _check_scoped_permission(user_context, "tools.execute"):
+            raise PermissionError("Insufficient permissions. Required: tools.execute")
+        # Layer 2: RBAC check
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
@@ -1348,12 +1370,18 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
         final_teams = normalize_token_teams(payload)
 
-    return {
+    user_ctx: dict[str, Any] = {
         "email": email,
         "teams": final_teams,
         "is_admin": is_admin,
         "is_authenticated": True,
     }
+    # Extract scoped permissions from JWT for per-method enforcement
+    scopes = payload.get("scopes") or {}
+    scoped_perms = scopes.get("permissions") or [] if isinstance(scopes, dict) else []
+    if scoped_perms:
+        user_ctx["scoped_permissions"] = scoped_perms
+    return user_ctx
 
 
 @mcp_app.list_tools()
@@ -2886,14 +2914,18 @@ class _StreamableHttpAuthHandler:
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
 
-            user_context_var.set(
-                {
-                    "email": user_email,
-                    "teams": final_teams,
-                    "is_authenticated": True,
-                    "is_admin": is_admin,
-                }
-            )
+            auth_user_ctx: dict[str, Any] = {
+                "email": user_email,
+                "teams": final_teams,
+                "is_authenticated": True,
+                "is_admin": is_admin,
+            }
+            # Extract scoped permissions from JWT for per-method enforcement
+            jwt_scopes = user_payload.get("scopes") or {}
+            jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
+            if jwt_scoped_perms:
+                auth_user_ctx["scoped_permissions"] = jwt_scoped_perms
+            user_context_var.set(auth_user_ctx)
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
