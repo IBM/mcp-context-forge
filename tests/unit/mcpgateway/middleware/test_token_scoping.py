@@ -131,6 +131,16 @@ class TestTokenScopingMiddleware:
             result = middleware._check_server_restriction(path, "server-123")
             assert result == True, f"Path {path} should remain whitelisted"
 
+    def test_transport_endpoints_whitelisted_for_server_scoped_tokens(self, middleware):
+        """Transport endpoints (/rpc, /mcp, /sse) must be whitelisted for server-scoped tokens.
+
+        These endpoints don't contain a server ID in the URL path, so they must
+        appear in general_endpoints to avoid being denied by _check_server_restriction.
+        """
+        for path in ["/rpc", "/mcp", "/sse"]:
+            result = middleware._check_server_restriction(path, "server-123")
+            assert result is True, f"{path} should be whitelisted for server-scoped tokens"
+
     @pytest.mark.asyncio
     async def test_canonical_permissions_used_in_map(self, middleware):
         """Test that permission map uses canonical Permissions constants (Issue 5 fix)."""
