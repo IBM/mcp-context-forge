@@ -34,8 +34,10 @@ from typing import Any, Generator
 import uuid
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, Playwright
 import pytest
+
+pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
+from playwright.sync_api import APIRequestContext, Playwright
 
 # First-Party
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
