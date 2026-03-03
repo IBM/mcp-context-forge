@@ -231,18 +231,20 @@ def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, N
 @pytest.fixture(scope="module")
 def sse_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
     """Register fast_time_server via SSE transport and wait for tool sync."""
-    # Delete any pre-existing SSE gateway with same name
+    sse_url = "http://fast_time_server:8080/sse"
+
+    # Delete any pre-existing SSE gateway with same name or same URL
     with suppress(Exception):
         gateways = admin_api.get("/gateways").json()
         for gw in gateways:
-            if gw.get("name") == SSE_GATEWAY_NAME:
+            if gw.get("name") == SSE_GATEWAY_NAME or gw.get("url") == sse_url:
                 admin_api.delete(f"/gateways/{gw['id']}")
 
     resp = admin_api.post(
         "/gateways",
         data={
             "name": SSE_GATEWAY_NAME,
-            "url": "http://fast_time_server:8080/sse",
+            "url": sse_url,
             "transport": "SSE",
         },
     )
