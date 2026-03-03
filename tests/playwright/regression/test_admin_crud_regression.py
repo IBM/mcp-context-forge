@@ -166,11 +166,11 @@ class TestVirtualServerCRUD:
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
 
         assert js_errors == [], (
-            f"JavaScript errors during server creation:\n"
+            "JavaScript errors during server creation:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
         assert failed_requests == [], (
-            f"Failed API calls during server creation:\n"
+            "Failed API calls during server creation:\n"
             + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
         )
 
@@ -231,11 +231,11 @@ class TestVirtualServerCRUD:
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
 
         assert js_errors == [], (
-            f"JavaScript errors during server edit:\n"
+            "JavaScript errors during server edit:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
         assert failed_requests == [], (
-            f"Failed API calls during server edit:\n"
+            "Failed API calls during server edit:\n"
             + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
         )
 
@@ -291,11 +291,11 @@ class TestVirtualServerCRUD:
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
 
         assert js_errors == [], (
-            f"JavaScript errors during server deletion:\n"
+            "JavaScript errors during server deletion:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
         assert failed_requests == [], (
-            f"Failed API calls during server deletion:\n"
+            "Failed API calls during server deletion:\n"
             + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
         )
 
@@ -342,7 +342,7 @@ class TestStatePersistence:
         # Step 4: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
-            f"JavaScript errors after page refresh:\n"
+            "JavaScript errors after page refresh:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
 
@@ -395,7 +395,7 @@ class TestStatePersistence:
         # Step 6: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
-            f"JavaScript errors after team context refresh:\n"
+            "JavaScript errors after team context refresh:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
 
@@ -445,7 +445,7 @@ class TestStatePersistence:
         # Step 6: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
-            f"JavaScript errors after filter state refresh:\n"
+            "JavaScript errors after filter state refresh:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
 
@@ -475,7 +475,7 @@ class TestErrorMonitoring:
 
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
-            f"JavaScript errors on page load:\n"
+            "JavaScript errors on page load:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
 
@@ -495,7 +495,7 @@ class TestErrorMonitoring:
 
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
         assert failed_requests == [], (
-            f"Failed API calls on page load:\n"
+            "Failed API calls on page load:\n"
             + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
         )
 
@@ -524,7 +524,7 @@ class TestErrorMonitoring:
 
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
-            f"JavaScript errors during tab navigation:\n"
+            "JavaScript errors during tab navigation:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
 
@@ -573,7 +573,7 @@ class TestErrorMonitoring:
 
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
-            f"JavaScript errors when clicking data-action buttons:\n"
+            "JavaScript errors when clicking data-action buttons:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
 

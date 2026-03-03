@@ -341,8 +341,6 @@ class TestToolTableInIframe:
         This is the end-to-end delegation test: the click event bubbles up to
         the wrapper's delegation listener which calls viewTool(toolId).
         """
-        frame = _get_admin_frame(page)
-
         # Wait for the tools tab to be available
         try:
             iframe_host.locator('[data-testid="tools-tab"]').wait_for(
