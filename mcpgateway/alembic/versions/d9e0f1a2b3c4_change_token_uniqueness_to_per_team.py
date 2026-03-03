@@ -34,11 +34,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Replace global (user_email, name) unique constraint with per-team (user_email, name, team_id) constraint."""
-    inspector = sa.inspect(op.get_bind())
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
     # Skip if the table doesn't exist yet (fresh DB is created directly from db.py models)
     if "email_api_tokens" not in inspector.get_table_names():
         return
+
+    # Clean up orphaned temp table from a previously failed batch_alter_table run.
+    # On SQLite, DDL is non-transactional so the temp table persists after a rollback.
+    if "_alembic_tmp_email_api_tokens" in inspector.get_table_names():
+        op.drop_table("_alembic_tmp_email_api_tokens")
 
     existing_constraints = {c["name"] for c in inspector.get_unique_constraints("email_api_tokens")}
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("email_api_tokens")}
@@ -73,10 +79,15 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Restore the original global (user_email, name) unique constraint."""
-    inspector = sa.inspect(op.get_bind())
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
     if "email_api_tokens" not in inspector.get_table_names():
         return
+
+    # Clean up orphaned temp table from a previously failed batch_alter_table run.
+    if "_alembic_tmp_email_api_tokens" in inspector.get_table_names():
+        op.drop_table("_alembic_tmp_email_api_tokens")
 
     existing_constraints = {c["name"] for c in inspector.get_unique_constraints("email_api_tokens")}
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("email_api_tokens")}
