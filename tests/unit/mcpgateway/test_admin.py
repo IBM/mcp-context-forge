@@ -5546,6 +5546,259 @@ class TestAdminUIMainEndpoint:
         assert context["a2a_agents"] == []  # Should be empty list when A2A disabled
 
 
+class TestAdminNonMemberTeamBanner:
+    """Test the admin non-member team banner feature."""
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_viewing_non_member_team_flag_true(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is True when admin selects non-member team."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        # Admin user's teams (they are member of team-1 only)
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "member"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Admin user selecting team-2 (which they are NOT a member of)
+        response = await admin_ui(
+            request=mock_request,
+            team_id="team-2",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is True (admin viewing non-member team)
+        assert context["admin_viewing_non_member_team"] is True
+        assert context["is_admin"] is True
+        assert context["selected_team_id"] == "team-2"
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_viewing_member_team_flag_false(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is False when admin selects their own team."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        # Admin user's teams
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "owner"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Admin user selecting team-1 (which they ARE a member of)
+        response = await admin_ui(
+            request=mock_request,
+            team_id="team-1",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is False (admin viewing their own team)
+        assert context["admin_viewing_non_member_team"] is False
+        assert context["is_admin"] is True
+        assert context["selected_team_id"] == "team-1"
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_non_admin_viewing_team_flag_false(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is False for non-admin users."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "member"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Non-admin user (is_admin=False)
+        response = await admin_ui(
+            request=mock_request,
+            team_id="team-1",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "user@example.com", "is_admin": False, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is False (non-admin user)
+        assert context["admin_viewing_non_member_team"] is False
+        assert context["is_admin"] is False
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_no_team_selected_flag_false(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is False when no team is selected."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "member"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Admin user with no team selected (team_id=None)
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is False (no team selected)
+        assert context["admin_viewing_non_member_team"] is False
+        assert context["is_admin"] is True
+        assert context["selected_team_id"] is None
+
+
 class TestSetLoggingService:
     """Test the logging service setup functionality."""
 

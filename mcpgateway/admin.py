@@ -3231,15 +3231,15 @@ async def admin_ui(
 
     # --------------------------------------------------------------------------------
     # Validate team_id if provided (only when email-based teams are enabled).
-    # Non-admin users get 403 when they supply a team_id they do not belong to.
     # Platform admins with unrestricted tokens (is_admin AND token_teams is None)
-    # bypass the membership check, consistent with the codebase admin bypass
-    # convention. Team-scoped admin tokens are still subject to membership checks.
-    # When team_id is None (not sent), selected_team_id stays None and the
-    # unscoped/public path works as expected.
+    # bypass the membership check. Team-scoped admin tokens can still view any
+    # team for governance. Non-admins get their team filter reset when they
+    # supply a team_id they do not belong to.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
     user_email = get_user_email(user)
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    
     if team_id and getattr(settings, "email_auth_enabled", False):
         _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
         _token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
@@ -3250,8 +3250,12 @@ async def admin_ui(
 
             valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
             if str(team_id) not in valid_team_ids:
-                LOGGER.warning("Requested team_id is not in user's teams; rejecting (team_id=%s)", team_id)
-                raise HTTPException(status_code=403, detail="Not a member of the requested team")
+                # Admins can view non-member teams for governance purposes
+                if not is_admin_user:
+                    LOGGER.warning("Non-admin requested team_id not in their teams; ignoring team filter (team_id=%s)", team_id)
+                    selected_team_id = None
+                else:
+                    LOGGER.info("Admin viewing non-member team for governance (team_id=%s)", team_id)
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
@@ -3600,6 +3604,12 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
             "selected_team_id": selected_team_id,
+            "admin_viewing_non_member_team": (
+                bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+                and selected_team_id is not None
+                and selected_team_id != ""
+                and not any(t.get("id") == selected_team_id for t in user_teams)
+            ),
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "ui_hidden_sections": ui_visibility_config["hidden_sections"],
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
