@@ -152,6 +152,27 @@ class TestTokenScopingMiddleware:
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
     @pytest.mark.asyncio
+    async def test_rpc_endpoint_allowed_with_tools_execute_permission(self, middleware):
+        """POST /rpc must be reachable for tokens that carry tools.execute in their scopes.
+
+        Regression: tokens with explicit scopes.permissions (e.g. API tokens created in the
+        UI) were denied with "Insufficient permissions for this operation" on POST /rpc even
+        when they held tools.execute, because /rpc had no entry in _PERMISSION_PATTERNS and
+        the middleware defaults to deny for unmatched paths.
+        """
+        # Token has tools.execute - must be allowed through
+        result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.TOOLS_EXECUTE])
+        assert result is True, "POST /rpc should be allowed when token has tools.execute"
+
+        # Token only has tools.read - should be denied at the middleware layer
+        result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.TOOLS_READ])
+        assert result is False, "POST /rpc should be denied when token lacks tools.execute"
+
+        # Wildcard permission bypasses pattern matching entirely
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["*"])
+        assert result is True, "POST /rpc should be allowed with wildcard permission"
+
+    @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
         """Test that admin endpoint groups use canonical granular permissions."""
         result = middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
