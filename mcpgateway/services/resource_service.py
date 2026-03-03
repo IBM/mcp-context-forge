@@ -1764,7 +1764,6 @@ class ResourceService(BaseService):
                                     async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
                                         read_stream,
                                         write_stream,
-                                        _get_session_id,
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()

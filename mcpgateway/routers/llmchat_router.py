@@ -40,7 +40,7 @@ except ImportError:
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import (
     GatewayConfig,
@@ -728,6 +728,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
 
 
 @llmchat_router.post("/connect")
+@require_permission("llm.invoke")
 async def connect(input_data: ConnectInput, request: Request, user=Depends(get_current_user_with_permissions)):
     """Create or refresh a chat session for a user.
 
@@ -975,6 +976,7 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
 
 
 @llmchat_router.post("/chat")
+@require_permission("llm.invoke")
 async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permissions)):
     """Send a message to the user's active chat session and receive a response.
 
@@ -1091,6 +1093,7 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
 
 
 @llmchat_router.post("/disconnect")
+@require_permission("llm.invoke")
 async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_with_permissions)):
     """End the chat session for a user and clean up resources.
 
@@ -1171,6 +1174,7 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
 
 
 @llmchat_router.get("/status/{user_id}")
+@require_permission("llm.read")
 async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
     """Check if an active chat session exists for the specified user.
 
@@ -1216,6 +1220,7 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
 
 
 @llmchat_router.get("/config/{user_id}")
+@require_permission("llm.read")
 async def get_config(user_id: str, user=Depends(get_current_user_with_permissions)):
     """Retrieve the stored configuration for a user's session.
 
@@ -1276,6 +1281,7 @@ async def get_config(user_id: str, user=Depends(get_current_user_with_permission
 
 
 @llmchat_router.get("/gateway/models")
+@require_permission("llm.read")
 async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
     """Get available models from configured LLM providers.
 

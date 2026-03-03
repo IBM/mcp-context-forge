@@ -616,15 +616,57 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 )
 
                 # If a plugin made a decision, respect it
-                if result and result.modified_payload:
-                    if result.modified_payload.granted:
-                        logger.info(f"Permission granted by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
-                        return await func(*args, **kwargs)
-                    logger.warning(f"Permission denied by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Insufficient permissions. Required: {permission}",
+                if result and result.modified_payload and hasattr(result.modified_payload, "granted"):
+                    decision_plugin = "unknown"
+                    decision_reason = getattr(result.modified_payload, "reason", None)
+                    result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+                    if result_metadata.get("_decision_plugin"):
+                        decision_plugin = str(result_metadata["_decision_plugin"])
+                    for key in ("plugin_name", "plugin", "source_plugin", "handler"):
+                        if decision_plugin != "unknown":
+                            break
+                        plugin_name = result_metadata.get(key)
+                        if plugin_name:
+                            decision_plugin = str(plugin_name)
+
+                    logger.info(
+                        "Plugin permission decision: plugin=%s user=%s permission=%s granted=%s reason=%s",
+                        decision_plugin,
+                        user_context["email"],
+                        permission,
+                        result.modified_payload.granted,
+                        decision_reason,
                     )
+
+                    if result.modified_payload.granted:
+                        if settings.plugins_can_override_rbac:
+                            logger.warning(
+                                "Plugin RBAC grant override applied: plugin=%s user=%s permission=%s reason=%s",
+                                decision_plugin,
+                                user_context["email"],
+                                permission,
+                                decision_reason,
+                            )
+                            return await func(*args, **kwargs)
+
+                        logger.info(
+                            "Plugin RBAC grant decision ignored by default policy: plugin=%s user=%s permission=%s",
+                            decision_plugin,
+                            user_context["email"],
+                            permission,
+                        )
+                    else:
+                        logger.warning(
+                            "Permission denied by plugin: plugin=%s user=%s permission=%s reason=%s",
+                            decision_plugin,
+                            user_context["email"],
+                            permission,
+                            decision_reason,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Insufficient permissions. Required: {permission}",
+                        )
 
             # No plugin handled it, fall through to standard RBAC check
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh

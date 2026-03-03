@@ -27,25 +27,31 @@ def patch_logger(monkeypatch):
 # CONFIGURATION TESTS
 # --------------------------------------------------------------------------- #
 
-def test_mcpserverconfig_http_and_stdio_modes():
+def test_mcpserverconfig_http_and_stdio_modes(monkeypatch):
     http_conf = svc.MCPServerConfig(url="https://srv", transport="sse", auth_token="token")
     assert http_conf.url == "https://srv"
     assert "sse" in http_conf.transport
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     stdio_conf = svc.MCPServerConfig(command="python", args=["main.py"], transport="stdio")
     assert stdio_conf.command == "python"
     assert isinstance(stdio_conf.args, list)
 
 
-def test_mcpserverconfig_url_required_for_http_transports_validator():
-    info = SimpleNamespace(data={"transport": "sse"})
+def test_mcpserverconfig_stdio_requires_feature_flag(monkeypatch):
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", False)
+    with pytest.raises(ValueError, match="stdio transport is disabled"):
+        svc.MCPServerConfig(command="python", args=["main.py"], transport="stdio")
+
+
+def test_mcpserverconfig_url_required_for_http_transports():
     with pytest.raises(ValueError, match="URL is required"):
-        svc.MCPServerConfig.validate_url_for_transport(None, info)
+        svc.MCPServerConfig(transport="sse")
 
 
-def test_mcpserverconfig_command_required_for_stdio_validator():
-    info = SimpleNamespace(data={"transport": "stdio"})
+def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     with pytest.raises(ValueError, match="Command is required"):
-        svc.MCPServerConfig.validate_command_for_stdio(None, info)
+        svc.MCPServerConfig(transport="stdio")
 
 
 def test_azure_openai_config_and_defaults():

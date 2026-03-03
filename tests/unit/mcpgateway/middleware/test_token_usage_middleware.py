@@ -33,7 +33,7 @@ async def test_skips_health_check_paths():
     app = AsyncMock()
     middleware = TokenUsageMiddleware(app=app)
 
-    for path in ["/health", "/healthz", "/ready", "/metrics", "/static/logo.png"]:
+    for path in ["/health", "/healthz", "/ready", "/metrics", "/static/admin.css"]:
         scope = {"type": "http", "path": path, "method": "GET"}
         receive = AsyncMock()
         send = AsyncMock()

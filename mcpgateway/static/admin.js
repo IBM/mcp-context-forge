@@ -204,42 +204,36 @@ function updateEditToolUrl() {
     }
 }
 
-// Function to update default visibility based on team_id in URL
-function updateDefaultVisibility() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("team_id");
-    const hasTeam = teamId && teamId.trim() !== "";
+function isTeamScopedView() {
+    const teamId = new URLSearchParams(window.location.search).get("team_id");
+    return Boolean(teamId && teamId.trim() !== "");
+}
 
-    // List of visibility prefixes to handle
-    // These correspond to the "public", "team", "private" radio buttons
-    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
-    const visibilityPrefixes = [
-        "gateway-visibility", // Gateways (Create)
-        "server-visibility", // Virtual Servers (Create)
-        "tool-visibility", // Tools (Create)
-        "resource-visibility", // Resources (Create)
-        "prompt-visibility", // Prompts (Create)
-        "a2a-visibility", // Agents (Create)
-    ];
+/**
+ * Apply visibility restrictions (disable/style public radio) without changing checked state.
+ * Use this for edit forms to preserve the entity's saved visibility.
+ * @param {string[]} prefixes - Array of visibility ID prefixes to process
+ */
+function applyVisibilityRestrictions(prefixes) {
+    const hasTeam = isTeamScopedView();
 
-    visibilityPrefixes.forEach((prefix) => {
+    prefixes.forEach((prefix) => {
         const publicId = `[id="${prefix}-public"]`;
-        const teamIdStr = `[id="${prefix}-team"]`;
-        const privateIdStr = `[id="${prefix}-private"]`;
-
-        // Handle potential duplicate IDs using querySelectorAll
         const publicRadios = document.querySelectorAll(publicId);
-        const teamRadios = document.querySelectorAll(teamIdStr);
-        const privateRadios = document.querySelectorAll(privateIdStr);
 
         // Disable public radio when flag is false AND we're in a team-scoped view.
         const publicBlocked =
             window.ALLOW_PUBLIC_VISIBILITY === false && hasTeam;
         publicRadios.forEach((radio) => {
-            radio.disabled = publicBlocked;
+            // Keep a checked public value enabled in edit forms so FormData
+            // includes visibility and we don't silently change saved state.
+            // This is intentionally one-way: once switched away from public in
+            // restricted team scope, public cannot be re-selected.
+            const shouldDisable = publicBlocked && !radio.checked;
+            radio.disabled = shouldDisable;
             const wrapper = radio.closest(".flex.items-center");
             if (wrapper) {
-                if (publicBlocked) {
+                if (shouldDisable) {
                     wrapper.classList.add("opacity-40", "cursor-not-allowed");
                     wrapper.title =
                         "Public visibility is disabled by platform configuration";
@@ -256,6 +250,34 @@ function updateDefaultVisibility() {
                 }
             }
         });
+    });
+}
+
+// Function to update default visibility based on team_id in URL
+function updateDefaultVisibility() {
+    const hasTeam = isTeamScopedView();
+
+    // List of visibility prefixes to handle
+    // These correspond to the "public", "team", "private" radio buttons
+    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
+    const visibilityPrefixes = [
+        "gateway-visibility", // Gateways (Create)
+        "server-visibility", // Virtual Servers (Create)
+        "tool-visibility", // Tools (Create)
+        "resource-visibility", // Resources (Create)
+        "prompt-visibility", // Prompts (Create)
+        "a2a-visibility", // Agents (Create)
+    ];
+
+    // Set default checked state for add/create forms
+    visibilityPrefixes.forEach((prefix) => {
+        const publicId = `[id="${prefix}-public"]`;
+        const teamIdStr = `[id="${prefix}-team"]`;
+        const privateIdStr = `[id="${prefix}-private"]`;
+
+        const publicRadios = document.querySelectorAll(publicId);
+        const teamRadios = document.querySelectorAll(teamIdStr);
+        const privateRadios = document.querySelectorAll(privateIdStr);
 
         if (hasTeam) {
             // Default to Team
@@ -295,6 +317,10 @@ function updateDefaultVisibility() {
             });
         }
     });
+
+    // Apply restrictions after defaults are set so initially checked public
+    // radios in create forms become disabled once switched to team/private.
+    applyVisibilityRestrictions(visibilityPrefixes);
 }
 
 /**
@@ -777,7 +803,20 @@ function _navigateAdmin(fragment, searchParams) {
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : window.ROOT_PATH || window.location.origin;
     const qs = searchParams ? searchParams.toString() : "";
-    window.location.href = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+    const target = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+
+    // When the target URL is identical to the current URL (same path, query,
+    // AND hash), browsers treat the assignment as an in-page anchor scroll
+    // and skip the network reload.  This happens in proxy/iframe deployments
+    // where the URL has no trailing slash (unlike direct mode where FastAPI
+    // redirects /admin → /admin/, creating a path difference).  Force a full
+    // reload so the UI always reflects the latest server state.
+    // Fixes #3351 (root cause of #3324).
+    if (window.location.href === target) {
+        window.location.reload();
+    } else {
+        window.location.href = target;
+    }
 }
 
 /**
@@ -1762,12 +1801,18 @@ function showMetricsError(error) {
                 <p class="text-sm mb-2">${escapeHtml(errorMessage)}</p>
                 <p class="text-xs text-gray-500 mb-4">${helpText}</p>
                 <button
-                    onclick="retryLoadMetrics()"
+                    data-action="retry-metrics"
                     class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Try Again
                 </button>
             </div>
         `;
+        const retryBtn = errorDiv.querySelector(
+            '[data-action="retry-metrics"]',
+        );
+        if (retryBtn) {
+            retryBtn.addEventListener("click", retryLoadMetrics);
+        }
 
         aggregatedSection.innerHTML = "";
         aggregatedSection.appendChild(errorDiv);
@@ -1869,10 +1914,16 @@ function displayMetrics(data, retryCount = 0) {
                 </svg>
                 <h3 class="text-lg font-medium mb-2">No Metrics Available</h3>
                 <p class="text-sm">Metrics data will appear here once tools, resources, or prompts are executed.</p>
-                <button onclick="retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                <button data-action="retry-metrics" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Refresh Metrics
                 </button>
             `;
+            const refreshBtn = emptyStateDiv.querySelector(
+                '[data-action="retry-metrics"]',
+            );
+            if (refreshBtn) {
+                refreshBtn.addEventListener("click", retryLoadMetrics);
+            }
             aggregatedContent.innerHTML = "";
             aggregatedContent.appendChild(emptyStateDiv);
             return;
@@ -3459,14 +3510,27 @@ async function editTool(toolId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = tool.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = tool.visibility
+            ? tool.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-tool-visibility-public");
         const teamRadio = safeGetElement("edit-tool-visibility-team");
         const privateRadio = safeGetElement("edit-tool-visibility-private");
 
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
-            // coerce legacy-public records to team or private.
+            // coerce legacy-public records to team.
             const effectiveVisibility =
                 window.ALLOW_PUBLIC_VISIBILITY === false &&
                 visibility === "public" &&
@@ -3784,6 +3848,7 @@ async function editTool(toolId) {
         }
 
         openModal("tool-edit-modal");
+        applyVisibilityRestrictions(["edit-tool-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Ensure editors are refreshed after modal display
         setTimeout(() => {
@@ -4135,9 +4200,9 @@ async function editA2AAgent(agentId) {
             ? agent.visibility.toLowerCase()
             : null;
 
-        const publicRadio = safeGetElement("a2a-visibility-public-edit");
-        const teamRadio = safeGetElement("a2a-visibility-team-edit");
-        const privateRadio = safeGetElement("a2a-visibility-private-edit");
+        const publicRadio = safeGetElement("edit-a2a-visibility-public");
+        const teamRadio = safeGetElement("edit-a2a-visibility-team");
+        const privateRadio = safeGetElement("edit-a2a-visibility-private");
 
         // Clear all first
         if (publicRadio) {
@@ -4368,6 +4433,7 @@ async function editA2AAgent(agentId) {
         }
 
         openModal("a2a-edit-modal");
+        applyVisibilityRestrictions(["edit-a2a-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ A2A Agent edit modal loaded successfully");
     } catch (err) {
         console.error("Error loading A2A agent:", err);
@@ -5152,6 +5218,7 @@ async function editResource(resourceId) {
         // }
 
         openModal("resource-edit-modal");
+        applyVisibilityRestrictions(["edit-resource-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editor after modal display
         setTimeout(() => {
@@ -5671,6 +5738,7 @@ async function editPrompt(promptId) {
         }
 
         openModal("prompt-edit-modal");
+        applyVisibilityRestrictions(["edit-prompt-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editors after modal display
         setTimeout(() => {
@@ -5980,10 +6048,23 @@ async function editGateway(gatewayId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = gateway.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = gateway.visibility
+            ? gateway.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-gateway-visibility-public");
         const teamRadio = safeGetElement("edit-gateway-visibility-team");
         const privateRadio = safeGetElement("edit-gateway-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
 
         if (visibility) {
             // When public visibility is disabled and we're in a team-scoped view,
@@ -6244,6 +6325,7 @@ async function editGateway(gatewayId) {
         }
 
         openModal("gateway-edit-modal");
+        applyVisibilityRestrictions(["edit-gateway-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ Gateway edit modal loaded successfully");
     } catch (error) {
         console.error("Error fetching gateway for editing:", error);
@@ -6790,10 +6872,23 @@ async function editServer(serverId) {
         }
         hiddenField.value = isInactiveCheckedBool;
 
-        const visibility = server.visibility; // Ensure visibility is either 'public', 'team', or 'private'
-        const publicRadio = safeGetElement("edit-visibility-public");
-        const teamRadio = safeGetElement("edit-visibility-team");
-        const privateRadio = safeGetElement("edit-visibility-private");
+        const visibility = server.visibility
+            ? server.visibility.toLowerCase()
+            : null;
+        const publicRadio = safeGetElement("edit-server-visibility-public");
+        const teamRadio = safeGetElement("edit-server-visibility-team");
+        const privateRadio = safeGetElement("edit-server-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
 
         // Prepopulate visibility radio buttons based on the server data
         if (visibility) {
@@ -7013,6 +7108,7 @@ async function editServer(serverId) {
         ensureEditStoreListeners();
 
         openModal("server-edit-modal");
+        applyVisibilityRestrictions(["edit-server-visibility"]); // Disable public radio if restricted, preserve checked state
         // Initialize the select handlers for gateways, resources and prompts in the edit modal
         // so that gateway changes will trigger filtering of associated items while editing.
         if (document.getElementById("associatedEditGateways")) {
@@ -11987,23 +12083,23 @@ async function loadTools() {
                     </td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                     <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                        <button onclick="enrichTool('${id}')"
+                        <button data-action="enrich-tool" data-tool-id="${id}"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
                         Enrich
                         </button>
-                        <button onclick="generateToolTestCases('${id}')"
+                        <button data-action="generate-tool-tests" data-tool-id="${id}"
                         class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
                         Generate Test Cases
                         </button>
-                        <button onclick="validateTool('${id}')"
+                        <button data-action="validate-tool" data-tool-id="${id}"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
                         Validate
                         </button>
-                        <button onclick="viewTool('${id}')"
+                        <button data-action="view-tool" data-tool-id="${id}"
                         class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
                         View
                         </button>
-                        <button onclick="editTool('${id}')"
+                        <button data-action="edit-tool" data-tool-id="${id}"
                         class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
                         Edit
                         </button>
@@ -12029,6 +12125,40 @@ async function loadTools() {
 
 document.addEventListener("DOMContentLoaded", loadTools);
 
+// Event delegation for tool table action buttons (inline onclick stripped by innerHTML sanitizer).
+// Bind to #tool-ops-main-content-wrapper (exists in admin.html at DOMContentLoaded) rather than
+// #toolBody (injected later via HTMX partial) so the listener survives HTMX content swaps.
+document.addEventListener("DOMContentLoaded", function () {
+    const wrapper =
+        document.getElementById("tool-ops-main-content-wrapper") ||
+        document.getElementById("toolBody");
+    if (wrapper) {
+        wrapper.addEventListener("click", function (e) {
+            const btn = e.target.closest("[data-action]");
+            if (!btn) return;
+            const toolId = btn.dataset.toolId;
+            if (!toolId) return;
+            switch (btn.dataset.action) {
+                case "enrich-tool":
+                    enrichTool(toolId);
+                    break;
+                case "generate-tool-tests":
+                    generateToolTestCases(toolId);
+                    break;
+                case "validate-tool":
+                    validateTool(toolId);
+                    break;
+                case "view-tool":
+                    viewTool(toolId);
+                    break;
+                case "edit-tool":
+                    editTool(toolId);
+                    break;
+            }
+        });
+    }
+});
+
 async function enrichTool(toolId) {
     try {
         console.log(`Enriching tool ID: ${toolId}`);
@@ -12052,7 +12182,7 @@ async function enrichTool(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const enrichButton = document.querySelector(
-            `[onclick*="enrichTool('${toolId}')"]`,
+            `[data-action="enrich-tool"][data-tool-id="${toolId}"]`,
         );
         if (enrichButton) {
             if (enrichButton.disabled) {
@@ -12115,9 +12245,11 @@ async function enrichTool(toolId) {
         }
 
         const data = await response.json();
-        enrichButton.disabled = false;
-        enrichButton.textContent = "Enrich";
-        enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        if (enrichButton) {
+            enrichButton.disabled = false;
+            enrichButton.textContent = "Enrich";
+            enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
         console.log(`Tool ${toolId} enriched successfully`, data);
         // showSuccessMessage(`Tool ${toolId} enriched successfully`);
 
@@ -12139,7 +12271,7 @@ async function enrichTool(toolId) {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="enrichTool('${toolId}')"]`,
+            `[data-action="enrich-tool"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -12387,7 +12519,7 @@ async function generateToolTestCases(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const tcgButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (tcgButton) {
             if (tcgButton.disabled) {
@@ -12423,15 +12555,17 @@ async function generateToolTestCases(toolId) {
 
         openModal("testcase-gen-modal");
 
-        tcgButton.disabled = false;
-        tcgButton.textContent = "Generate Test Cases";
-        tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+        if (tcgButton) {
+            tcgButton.disabled = false;
+            tcgButton.textContent = "Generate Test Cases";
+            tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -12499,7 +12633,7 @@ async function generateTestCases() {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -12540,7 +12674,7 @@ async function validateTool(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const validateButton = document.querySelector(
-            `[onclick*="validateTool('${toolId}')"]`,
+            `[data-action="validate-tool"][data-tool-id="${toolId}"]`,
         );
         if (validateButton) {
             if (validateButton.disabled) {
@@ -13215,7 +13349,7 @@ async function validateTool(toolId) {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="validateTool('${toolId}')"]`,
+            `[data-action="validate-tool"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -16617,6 +16751,59 @@ function refreshEditors() {
     }, 100);
 }
 
+/**
+ * Load teams into the team selector dropdown.
+ *
+ * Called from the Alpine.js x-data component when the dropdown opens.
+ * This logic lives here (not inline in x-data) because the innerHTML
+ * strings contain double-quote characters that break HTML attribute parsing
+ * when embedded inside an x-data="..." attribute.
+ */
+function loadTeamSelectorDropdown() {
+    const container = document.getElementById("team-selector-items");
+    if (!container || container.dataset.loaded) {
+        return;
+    }
+    container.innerHTML =
+        '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading teams\u2026</div>';
+    const rootPath = window.ROOT_PATH || "";
+    fetch(
+        rootPath + "/admin/teams/partial?page=1&per_page=10&render=selector",
+        { credentials: "same-origin" },
+    )
+        .then(function (resp) {
+            if (!resp.ok) {
+                throw new Error("HTTP " + resp.status);
+            }
+            return resp.text();
+        })
+        .then(function (html) {
+            container.innerHTML = html;
+            container.dataset.loaded = "true";
+            if (window.htmx) {
+                window.htmx.process(container);
+            }
+        })
+        .catch(function () {
+            delete container.dataset.loaded;
+            container.innerHTML =
+                '<div class="px-4 py-2 text-sm text-red-600 dark:text-red-400">' +
+                "Failed to load teams. Backend may be temporarily unavailable. " +
+                '<button type="button" data-action="retry-load-teams" ' +
+                'class="underline font-medium">Retry</button></div>';
+            const retryBtn = container.querySelector(
+                '[data-action="retry-load-teams"]',
+            );
+            if (retryBtn) {
+                retryBtn.addEventListener("click", function () {
+                    delete container.dataset.loaded;
+                    searchTeamSelector("");
+                });
+            }
+        });
+}
+window.loadTeamSelectorDropdown = loadTeamSelectorDropdown;
+
 // ===================================================================
 // GLOBAL ERROR HANDLERS
 // ===================================================================
@@ -18344,7 +18531,7 @@ function renderGlobalSearchResults(payload) {
                   class="global-search-result-item w-full text-left px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                   data-entity="${escapeHtml(entityType)}"
                   data-id="${escapeHtml(itemId)}"
-                  onclick="navigateToGlobalSearchResult(this)"
+                  data-action="navigate-search-result"
                 >
                   <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(name)}</div>
                   <div class="text-xs text-gray-500 dark:text-gray-400 truncate">${escapeHtml(summary)}</div>
@@ -18355,6 +18542,15 @@ function renderGlobalSearchResults(payload) {
     });
 
     container.innerHTML = html;
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    container
+        .querySelectorAll('[data-action="navigate-search-result"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () =>
+                navigateToGlobalSearchResult(btn),
+            );
+        });
 }
 
 async function runGlobalSearch(query) {
@@ -19556,9 +19752,17 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
                     <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No matching ${entityType}</h3>
-                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button onclick="clearTagFilter('${entityType}')" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
+                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button data-action="clear-tag-filter" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
                 </div>
             `;
+            const clearBtn = emptyMessage.querySelector(
+                '[data-action="clear-tag-filter"]',
+            );
+            if (clearBtn) {
+                clearBtn.addEventListener("click", () =>
+                    clearTagFilter(entityType),
+                );
+            }
             tableContainer.appendChild(emptyMessage);
         }
         emptyMessage.style.display = "block";
@@ -19738,7 +19942,7 @@ function addAuthHeader(containerId, options = {}) {
                 <button
                     type="button"
                     class="absolute inset-y-0 right-0 flex items-center px-2 text-xs font-medium text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-indigo-300"
-                    onclick="toggleInputMask('${valueInputId}', this)"
+                    data-action="toggle-mask"
                     aria-pressed="false"
                     aria-label="Show header value"
                 >
@@ -19748,7 +19952,7 @@ function addAuthHeader(containerId, options = {}) {
         </div>
         <button
             type="button"
-            onclick="removeAuthHeader('${headerId}', '${containerId}')"
+            data-action="remove-header"
             class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
             title="Remove header"
         >
@@ -19757,6 +19961,18 @@ function addAuthHeader(containerId, options = {}) {
             </svg>
         </button>
     `;
+    const toggleBtn = headerRow.querySelector('[data-action="toggle-mask"]');
+    if (toggleBtn) {
+        toggleBtn.addEventListener("click", function () {
+            toggleInputMask(valueInputId, this);
+        });
+    }
+    const removeBtn = headerRow.querySelector('[data-action="remove-header"]');
+    if (removeBtn) {
+        removeBtn.addEventListener("click", () =>
+            removeAuthHeader(headerId, containerId),
+        );
+    }
 
     container.appendChild(headerRow);
 
@@ -20600,11 +20816,15 @@ function updateDropZoneStatus(fileName, importData) {
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                     ${totalEntities} entities • Version ${escapeHtml(importData.version || "unknown")}
                 </div>
-                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" onclick="resetImportFile()">
+                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" data-action="reset-import">
                     Choose different file
                 </button>
             </div>
         `;
+        const resetBtn = dropZone.querySelector('[data-action="reset-import"]');
+        if (resetBtn) {
+            resetBtn.addEventListener("click", resetImportFile);
+        }
     }
 }
 
@@ -21684,6 +21904,54 @@ function setupCreateTokenForm() {
         // User can create public-only tokens in that context
         await createToken(form);
     });
+
+    // Attach HTMX error handlers to the tokens panel so that a transient backend
+    // failure (e.g. DB pool exhaustion / idle transaction timeout) shows an
+    // actionable error with a retry button instead of leaving the table stale.
+    const tokensPanel = document.getElementById("tokens-panel");
+    if (tokensPanel && !tokensPanel.dataset.htmxErrorHandlerAttached) {
+        tokensPanel.dataset.htmxErrorHandlerAttached = "true";
+        tokensPanel.addEventListener("htmx:responseError", function (evt) {
+            const tokensTable = document.getElementById("tokens-table");
+            if (tokensTable) {
+                const status =
+                    evt.detail && evt.detail.xhr
+                        ? evt.detail.xhr.status
+                        : "error";
+                tokensTable.innerHTML =
+                    '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                    "<strong>Failed to load tokens.</strong> The backend may be temporarily unavailable (HTTP " +
+                    status +
+                    "). " +
+                    '<button type="button" data-action="retry-tokens" class="underline font-medium">Retry</button></div>';
+                const retryBtn = tokensTable.querySelector(
+                    '[data-action="retry-tokens"]',
+                );
+                if (retryBtn) {
+                    retryBtn.addEventListener("click", () =>
+                        loadTokensList(true),
+                    );
+                }
+            }
+        });
+        tokensPanel.addEventListener("htmx:sendError", function () {
+            const tokensTable = document.getElementById("tokens-table");
+            if (tokensTable) {
+                tokensTable.innerHTML =
+                    '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                    "<strong>Failed to load tokens.</strong> Network error — check your connection and " +
+                    '<button type="button" data-action="retry-tokens" class="underline font-medium">retry</button>.</div>';
+                const retryBtn = tokensTable.querySelector(
+                    '[data-action="retry-tokens"]',
+                );
+                if (retryBtn) {
+                    retryBtn.addEventListener("click", () =>
+                        loadTokensList(true),
+                    );
+                }
+            }
+        });
+    }
 }
 
 /**
@@ -21878,12 +22146,34 @@ async function createToken(form) {
         showTokenCreatedModal(result);
         form.reset();
 
+        // Clear any lingering inline error
+        const inlineMessagesSuccess = document.getElementById(
+            "token-creation-messages",
+        );
+        if (inlineMessagesSuccess) {
+            inlineMessagesSuccess.innerHTML = "";
+        }
+
         // Show appropriate success message
         const tokenType = currentTeamId ? "team-scoped" : "public-only";
         showNotification(`${tokenType} token created successfully!`, "success");
     } catch (error) {
         console.error("Error creating token:", error);
         showNotification(`Error creating token: ${error.message}`, "error");
+        // Also show inline near the form — the toast may be missed if the user scrolled
+        const inlineMessages = document.getElementById(
+            "token-creation-messages",
+        );
+        if (inlineMessages) {
+            inlineMessages.innerHTML =
+                '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                "<strong>Failed to create token:</strong> " +
+                escapeHtml(error.message) +
+                "</div>";
+            setTimeout(function () {
+                inlineMessages.innerHTML = "";
+            }, 15000);
+        }
     } finally {
         submitButton.textContent = originalText;
         submitButton.disabled = false;
@@ -22143,7 +22433,7 @@ function showUsageStatsModal(stats) {
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Usage Statistics (Last ${stats.period_days} Days)</h3>
-                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                <button data-action="close-stats-modal" class="text-gray-400 hover:text-gray-600">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
@@ -22198,7 +22488,7 @@ function showUsageStatsModal(stats) {
 
             <div class="flex justify-end">
                 <button
-                    onclick="this.closest('.fixed').remove()"
+                    data-action="close-stats-modal"
                     class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500"
                 >
                     Close
@@ -22206,6 +22496,13 @@ function showUsageStatsModal(stats) {
             </div>
         </div>
     `;
+
+    // Attach close listeners (inline onclick is stripped by innerHTML sanitizer)
+    modal
+        .querySelectorAll('[data-action="close-stats-modal"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () => modal.remove());
+        });
 
     document.body.appendChild(modal);
 }
@@ -23559,7 +23856,7 @@ function displayPublicTeams(teams) {
                     ${team.member_count} members
                 </div>
                 <button
-                    onclick="requestToJoinTeam('${escapeHtml(team.id)}')"
+                    data-action="request-join" data-team-id="${escapeHtml(team.id)}"
                     class="px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                     Request to Join
@@ -23575,6 +23872,15 @@ function displayPublicTeams(teams) {
             ${teamsHtml}
         </div>
     `;
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    container
+        .querySelectorAll('[data-action="request-join"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () =>
+                requestToJoinTeam(btn.dataset.teamId),
+            );
+        });
 }
 
 /**
@@ -23985,15 +24291,15 @@ function displayImportPreview(preview) {
         <!-- Selection Controls -->
         <div class="flex justify-between items-center mb-4">
             <div class="space-x-4">
-                <button onclick="selectAllItems()"
+                <button data-action="select-all"
                         class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline">
                     Select All
                 </button>
-                <button onclick="selectNoneItems()"
+                <button data-action="select-none"
                         class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300 underline">
                     Select None
                 </button>
-                <button onclick="selectOnlyCustom()"
+                <button data-action="select-custom"
                         class="text-sm text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 underline">
                     Custom Items Only
                 </button>
@@ -24021,7 +24327,7 @@ function displayImportPreview(preview) {
                                 <input type="checkbox"
                                        class="gateway-checkbox mt-1 mr-3"
                                        data-gateway="${gatewayName}"
-                                       onchange="updateSelectionCount()">
+                                       data-action="update-count">
                                 <div class="flex-1">
                                     <div class="font-medium text-gray-900 dark:text-white">
                                         ${bundle.gateway.name}
@@ -24074,7 +24380,7 @@ function displayImportPreview(preview) {
                                            class="item-checkbox mt-1 mr-3"
                                            data-type="${entityType}"
                                            data-id="${item.id}"
-                                           onchange="updateSelectionCount()">
+                                           data-action="update-count">
                                     <div class="flex-1">
                                         <div class="text-sm font-medium text-gray-900 dark:text-white">
                                             ${item.name}
@@ -24129,23 +24435,48 @@ function displayImportPreview(preview) {
 
         <!-- Action Buttons -->
         <div class="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
-            <button onclick="resetImportSelection()"
+            <button data-action="reset-selection"
                     class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                 🔄 Reset Selection
             </button>
 
             <div class="space-x-3">
-                <button onclick="handleSelectiveImport(true)"
+                <button data-action="preview-selected"
                         class="px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-800">
                     🧪 Preview Selected
                 </button>
-                <button onclick="handleSelectiveImport(false)"
+                <button data-action="import-selected"
                         class="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700">
                     ✅ Import Selected Items
                 </button>
             </div>
         </div>
     `;
+
+    // Attach event listeners (inline onclick/onchange is stripped by innerHTML sanitizer)
+    previewContainer
+        .querySelector('[data-action="select-all"]')
+        ?.addEventListener("click", () => selectAllItems());
+    previewContainer
+        .querySelector('[data-action="select-none"]')
+        ?.addEventListener("click", () => selectNoneItems());
+    previewContainer
+        .querySelector('[data-action="select-custom"]')
+        ?.addEventListener("click", () => selectOnlyCustom());
+    previewContainer
+        .querySelector('[data-action="reset-selection"]')
+        ?.addEventListener("click", () => resetImportSelection());
+    previewContainer
+        .querySelector('[data-action="preview-selected"]')
+        ?.addEventListener("click", () => handleSelectiveImport(true));
+    previewContainer
+        .querySelector('[data-action="import-selected"]')
+        ?.addEventListener("click", () => handleSelectiveImport(false));
+    previewContainer
+        .querySelectorAll('[data-action="update-count"]')
+        .forEach((cb) => {
+            cb.addEventListener("change", () => updateSelectionCount());
+        });
 
     // Store preview data and show preview section
     window.currentImportPreview = preview;
@@ -25454,7 +25785,7 @@ async function loadVirtualServersForChat() {
                 <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors
                     ${llmChatState.selectedServerId === server.id ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900" : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600"}
                     ${!isActive ? "opacity-50" : ""}"
-                    onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
+                    data-action="select-server" data-server-id="${server.id}" data-server-name="${escapeHtml(server.name)}" data-is-active="${isActive}" data-requires-token="${requiresToken}" data-visibility="${visibility}"
                     style="position: relative;">
 
                     ${
@@ -25507,6 +25838,21 @@ async function loadVirtualServersForChat() {
                 }
             });
         });
+
+        // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+        serversList
+            .querySelectorAll('[data-action="select-server"]')
+            .forEach((item) => {
+                item.addEventListener("click", () => {
+                    selectServerForChat(
+                        item.dataset.serverId,
+                        item.dataset.serverName,
+                        item.dataset.isActive === "true",
+                        item.dataset.requiresToken === "true",
+                        item.dataset.visibility,
+                    );
+                });
+            });
     } catch (error) {
         console.error("Error loading servers for chat:", error);
         serversList.innerHTML =
@@ -25519,7 +25865,7 @@ async function loadVirtualServersForChat() {
 /**
  * Select a server for chat
  */
-// eslint-disable-next-line no-unused-vars
+
 async function selectServerForChat(
     serverId,
     serverName,
@@ -25580,7 +25926,7 @@ async function selectServerForChat(
     // Update UI to show selected server in dropdown list
     const serverItems = document.querySelectorAll(".server-item");
     serverItems.forEach((item) => {
-        if (item.onclick.toString().includes(serverId)) {
+        if (item.dataset.serverId === serverId) {
             item.classList.add(
                 "border-indigo-500",
                 "bg-indigo-50",
@@ -29915,7 +30261,7 @@ function displayLogResults(data) {
 
             return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
+                data-action="show-log" data-log-id="${log.id}" data-correlation-id="${escapeHtml(log.correlation_id || "")}">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(log.timestamp)}
                 </td>
@@ -29941,7 +30287,7 @@ function displayLogResults(data) {
                     ${
                         correlationId !== "-"
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(correlationId)}')"
+                        <button data-action="show-correlation" data-correlation-id="${escapeHtml(correlationId)}"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(correlationId, 12))}
                         </button>
@@ -29953,6 +30299,31 @@ function displayLogResults(data) {
         `;
         })
         .join("");
+
+    // Attach click listeners via event delegation (inline onclick stripped by innerHTML sanitizer).
+    // Abort previous controller to remove stale handler on repeated calls.
+    if (tbody._logClickAC) {
+        tbody._logClickAC.abort();
+    }
+    tbody._logClickAC = new AbortController();
+    tbody.addEventListener(
+        "click",
+        function (e) {
+            const corrBtn = e.target.closest(
+                '[data-action="show-correlation"]',
+            );
+            if (corrBtn) {
+                e.stopPropagation();
+                showCorrelationTrace(corrBtn.dataset.correlationId);
+                return;
+            }
+            const row = e.target.closest('[data-action="show-log"]');
+            if (row) {
+                showLogDetails(row.dataset.logId, row.dataset.correlationId);
+            }
+        },
+        { signal: tbody._logClickAC.signal },
+    );
 }
 
 /**
@@ -30583,7 +30954,7 @@ function displaySecurityEvents(events) {
                     ${
                         event.correlation_id
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(event.correlation_id)}')"
+                        <button data-action="show-correlation" data-correlation-id="${escapeHtml(event.correlation_id)}"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(event.correlation_id, 12))}
                         </button>
@@ -30595,6 +30966,16 @@ function displaySecurityEvents(events) {
         `;
         })
         .join("");
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    tbody
+        .querySelectorAll('[data-action="show-correlation"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showCorrelationTrace(btn.dataset.correlationId);
+            });
+        });
 }
 
 /**
@@ -30749,7 +31130,7 @@ function displayAuditTrail(trails) {
                     ${
                         trail.correlation_id
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(trail.correlation_id)}')"
+                        <button data-action="show-correlation" data-correlation-id="${escapeHtml(trail.correlation_id)}"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(trail.correlation_id, 12))}
                         </button>
@@ -30761,6 +31142,16 @@ function displayAuditTrail(trails) {
         `;
         })
         .join("");
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    tbody
+        .querySelectorAll('[data-action="show-correlation"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showCorrelationTrace(btn.dataset.correlationId);
+            });
+        });
 }
 
 /**
@@ -32738,13 +33129,47 @@ function performTeamSelectorSearch(searchTerm) {
 
     const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
 
-    // Use HTMX to load results
-    if (window.htmx) {
-        window.htmx.ajax("GET", url, {
-            target: "#team-selector-items",
-            swap: "innerHTML",
-        });
+    // Load results via fetch for reliable error handling; htmx.ajax() does not
+    // reject on HTTP 5xx so we cannot detect backend failures with it.
+    if (container) {
+        container.innerHTML =
+            '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading\u2026</div>';
     }
+    fetch(url, { credentials: "same-origin" })
+        .then(function (resp) {
+            if (!resp.ok) {
+                throw new Error("HTTP " + resp.status);
+            }
+            return resp.text();
+        })
+        .then(function (html) {
+            if (container) {
+                container.innerHTML = html;
+                container.dataset.loaded = "true";
+                if (window.htmx) {
+                    window.htmx.process(container);
+                }
+            }
+        })
+        .catch(function () {
+            if (container) {
+                delete container.dataset.loaded;
+                container.innerHTML =
+                    '<div class="px-4 py-2 text-sm text-red-600 dark:text-red-400">' +
+                    "Failed to load teams. " +
+                    '<button type="button" data-action="retry-team-search" ' +
+                    'class="underline font-medium">Retry</button></div>';
+                const retryBtn = container.querySelector(
+                    '[data-action="retry-team-search"]',
+                );
+                if (retryBtn) {
+                    retryBtn.addEventListener("click", function () {
+                        delete container.dataset.loaded;
+                        searchTeamSelector("");
+                    });
+                }
+            }
+        });
 }
 
 /**
@@ -32782,6 +33207,21 @@ function selectTeamFromSelector(button) {
         window.updateTeamContext(teamId);
     }
 }
+
+// Event delegation for team selector items.
+// Inline onclick attributes are stripped by the innerHTML sanitizer guard,
+// so we use a delegated click listener on the container instead.
+document.addEventListener("DOMContentLoaded", function () {
+    const container = document.getElementById("team-selector-items");
+    if (container) {
+        container.addEventListener("click", function (event) {
+            const button = event.target.closest(".team-selector-item");
+            if (button) {
+                selectTeamFromSelector(button);
+            }
+        });
+    }
+});
 
 // Make team functions globally available
 window.serverSideTeamSearch = serverSideTeamSearch;
@@ -32865,9 +33305,12 @@ document.addEventListener("htmx:afterSettle", function (_evt) {
             }
 
             if (!canModify) {
-                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate
+                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate.
+                // Match both data-action (tool-ops converted buttons) and inline onclick
+                // (other entity tables that still use server-rendered handlers).
                 const buttons = row.querySelectorAll(
-                    "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
+                    "[data-action='edit-tool'], [data-action='enrich-tool'], [data-action='validate-tool'], [data-action='generate-tool-tests'], " +
+                        "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
                 );
                 for (let b = 0; b < buttons.length; b++) {
                     buttons[b].remove();

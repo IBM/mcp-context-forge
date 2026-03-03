@@ -16047,6 +16047,17 @@ class TestTemplateButtonGating:
             return html.unescape(value)
 
         env.filters["decode_html"] = decode_html_entities
+
+        # Register tojson_attr filter (same as in main.py) for inline event handler escaping
+        def tojson_attr(value: object) -> str:
+            """JSON-encode a value for safe use inside double-quoted HTML attributes."""
+            import json as _json
+
+            s = _json.dumps(value)
+            s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
+            return s
+
+        env.filters["tojson_attr"] = tojson_attr
         return env
 
     def _render_tools_partial(self, jinja_env, tool_data, current_user_email, is_admin=False, user_team_roles=None):
