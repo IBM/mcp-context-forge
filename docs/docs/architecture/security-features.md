@@ -15,6 +15,7 @@
 
 - **HTTP Basic Auth** is disabled by default for security. Enable with `API_ALLOW_BASIC_AUTH=true` for API endpoints or `DOCS_ALLOW_BASIC_AUTH=true` for docs. When enabled, credentials use `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD`. The Admin UI uses email/password authentication, not Basic auth.
 - **JWT bearer tokens** are required for API access and MCP transports when `MCP_CLIENT_AUTH_ENABLED=true` (default). For reverse proxies you can opt into `TRUST_PROXY_AUTH=true` and provide the authenticated identity through `PROXY_USER_HEADER`.
+- **Per-server OAuth enforcement.** Virtual servers with `oauth_enabled=True` require authentication even when the global `MCP_REQUIRE_AUTH=false` (permissive mode). Unauthenticated requests to these servers receive a 401 with an RFC 9728 `WWW-Authenticate` header for OAuth discovery. If the database is unavailable during this check, the request is rejected with 503 (fail-closed). Enforcement is applied at both the middleware and handler levels as a defense-in-depth measure. See [RFC 9728 Compliance](rfc9728-compliance.md#per-server-oauth-enforcement) for details.
 - **Token issuance tooling.** `python -m mcpgateway.utils.create_jwt_token` produces gateway-signed tokens for automation. The helper respects configured expiry, issuer, and audience claims.
 
 ### JWT Token Management
