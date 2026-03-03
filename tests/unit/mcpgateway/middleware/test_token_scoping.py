@@ -437,6 +437,28 @@ class TestTokenScopingMiddleware:
             assert "Insufficient permissions for this operation" in content.get("detail")
             call_next.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_sse(self, middleware, mock_request):
+        """Scoped token without servers.use must be denied on GET /sse with HTTP 403.
+
+        Deny-path regression: ensures the full middleware __call__ path enforces the
+        permission restriction for /sse, not just _check_permission_restrictions in isolation.
+        """
+        mock_request.url.path = "/sse"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions for this operation" in content.get("detail")
+            call_next.assert_not_called()
+
     def test_permission_restrictions_rpc_denied_without_servers_use(self, middleware):
         """Tokens without servers.use should be denied on POST /rpc."""
         assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.RESOURCES_READ]) is False
