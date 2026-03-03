@@ -19932,6 +19932,7 @@ class TestAdminPersonalTeamFiltering:
         mock_team_service = MagicMock()
         mock_team_service.get_all_team_ids = AsyncMock(return_value=["team1", "team2"])
         mock_team_service.get_user_personal_team = AsyncMock(return_value=mock_personal_team)
+        mock_team_service.should_include_personal_team = MagicMock(return_value=False)
 
         with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
              patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
@@ -19960,6 +19961,7 @@ class TestAdminPersonalTeamFiltering:
         mock_team_service = MagicMock()
         mock_team_service.get_all_team_ids = AsyncMock(return_value=["team1"])
         mock_team_service.get_user_personal_team = AsyncMock(return_value=mock_personal_team)
+        mock_team_service.should_include_personal_team = MagicMock(return_value=False)
 
         with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
              patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
@@ -19986,6 +19988,7 @@ class TestAdminPersonalTeamFiltering:
         mock_team_service = MagicMock()
         mock_team_service.get_all_team_ids = AsyncMock(return_value=["team1"])
         mock_team_service.get_user_personal_team = AsyncMock(return_value=mock_personal_team)
+        mock_team_service.should_include_personal_team = MagicMock(return_value=False)
 
         with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
              patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
@@ -20051,6 +20054,7 @@ class TestAdminPersonalTeamFiltering:
             "links": None
         })
         mock_team_service.get_user_personal_team = AsyncMock(return_value=mock_personal_team)
+        mock_team_service.should_include_personal_team = MagicMock(return_value=False)
 
         with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
              patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
@@ -20118,6 +20122,7 @@ class TestAdminPersonalTeamFiltering:
             "links": None
         })
         mock_team_service.get_user_personal_team = AsyncMock(return_value=mock_personal_team)
+        mock_team_service.should_include_personal_team = MagicMock(return_value=False)
 
         with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
              patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \

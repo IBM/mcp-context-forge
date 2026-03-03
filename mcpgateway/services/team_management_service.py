@@ -220,6 +220,38 @@ class TeamManagementService:
         return settings.default_team_owner_role if membership_role == "owner" else settings.default_team_member_role
 
     @staticmethod
+    def should_include_personal_team(team: EmailTeam, include_inactive: bool, visibility: Optional[str], search_query: Optional[str]) -> bool:
+        """Check if a personal team should be included based on filters.
+
+        Args:
+            team: The team to check
+            include_inactive: Whether inactive teams should be included
+            visibility: Optional visibility filter
+            search_query: Optional search query (checks name, slug, and description)
+
+        Returns:
+            bool: True if the team should be included, False otherwise
+
+        Examples:
+            >>> from unittest.mock import Mock
+            >>> team = Mock(is_active=True, visibility='private', name='Test', slug='test', description='desc')
+            >>> TeamManagementService.should_include_personal_team(team, False, None, None)
+            True
+            >>> TeamManagementService.should_include_personal_team(team, False, 'public', None)
+            False
+        """
+        if not include_inactive and not team.is_active:
+            return False
+        if visibility and team.visibility != visibility:
+            return False
+        if search_query:
+            search_lower = search_query.lower()
+            description_text = (team.description or "").lower()
+            if search_lower not in team.name.lower() and search_lower not in team.slug.lower() and search_lower not in description_text:
+                return False
+        return True
+
+    @staticmethod
     def _fire_and_forget(coro: Any) -> None:
         """Schedule a background coroutine and close it if scheduling fails.
 
@@ -1397,7 +1429,7 @@ class TeamManagementService:
             return team
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to get personal team for user {user_email}: {e}")
+            logger.error("Failed to get personal team for user %s: %s", user_email, e)
             return None
 
     async def get_teams_count(

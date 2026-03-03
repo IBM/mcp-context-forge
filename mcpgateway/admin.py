@@ -3604,12 +3604,7 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
             "selected_team_id": selected_team_id,
-            "admin_viewing_non_member_team": (
-                bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
-                and selected_team_id is not None
-                and selected_team_id != ""
-                and not any(t.get("id") == selected_team_id for t in user_teams)
-            ),
+            "admin_viewing_non_member_team": (is_admin_user and selected_team_id is not None and selected_team_id != "" and not any(t.get("id") == selected_team_id for t in user_teams)),
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "ui_hidden_sections": ui_visibility_config["hidden_sections"],
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
@@ -4756,14 +4751,7 @@ async def admin_get_all_team_ids(
         admin_personal_team = await team_service.get_user_personal_team(user_email)
         if admin_personal_team and admin_personal_team.id not in team_ids:
             # Apply same filters as the main query
-            include_team = True
-            if not include_inactive and not admin_personal_team.is_active:
-                include_team = False
-            if visibility and admin_personal_team.visibility != visibility:
-                include_team = False
-            if q and q.lower() not in admin_personal_team.name.lower() and q.lower() not in admin_personal_team.slug.lower():
-                include_team = False
-            if include_team:
+            if team_service.should_include_personal_team(admin_personal_team, include_inactive, visibility, q):
                 team_ids.append(admin_personal_team.id)
     else:
         # For non-admins, get user's teams + public teams logic?
@@ -4844,16 +4832,7 @@ async def admin_search_teams(
         admin_personal_team = await team_service.get_user_personal_team(user_email)
         if admin_personal_team and not any(t.id == admin_personal_team.id for t in teams):
             # Apply same filters as the main query
-            include_team = True
-            if not include_inactive and not admin_personal_team.is_active:
-                include_team = False
-            if visibility and admin_personal_team.visibility != visibility:
-                include_team = False
-            if search_query:
-                description_text = (admin_personal_team.description or "").lower()
-                if search_query not in admin_personal_team.name.lower() and search_query not in admin_personal_team.slug.lower() and search_query not in description_text:
-                    include_team = False
-            if include_team and len(teams) < limit:
+            if team_service.should_include_personal_team(admin_personal_team, include_inactive, visibility, search_query) and len(teams) < limit:
                 teams.append(admin_personal_team)
     else:
         # Non-admin search
@@ -4965,15 +4944,7 @@ async def admin_teams_partial_html(
         admin_personal_team = await team_service.get_user_personal_team(user_email)
         if admin_personal_team and not any(t.id == admin_personal_team.id for t in data):
             # Apply same filters as the main query
-            include_team = True
-            if not include_inactive and not admin_personal_team.is_active:
-                include_team = False
-            if visibility and admin_personal_team.visibility != visibility:
-                include_team = False
-            if q:
-                if q.lower() not in admin_personal_team.name.lower() and q.lower() not in admin_personal_team.slug.lower() and q.lower() not in (admin_personal_team.description or "").lower():
-                    include_team = False
-            if include_team and len(data) < per_page:
+            if team_service.should_include_personal_team(admin_personal_team, include_inactive, visibility, q) and len(data) < per_page:
                 data.append(admin_personal_team)
     else:
         # Filter by relationship or regular user view
@@ -5182,12 +5153,8 @@ async def admin_list_teams(
             # Include admin's own personal team if it matches filters and isn't already in results
             admin_personal_team = await team_service.get_user_personal_team(user_email)
             if admin_personal_team and not any(t.id == admin_personal_team.id for t in data):
-                # Apply same filters as the main query
-                include_team = True
-                if q:
-                    if q.lower() not in admin_personal_team.name.lower() and q.lower() not in admin_personal_team.slug.lower() and q.lower() not in (admin_personal_team.description or "").lower():
-                        include_team = False
-                if include_team and len(data) < per_page:
+                # Apply same filters as the main query (note: include_inactive and visibility not used in this context)
+                if team_service.should_include_personal_team(admin_personal_team, True, None, q) and len(data) < per_page:
                     data.append(admin_personal_team)
         else:
             all_teams = await team_service.get_user_teams(current_user.email, include_personal=True)
