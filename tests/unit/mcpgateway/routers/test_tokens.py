@@ -1043,3 +1043,32 @@ class TestEdgeCases:
             assert len(scope.permissions) == 3
             assert len(scope.ip_restrictions) == 2
             assert scope.usage_limits["max_calls"] == 10000
+
+    @pytest.mark.asyncio
+    async def test_create_token_auto_inherits_single_team(self, mock_db, mock_token_record):
+        """Non-admin user belonging to exactly one team auto-inherits team_id when not set in the request."""
+        single_team_user = {
+            "email": "dev@example.com",
+            "is_admin": False,
+            "permissions": ["tokens.create"],
+            "db": mock_db,
+            "auth_method": "jwt",
+            "token_teams": ["team-auto"],
+        }
+        request = MagicMock(spec=TokenCreateRequest)
+        request.name = "Auto Team Token"
+        request.description = None
+        request.scope = None
+        request.expires_in_days = 30
+        request.tags = []
+        request.team_id = None
+        request.is_active = True
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "auto-inherit-token"))
+
+            await create_token(request, current_user=single_team_user, db=mock_db)
+
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["team_id"] == "team-auto"
