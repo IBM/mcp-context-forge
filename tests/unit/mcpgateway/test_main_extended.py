@@ -6987,6 +6987,28 @@ class TestRpcScopedPermissions:
         assert result["error"]["code"] == -32003
         assert "tools.read" in result["error"]["message"]
 
+    async def test_tools_list_allowed_with_non_dict_jwt_payload(self):
+        """Cached JWT payload that is not a dict should defer to RBAC."""
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+        request = MagicMock(spec=Request)
+        request.body = AsyncMock(return_value=json.dumps(payload).encode())
+        request.headers = {}
+        request.query_params = {}
+        request.state = MagicMock()
+        # Simulate a non-dict payload (e.g. a string or None)
+        request.state._jwt_verified_payload = ("fake-token", "not-a-dict")
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"id": "tool-1"}
+
+        with (
+            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+        ):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            assert "error" not in result
+
 
 @pytest.fixture
 def auth_headers():

@@ -10725,3 +10725,91 @@ async def test_list_resource_templates_denied_by_token_scope(monkeypatch):
 
     with pytest.raises(PermissionError, match="resources.read"):
         await list_resource_templates()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_allowed_with_wildcard_scoped_permissions(monkeypatch):
+    """Token with wildcard scoped permissions should pass scope check."""
+    from mcp import types as mcp_types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True, "scoped_permissions": ["*"]},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    tool_result = MagicMock()
+    tool_result.content = [mcp_types.TextContent(type="text", text="ok")]
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=tool_result))
+
+    await call_tool("mytool", {"foo": "bar"})
+    tool_service.invoke_tool.assert_called_once()
+
+
+def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
+    """API token with scopes.permissions should include scoped_permissions in context."""
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
+
+    raw = {
+        "sub": "user@example.com",
+        "token_use": "api",
+        "teams": ["team-a"],
+        "scopes": {"permissions": ["tools.read", "servers.use"]},
+    }
+    result = _normalize_jwt_payload(raw)
+    assert result["scoped_permissions"] == ["tools.read", "servers.use"]
+    assert result["is_authenticated"] is True
+
+
+@pytest.mark.asyncio
+async def test_set_logging_level_denied_by_token_scope(monkeypatch):
+    """Token without admin.system_config should be denied set_logging_level."""
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use", "tools.read"]))
+
+    with pytest.raises(PermissionError, match="admin.system_config"):
+        await set_logging_level("error")
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
+    """_auth_jwt should propagate scopes.permissions into user_context_var."""
+    from mcpgateway.transports.streamablehttp_transport import (
+        _StreamableHttpAuthHandler,
+        user_context_var,
+    )
+
+    jwt_payload = {
+        "sub": "user@example.com",
+        "is_admin": True,
+        "token_use": "api",
+        "scopes": {"permissions": ["tools.read", "tools.execute", "servers.use"]},
+    }
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    # Admin with normalize_token_teams returning None bypasses team membership check
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: None)
+
+    handler = _StreamableHttpAuthHandler(
+        scope={"type": "http", "headers": []},
+        receive=AsyncMock(),
+        send=AsyncMock(),
+    )
+
+    result = await handler._auth_jwt(token="fake-token")
+    assert result is True
+
+    ctx = user_context_var.get()
+    assert ctx["scoped_permissions"] == ["tools.read", "tools.execute", "servers.use"]
+    assert ctx["email"] == "user@example.com"
