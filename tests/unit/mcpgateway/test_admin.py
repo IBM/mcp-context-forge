@@ -20,8 +20,8 @@ from uuid import UUID, uuid4
 
 # Third-Party
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.testclient import TestClient
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
 from pydantic_core import ValidationError as CoreValidationError
@@ -249,8 +249,8 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
-from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
+from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
     GatewayTestRequest,
     GlobalConfigRead,
@@ -503,7 +503,7 @@ class TestAdminServerRoutes:
                 "visibility": "private",
                 "associatedTools": ["1", "2", "3"],
                 "selectAllTools": "true",
-                "allToolIds": "[\"1\",\"2\",\"3\"]",
+                "allToolIds": '["1","2","3"]',
             },
         )
 
@@ -16052,6 +16052,7 @@ class TestTemplateButtonGating:
         # Register tojson_attr filter (same as in main.py) for inline event handler escaping
         def tojson_attr(value: object) -> str:
             """JSON-encode a value for safe use inside double-quoted HTML attributes."""
+            # Standard
             import json as _json
 
             s = _json.dumps(value)
@@ -17898,9 +17899,137 @@ class TestAdminCsrfProtection:
         with pytest.raises(HTTPException, match="token validation failed"):
             await admin_mod.enforce_admin_csrf(request)
 
+    # -- allowed_origins fallback tests ------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_allowed_origin_fallback(self, monkeypatch):
+        """Origin mismatches forwarded headers but is listed in allowed_origins."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"https://external.com"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://external.com",
+                "x-forwarded-proto": "http",
+                "x-forwarded-host": "internal:4444",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_wildcard_allowed_origin(self, monkeypatch):
+        """Wildcard in allowed_origins must not bypass CSRF origin check."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"*"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://evil.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+
+        with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_unlisted_origin(self, monkeypatch):
+        """Origin not in allowed_origins must be rejected."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"https://legit.com"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://attacker.com",
+                "host": "internal:4444",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_allowed_origin_port_normalization(self, monkeypatch):
+        """Default-port origins must match even when port is explicit in allowed_origins."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"https://gw.com:443"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://gw.com",
+                "host": "internal:4444",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_empty_allowed_origins(self, monkeypatch):
+        """Empty allowed_origins set must not bypass CSRF origin check."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", set())
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://external.com",
+                "host": "internal:4444",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_direct_match_still_works(self, monkeypatch):
+        """Direct same-origin match must pass even with empty allowed_origins (regression guard)."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", set())
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://example.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
     # -- _resolve_root_path tests ------------------------------------------
 
     def test_resolve_root_path_prefers_scope_root_path(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
@@ -17910,6 +18039,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == "/mounted"
 
     def test_resolve_root_path_falls_back_to_settings(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
@@ -17919,6 +18049,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
 
     def test_resolve_root_path_returns_empty_when_both_empty(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
@@ -17928,6 +18059,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == ""
 
     def test_resolve_root_path_normalizes_leading_slash(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "api/proxy/mcp", raising=False)
@@ -17937,6 +18069,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
 
     def test_resolve_root_path_strips_trailing_slash(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
@@ -17946,6 +18079,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == "/mounted"
 
     def test_resolve_root_path_missing_scope_key_falls_back(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/api/proxy/mcp", raising=False)
@@ -17955,6 +18089,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == "/api/proxy/mcp"
 
     def test_resolve_root_path_none_settings_returns_empty(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", None, raising=False)
@@ -17964,6 +18099,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == ""
 
     def test_resolve_root_path_scope_none_value_falls_back(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
@@ -17973,6 +18109,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == "/fallback"
 
     def test_resolve_root_path_strips_scheme_relative_double_slash(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "", raising=False)
@@ -17982,6 +18119,7 @@ class TestAdminCsrfProtection:
         assert admin_mod._resolve_root_path(request) == "/evil.com"
 
     def test_resolve_root_path_whitespace_only_scope_falls_back(self, monkeypatch):
+        # First-Party
         from mcpgateway import admin as admin_mod
 
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/fallback", raising=False)
@@ -18411,6 +18549,7 @@ class TestPublicVisibilityGuard:
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
         monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_grpc_enabled", True)
+        # First-Party
         from mcpgateway.schemas import GrpcServiceCreate
 
         service = GrpcServiceCreate(name="G", target="localhost:50051", visibility="public", team_id="team-abc")
@@ -18476,6 +18615,7 @@ class TestPublicVisibilityGuard:
         mock_mgr = MagicMock()
         mock_mgr.register_service = AsyncMock(return_value={"id": "svc-new", "name": "G"})
         monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mock_mgr)
+        # First-Party
         from mcpgateway.schemas import GrpcServiceCreate
 
         service = GrpcServiceCreate(name="G", target="localhost:50051", visibility="public")
