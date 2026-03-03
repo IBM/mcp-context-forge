@@ -31,10 +31,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 ROLE_PERMISSION_ADDITIONS = {
-    "viewer": ["admin.overview", "tools.execute"],
-    "platform_viewer": ["admin.overview", "tools.execute"],
-    "developer": ["admin.overview"],
-    "team_admin": ["admin.overview"],
+    "viewer": ["admin.overview", "tools.execute", "servers.use"],
+    "platform_viewer": ["admin.overview", "tools.execute", "servers.use"],
+    "developer": ["admin.overview", "servers.use"],
+    "team_admin": ["admin.overview", "servers.use"],
 }
 
 
