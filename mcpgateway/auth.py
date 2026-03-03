@@ -1099,7 +1099,11 @@ async def get_current_user(
                         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                             # Session token: resolve teams from DB/cache
                             user_info = cached_ctx.user or {"is_admin": False}
-                            teams = await _resolve_teams_from_db(email, user_info)
+                            payload_teams = payload.get("teams", [])
+                            if isinstance(payload_teams, list) and len(payload_teams) == 1:
+                                teams = normalize_token_teams(payload)
+                            else:
+                                teams = await _resolve_teams_from_db(email, user_info)
                         else:
                             # API token or legacy: use embedded teams
                             teams = normalize_token_teams(payload)
@@ -1294,7 +1298,11 @@ async def get_current_user(
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
             user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
-            normalized_teams = await _resolve_teams_from_db(email, user_info)
+            payload_teams = payload.get("teams", [])
+            if isinstance(payload_teams, list) and len(payload_teams) == 1:
+                normalized_teams = normalize_token_teams(payload)
+            else:
+                normalized_teams = await _resolve_teams_from_db(email, user_info)
         else:
             # API token or legacy: use embedded teams
             normalized_teams = normalize_token_teams(payload)
