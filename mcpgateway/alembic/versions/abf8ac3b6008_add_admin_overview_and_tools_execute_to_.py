@@ -1,15 +1,15 @@
 # pylint: disable=no-member
-"""Add admin.overview and tools.execute permissions to viewer and platform_viewer roles.
+"""Add admin.overview, tools.execute, and servers.use permissions to viewer roles.
 
 Revision ID: abf8ac3b6008
 Revises: d9e0f1a2b3c4
 Create Date: 2026-03-02 21:54:28.873091
 
 Backfills default role permission sets so existing deployments receive:
-- viewer: admin.overview, tools.execute
-- platform_viewer: admin.overview, tools.execute
-- developer: admin.overview
-- team_admin: admin.overview
+- viewer: admin.overview, tools.execute, servers.use
+- platform_viewer: admin.overview, tools.execute, servers.use
+- developer: admin.overview, servers.use
+- team_admin: admin.overview, servers.use
 
 """
 
@@ -129,7 +129,7 @@ def _update_role_permissions(conn, role_name: str, permissions: list[str], add: 
 
 
 def upgrade() -> None:
-    """Backfill admin.overview and tools.execute permissions into viewer, platform_viewer, developer, and team_admin role records."""
+    """Backfill admin.overview, tools.execute, and servers.use permissions into viewer, platform_viewer, developer, and team_admin role records."""
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     if "roles" not in inspector.get_table_names():
@@ -141,7 +141,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove admin.overview and tools.execute permissions from viewer, platform_viewer, developer, and team_admin role records."""
+    """Remove admin.overview, tools.execute, and servers.use permissions from viewer, platform_viewer, developer, and team_admin role records."""
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     if "roles" not in inspector.get_table_names():
