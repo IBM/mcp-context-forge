@@ -721,7 +721,10 @@ class TestPromptsSearchAndFilter:
         search_input.fill(full_name[:5])
 
         # Wait for search debounce and HTMX reload
-        prompts_page.page.wait_for_timeout(2000)
+        prompts_page.page.wait_for_function(
+            "() => !document.querySelector('#prompts-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Should still find at least one result
         count = prompts_page.get_prompt_count()
@@ -730,7 +733,10 @@ class TestPromptsSearchAndFilter:
         # Clear search to restore
         clear_btn = prompts_page.page.locator("#prompts-clear-search")
         clear_btn.click()
-        prompts_page.page.wait_for_timeout(1000)
+        prompts_page.page.wait_for_function(
+            "() => !document.querySelector('#prompts-loading.htmx-request')",
+            timeout=15000,
+        )
 
     def test_search_no_results(self, prompts_page: PromptsPage):
         """Test searching for a nonexistent prompt."""
@@ -739,7 +745,10 @@ class TestPromptsSearchAndFilter:
 
         search_input = prompts_page.page.locator("#prompts-search-input")
         search_input.fill("nonexistent-prompt-xyz-99999")
-        prompts_page.page.wait_for_timeout(2000)
+        prompts_page.page.wait_for_function(
+            "() => !document.querySelector('#prompts-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Table may show no results
         count = prompts_page.get_prompt_count()
@@ -748,7 +757,10 @@ class TestPromptsSearchAndFilter:
         # Clear search to restore
         clear_btn = prompts_page.page.locator("#prompts-clear-search")
         clear_btn.click()
-        prompts_page.page.wait_for_timeout(1000)
+        prompts_page.page.wait_for_function(
+            "() => !document.querySelector('#prompts-loading.htmx-request')",
+            timeout=15000,
+        )
 
     def test_search_placeholder_text(self, prompts_page: PromptsPage):
         """Test that the search input has the correct placeholder text."""

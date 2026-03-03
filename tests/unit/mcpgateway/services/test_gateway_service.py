@@ -1450,6 +1450,29 @@ class TestGatewayService:
             await gateway_service.delete_gateway(test_db, 999)
         assert "Gateway not found: 999" in str(exc_info.value)
 
+    def test_init_falls_back_when_singleton_imports_unavailable(self, monkeypatch):
+        """GatewayService should instantiate local services when singleton imports fail."""
+        # Standard
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+            if name == "mcpgateway.services.prompt_service" and "prompt_service" in fromlist:
+                raise ImportError("prompt singleton unavailable")
+            if name == "mcpgateway.services.resource_service" and "resource_service" in fromlist:
+                raise ImportError("resource singleton unavailable")
+            if name == "mcpgateway.services.tool_service" and "tool_service" in fromlist:
+                raise ImportError("tool singleton unavailable")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        service = GatewayService()
+
+        assert service.prompt_service.__class__.__name__ == "PromptService"
+        assert service.resource_service.__class__.__name__ == "ResourceService"
+        assert service.tool_service.__class__.__name__ == "ToolService"
+
     # ────────────────────────────────────────────────────────────────────
     # FORWARD
     # ────────────────────────────────────────────────────────────────────

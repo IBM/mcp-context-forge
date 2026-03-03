@@ -1160,7 +1160,7 @@ async def require_admin_auth(
                         else:
                             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
                 except Exception:
-                    raise Exception
+                    raise
                 finally:
                     db_session.close()
         except HTTPException as e:

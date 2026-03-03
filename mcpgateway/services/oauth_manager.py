@@ -1380,3 +1380,56 @@ class OAuthError(Exception):
         ...     isinstance(e, OAuthError)
         True
     """
+
+
+class OAuthRequiredError(OAuthError):
+    """Raised when a server requires OAuth but the caller is unauthenticated.
+
+    Carries ``server_id`` so the middleware can identify which server
+    triggered the rejection when constructing the ``WWW-Authenticate``
+    header.
+
+    Examples:
+        >>> err = OAuthRequiredError("auth required", server_id="s1")
+        >>> err.server_id
+        's1'
+        >>> isinstance(err, OAuthError)
+        True
+    """
+
+    def __init__(self, message: str, *, server_id: str = "") -> None:
+        """Initialize with message and optional server_id.
+
+        Args:
+            message: Human-readable error description.
+            server_id: Virtual-server identifier that triggered the rejection.
+        """
+        super().__init__(message)
+        self.server_id = server_id
+
+
+class OAuthEnforcementUnavailableError(OAuthError):
+    """Raised when OAuth enforcement cannot be performed due to infrastructure failure.
+
+    Used when the database or other backing services needed to check a
+    server's ``oauth_enabled`` flag are unavailable.  The middleware
+    translates this into an HTTP 503 to avoid silently allowing
+    unauthenticated access (fail-closed).
+
+    Examples:
+        >>> err = OAuthEnforcementUnavailableError("DB down", server_id="s1")
+        >>> err.server_id
+        's1'
+        >>> isinstance(err, OAuthError)
+        True
+    """
+
+    def __init__(self, message: str, *, server_id: str = "") -> None:
+        """Initialize with message and optional server_id.
+
+        Args:
+            message: Human-readable error description.
+            server_id: Virtual-server identifier that triggered the rejection.
+        """
+        super().__init__(message)
+        self.server_id = server_id
