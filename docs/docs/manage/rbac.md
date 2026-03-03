@@ -119,7 +119,7 @@ Logical groups that:
        - Enables management of personal team resources
     2. `platform_viewer` role with **global scope**
        - `scope_id` = None
-       - Provides read-only access to platform resources
+       - Provides read and test access to platform resources
 
     **Migration behavior:**
     - Only affects users without existing role assignments

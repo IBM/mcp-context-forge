@@ -8,8 +8,12 @@ Create Date: 2026-03-02 21:54:28.873091
 Backfills default role permission sets so existing deployments receive:
 - viewer: admin.overview, tools.execute, servers.use
 - platform_viewer: admin.overview, tools.execute, servers.use
-- developer: admin.overview, servers.use
-- team_admin: admin.overview, servers.use
+- developer: admin.overview
+- team_admin: admin.overview
+
+Note: developer and team_admin already have servers.use in their baseline
+definitions, so it is intentionally not included here to avoid a destructive
+downgrade that would strip a pre-existing permission.
 
 """
 
@@ -33,8 +37,8 @@ depends_on: Union[str, Sequence[str], None] = None
 ROLE_PERMISSION_ADDITIONS = {
     "viewer": ["admin.overview", "tools.execute", "servers.use"],
     "platform_viewer": ["admin.overview", "tools.execute", "servers.use"],
-    "developer": ["admin.overview", "servers.use"],
-    "team_admin": ["admin.overview", "servers.use"],
+    "developer": ["admin.overview"],
+    "team_admin": ["admin.overview"],
 }
 
 
@@ -129,7 +133,7 @@ def _update_role_permissions(conn, role_name: str, permissions: list[str], add: 
 
 
 def upgrade() -> None:
-    """Backfill admin.overview, tools.execute, and servers.use permissions into viewer, platform_viewer, developer, and team_admin role records."""
+    """Backfill missing permissions into viewer, platform_viewer, developer, and team_admin role records."""
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     if "roles" not in inspector.get_table_names():
@@ -141,7 +145,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove admin.overview, tools.execute, and servers.use permissions from viewer, platform_viewer, developer, and team_admin role records."""
+    """Remove migration-added permissions from viewer, platform_viewer, developer, and team_admin role records."""
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     if "roles" not in inspector.get_table_names():
