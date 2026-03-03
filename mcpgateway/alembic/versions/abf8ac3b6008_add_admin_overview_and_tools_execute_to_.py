@@ -1,13 +1,13 @@
 # pylint: disable=no-member
-"""Add admin.overview, tools.execute, and servers.use permissions to viewer roles.
+"""Add admin.overview,  and servers.use permissions to viewer roles.
 
 Revision ID: abf8ac3b6008
 Revises: d9e0f1a2b3c4
 Create Date: 2026-03-02 21:54:28.873091
 
 Backfills default role permission sets so existing deployments receive:
-- viewer: admin.overview, tools.execute, servers.use
-- platform_viewer: admin.overview, tools.execute, servers.use
+- viewer: admin.overview,, servers.use
+- platform_viewer: admin.overview,  servers.use
 - developer: admin.overview
 - team_admin: admin.overview
 
@@ -35,8 +35,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 ROLE_PERMISSION_ADDITIONS = {
-    "viewer": ["admin.overview", "tools.execute", "servers.use"],
-    "platform_viewer": ["admin.overview", "tools.execute", "servers.use"],
+    "viewer": ["admin.overview", "servers.use"],
+    "platform_viewer": ["admin.overview", "servers.use"],
     "developer": ["admin.overview"],
     "team_admin": ["admin.overview"],
 }
