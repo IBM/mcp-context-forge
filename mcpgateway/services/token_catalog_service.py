@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser, TokenRevocation, TokenUsageLog, utc_now
+from mcpgateway.db import EmailApiToken, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
@@ -292,10 +292,9 @@ class TokenCatalogService:
         # Auto-inject servers.use for tokens with explicit MCP-related permissions.
         # Without servers.use, the token scoping middleware blocks /rpc and /mcp
         # transport access, making MCP-method permissions useless.
-        mcp_method_prefixes = ("tools.", "resources.", "prompts.")
         permissions = scopes_dict["permissions"]
         if permissions and "*" not in permissions and "servers.use" not in permissions:
-            if any(p.startswith(mcp_method_prefixes) for p in permissions):
+            if any(p.startswith(Permissions.MCP_METHOD_PREFIXES) for p in permissions):
                 scopes_dict["permissions"] = [*permissions, "servers.use"]
 
         # Generate JWT token using the centralized token creation utility
