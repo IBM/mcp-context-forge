@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import Request, status
+from starlette.responses import Response
 import pytest
 
 # First-Party
@@ -171,9 +172,19 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.SERVERS_USE])
         assert result is True, "POST /rpc should be allowed when token has servers.use"
 
-        # Token only has tools.read - should be denied at the middleware layer
+        # Token with MCP method permissions gets implicit transport access (runtime compensation)
         result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.TOOLS_READ])
-        assert result is False, "POST /rpc should be denied when token lacks servers.use"
+        assert result is True, "POST /rpc should be allowed when token has MCP method permissions (tools.read)"
+
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["resources.read"])
+        assert result is True, "POST /rpc should be allowed when token has MCP method permissions (resources.read)"
+
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["prompts.read"])
+        assert result is True, "POST /rpc should be allowed when token has MCP method permissions (prompts.read)"
+
+        # Token with only non-MCP permissions should still be denied
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["gateways.read"])
+        assert result is False, "POST /rpc should be denied when token has only non-MCP permissions"
 
         # Wildcard permission bypasses pattern matching entirely
         result = middleware._check_permission_restrictions("/rpc", "POST", ["*"])
@@ -191,9 +202,13 @@ class TestTokenScopingMiddleware:
             result = middleware._check_permission_restrictions("/mcp", method, [Permissions.SERVERS_USE])
             assert result is True, f"{method} /mcp should be allowed when token has servers.use"
 
-        # Token without servers.use must be denied
+        # Token with MCP method permissions gets implicit transport access (runtime compensation)
         result = middleware._check_permission_restrictions("/mcp", "POST", [Permissions.TOOLS_READ])
-        assert result is False, "POST /mcp should be denied when token lacks servers.use"
+        assert result is True, "POST /mcp should be allowed when token has MCP method permissions"
+
+        # Token with only non-MCP permissions should still be denied
+        result = middleware._check_permission_restrictions("/mcp", "POST", ["gateways.read"])
+        assert result is False, "POST /mcp should be denied when token has only non-MCP permissions"
 
     @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
@@ -205,8 +220,13 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/sse", "GET", [Permissions.SERVERS_USE])
         assert result is True, "GET /sse should be allowed when token has servers.use"
 
+        # Token with MCP method permissions gets implicit transport access (runtime compensation)
         result = middleware._check_permission_restrictions("/sse", "GET", [Permissions.TOOLS_READ])
-        assert result is False, "GET /sse should be denied when token lacks servers.use"
+        assert result is True, "GET /sse should be allowed when token has MCP method permissions"
+
+        # Token with only non-MCP permissions should still be denied
+        result = middleware._check_permission_restrictions("/sse", "GET", ["gateways.read"])
+        assert result is False, "GET /sse should be denied when token has only non-MCP permissions"
 
         result = middleware._check_permission_restrictions("/sse", "GET", ["*"])
         assert result is True, "GET /sse should be allowed with wildcard permission"
@@ -394,11 +414,11 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/unmatched/path", "GET", []) is True
 
     @pytest.mark.asyncio
-    async def test_permission_restricted_token_blocked_from_rpc(self, middleware, mock_request):
-        """Scoped token without servers.use must be denied on POST /rpc with HTTP 403.
+    async def test_permission_restricted_token_allowed_rpc_with_mcp_permissions(self, middleware, mock_request):
+        """Scoped token with MCP method permissions should pass through /rpc middleware.
 
-        Deny-path regression: ensures the full middleware __call__ path enforces the
-        permission restriction for /rpc, not just _check_permission_restrictions in isolation.
+        Runtime compensation: tokens with tools.*/resources.*/prompts.* permissions
+        implicitly get servers.use transport access.
         """
         mock_request.url.path = "/rpc"
         mock_request.method = "POST"
@@ -407,6 +427,26 @@ class TestTokenScopingMiddleware:
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
             mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
 
+            expected_response = Response(status_code=200, content="ok")
+            call_next = AsyncMock(return_value=expected_response)
+            response = await middleware(mock_request, call_next)
+
+            call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_rpc_non_mcp(self, middleware, mock_request):
+        """Scoped token with only non-MCP permissions must be denied on POST /rpc with HTTP 403.
+
+        Deny-path regression: tokens without servers.use AND without MCP method permissions
+        should still be blocked at the middleware layer.
+        """
+        mock_request.url.path = "/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": ["gateways.read"]}}
+
             call_next = AsyncMock()
             response = await middleware(mock_request, call_next)
             content = json.loads(response.body)
@@ -416,11 +456,11 @@ class TestTokenScopingMiddleware:
             call_next.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_permission_restricted_token_blocked_from_mcp(self, middleware, mock_request):
-        """Scoped token without servers.use must be denied on POST /mcp with HTTP 403.
+    async def test_permission_restricted_token_allowed_mcp_with_mcp_permissions(self, middleware, mock_request):
+        """Scoped token with MCP method permissions should pass through /mcp middleware.
 
-        Deny-path regression: ensures the full middleware __call__ path enforces the
-        permission restriction for /mcp, not just _check_permission_restrictions in isolation.
+        Runtime compensation: tokens with tools.*/resources.*/prompts.* permissions
+        implicitly get servers.use transport access.
         """
         mock_request.url.path = "/mcp"
         mock_request.method = "POST"
@@ -429,6 +469,26 @@ class TestTokenScopingMiddleware:
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
             mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
 
+            expected_response = Response(status_code=200, content="ok")
+            call_next = AsyncMock(return_value=expected_response)
+            response = await middleware(mock_request, call_next)
+
+            call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_mcp_non_mcp(self, middleware, mock_request):
+        """Scoped token with only non-MCP permissions must be denied on POST /mcp with HTTP 403.
+
+        Deny-path regression: tokens without servers.use AND without MCP method permissions
+        should still be blocked at the middleware layer.
+        """
+        mock_request.url.path = "/mcp"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": ["gateways.read"]}}
+
             call_next = AsyncMock()
             response = await middleware(mock_request, call_next)
             content = json.loads(response.body)
@@ -438,11 +498,11 @@ class TestTokenScopingMiddleware:
             call_next.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_permission_restricted_token_blocked_from_sse(self, middleware, mock_request):
-        """Scoped token without servers.use must be denied on GET /sse with HTTP 403.
+    async def test_permission_restricted_token_allowed_sse_with_mcp_permissions(self, middleware, mock_request):
+        """Scoped token with MCP method permissions should pass through /sse middleware.
 
-        Deny-path regression: ensures the full middleware __call__ path enforces the
-        permission restriction for /sse, not just _check_permission_restrictions in isolation.
+        Runtime compensation: tokens with tools.*/resources.*/prompts.* permissions
+        implicitly get servers.use transport access.
         """
         mock_request.url.path = "/sse"
         mock_request.method = "GET"
@@ -450,6 +510,26 @@ class TestTokenScopingMiddleware:
 
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
             mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+
+            expected_response = Response(status_code=200, content="ok")
+            call_next = AsyncMock(return_value=expected_response)
+            response = await middleware(mock_request, call_next)
+
+            call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_sse_non_mcp(self, middleware, mock_request):
+        """Scoped token with only non-MCP permissions must be denied on GET /sse with HTTP 403.
+
+        Deny-path regression: tokens without servers.use AND without MCP method permissions
+        should still be blocked at the middleware layer.
+        """
+        mock_request.url.path = "/sse"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": ["gateways.read"]}}
 
             call_next = AsyncMock()
             response = await middleware(mock_request, call_next)
@@ -459,14 +539,18 @@ class TestTokenScopingMiddleware:
             assert "Insufficient permissions for this operation" in content.get("detail")
             call_next.assert_not_called()
 
-    def test_permission_restrictions_rpc_denied_without_servers_use(self, middleware):
-        """Tokens without servers.use should be denied on POST /rpc."""
-        assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.RESOURCES_READ]) is False
+    def test_permission_restrictions_rpc_allowed_with_mcp_permissions(self, middleware):
+        """Tokens with MCP method permissions get implicit servers.use transport access on /rpc."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.RESOURCES_READ]) is True
+        assert middleware._check_permission_restrictions("/rpc", "POST", ["gateways.read"]) is False
 
     def test_permission_restrictions_server_mcp_requires_servers_use(self, middleware):
-        """Server MCP endpoint should require servers.use permission."""
-        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is False
+        """Server MCP endpoint should require servers.use or MCP method permissions."""
+        # MCP method permissions get implicit transport access
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is True
         assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
+        # Non-MCP permissions should still be denied
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", ["gateways.read"]) is False
 
     def test_permission_restrictions_llm_proxy_default_prefix(self, middleware):
         """LLM proxy endpoints should enforce llm.read/llm.invoke with default /v1 prefix."""
@@ -682,11 +766,19 @@ class TestTokenScopingMiddleware:
         ) == True, "POST /servers should succeed with servers.create"
 
         # Virtual MCP Server access should NOT require servers.create (this is the fix!)
+        # With MCP method permissions (tools.read), implicit servers.use is granted
         assert middleware._check_permission_restrictions(
             "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
             "POST",
             [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-        ) == False, "POST /servers/{id}/mcp should require servers.use, not servers.read"
+        ) == True, "POST /servers/{id}/mcp should be allowed with MCP method permissions"
+
+        # Without MCP method permissions, servers.use is still required
+        assert middleware._check_permission_restrictions(
+            "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
+            "POST",
+            [Permissions.SERVERS_READ, "gateways.read"]
+        ) == False, "POST /servers/{id}/mcp should require servers.use when no MCP method permissions"
 
         assert middleware._check_permission_restrictions(
             "/servers/abc123/sse",
@@ -699,12 +791,19 @@ class TestTokenScopingMiddleware:
             [Permissions.SERVERS_READ]
         ) == False, "GET /servers/{id}/sse should NOT accept servers.read"
 
-        # Other Virtual MCP Server endpoints should also not require servers.create
+        # Other Virtual MCP Server endpoints — MCP method permissions grant implicit transport access
         assert middleware._check_permission_restrictions(
             "/servers/test-server/mcp/",
             "POST",
             [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-        ) == False, "POST /servers/{id}/mcp/ should require servers.use"
+        ) == True, "POST /servers/{id}/mcp/ should be allowed with MCP method permissions"
+
+        # Without MCP method permissions, servers.use is still required
+        assert middleware._check_permission_restrictions(
+            "/servers/test-server/mcp/",
+            "POST",
+            [Permissions.SERVERS_READ]
+        ) == False, "POST /servers/{id}/mcp/ should require servers.use when no MCP method permissions"
 
         # Verify that servers.create works for Virtual MCP Server too (backward compatibility)
         assert middleware._check_permission_restrictions(
@@ -1460,6 +1559,137 @@ async def test_team_scoped_resource_denied(monkeypatch):
         response = await middleware(mock_request, call_next)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         call_next.assert_not_called()
+
+
+class TestRuntimeMcpTransportCompensation:
+    """Tests for runtime servers.use compensation for tokens with MCP method permissions.
+
+    When the token_catalog_service generates a token with MCP method permissions
+    (tools.*, resources.*, prompts.*), it auto-injects servers.use. However, tokens
+    generated before this fix lack servers.use. The middleware compensates at runtime
+    by implicitly granting servers.use transport access to tokens that carry MCP
+    method permissions, ensuring pre-existing tokens continue to work.
+
+    This test class verifies:
+    1. Each MCP method prefix (tools., resources., prompts.) grants implicit transport access
+    2. Non-MCP permissions do NOT grant implicit transport access
+    3. All transport endpoints (rpc, sse, mcp, server-scoped) are covered
+    4. Mixed permission lists are handled correctly
+    5. Edge cases (empty, wildcard, exact servers.use) still work
+    """
+
+    @pytest.fixture
+    def middleware(self):
+        return TokenScopingMiddleware()
+
+    # --- Per-prefix verification across all transport endpoints ---
+
+    @pytest.mark.parametrize("mcp_permission", [
+        "tools.read", "tools.execute", "tools.create", "tools.update", "tools.delete",
+        "resources.read", "resources.create", "resources.update", "resources.delete",
+        "prompts.read", "prompts.create", "prompts.update", "prompts.delete",
+    ])
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/rpc"),
+        ("GET", "/sse"),
+        ("POST", "/mcp"),
+        ("GET", "/mcp"),
+        ("DELETE", "/mcp"),
+        ("GET", "/servers/abc123/sse"),
+        ("POST", "/servers/abc123/message"),
+        ("POST", "/servers/abc123/mcp"),
+    ])
+    def test_mcp_permission_grants_implicit_transport_access(self, middleware, mcp_permission, method, path):
+        """Any MCP method permission should grant implicit servers.use on all transport endpoints."""
+        assert middleware._check_permission_restrictions(path, method, [mcp_permission]) is True, (
+            f"{method} {path} should be allowed with MCP permission '{mcp_permission}'"
+        )
+
+    # --- Non-MCP permissions must NOT grant implicit transport access ---
+
+    @pytest.mark.parametrize("non_mcp_permission", [
+        "gateways.read", "gateways.create",
+        "servers.read", "servers.create", "servers.update", "servers.delete",
+        "admin.user_management", "admin.system_config",
+        "llm.read", "llm.invoke",
+    ])
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/rpc"),
+        ("GET", "/sse"),
+        ("POST", "/mcp"),
+        ("POST", "/servers/abc123/mcp"),
+    ])
+    def test_non_mcp_permission_denied_on_transport(self, middleware, non_mcp_permission, method, path):
+        """Non-MCP permissions alone must NOT grant transport access."""
+        assert middleware._check_permission_restrictions(path, method, [non_mcp_permission]) is False, (
+            f"{method} {path} should be denied with only non-MCP permission '{non_mcp_permission}'"
+        )
+
+    # --- Mixed permission lists ---
+
+    def test_mixed_mcp_and_non_mcp_permissions_grants_access(self, middleware):
+        """A permission list containing at least one MCP permission should grant transport access."""
+        permissions = ["gateways.read", "servers.read", "tools.execute"]
+        assert middleware._check_permission_restrictions("/rpc", "POST", permissions) is True
+
+    def test_mixed_non_mcp_only_permissions_denied(self, middleware):
+        """A permission list with multiple non-MCP permissions should still be denied."""
+        permissions = ["gateways.read", "servers.read", "servers.create"]
+        assert middleware._check_permission_restrictions("/rpc", "POST", permissions) is False
+
+    # --- Explicit servers.use still works ---
+
+    def test_explicit_servers_use_still_works(self, middleware):
+        """Explicit servers.use (without MCP permissions) must still grant transport access."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.SERVERS_USE]) is True
+        assert middleware._check_permission_restrictions("/mcp", "POST", [Permissions.SERVERS_USE]) is True
+        assert middleware._check_permission_restrictions("/sse", "GET", [Permissions.SERVERS_USE]) is True
+
+    # --- Wildcard and empty permissions (no compensation needed) ---
+
+    def test_wildcard_bypasses_all_checks(self, middleware):
+        """Wildcard permission should bypass all pattern checks including transport."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", ["*"]) is True
+
+    def test_empty_permissions_bypasses_all_checks(self, middleware):
+        """Empty permissions (defer to RBAC) should bypass pattern checks."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", []) is True
+
+    # --- Compensation does NOT affect non-transport endpoints ---
+
+    def test_mcp_permissions_do_not_affect_non_transport_endpoints(self, middleware):
+        """MCP method permissions should not grant access to non-transport endpoints like POST /tools."""
+        # tools.read should not grant tools.create access
+        assert middleware._check_permission_restrictions("/tools", "POST", ["tools.read"]) is False
+        # resources.read should not grant resources.create access
+        assert middleware._check_permission_restrictions("/resources", "POST", ["resources.read"]) is False
+
+    # --- Reproduces the original bug scenario ---
+
+    def test_pre_fix_api_token_scenario(self, middleware):
+        """Reproduce the exact scenario: API token with tools.read + tools.execute but no servers.use.
+
+        This is the token shape generated before the auto-injection fix was deployed.
+        The runtime compensation should allow it through on transport endpoints.
+        """
+        pre_fix_permissions = [
+            "servers.create", "servers.read", "servers.update", "servers.delete",
+            "gateways.read", "tools.read", "tools.execute",
+        ]
+        # Transport endpoints should now work (tools.read/execute trigger compensation)
+        assert middleware._check_permission_restrictions("/rpc", "POST", pre_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/mcp", "POST", pre_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/sse", "GET", pre_fix_permissions) is True
+
+    def test_post_fix_api_token_with_servers_use(self, middleware):
+        """Tokens generated after the fix already have servers.use — should still work."""
+        post_fix_permissions = [
+            "servers.create", "servers.read", "servers.update", "servers.delete",
+            "gateways.read", "tools.read", "tools.execute", "servers.use",
+        ]
+        assert middleware._check_permission_restrictions("/rpc", "POST", post_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/mcp", "POST", post_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/sse", "GET", post_fix_permissions) is True
 
 
 @pytest.mark.asyncio
