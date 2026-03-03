@@ -69,8 +69,13 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
-    # JSON-RPC endpoint (handles tools/call, tools/list, resources/list, initialize, etc.)
-    ("POST", re.compile(r"^/rpc(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    # JSON-RPC endpoint — multiplexes tools/call, resources/list, initialize, etc.
+    # Fine-grained per-method RBAC is enforced downstream by _ensure_rpc_permission();
+    # the middleware only gates transport-level access via servers.use.
+    ("POST", re.compile(r"^/rpc(?:$|/)"), Permissions.SERVERS_USE),
+    # SSE transport — like /rpc and /mcp, this is a transport-level endpoint;
+    # the handler's own @require_permission enforces fine-grained RBAC.
+    ("GET", re.compile(r"^/sse(?:$|/)"), Permissions.SERVERS_USE),
     # Streamable HTTP MCP transport (POST=send, GET=SSE stream, DELETE=session termination)
     ("POST", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),
     ("GET", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),

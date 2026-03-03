@@ -146,21 +146,24 @@ class TestTokenScopingMiddleware:
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
     @pytest.mark.asyncio
-    async def test_rpc_endpoint_allowed_with_tools_execute_permission(self, middleware):
-        """POST /rpc must be reachable for tokens that carry tools.execute in their scopes.
+    async def test_rpc_endpoint_allowed_with_servers_use_permission(self, middleware):
+        """POST /rpc must be reachable for tokens that carry servers.use.
 
-        Regression: tokens with explicit scopes.permissions (e.g. API tokens created in the
-        UI) were denied with "Insufficient permissions for this operation" on POST /rpc even
-        when they held tools.execute, because /rpc had no entry in _PERMISSION_PATTERNS and
-        the middleware defaults to deny for unmatched paths.
+        The /rpc endpoint multiplexes multiple MCP methods (tools/call, resources/list,
+        initialize, etc.), each requiring different permissions. The middleware gates
+        transport-level access with servers.use; fine-grained per-method RBAC is
+        enforced downstream by _ensure_rpc_permission().
+
+        Regression: tokens with explicit scopes.permissions were denied with
+        "Insufficient permissions" on POST /rpc because it had no _PERMISSION_PATTERNS entry.
         """
-        # Token has tools.execute - must be allowed through
-        result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.TOOLS_EXECUTE])
-        assert result is True, "POST /rpc should be allowed when token has tools.execute"
+        # Token has servers.use - must be allowed through
+        result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.SERVERS_USE])
+        assert result is True, "POST /rpc should be allowed when token has servers.use"
 
         # Token only has tools.read - should be denied at the middleware layer
         result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.TOOLS_READ])
-        assert result is False, "POST /rpc should be denied when token lacks tools.execute"
+        assert result is False, "POST /rpc should be denied when token lacks servers.use"
 
         # Wildcard permission bypasses pattern matching entirely
         result = middleware._check_permission_restrictions("/rpc", "POST", ["*"])
@@ -181,6 +184,22 @@ class TestTokenScopingMiddleware:
         # Token without servers.use must be denied
         result = middleware._check_permission_restrictions("/mcp", "POST", [Permissions.TOOLS_READ])
         assert result is False, "POST /mcp should be denied when token lacks servers.use"
+
+    @pytest.mark.asyncio
+    async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
+        """GET /sse must be reachable for tokens that carry servers.use.
+
+        Same pattern as /rpc and /mcp — the middleware gates transport-level access
+        with servers.use; the handler's own @require_permission enforces fine-grained RBAC.
+        """
+        result = middleware._check_permission_restrictions("/sse", "GET", [Permissions.SERVERS_USE])
+        assert result is True, "GET /sse should be allowed when token has servers.use"
+
+        result = middleware._check_permission_restrictions("/sse", "GET", [Permissions.TOOLS_READ])
+        assert result is False, "GET /sse should be denied when token lacks servers.use"
+
+        result = middleware._check_permission_restrictions("/sse", "GET", ["*"])
+        assert result is True, "GET /sse should be allowed with wildcard permission"
 
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
@@ -366,7 +385,7 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_permission_restricted_token_blocked_from_rpc(self, middleware, mock_request):
-        """Scoped token without tools.execute must be denied on POST /rpc with HTTP 403.
+        """Scoped token without servers.use must be denied on POST /rpc with HTTP 403.
 
         Deny-path regression: ensures the full middleware __call__ path enforces the
         permission restriction for /rpc, not just _check_permission_restrictions in isolation.
@@ -408,8 +427,8 @@ class TestTokenScopingMiddleware:
             assert "Insufficient permissions for this operation" in content.get("detail")
             call_next.assert_not_called()
 
-    def test_permission_restrictions_rpc_denied_for_scoped_token(self, middleware):
-        """Scoped tokens should not access /rpc directly without explicit mapping."""
+    def test_permission_restrictions_rpc_denied_without_servers_use(self, middleware):
+        """Tokens without servers.use should be denied on POST /rpc."""
         assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.RESOURCES_READ]) is False
 
     def test_permission_restrictions_server_mcp_requires_servers_use(self, middleware):
