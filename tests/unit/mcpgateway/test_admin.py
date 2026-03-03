@@ -3666,8 +3666,11 @@ class TestAdminUIRoute:
             raising=False,
         )
 
+        valid_team = SimpleNamespace(id="some-team-id", name="Some Team", type="organization", is_personal=False)
         team_service_mock = MagicMock()
-        team_service_mock.get_teams_for_user = MagicMock(return_value=[])
+        team_service_mock.get_user_teams = AsyncMock(return_value=[valid_team])
+        team_service_mock.get_member_counts_batch_cached = AsyncMock(return_value={})
+        team_service_mock.get_user_roles_batch = MagicMock(return_value={})
         team_service_ctor = MagicMock(return_value=team_service_mock)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
 
@@ -3733,14 +3736,15 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        response = await admin_ui(
-            request=mock_request,
-            team_id="not-a-team",
-            include_inactive=False,
-            db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
-        )
-        assert isinstance(response, HTMLResponse)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_ui(
+                request=mock_request,
+                team_id="not-a-team",
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db},
+            )
+        assert exc_info.value.status_code == 403
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -3773,14 +3777,15 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        response = await admin_ui(
-            request=mock_request,
-            team_id="team-1",
-            include_inactive=False,
-            db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
-        )
-        assert isinstance(response, HTMLResponse)
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_ui(
+                request=mock_request,
+                team_id="team-1",
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db},
+            )
+        assert exc_info.value.status_code == 403
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
