@@ -59,6 +59,7 @@ include .snyk
 # Runtime data that lives *inside* the package at import time
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
+exclude mcpgateway/static/iframe-test-harness.html
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico
 recursive-include mcpgateway *.json

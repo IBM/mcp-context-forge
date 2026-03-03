@@ -267,6 +267,9 @@ public/
 static/
 media/
 
+# Test harnesses (should not ship in container images)
+mcpgateway/static/iframe-test-harness.html
+
 # Application instances
 instance/
 local_settings.py

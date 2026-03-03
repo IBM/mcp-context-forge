@@ -7,6 +7,7 @@
   data-team-id="{{ team.id }}"
   data-team-name="{{ team.name }}"
   data-team-is-personal="{{ 'true' if team.is_personal else 'false' }}"
+  data-action="select-team"
 >
   <span>
     {% if team.is_personal %}👤{% else %}🏢{% endif %} {{ team.name }}
