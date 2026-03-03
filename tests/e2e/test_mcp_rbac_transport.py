@@ -386,7 +386,7 @@ def outsider_user(admin_api: APIRequestContext, playwright: Playwright) -> Gener
 
 @pytest.fixture(scope="module")
 def scoped_token_read_only(admin_api: APIRequestContext, playwright: Playwright) -> Generator[dict[str, Any], None, None]:
-    """A token with only tools.read permission (no tools.execute)."""
+    """A token with only tools.read permission (servers.use auto-injected at generation)."""
     uid = uuid.uuid4().hex[:8]
     user = _create_user_with_token(
         admin_api,
@@ -402,7 +402,7 @@ def scoped_token_read_only(admin_api: APIRequestContext, playwright: Playwright)
 
 @pytest.fixture(scope="module")
 def scoped_token_read_execute(admin_api: APIRequestContext, playwright: Playwright) -> Generator[dict[str, Any], None, None]:
-    """A token with tools.read + tools.execute permissions."""
+    """A token with tools.read + tools.execute permissions (servers.use auto-injected at generation)."""
     uid = uuid.uuid4().hex[:8]
     user = _create_user_with_token(
         admin_api,
@@ -684,39 +684,35 @@ class TestMcpScopedTokenPermissions:
     """Token scope enforcement through MCP protocol.
 
     The MCP endpoint (/servers/{id}/mcp) requires ``servers.use`` at the HTTP
-    middleware layer *before* any JSON-RPC processing occurs. Tokens with
-    scope restrictions that omit ``servers.use`` are rejected with HTTP 403 by
-    the token scoping middleware, and the wrapper converts this to a bridge
-    error with ``id: "bridge"``.
+    middleware layer *before* any JSON-RPC processing occurs. Token generation
+    auto-injects ``servers.use`` when MCP-method permissions (``tools.*``,
+    ``resources.*``, ``prompts.*``) are present, so tokens with these
+    permissions can reach the transport layer without explicitly including it.
 
     Therefore:
-    - A token with only ``["tools.read"]`` cannot even reach the MCP endpoint.
+    - A token with ``["tools.read"]`` gets ``servers.use`` auto-injected and can initialize.
+    - A token with ``["tools.read", "tools.execute"]`` likewise succeeds at transport level.
     - A token with ``["servers.use", "tools.read"]`` can list tools but not call them.
     - A token with ``["servers.use", "tools.read", "tools.execute"]`` can do both.
     """
 
-    def test_tools_read_only_token_blocked_at_http(self, scoped_token_read_only: dict) -> None:
-        """Token with only tools.read is blocked at HTTP level (missing servers.use)."""
+    def test_tools_read_only_token_can_initialize(self, scoped_token_read_only: dict) -> None:
+        """Token with tools.read gets servers.use auto-injected and can reach MCP endpoint."""
         env = build_wrapper_env(scoped_token_read_only["access_token"])
         responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        # Expect bridge-level error (HTTP 403) since servers.use is missing
-        if responses:
-            bridge_errors = [r for r in responses if r.get("id") == "bridge" and "error" in r]
-            assert len(bridge_errors) > 0, f"Expected bridge 403 error, got: {responses}"
-            print(f"    -> tools.read-only token blocked at HTTP: {bridge_errors[0]['error']}")
-        else:
-            print("    -> tools.read-only token: no response (wrapper rejected)")
+        assert responses, "Expected initialize response, got empty"
+        init_results = [r for r in responses if r.get("id") == 1 and "result" in r]
+        assert len(init_results) > 0, f"Expected successful initialize, got: {responses}"
+        print(f"    -> tools.read-only token initialized (servers.use auto-injected)")
 
-    def test_read_execute_token_blocked_without_servers_use(self, scoped_token_read_execute: dict) -> None:
-        """Token with tools.read+execute but no servers.use is also blocked at HTTP."""
+    def test_read_execute_token_can_initialize(self, scoped_token_read_execute: dict) -> None:
+        """Token with tools.read+execute gets servers.use auto-injected and can reach MCP endpoint."""
         env = build_wrapper_env(scoped_token_read_execute["access_token"])
         responses = send_jsonrpc_via_wrapper(env, [build_initialize(1)], settle_seconds=2.0)
-        if responses:
-            bridge_errors = [r for r in responses if r.get("id") == "bridge" and "error" in r]
-            assert len(bridge_errors) > 0, f"Expected bridge 403 error, got: {responses}"
-            print(f"    -> tools.read+execute token blocked without servers.use: {bridge_errors[0]['error']}")
-        else:
-            print("    -> tools.read+execute token: no response (wrapper rejected)")
+        assert responses, "Expected initialize response, got empty"
+        init_results = [r for r in responses if r.get("id") == 1 and "result" in r]
+        assert len(init_results) > 0, f"Expected successful initialize, got: {responses}"
+        print(f"    -> tools.read+execute token initialized (servers.use auto-injected)")
 
     def test_unscoped_admin_token_can_call_tools(self, test_users: dict) -> None:
         """Admin token without custom scope (empty permissions = pass-through) can call tools."""
