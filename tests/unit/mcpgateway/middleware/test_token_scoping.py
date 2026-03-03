@@ -131,12 +131,6 @@ class TestTokenScopingMiddleware:
             result = middleware._check_server_restriction(path, "server-123")
             assert result == True, f"Path {path} should remain whitelisted"
 
-    def test_rpc_endpoint_whitelisted_for_server_scoped_tokens(self, middleware):
-        """Test that /rpc endpoint is whitelisted for server-scoped tokens."""
-        # The /rpc endpoint is required for MCP protocol operations (SSE transport)
-        result = middleware._check_server_restriction("/rpc", "server-123")
-        assert result == True, "/rpc endpoint should be whitelisted for server-scoped tokens"
-
     @pytest.mark.asyncio
     async def test_canonical_permissions_used_in_map(self, middleware):
         """Test that permission map uses canonical Permissions constants (Issue 5 fix)."""
@@ -369,6 +363,50 @@ class TestTokenScopingMiddleware:
     def test_permission_restrictions_unmatched_path_public_token(self, middleware):
         """Unmatched paths should still allow empty permissions (public token behavior)."""
         assert middleware._check_permission_restrictions("/unmatched/path", "GET", []) is True
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_rpc(self, middleware, mock_request):
+        """Scoped token without tools.execute must be denied on POST /rpc with HTTP 403.
+
+        Deny-path regression: ensures the full middleware __call__ path enforces the
+        permission restriction for /rpc, not just _check_permission_restrictions in isolation.
+        """
+        mock_request.url.path = "/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions for this operation" in content.get("detail")
+            call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_mcp(self, middleware, mock_request):
+        """Scoped token without servers.use must be denied on POST /mcp with HTTP 403.
+
+        Deny-path regression: ensures the full middleware __call__ path enforces the
+        permission restriction for /mcp, not just _check_permission_restrictions in isolation.
+        """
+        mock_request.url.path = "/mcp"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions for this operation" in content.get("detail")
+            call_next.assert_not_called()
 
     def test_permission_restrictions_rpc_denied_for_scoped_token(self, middleware):
         """Scoped tokens should not access /rpc directly without explicit mapping."""

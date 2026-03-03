@@ -625,7 +625,7 @@ class TokenScopingMiddleware:
                 return path_server_id == server_id
 
         # If no server ID found in path, allow general endpoints
-        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc"]
+        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc"]
 
         # Check exact root path separately
         if request_path == "/":
