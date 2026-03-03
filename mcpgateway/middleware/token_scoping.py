@@ -690,7 +690,16 @@ class TokenScopingMiddleware:
         # Check each permission mapping (uses precompiled regex patterns)
         for method, path_pattern, required_permission in _PERMISSION_PATTERNS:
             if request_method == method and path_pattern.match(request_path):
-                return required_permission in permissions
+                if required_permission in permissions:
+                    return True
+                # Runtime compensation: tokens with MCP method permissions
+                # (tools.*, resources.*, prompts.*) implicitly have transport
+                # access (servers.use) — mirrors the generation-time injection
+                # in token_catalog_service._generate_token() for pre-existing tokens.
+                if required_permission == Permissions.SERVERS_USE:
+                    mcp_prefixes = ("tools.", "resources.", "prompts.")
+                    return any(p.startswith(mcp_prefixes) for p in permissions)
+                return False
 
         # LLM proxy permissions (respect configured llm_api_prefix).
         for method, path_pattern, required_permission in _get_llm_permission_patterns(settings.llm_api_prefix):
