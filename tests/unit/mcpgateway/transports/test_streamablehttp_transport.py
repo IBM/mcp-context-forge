@@ -38,6 +38,7 @@ from starlette.types import Scope
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
+from mcpgateway.transports.streamablehttp_transport import _MCPGATEWAY_CONTEXT_KEY
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
@@ -3408,6 +3409,10 @@ async def test_set_logging_level_requires_admin_system_config(monkeypatch):
         ),
     )
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_server_oauth_enforcement", AsyncMock())
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=False),
+    )
 
     mock_logging_service = MagicMock()
     mock_logging_service.set_level = AsyncMock()
@@ -3417,6 +3422,40 @@ async def test_set_logging_level_requires_admin_system_config(monkeypatch):
     with pytest.raises(PermissionError, match="admin.system_config"):
         await set_logging_level("info")
     mock_logging_service.set_level.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_set_logging_level_admin_allowed(monkeypatch):
+    """logging/setLevel succeeds when the caller has admin.system_config permission."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_server_oauth_enforcement", AsyncMock())
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=True),
+    )
+
+    mock_logging_service = MagicMock()
+    mock_logging_service.set_level = AsyncMock()
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.logging_service", mock_logging_service)
+
+    result = await set_logging_level("info")
+    assert isinstance(result, mcp_types.EmptyResult)
+    mock_logging_service.set_level.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -10700,7 +10739,7 @@ async def test_get_request_context_reads_scope_context(monkeypatch):
     injected_server_id = "abc123def456"
 
     mock_scope = {
-        "_mcpgateway_context": {
+        _MCPGATEWAY_CONTEXT_KEY: {
             "server_id": injected_server_id,
             "request_headers": injected_headers,
             "user_context": injected_user_context,
@@ -10794,7 +10833,7 @@ async def test_get_request_context_scope_null_server_id_falls_back(monkeypatch):
     injected_user_context = {"email": "u@example.com", "teams": [], "is_authenticated": True, "is_admin": False}
 
     mock_scope = {
-        "_mcpgateway_context": {
+        _MCPGATEWAY_CONTEXT_KEY: {
             "server_id": None,  # Null server_id — should fall back to s_id
             "request_headers": {"x-custom": "val"},
             "user_context": injected_user_context,
@@ -10830,7 +10869,7 @@ async def test_get_request_context_scope_non_dict_mcpgateway_context_skipped(mon
     token = server_id_var.set("default_server_id")
 
     mock_request = MagicMock()
-    mock_request.scope = {"_mcpgateway_context": "not-a-dict"}  # Invalid type
+    mock_request.scope = {_MCPGATEWAY_CONTEXT_KEY: "not-a-dict"}  # Invalid type
     mock_request.url.path = "/mcp"
     mock_request.headers = {}
     mock_request.cookies = {}

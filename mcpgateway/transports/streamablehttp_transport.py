@@ -81,6 +81,9 @@ logger = logging_service.get_logger(__name__)
 # Precompiled regex for server ID extraction from path
 _SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
 
+# ASGI scope key for propagating gateway context from middleware to MCP handlers
+_MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
+
 # Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
 tool_service: ToolService = ToolService()
 prompt_service: PromptService = PromptService()
@@ -1260,7 +1263,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     1. Context variables (fast path). Used when the handler executes in the
        same async context as the middleware (for example, direct ASGI dispatch).
     2. ASGI scope. The middleware stores resolved context on
-       ``scope["_mcpgateway_context"]`` before handing off to the MCP SDK.
+       ``scope[_MCPGATEWAY_CONTEXT_KEY]`` before handing off to the MCP SDK.
        Because the SDK passes the same ``scope`` dictionary through to
        ``mcp_app.request_context.request``, this survives task-group
        boundaries where ContextVars may be lost.
@@ -1285,11 +1288,12 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         return s_id, request_headers_var.get(), user_context_var.get()
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
+    ctx = None
     try:
         ctx = mcp_app.request_context
         request = ctx.request
         if request:
-            gw_ctx = getattr(request, "scope", {}).get("_mcpgateway_context")
+            gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
             if isinstance(gw_ctx, dict):
                 return (
                     gw_ctx.get("server_id") or s_id,
@@ -1300,11 +1304,14 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         # Not in a request context — fall through to ContextVar defaults
         return s_id, request_headers_var.get(), user_context_var.get()
     except Exception as e:
-        logger.debug("Failed to read _mcpgateway_context from scope: %s", e)
+        logger.debug("Failed to read %s from scope: %s", _MCPGATEWAY_CONTEXT_KEY, e)
 
     # 3. Re-authentication fallback (stateful session path)
     try:
-        ctx = mcp_app.request_context
+        # Reuse ctx from the scope-reading block above (step 2) to avoid
+        # a redundant mcp_app.request_context lookup.
+        if ctx is None:
+            ctx = mcp_app.request_context
         request = ctx.request
         if not request:
             logger.warning("No request object found in MCP context")
@@ -2660,7 +2667,7 @@ class SessionManagerWrapper:
         # handlers can retrieve it even when ContextVars are lost (the SDK's
         # task group was created at startup, so spawned handler tasks inherit
         # the startup context rather than the per-request context).
-        scope["_mcpgateway_context"] = {
+        scope[_MCPGATEWAY_CONTEXT_KEY] = {
             "server_id": server_id_var.get(),
             "request_headers": headers,
             "user_context": user_context,
