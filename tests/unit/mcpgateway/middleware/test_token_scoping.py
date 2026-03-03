@@ -173,6 +173,22 @@ class TestTokenScopingMiddleware:
         assert result is True, "POST /rpc should be allowed with wildcard permission"
 
     @pytest.mark.asyncio
+    async def test_mcp_streamable_http_endpoint_allowed_with_servers_use_permission(self, middleware):
+        """POST/GET/DELETE /mcp must be reachable for tokens that carry servers.use in their scopes.
+
+        Regression: same root cause as /rpc — /mcp was missing from _PERMISSION_PATTERNS so
+        scoped tokens with explicit permissions were denied at the middleware layer before
+        reaching the transport's own servers.use RBAC check.
+        """
+        for method in ("POST", "GET", "DELETE"):
+            result = middleware._check_permission_restrictions("/mcp", method, [Permissions.SERVERS_USE])
+            assert result is True, f"{method} /mcp should be allowed when token has servers.use"
+
+        # Token without servers.use must be denied
+        result = middleware._check_permission_restrictions("/mcp", "POST", [Permissions.TOOLS_READ])
+        assert result is False, "POST /mcp should be denied when token lacks servers.use"
+
+    @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
         """Test that admin endpoint groups use canonical granular permissions."""
         result = middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
