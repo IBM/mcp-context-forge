@@ -2020,6 +2020,9 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         >>> sig = inspect.signature(set_logging_level)
         >>> list(sig.parameters.keys())
         ['level']
+
+    Raises:
+        PermissionError: If the user does not have permission to set the logging level.
     """
     server_id, _, user_context = await _get_request_context_or_default()
 
