@@ -27,10 +27,10 @@ EXPECTED_REVISION = "abf8ac3b6008"
 EXPECTED_DOWN_REVISION = "d9e0f1a2b3c4"
 
 ROLE_PERMISSION_ADDITIONS = {
-    "viewer": ["admin.overview", "tools.execute"],
-    "platform_viewer": ["admin.overview", "tools.execute"],
-    "developer": ["admin.overview"],
-    "team_admin": ["admin.overview"],
+    "viewer": ["admin.overview", "tools.execute", "servers.use"],
+    "platform_viewer": ["admin.overview", "tools.execute", "servers.use"],
+    "developer": ["admin.overview", "servers.use"],
+    "team_admin": ["admin.overview", "servers.use"],
 }
 
 
