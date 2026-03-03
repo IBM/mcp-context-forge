@@ -95,7 +95,7 @@ The `teams` claim in JWT tokens determines resource visibility:
 ### Security Invariants (Required)
 
 - Treat `public` as platform-public scope, not internet-anonymous scope.
-- Explicit exception: when `MCP_REQUIRE_AUTH=false`, unauthenticated `/mcp` requests are allowed with public-only visibility.
+- Explicit exception: when `MCP_REQUIRE_AUTH=false`, unauthenticated `/mcp` requests are allowed with public-only visibility — **unless** the target virtual server has `oauth_enabled=True`, in which case unauthenticated requests are rejected with 401 regardless of the global setting.
 - Keep the two-layer model on every path:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
@@ -184,6 +184,10 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 - **HTMX + Alpine.js** for admin UI
 - **SQLite** default, **PostgreSQL** support, **Redis** for caching/federation
 - **Alembic** for migrations
+
+### Synchronous SQLAlchemy in Async Handlers (Design Decision)
+
+The codebase deliberately uses synchronous SQLAlchemy sessions (e.g. `SessionLocal().begin()`) inside async FastAPI handlers and ASGI middleware, relying on FastAPI's event-loop management to handle blocking operations. Do not flag this as a bug or attempt to convert individual call sites to async without a broader migration plan. This design decision may be revisited in the future alongside a potential migration to async database drivers.
 
 ## Alembic Database Migrations
 

@@ -33179,6 +33179,59 @@ window.selectTeamFromSelector = selectTeamFromSelector;
 window.getTeamsCurrentPaginationState = getTeamsCurrentPaginationState;
 
 /**
+ * Load teams into the team selector dropdown.
+ *
+ * Called from the Alpine.js x-data component when the dropdown opens.
+ * This logic lives here (not inline in x-data) because the innerHTML
+ * strings contain double-quote characters that break HTML attribute parsing
+ * when embedded inside an x-data="..." attribute.
+ */
+function loadTeamSelectorDropdown() {
+    const container = document.getElementById("team-selector-items");
+    if (!container || container.dataset.loaded) {
+        return;
+    }
+    container.innerHTML =
+        '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading teams\u2026</div>';
+    const rootPath = window.ROOT_PATH || "";
+    fetch(
+        rootPath + "/admin/teams/partial?page=1&per_page=10&render=selector",
+        { credentials: "same-origin" },
+    )
+        .then(function (resp) {
+            if (!resp.ok) {
+                throw new Error("HTTP " + resp.status);
+            }
+            return resp.text();
+        })
+        .then(function (html) {
+            container.innerHTML = html;
+            container.dataset.loaded = "true";
+            if (window.htmx) {
+                window.htmx.process(container);
+            }
+        })
+        .catch(function () {
+            delete container.dataset.loaded;
+            container.innerHTML =
+                '<div class="px-4 py-2 text-sm text-red-600 dark:text-red-400">' +
+                "Failed to load teams. Backend may be temporarily unavailable. " +
+                '<button type="button" data-action="retry-load-teams" ' +
+                'class="underline font-medium">Retry</button></div>';
+            const retryBtn = container.querySelector(
+                '[data-action="retry-load-teams"]',
+            );
+            if (retryBtn) {
+                retryBtn.addEventListener("click", function () {
+                    delete container.dataset.loaded;
+                    searchTeamSelector("");
+                });
+            }
+        });
+}
+window.loadTeamSelectorDropdown = loadTeamSelectorDropdown;
+
+/**
  * Handle keydown event when Enter or Space key is pressed
  *
  * @param {KeyboardEvent} event - the keyboard event triggered
