@@ -69,6 +69,17 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    # JSON-RPC endpoint — multiplexes tools/call, resources/list, initialize, etc.
+    # Fine-grained per-method RBAC is enforced downstream by _ensure_rpc_permission();
+    # the middleware only gates transport-level access via servers.use.
+    ("POST", re.compile(r"^/rpc(?:$|/)"), Permissions.SERVERS_USE),
+    # SSE transport — like /rpc and /mcp, this is a transport-level endpoint;
+    # the handler's own @require_permission enforces fine-grained RBAC.
+    ("GET", re.compile(r"^/sse(?:$|/)"), Permissions.SERVERS_USE),
+    # Streamable HTTP MCP transport (POST=send, GET=SSE stream, DELETE=session termination)
+    ("POST", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),
+    ("GET", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),
+    ("DELETE", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),
     # Resources permissions
     ("GET", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_READ),
     ("POST", re.compile(r"^/resources/?$"), Permissions.RESOURCES_CREATE),  # Only exact /resources or /resources/
@@ -619,7 +630,7 @@ class TokenScopingMiddleware:
                 return path_server_id == server_id
 
         # If no server ID found in path, allow general endpoints
-        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc"]
+        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc", "/mcp", "/sse"]
 
         # Check exact root path separately
         if request_path == "/":
