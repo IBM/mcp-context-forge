@@ -70,7 +70,7 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "pyjwt>=2.11.0",
     "python-json-logger>=4.0.0",
-    "python-multipart>=0.0.22", # Transitive pin (mcp, fastapi); CVE-2026-24486; dependabot/81
+    "python-multipart>=0.0.22", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.48",
@@ -78,7 +78,7 @@ dependencies = [
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
     "typer>=0.24.1",
-    "urllib3>=2.6.3", # Transitive pin (requests); CVE-2026-21441; dependabot/76
+    "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.41.0",
 ]
 
@@ -159,8 +159,6 @@ dev = [
     "vulture>=2.14",
     "websockets>=15.0.1",
     "yamllint>=1.37.1",
-    # Required by other packages but here for security version control (CVEs)
-    # Can be removed once the associated packages update their dependencies
     "pyasn1>=0.6.2", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
     # gRPC plugin framework testing (optional at runtime, required for test coverage)
     "grpcio>=1.76.0",
