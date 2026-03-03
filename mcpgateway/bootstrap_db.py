@@ -339,7 +339,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 },
                 {
                     "name": "viewer",
-                    "description": "Read-only access to resources and admin UI",
+                    "description": "Read and test access to resources and admin UI",
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
@@ -364,7 +364,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 },
                 {
                     "name": "platform_viewer",
-                    "description": "Read-only access to resources and admin UI",
+                    "description": "Read and test access to resources and admin UI",
                     "scope": "global",
                     "permissions": [
                         "admin.dashboard",
