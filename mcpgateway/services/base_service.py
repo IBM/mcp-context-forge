@@ -120,7 +120,6 @@ class BaseService(ABC):
                 access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
             return query.where(or_(*access_conditions))
 
-
         # Owner can see their own private resources (but NOT team resources
         # from teams outside token scope — those are covered by the
         # token_teams condition below)
