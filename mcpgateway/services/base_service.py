@@ -106,6 +106,8 @@ class BaseService(ABC):
             Filtered query
         """
         model_cls = self._visibility_model_cls
+        # Global listing: public resources visible to everyone
+        access_conditions = [model_cls.visibility == "public"]
 
         if team_id:
             # User requesting specific team - verify access
@@ -113,13 +115,11 @@ class BaseService(ABC):
                 return query.where(False)
 
             # Scope results strictly to the requested team
-            access_conditions = [and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"]))]
+            access_conditions.append(and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"])))
             if user_email:
                 access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
             return query.where(or_(*access_conditions))
 
-        # Global listing: public resources visible to everyone
-        access_conditions = [model_cls.visibility == "public"]
 
         # Owner can see their own private resources (but NOT team resources
         # from teams outside token scope — those are covered by the
