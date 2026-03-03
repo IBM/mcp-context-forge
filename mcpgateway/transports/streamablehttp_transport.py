@@ -81,6 +81,9 @@ logger = logging_service.get_logger(__name__)
 # Precompiled regex for server ID extraction from path
 _SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
 
+# ASGI scope key for propagating gateway context from middleware to MCP handlers
+_MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
+
 # Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
 tool_service: ToolService = ToolService()
 prompt_service: PromptService = PromptService()
@@ -478,7 +481,7 @@ def _should_enforce_streamable_rbac(user_context: Optional[dict[str, Any]]) -> b
     Returns:
         bool: ``True`` when permission checks should be enforced for this request.
     """
-    return isinstance(user_context, dict) and "is_authenticated" in user_context
+    return isinstance(user_context, dict) and user_context.get("is_authenticated", False) is True
 
 
 def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
@@ -1253,28 +1256,29 @@ async def call_tool(name: str, arguments: dict) -> Union[
 
 
 async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[str, Any]]:
-    """Retrieve request context information for the current execution.
+    """Retrieves request context information for the current execution.
 
-    This function attempts to obtain the `server_id`, request headers, and
-    user context from ContextVars (fast path). If the ContextVars contain
-    default values—indicating a stateful session where context propagation
-    may not have occurred—it falls back to extracting the information from
-    `mcp_app.request_context`.
+    This function resolves request context using the following precedence:
 
-    The fallback logic:
-    - Extracts `server_id` from the request URL path.
-    - Copies request headers from the underlying request object.
-    - Attempts to recover user context using the authorization header or
-      JWT token stored in cookies.
-
-    If recovery fails at any point, default ContextVar values are returned.
+    1. Context variables (fast path). Used when the handler executes in the
+       same async context as the middleware (for example, direct ASGI dispatch).
+    2. ASGI scope. The middleware stores resolved context on
+       ``scope[_MCPGATEWAY_CONTEXT_KEY]`` before handing off to the MCP SDK.
+       Because the SDK passes the same ``scope`` dictionary through to
+       ``mcp_app.request_context.request``, this survives task-group
+       boundaries where ContextVars may be lost.
+    3. Re-authentication fallback. Re-extracts identity from the request's
+       Authorization header or cookies. This is the most expensive path and
+       may produce a different context shape for anonymous callers (an empty
+       dictionary instead of the middleware's canonical
+       ``{"is_authenticated": False, ...}`` structure).
 
     Returns:
         Tuple[str, dict[str, Any], dict[str, Any]]: A tuple containing:
+
             - server_id: The resolved server identifier.
-            - request_headers: A dictionary of request headers.
-            - user_context: A dictionary representing the authenticated user
-              context (empty if anonymous or recovery fails).
+            - request_headers: The request headers as a dictionary.
+            - user_context: The resolved user context dictionary.
     """
     # 1. Try context vars first (fast path)
     s_id = server_id_var.get()
@@ -1283,9 +1287,31 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     if s_id != "default_server_id":
         return s_id, request_headers_var.get(), user_context_var.get()
 
-    # 2. Fallback to mcp_app.request_context (stateful session path)
+    # 2. Try ASGI scope context injected by handle_streamable_http()
+    ctx = None
     try:
         ctx = mcp_app.request_context
+        request = ctx.request
+        if request:
+            gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
+            if isinstance(gw_ctx, dict):
+                return (
+                    gw_ctx.get("server_id") or s_id,
+                    gw_ctx.get("request_headers", {}),
+                    gw_ctx.get("user_context", {}),
+                )
+    except LookupError:
+        # Not in a request context — fall through to ContextVar defaults
+        return s_id, request_headers_var.get(), user_context_var.get()
+    except Exception as e:
+        logger.debug("Failed to read %s from scope: %s", _MCPGATEWAY_CONTEXT_KEY, e)
+
+    # 3. Re-authentication fallback (stateful session path)
+    try:
+        # Reuse ctx from the scope-reading block above (step 2) to avoid
+        # a redundant mcp_app.request_context lookup.
+        if ctx is None:
+            ctx = mcp_app.request_context
         request = ctx.request
         if not request:
             logger.warning("No request object found in MCP context")
@@ -1996,14 +2022,14 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
     Returns:
         types.EmptyResult: An empty result indicating success.
 
-    Raises:
-        PermissionError: If the caller lacks ``admin.system_config`` permission.
-
     Examples:
         >>> import inspect
         >>> sig = inspect.signature(set_logging_level)
         >>> list(sig.parameters.keys())
         ['level']
+
+    Raises:
+        PermissionError: If the user does not have permission to set the logging level.
     """
     server_id, _, user_context = await _get_request_context_or_default()
 
@@ -2636,6 +2662,16 @@ class SessionManagerWrapper:
                         captured_session_id = header_value
                         break
             await send(message)
+
+        # Propagate middleware-resolved context via ASGI scope so that MCP
+        # handlers can retrieve it even when ContextVars are lost (the SDK's
+        # task group was created at startup, so spawned handler tasks inherit
+        # the startup context rather than the per-request context).
+        scope[_MCPGATEWAY_CONTEXT_KEY] = {
+            "server_id": server_id_var.get(),
+            "request_headers": headers,
+            "user_context": user_context,
+        }
 
         try:
             await self.session_manager.handle_request(scope, receive, send_with_capture)
