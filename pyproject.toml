@@ -213,7 +213,7 @@ fuzz = [
     "hypothesis>=6.151.9",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.11.0",
+    "schemathesis>=4.10.2,<4.11.0",  # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
