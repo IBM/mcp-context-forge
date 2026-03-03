@@ -1033,7 +1033,7 @@ class TestAdminAuthMiddleware:
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
-            query_params={"team_id": "team-abc-123"},
+            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
         )
         call_next = AsyncMock(return_value="ok")
 
@@ -1056,7 +1056,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123", "team-xyz-456"])),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -1064,16 +1064,16 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Verify has_admin_permission was called with the validated team_id
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-abc-123")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
 
     @pytest.mark.asyncio
-    async def test_admin_auth_team_scoped_request_ignores_invalid_team_id(self, monkeypatch):
+    async def test_admin_auth_team_scoped_request_ignores_nonmember_team_id(self, monkeypatch):
         """team_id not in user's teams should be ignored (falls back to global check)."""
         middleware = AdminAuthMiddleware(None)
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
-            query_params={"team_id": "team-not-mine"},
+            query_params={"team_id": "00000000000000000000000000000099"},
         )
         call_next = AsyncMock(return_value="ok")
 
@@ -1097,7 +1097,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -1136,7 +1136,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -1176,7 +1176,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -1193,7 +1193,7 @@ class TestAdminAuthMiddleware:
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
-            query_params={"team_id": "team-abc-123"},
+            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
         )
         call_next = AsyncMock(return_value="ok")
 
@@ -1228,18 +1228,15 @@ class TestAdminAuthMiddleware:
         mock_permission_service.has_admin_permission.assert_awaited_once_with("admin@example.com", team_id=None)
 
     @pytest.mark.asyncio
-    async def test_admin_auth_repeated_team_id_uses_last_value(self, monkeypatch):
-        """Repeated team_id query keys: .get() returns last value; validate against token_teams."""
-        from starlette.datastructures import QueryParams
-
+    async def test_admin_auth_hyphenated_uuid_normalized_to_hex(self, monkeypatch):
+        """Hyphenated UUID in query should be normalized to hex and match token_teams."""
         middleware = AdminAuthMiddleware(None)
+        # Hyphenated form of the same UUID
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
+            query_params={"team_id": "a1b2c3d4-e5f6-7890-1234-5678abcdef01"},
         )
-        # Simulate repeated keys: ?team_id=team-evil&team_id=team-abc-123
-        # Starlette QueryParams.get() returns the last value
-        request.query_params = QueryParams("team_id=team-evil&team_id=team-abc-123")
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -1261,16 +1258,102 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            # User belongs to team-abc-123 but NOT team-evil
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["team-abc-123"])),
+            # DB stores hex format
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
             response = await middleware.dispatch(request, call_next)
 
         assert response == "ok"
-        # .get() returns "team-abc-123" (last value), which IS in token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-abc-123")
+        # Hyphenated UUID should be normalized to hex and match token_teams
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_garbage_team_id_treated_as_absent(self, monkeypatch):
+        """Non-UUID team_id in query params should be treated as absent (not a valid UUID)."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+            query_params={"team_id": "not-a-valid-uuid"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+            ),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # Invalid UUID is discarded, falls back to global check
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_repeated_team_id_uses_last_value(self, monkeypatch):
+        """Repeated team_id query keys: .get() returns last value; validate against token_teams."""
+        from starlette.datastructures import QueryParams
+
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+        )
+        # Simulate repeated keys — .get() returns the last value
+        request.query_params = QueryParams(
+            "team_id=00000000000000000000000000000099"
+            "&team_id=a1b2c3d4e5f6789012345678abcdef01"
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+            ),
+            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # .get() returns last value (hex UUID), which IS in token_teams
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
 
 
 class TestMCPPathRewriteMiddleware:

@@ -1826,6 +1826,11 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     # so that developer/viewer roles with admin.dashboard can access the UI.
                     permission_service = PermissionService(db)
                     request_team_id = request.query_params.get("team_id")
+                    # Normalize to hex so hyphenated UUIDs match DB-stored hex IDs
+                    try:
+                        request_team_id = uuid.UUID(request_team_id).hex if request_team_id else None
+                    except (ValueError, AttributeError):
+                        request_team_id = None
                     # Only trust team_id if it is in the user's DB-resolved teams
                     validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
                     has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id)
