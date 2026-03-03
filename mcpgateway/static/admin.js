@@ -33194,7 +33194,10 @@ function loadTeamSelectorDropdown() {
     container.innerHTML =
         '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading teams\u2026</div>';
     const rootPath = window.ROOT_PATH || "";
-    fetch(rootPath + "/admin/teams/partial?page=1&per_page=10&render=selector", { credentials: "same-origin" })
+    fetch(
+        rootPath + "/admin/teams/partial?page=1&per_page=10&render=selector",
+        { credentials: "same-origin" },
+    )
         .then(function (resp) {
             if (!resp.ok) {
                 throw new Error("HTTP " + resp.status);
@@ -33215,7 +33218,9 @@ function loadTeamSelectorDropdown() {
                 "Failed to load teams. Backend may be temporarily unavailable. " +
                 '<button type="button" data-action="retry-load-teams" ' +
                 'class="underline font-medium">Retry</button></div>';
-            var retryBtn = container.querySelector('[data-action="retry-load-teams"]');
+            const retryBtn = container.querySelector(
+                '[data-action="retry-load-teams"]',
+            );
             if (retryBtn) {
                 retryBtn.addEventListener("click", function () {
                     delete container.dataset.loaded;
