@@ -1495,8 +1495,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data):
+            def __init__(self, data, status_code):
                 self._data = data
+                self.status_code = status_code
             def json(self):
                 return self._data
 
@@ -1512,7 +1513,7 @@ class TestExecuteForwardedRequest:
                 self.post_calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
                 return self._response
 
-        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "result": {"x": 1}, "id": 1}))
+        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "result": {"x": 1}, "id": 1}, 200))
 
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.port = 4444
@@ -1532,8 +1533,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data):
+            def __init__(self, data, status_code):
                 self._data = data
+                self.status_code = status_code
             def json(self):
                 return self._data
 
@@ -1547,7 +1549,7 @@ class TestExecuteForwardedRequest:
             async def post(self, *_args, **_kwargs):
                 return self._response
 
-        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "error": {"code": -32601, "message": "nope"}, "id": 1}))
+        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "error": {"code": -32601, "message": "nope"}, "id": 1}, status_code=200))
 
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.port = 4444
