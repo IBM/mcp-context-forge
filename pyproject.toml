@@ -70,6 +70,9 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "pyjwt>=2.11.0",
     "python-json-logger>=4.0.0",
+    # Required by other packages but here for security version control (CVEs)
+    # Can be removed once the associated packages update their dependencies
+    "python-multipart>=0.0.22",  # mcp, fastapi; https://github.com/IBM/mcp-context-forge/security/dependabot/81
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.47",
@@ -77,9 +80,10 @@ dependencies = [
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
     "typer>=0.24.1",
+    # Required by other packages but here for security version control (CVEs)
+    # Can be removed once the associated packages update their dependencies
+    "urllib3>=2.6.3",  # requests; https://github.com/IBM/mcp-context-forge/security/dependabot/76
     "uvicorn[standard]>=0.41.0",
-    "urllib3>=2.6.3",               # Pinned to ensure latest security patches for transitive dependencies
-    "python-multipart>=0.0.22",     # Pinned to ensure latest security patches for transitive dependencies
 ]
 
 # ----------------------------------------------------------------
