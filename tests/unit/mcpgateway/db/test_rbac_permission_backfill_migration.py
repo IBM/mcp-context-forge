@@ -29,8 +29,8 @@ EXPECTED_DOWN_REVISION = "d9e0f1a2b3c4"
 ROLE_PERMISSION_ADDITIONS = {
     "viewer": ["admin.overview", "tools.execute", "servers.use"],
     "platform_viewer": ["admin.overview", "tools.execute", "servers.use"],
-    "developer": ["admin.overview", "servers.use"],
-    "team_admin": ["admin.overview", "servers.use"],
+    "developer": ["admin.overview"],
+    "team_admin": ["admin.overview"],
 }
 
 
@@ -154,12 +154,13 @@ def migration_db():
                 """
             )
         )
-        # Pre-populate roles with permissions BEFORE the migration
+        # Pre-populate roles with realistic baseline permissions BEFORE the migration.
+        # developer and team_admin already include servers.use in bootstrap_db.py.
         roles_data = [
             ("1", "viewer", json.dumps(["admin.dashboard", "tools.read", "resources.read"])),
             ("2", "platform_viewer", json.dumps(["admin.dashboard", "tools.read", "resources.read"])),
-            ("3", "developer", json.dumps(["admin.dashboard", "tools.read", "tools.execute", "resources.read"])),
-            ("4", "team_admin", json.dumps(["admin.dashboard", "tools.read", "tools.execute", "resources.read"])),
+            ("3", "developer", json.dumps(["admin.dashboard", "tools.read", "tools.execute", "resources.read", "servers.use"])),
+            ("4", "team_admin", json.dumps(["admin.dashboard", "tools.read", "tools.execute", "resources.read", "servers.use"])),
             ("5", "platform_admin", json.dumps(["*"])),
         ]
         for role_id, name, perms in roles_data:
@@ -352,6 +353,33 @@ class TestDowngradeLogic:
                 perms = _get_role_permissions(conn, role_name)
                 for perm in permissions:
                     assert perm not in perms, f"Role '{role_name}' still has '{perm}' after downgrade"
+
+    def test_upgrade_downgrade_restores_exact_original_state(self, migration_db, migration_module):
+        """Full round-trip: upgrade then downgrade restores exact original permissions for all roles."""
+        with migration_db.connect() as conn:
+            # Capture original state
+            originals = {}
+            for role_name in ROLE_PERMISSION_ADDITIONS:
+                originals[role_name] = sorted(_get_role_permissions(conn, role_name))
+
+            # Upgrade
+            for role_name, permissions in ROLE_PERMISSION_ADDITIONS.items():
+                migration_module._update_role_permissions(conn, role_name, permissions, add=True)
+            conn.commit()
+
+            # Downgrade
+            for role_name, permissions in ROLE_PERMISSION_ADDITIONS.items():
+                migration_module._update_role_permissions(conn, role_name, permissions, add=False)
+            conn.commit()
+
+            # Verify exact restoration (catches the servers.use regression)
+            for role_name, original_perms in originals.items():
+                restored = sorted(_get_role_permissions(conn, role_name))
+                assert restored == original_perms, (
+                    f"Role '{role_name}' not restored after round-trip. "
+                    f"Lost: {set(original_perms) - set(restored)}, "
+                    f"Extra: {set(restored) - set(original_perms)}"
+                )
 
     def test_downgrade_idempotent(self, migration_db, migration_module):
         """Running downgrade twice produces the same result."""
