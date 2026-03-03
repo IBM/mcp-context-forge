@@ -562,7 +562,24 @@ def update_dependency_array(
     Returns:
         A new tomlkit Array with updated (and possibly sorted) dependencies.
     """
-    updated_items: List[Tuple[str, Any]] = []
+    # Build a map from dependency values to their inline comments.
+    # tomlkit stores array-item comments on internal _ArrayItemGroup objects,
+    # not on the string item's own trivia, so we must extract them here.
+    original_comments: Dict[str, Optional[str]] = {}
+    if not remove_comments and hasattr(dep_array, "_value"):
+        for group in dep_array._value:
+            val = getattr(group, "value", None)
+            if val is not None:
+                key = str(val.value) if hasattr(val, "value") else str(val)
+                comment_obj = getattr(group, "comment", None)
+                if comment_obj is not None and hasattr(comment_obj, "trivia"):
+                    # Store comment text without the leading "# "
+                    raw = comment_obj.trivia.comment
+                    original_comments[key] = raw.lstrip("# ") if raw else None
+                else:
+                    original_comments[key] = None
+
+    updated_items: List[Tuple[str, str, Optional[str]]] = []
 
     for item in dep_array:
         # If not a string or tomlkit string, skip
@@ -582,28 +599,12 @@ def update_dependency_array(
             if verbose:
                 logger.info(f"📝 Updated dependency: {original} -> {new_dep}")
 
-        new_item = tomlkit.string(new_dep)
-        # Conditionally preserve trivia (comments, indent, whitespace)
-        if remove_comments:
-            logger.debug(f"Skipping comment preservation for {dep_str}")
-        else:
-            logger.debug(f"Preserving comment for {dep_str}")
-            if hasattr(item, "trivia"):
-                try:
-                    # Attempt to copy over all comment-related trivia
-                    new_item.trivia.indent = item.trivia.indent
-                    new_item.trivia.comment_ws = item.trivia.comment_ws
-                    new_item.trivia.comment = item.trivia.comment
-                    new_item.trivia.trail = item.trivia.trail
+        # Look up the comment from the original array item
+        comment_text = original_comments.get(dep_str) if not remove_comments else None
+        if comment_text:
+            logger.debug(f"Preserved comment text for {dep_str}: {comment_text}")
 
-                    # At DEBUG -> also show what comment we are preserving
-                    if item.trivia.comment:
-                        logger.debug(f"Preserved comment text for {dep_str}: {item.trivia.comment}")
-
-                except AttributeError:
-                    logger.warning(f"⚠️ Could not fully preserve trivia for {dep_str}")
-
-        updated_items.append((extract_package_name(new_dep), new_item))
+        updated_items.append((extract_package_name(new_dep), new_dep, comment_text))
 
     if sort_dependencies:
         logger.info("🔡 Sorting dependencies alphabetically.")
@@ -613,8 +614,8 @@ def update_dependency_array(
 
     new_array = tomlkit.array()
     new_array.multiline(True)
-    for _, item in updated_items:
-        new_array.append(item)
+    for _, dep_value, comment in updated_items:
+        new_array.add_line(dep_value, comment=comment if comment else "")
 
     return new_array
 
