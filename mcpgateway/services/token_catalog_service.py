@@ -289,6 +289,15 @@ class TokenCatalogService:
                 "time_restrictions": {},
             }
 
+        # Auto-inject servers.use for tokens with explicit MCP-related permissions.
+        # Without servers.use, the token scoping middleware blocks /rpc and /mcp
+        # transport access, making MCP-method permissions useless.
+        mcp_method_prefixes = ("tools.", "resources.", "prompts.")
+        permissions = scopes_dict["permissions"]
+        if permissions and "*" not in permissions and "servers.use" not in permissions:
+            if any(p.startswith(mcp_method_prefixes) for p in permissions):
+                scopes_dict["permissions"] = [*permissions, "servers.use"]
+
         # Generate JWT token using the centralized token creation utility
         # Pass structured data to the enhanced create_jwt_token function
         return await create_jwt_token(
