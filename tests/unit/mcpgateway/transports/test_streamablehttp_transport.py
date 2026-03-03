@@ -10969,7 +10969,6 @@ async def test_get_request_context_scope_generic_exception_falls_through(monkeyp
 
     # Re-auth fallback: need a fresh mock_ctx that works
     call_count = 0
-    original_request = mock_request
 
     def get_request_context():
         nonlocal call_count
