@@ -3239,7 +3239,7 @@ async def admin_ui(
     selected_team_id = team_id
     user_email = get_user_email(user)
     is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
-    
+
     if team_id and getattr(settings, "email_auth_enabled", False):
         _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
         _token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
@@ -4751,7 +4751,7 @@ async def admin_get_all_team_ids(
     if current_user.is_admin:
         # Admin sees all non-personal teams plus their own personal team
         team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q)
-        
+
         # Include admin's own personal team
         admin_personal_team = await team_service.get_user_personal_team(user_email)
         if admin_personal_team and admin_personal_team.id not in team_ids:
@@ -4839,7 +4839,7 @@ async def admin_search_teams(
         result = await team_service.list_teams(page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query)
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
-        
+
         # Include admin's own personal team if it matches filters
         admin_personal_team = await team_service.get_user_personal_team(user_email)
         if admin_personal_team and not any(t.id == admin_personal_team.id for t in teams):
@@ -4960,7 +4960,7 @@ async def admin_teams_partial_html(
         data = paginated_result["data"]
         pagination = paginated_result["pagination"]
         links = paginated_result["links"]
-        
+
         # Include admin's own personal team if it matches filters and isn't already in results
         admin_personal_team = await team_service.get_user_personal_team(user_email)
         if admin_personal_team and not any(t.id == admin_personal_team.id for t in data):
@@ -5178,7 +5178,7 @@ async def admin_list_teams(
             data = paginated_result["data"]
             pagination = paginated_result["pagination"]
             links = paginated_result["links"]
-            
+
             # Include admin's own personal team if it matches filters and isn't already in results
             admin_personal_team = await team_service.get_user_personal_team(user_email)
             if admin_personal_team and not any(t.id == admin_personal_team.id for t in data):

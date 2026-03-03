@@ -1375,6 +1375,7 @@ class TeamManagementService:
         result = self.db.execute(query)
         team_ids = [row[0] for row in result.all()]
         self.db.commit()  # Release transaction to avoid idle-in-transaction
+        return team_ids
 
     async def get_user_personal_team(self, user_email: str) -> Optional[EmailTeam]:
         """Get a user's personal team.
@@ -1389,11 +1390,7 @@ class TeamManagementService:
             Used to include admin's own personal team in admin UI listings.
         """
         try:
-            query = select(EmailTeam).where(
-                EmailTeam.created_by == user_email,
-                EmailTeam.is_personal.is_(True),
-                EmailTeam.is_active.is_(True)
-            )
+            query = select(EmailTeam).where(EmailTeam.created_by == user_email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True))
             result = self.db.execute(query)
             team = result.scalar_one_or_none()
             self.db.commit()  # Release transaction to avoid idle-in-transaction
@@ -1402,7 +1399,6 @@ class TeamManagementService:
             self.db.rollback()
             logger.error(f"Failed to get personal team for user {user_email}: {e}")
             return None
-        return team_ids
 
     async def get_teams_count(
         self,
