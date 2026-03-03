@@ -640,6 +640,8 @@ test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		uv pip show pytest-playwright >/dev/null 2>&1 || \
+			{ echo "📦 Installing playwright dependencies..."; uv pip install -q ".[playwright]" && playwright install --with-deps chromium; } && \
 		uv run --active pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
