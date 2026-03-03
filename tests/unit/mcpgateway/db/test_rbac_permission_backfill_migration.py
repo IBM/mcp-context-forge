@@ -2,7 +2,7 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for Alembic migration abf8ac3b6008 (backfill admin.overview, tools.execute, servers.use).
+"""Tests for Alembic migration abf8ac3b6008 (backfill admin.overview and servers.use).
 
 Tests verify:
 - Migration module structure (import, revision IDs, function signatures)
@@ -27,8 +27,8 @@ EXPECTED_REVISION = "abf8ac3b6008"
 EXPECTED_DOWN_REVISION = "d9e0f1a2b3c4"
 
 ROLE_PERMISSION_ADDITIONS = {
-    "viewer": ["admin.overview","servers.use"],
-    "platform_viewer": ["admin.overview",  "servers.use"],
+    "viewer": ["admin.overview", "servers.use"],
+    "platform_viewer": ["admin.overview", "servers.use"],
     "developer": ["admin.overview"],
     "team_admin": ["admin.overview"],
 }
@@ -155,7 +155,7 @@ def migration_db():
             )
         )
         # Pre-populate roles with realistic baseline permissions BEFORE the migration.
-        # developer and team_admin already include servers.use in bootstrap_db.py.
+        # developer and team_admin already include servers.use and tools.execute in bootstrap_db.py.
         roles_data = [
             ("1", "viewer", json.dumps(["admin.dashboard", "tools.read", "resources.read"])),
             ("2", "platform_viewer", json.dumps(["admin.dashboard", "tools.read", "resources.read"])),
@@ -182,20 +182,20 @@ def _get_role_permissions(conn, role_name: str) -> list[str]:
 class TestUpgradeLogic:
     """Test upgrade() adds the correct permissions."""
 
-    def test_upgrade_adds_admin_overview_to_viewer(self, migration_db, migration_module):
-        """Viewer gains admin.overview after upgrade."""
+    def test_upgrade_adds_permissions_to_viewer(self, migration_db, migration_module):
+        """Viewer gains admin.overview and servers.use after upgrade."""
         with migration_db.connect() as conn:
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
 
             perms = _get_role_permissions(conn, "viewer")
             assert "admin.overview" in perms
-            assert "tools.execute" in perms
+            assert "servers.use" in perms
 
     def test_upgrade_adds_admin_overview_to_developer(self, migration_db, migration_module):
         """Developer gains admin.overview after upgrade."""
         with migration_db.connect() as conn:
-            migration_module._update_role_permissions(conn, "developer", ["admin.overview"], add=True)
+            migration_module._update_role_permissions(conn, "developer", ROLE_PERMISSION_ADDITIONS["developer"], add=True)
             conn.commit()
 
             perms = _get_role_permissions(conn, "developer")
@@ -204,7 +204,7 @@ class TestUpgradeLogic:
     def test_upgrade_adds_admin_overview_to_team_admin(self, migration_db, migration_module):
         """Team admin gains admin.overview after upgrade."""
         with migration_db.connect() as conn:
-            migration_module._update_role_permissions(conn, "team_admin", ["admin.overview"], add=True)
+            migration_module._update_role_permissions(conn, "team_admin", ROLE_PERMISSION_ADDITIONS["team_admin"], add=True)
             conn.commit()
 
             perms = _get_role_permissions(conn, "team_admin")
@@ -214,7 +214,7 @@ class TestUpgradeLogic:
         """Existing permissions are not removed during upgrade."""
         with migration_db.connect() as conn:
             original_perms = _get_role_permissions(conn, "viewer")
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
 
             updated_perms = _get_role_permissions(conn, "viewer")
@@ -224,21 +224,22 @@ class TestUpgradeLogic:
     def test_upgrade_does_not_duplicate_existing_permissions(self, migration_db, migration_module):
         """Permissions already present are not duplicated."""
         with migration_db.connect() as conn:
-            # developer already has tools.execute
-            migration_module._update_role_permissions(conn, "developer", ["admin.overview"], add=True)
+            # developer already has tools.execute and servers.use
+            migration_module._update_role_permissions(conn, "developer", ROLE_PERMISSION_ADDITIONS["developer"], add=True)
             conn.commit()
 
             perms = _get_role_permissions(conn, "developer")
             assert perms.count("tools.execute") == 1
+            assert perms.count("servers.use") == 1
 
     def test_upgrade_idempotent(self, migration_db, migration_module):
         """Running upgrade twice produces the same result."""
         with migration_db.connect() as conn:
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
             first_perms = _get_role_permissions(conn, "viewer")
 
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
             second_perms = _get_role_permissions(conn, "viewer")
 
@@ -257,7 +258,7 @@ class TestUpgradeLogic:
             assert final_perms == original_perms
 
     def test_upgrade_adds_servers_use_to_viewer(self, migration_db, migration_module):
-        """Viewer gains servers.use after upgrade (required for tool testing via transport)."""
+        """Viewer gains servers.use after upgrade (required for transport access)."""
         with migration_db.connect() as conn:
             migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
@@ -289,7 +290,7 @@ class TestUpgradeLogic:
     def test_upgrade_sets_updated_at(self, migration_db, migration_module):
         """Upgrade sets the updated_at timestamp."""
         with migration_db.connect() as conn:
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
 
             row = conn.execute(text("SELECT updated_at FROM roles WHERE name = 'viewer'")).fetchone()
@@ -303,25 +304,25 @@ class TestDowngradeLogic:
         """Downgrade removes the permissions that were added."""
         with migration_db.connect() as conn:
             # First upgrade
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
 
             # Then downgrade
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=False)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=False)
             conn.commit()
 
             perms = _get_role_permissions(conn, "viewer")
             assert "admin.overview" not in perms
-            assert "tools.execute" not in perms
+            assert "servers.use" not in perms
 
     def test_downgrade_preserves_original_permissions(self, migration_db, migration_module):
         """Downgrade does not remove permissions that existed before upgrade."""
         with migration_db.connect() as conn:
             original_perms = _get_role_permissions(conn, "viewer")
 
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=False)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=False)
             conn.commit()
 
             final_perms = _get_role_permissions(conn, "viewer")
@@ -384,14 +385,14 @@ class TestDowngradeLogic:
     def test_downgrade_idempotent(self, migration_db, migration_module):
         """Running downgrade twice produces the same result."""
         with migration_db.connect() as conn:
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=True)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
             conn.commit()
 
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=False)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=False)
             conn.commit()
             first_perms = _get_role_permissions(conn, "viewer")
 
-            migration_module._update_role_permissions(conn, "viewer", ["admin.overview", "tools.execute"], add=False)
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=False)
             conn.commit()
             second_perms = _get_role_permissions(conn, "viewer")
 
@@ -464,3 +465,44 @@ class TestEdgeCases:
                 migration_module.downgrade()
 
         engine.dispose()
+
+    def test_upgrade_via_entry_point(self, migration_db, migration_module):
+        """upgrade() adds all expected permissions when called via its public entry point."""
+        from unittest.mock import patch
+
+        with migration_db.connect() as conn:
+            originals = {r: _get_role_permissions(conn, r) for r in ROLE_PERMISSION_ADDITIONS}
+
+            with patch("alembic.op.get_bind", return_value=conn):
+                migration_module.upgrade()
+            conn.commit()
+
+            for role_name, additions in ROLE_PERMISSION_ADDITIONS.items():
+                perms = _get_role_permissions(conn, role_name)
+                for perm in additions:
+                    assert perm in perms, f"upgrade() did not add '{perm}' to '{role_name}'"
+                for perm in originals[role_name]:
+                    assert perm in perms, f"upgrade() lost pre-existing '{perm}' from '{role_name}'"
+
+    def test_downgrade_via_entry_point(self, migration_db, migration_module):
+        """downgrade() removes only the added permissions when called via its public entry point."""
+        from unittest.mock import patch
+
+        with migration_db.connect() as conn:
+            originals = {r: sorted(_get_role_permissions(conn, r)) for r in ROLE_PERMISSION_ADDITIONS}
+
+            with patch("alembic.op.get_bind", return_value=conn):
+                migration_module.upgrade()
+            conn.commit()
+
+            with patch("alembic.op.get_bind", return_value=conn):
+                migration_module.downgrade()
+            conn.commit()
+
+            for role_name, original_perms in originals.items():
+                restored = sorted(_get_role_permissions(conn, role_name))
+                assert restored == original_perms, (
+                    f"downgrade() did not restore '{role_name}'. "
+                    f"Lost: {set(original_perms) - set(restored)}, "
+                    f"Extra: {set(restored) - set(original_perms)}"
+                )
