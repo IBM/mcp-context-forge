@@ -19,6 +19,7 @@ from .metrics_page import MetricsPage
 from .resources_page import ResourcesPage
 from .prompts_page import PromptsPage
 from .servers_page import ServersPage
+from .users_page import UsersPage
 from .version_page import VersionPage
 from .mcp_registry_page import MCPRegistryPage
 
@@ -35,6 +36,7 @@ __all__ = [
     "ResourcesPage",
     "PromptsPage",
     "ServersPage",
+    "UsersPage",
     "VersionPage",
     "MCPRegistryPage",
 ]

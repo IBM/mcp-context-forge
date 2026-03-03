@@ -3,9 +3,14 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 beforeAll(() => {
     win = loadAdminJs();
@@ -187,5 +192,97 @@ describe("getPerformanceAggregationConfig", () => {
 
     test('getPerformanceAggregationQuery returns query for 24h', () => {
         expect(query()("24h")).toBe("24h");
+    });
+});
+
+describe("admin template security hardening", () => {
+    test("admin template adds CSRF headers for HTMX and fetch", () => {
+        const adminTemplatePath = path.resolve(
+            __dirname,
+            "../../mcpgateway/templates/admin.html",
+        );
+        const html = fs.readFileSync(adminTemplatePath, "utf8");
+
+        expect(html).toContain('evt.detail.headers["X-CSRF-Token"] = csrfToken;');
+        expect(html).toContain("window.fetch = function(resource, init = {})");
+    });
+
+    test("all Tailwind CDN templates use pinned Tailwind Play CDN without SRI", () => {
+        const templates = [
+            "admin.html",
+            "login.html",
+            "forgot-password.html",
+            "reset-password.html",
+            "change-password-required.html",
+        ];
+
+        for (const templateName of templates) {
+            const templatePath = path.resolve(
+                __dirname,
+                "../../mcpgateway/templates",
+                templateName,
+            );
+            const html = fs.readFileSync(templatePath, "utf8");
+            expect(html).toContain('src="https://cdn.tailwindcss.com/3.4.17"');
+            expect(html).not.toContain('integrity="{{ sri_hashes.tailwindcss }}"');
+        }
+    });
+});
+
+describe("admin debug logging bootstrap", () => {
+    test("keeps console methods when MCPGATEWAY_ADMIN_DEBUG=1", () => {
+        cleanupAdminJs();
+
+        const originalLog = () => {};
+        const originalDebug = () => {};
+        const localWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.console.log = originalLog;
+                w.console.debug = originalDebug;
+                w.localStorage.setItem("MCPGATEWAY_ADMIN_DEBUG", "1");
+            },
+        });
+
+        expect(localWin.console.log).toBe(originalLog);
+        expect(localWin.console.debug).toBe(originalDebug);
+    });
+
+    test("disables console methods when debug toggle is not enabled", () => {
+        cleanupAdminJs();
+
+        const originalLog = () => {};
+        const originalDebug = () => {};
+        const localWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.console.log = originalLog;
+                w.console.debug = originalDebug;
+                w.localStorage.removeItem("MCPGATEWAY_ADMIN_DEBUG");
+            },
+        });
+
+        expect(localWin.console.log).not.toBe(originalLog);
+        expect(localWin.console.debug).not.toBe(originalDebug);
+    });
+
+    test("fails closed when localStorage access throws", () => {
+        cleanupAdminJs();
+
+        const originalLog = () => {};
+        const originalDebug = () => {};
+        const localWin = loadAdminJs({
+            beforeEval: (w) => {
+                w.console.log = originalLog;
+                w.console.debug = originalDebug;
+                Object.defineProperty(w, "localStorage", {
+                    configurable: true,
+                    get() {
+                        throw new Error("blocked");
+                    },
+                });
+            },
+        });
+
+        expect(localWin.console.log).not.toBe(originalLog);
+        expect(localWin.console.debug).not.toBe(originalDebug);
     });
 });

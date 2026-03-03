@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Schema validation utilities for migration testing.
 
 This module provides comprehensive database schema comparison and validation
-capabilities for ensuring migration integrity across MCP Gateway versions.
+capabilities for ensuring migration integrity across ContextForge versions.
 """
 
 # Standard
@@ -433,13 +433,13 @@ class SchemaValidator:
                     validation_results["errors"].extend(table_errors)
                     validation_results["valid"] = False
 
-            # Check for common MCP Gateway tables
+            # Check for common ContextForge tables
             core_tables = {"tools", "servers", "gateways", "alembic_version"}
             current_tables = set(current_schema.keys())
 
             missing_core = core_tables - current_tables
             if missing_core:
-                validation_results["warnings"].append(f"Missing core MCP Gateway tables: {missing_core}")
+                validation_results["warnings"].append(f"Missing core ContextForge tables: {missing_core}")
 
             logger.info(f"✅ Schema validation completed: valid={validation_results['valid']}")
             return validation_results

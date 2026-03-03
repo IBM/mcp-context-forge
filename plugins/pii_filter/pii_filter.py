@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-PII Filter Plugin for MCP Gateway.
+PII Filter Plugin for ContextForge.
 This plugin detects and masks Personally Identifiable Information (PII) in prompts
 and their responses, including SSNs, credit cards, emails, phone numbers, and more.
 """
@@ -355,7 +355,7 @@ class PIIDetector:
 
         return masked_text
 
-    def _apply_mask(self, value: str, pii_type: PIIType, strategy: MaskingStrategy) -> str:
+    def _apply_mask(self, value: str, pii_type: PIIType, strategy: MaskingStrategy) -> str:  # noqa: PLR0911
         """Apply masking strategy to a value.
 
         Args:
@@ -682,7 +682,7 @@ class PIIFilterPlugin(Plugin):
                     return ToolPostInvokeResult(continue_processing=False, violation=violation)
 
                 # Mask the PII
-                payload.result = self.detector.mask(payload.result, detections)
+                payload = payload.model_copy(update={"result": self.detector.mask(payload.result, detections)})
                 modified = True
                 self.masked_count += sum(len(items) for items in detections.values())
 
@@ -849,8 +849,8 @@ class PIIFilterPlugin(Plugin):
             # Check if this path has detections
             current_detections = all_detections.get(base_path, {})
             if current_detections:
-                # This won't work since strings are immutable, but the caller handles assignment
-                return self.detector.mask(data, current_detections)
+                # Strings are immutable — caller handles assignment
+                return
 
         elif isinstance(data, dict):
             for key, value in data.items():

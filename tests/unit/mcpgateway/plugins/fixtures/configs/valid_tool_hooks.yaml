@@ -4,7 +4,7 @@ plugins:
     kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
     description: "A plugin for testing tool hooks."
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge Team"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "tool-hooks"]
     mode: "enforce"  # enforce | permissive | disabled

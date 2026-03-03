@@ -1,10 +1,10 @@
 # Observability
 
-MCP Gateway includes production-grade OpenTelemetry instrumentation for distributed tracing, enabling you to monitor performance, debug issues, and understand request flows across your gateway instances.
+ContextForge includes production-grade OpenTelemetry instrumentation for distributed tracing, enabling you to monitor performance, debug issues, and understand request flows across your gateway instances.
 
 ## Overview
 
-The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend. MCP Gateway supports multiple observability backends, each optimized for different use cases.
+The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend. ContextForge supports multiple observability backends, each optimized for different use cases.
 
 ## Recommended Backend Options
 
@@ -226,7 +226,7 @@ export OTEL_TRACES_EXPORTER=console
 export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
-### 4. Run MCP Gateway
+### 4. Run ContextForge
 
 ```bash
 # Start the gateway (observability is disabled by default)
@@ -322,7 +322,7 @@ Failed operations include:
 Use the provided compose files:
 
 ```bash
-# Start MCP Gateway with Phoenix observability
+# Start ContextForge with Phoenix observability
 docker-compose -f docker-compose.yml \
                -f docker-compose.with-phoenix.yml up -d
 ```

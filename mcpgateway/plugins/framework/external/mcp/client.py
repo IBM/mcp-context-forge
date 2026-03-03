@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/framework/external/mcp/client.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Fred Araujo
 
 External plugin client which connects to a remote server through MCP.
 Module that contains plugin MCP client code to serve external plugins.
@@ -27,14 +27,13 @@ from mcp.types import TextContent
 import orjson
 
 # First-Party
-from mcpgateway.common.models import TransportType
-from mcpgateway.config import settings
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
 from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, HOOK_TYPE, IGNORE_CONFIG_EXTERNAL, INVOKE_HOOK, NAME, PAYLOAD, PLUGIN_NAME, PYTHON_SUFFIX, RESULT
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
 from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
-from mcpgateway.plugins.framework.models import MCPClientTLSConfig, PluginConfig, PluginContext, PluginErrorModel, PluginPayload, PluginResult
+from mcpgateway.plugins.framework.models import MCPClientTLSConfig, PluginConfig, PluginContext, PluginErrorModel, PluginPayload, PluginResult, TransportType
+from mcpgateway.plugins.framework.settings import get_http_client_settings
 
 logger = logging.getLogger(__name__)
 
@@ -273,28 +272,35 @@ class ExternalPlugin(Plugin):
                 PluginError: If TLS configuration fails.
             """
 
-            # First-Party
-            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
-
             kwargs: dict[str, Any] = {"follow_redirects": True}
             if uds_path:
                 kwargs["transport"] = httpx.AsyncHTTPTransport(uds=uds_path)
             if headers:
                 kwargs["headers"] = headers
-            kwargs["timeout"] = timeout if timeout else get_http_timeout()
+            http_settings = get_http_client_settings()
+            kwargs["timeout"] = (
+                timeout
+                if timeout
+                else httpx.Timeout(
+                    connect=http_settings.httpx_connect_timeout,
+                    read=http_settings.httpx_read_timeout,
+                    write=http_settings.httpx_write_timeout,
+                    pool=http_settings.httpx_pool_timeout,
+                )
+            )
             if auth is not None:
                 kwargs["auth"] = auth
 
             # Add connection pool limits
             kwargs["limits"] = httpx.Limits(
-                max_connections=settings.httpx_max_connections,
-                max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                keepalive_expiry=settings.httpx_keepalive_expiry,
+                max_connections=http_settings.httpx_max_connections,
+                max_keepalive_connections=http_settings.httpx_max_keepalive_connections,
+                keepalive_expiry=http_settings.httpx_keepalive_expiry,
             )
 
             if not tls_config:
                 # Use skip_ssl_verify setting when no custom TLS config
-                kwargs["verify"] = get_default_verify()
+                kwargs["verify"] = not http_settings.skip_ssl_verify
                 return httpx.AsyncClient(**kwargs)
 
             # Create SSL context using the utility function
@@ -328,7 +334,7 @@ class ExternalPlugin(Plugin):
                 )
                 return
             except Exception as e:
-                logger.warning(f"Connection attempt {attempt + 1}/{max_retries} failed: {e}")
+                logger.warning("Connection attempt %d/%d failed: %s", attempt + 1, max_retries, e)
                 if attempt == max_retries - 1:
                     # Final attempt failed
                     target = f"{uri} (uds={uds_path})" if uds_path else uri
@@ -336,9 +342,10 @@ class ExternalPlugin(Plugin):
                     logger.error(error_msg)
                     raise PluginError(error=PluginErrorModel(message=error_msg, plugin_name=self.name))
                 await self.shutdown()
+                self._exit_stack = AsyncExitStack()
                 # Wait before retry
                 delay = base_delay * (2**attempt)
-                logger.info(f"Retrying in {delay}s...")
+                logger.info("Retrying in %ss...", delay)
                 await asyncio.sleep(delay)
 
     async def invoke_hook(self, hook_type: str, payload: PluginPayload, context: PluginContext) -> PluginResult:

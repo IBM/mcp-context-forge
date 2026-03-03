@@ -2,11 +2,11 @@
 """Location: ./mcpgateway/services/grpc_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: MCP Gateway Contributors
+Authors: ContextForge Contributors
 
 gRPC Service Management
 
-This module implements gRPC service management for the MCP Gateway.
+This module implements gRPC service management for ContextForge.
 It handles gRPC service registration, reflection-based discovery, listing,
 retrieval, updates, activation toggling, and deletion.
 """
@@ -14,6 +14,7 @@ retrieval, updates, activation toggling, and deletion.
 # Standard
 import asyncio
 from datetime import datetime, timezone
+import ipaddress
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -46,6 +47,105 @@ from mcpgateway.utils.pagination import unified_paginate
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _validate_grpc_target(target: str) -> None:
+    """Validate a gRPC target address against SSRF-unsafe destinations.
+
+    Consults the platform SSRF settings (``ssrf_allow_localhost``,
+    ``ssrf_allow_private_networks``, ``ssrf_allowed_networks``,
+    ``ssrf_blocked_networks``, ``ssrf_blocked_hosts``) so that gRPC
+    targets follow the same rules as HTTP URLs validated by
+    ``SecurityValidator.validate_url``.
+
+    Args:
+        target: gRPC target string (host:port or host).
+
+    Raises:
+        GrpcServiceError: If the target resolves to a blocked address.
+    """
+    # First-Party
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    # Extract host (strip port)
+    host = target.rsplit(":", 1)[0].strip("[]")
+    if not host:
+        raise GrpcServiceError("Empty gRPC target address")
+
+    # Check blocked hostnames
+    hostname_normalized = host.lower().rstrip(".")
+    for blocked_host in settings.ssrf_blocked_hosts:
+        if hostname_normalized == blocked_host.lower().rstrip("."):
+            raise GrpcServiceError(f"gRPC target hostname '{host}' is blocked")
+
+    # Resolve IP and apply network-level checks
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        # Hostname, not an IP literal — hostname check above is sufficient
+        if hostname_normalized == "localhost":
+            if not settings.ssrf_allow_localhost:
+                raise GrpcServiceError(f"gRPC target hostname '{host}' is blocked (localhost not allowed)")
+        return
+
+    # Always block: cloud metadata, link-local (from ssrf_blocked_networks)
+    for network_str in settings.ssrf_blocked_networks:
+        try:
+            network = ipaddress.ip_network(network_str, strict=False)
+            if addr in network:
+                raise GrpcServiceError(f"gRPC target address '{host}' is blocked (network: {network_str})")
+        except ValueError:
+            continue
+
+    # Loopback
+    if addr.is_loopback:
+        if not settings.ssrf_allow_localhost:
+            raise GrpcServiceError(f"gRPC target address '{host}' is blocked (loopback not allowed)")
+        return
+
+    # Reserved / multicast — always block
+    if addr.is_reserved or addr.is_multicast:
+        raise GrpcServiceError(f"gRPC target address '{host}' is blocked (reserved/multicast)")
+
+    # Private networks — consult settings
+    if addr.is_private and not addr.is_loopback:
+        if settings.ssrf_allow_private_networks:
+            return  # Explicitly allowed
+        # Check per-network allowlist
+        for network_str in settings.ssrf_allowed_networks or []:
+            try:
+                network = ipaddress.ip_network(network_str, strict=False)
+                if addr in network:
+                    return  # Allowed by specific network allowlist
+            except ValueError:
+                continue
+        raise GrpcServiceError(f"gRPC target address '{host}' is blocked (private network not allowed)")
+
+
+def _validate_tls_path(path_str: str, label: str = "TLS path") -> Path:
+    """Validate that a TLS cert/key path is within allowed directories.
+
+    Args:
+        path_str: The file path to validate.
+        label: Label for error messages.
+
+    Returns:
+        Resolved Path object.
+
+    Raises:
+        GrpcServiceError: If the path escapes allowed directories.
+    """
+    resolved = Path(path_str).resolve()
+    # Allow only paths under /certs/, /etc/ssl/, /etc/pki/, or the CWD/certs dir
+    allowed_prefixes = (
+        Path("/certs").resolve(),
+        Path("/etc/ssl").resolve(),
+        Path("/etc/pki").resolve(),
+        Path.cwd().joinpath("certs").resolve(),
+    )
+    if not any(resolved.is_relative_to(prefix) for prefix in allowed_prefixes):
+        raise GrpcServiceError(f"{label} '{path_str}' is outside allowed certificate directories")
+    return resolved
 
 
 class GrpcServiceError(Exception):
@@ -488,13 +588,19 @@ class GrpcService:
             GrpcServiceError: If TLS certificate files not found
             Exception: If reflection or connection fails
         """
+        # Validate target address against SSRF
+        _validate_grpc_target(service.target)
+
         # Create gRPC channel
         if service.tls_enabled:
             if service.tls_cert_path and service.tls_key_path:
+                # Validate TLS paths against traversal
+                cert_path = _validate_tls_path(service.tls_cert_path, "TLS cert path")
+                key_path = _validate_tls_path(service.tls_key_path, "TLS key path")
                 # Load TLS certificates
                 try:
-                    cert = await asyncio.to_thread(Path(service.tls_cert_path).read_bytes)
-                    key = await asyncio.to_thread(Path(service.tls_key_path).read_bytes)
+                    cert = await asyncio.to_thread(cert_path.read_bytes)
+                    key = await asyncio.to_thread(key_path.read_bytes)
                     credentials = grpc.ssl_channel_credentials(root_certificates=cert, private_key=key)
                 except FileNotFoundError as e:
                     raise GrpcServiceError(f"TLS certificate or key file not found: {e}")
@@ -640,6 +746,13 @@ class GrpcService:
         parts = method_name.rsplit(".", 1)
         service_name = ".".join(parts[:-1]) if len(parts) > 1 else parts[0]
         method = parts[-1]
+
+        # Validate target address and TLS paths before connecting
+        _validate_grpc_target(service.target)
+        if service.tls_cert_path:
+            _validate_tls_path(service.tls_cert_path, "TLS cert path")
+        if service.tls_key_path:
+            _validate_tls_path(service.tls_key_path, "TLS key path")
 
         # Create endpoint and invoke
         endpoint = GrpcEndpoint(

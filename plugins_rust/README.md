@@ -1,6 +1,6 @@
-# Rust-Accelerated MCP Gateway Plugins
+# Rust-Accelerated ContextForge Plugins
 
-High-performance Rust implementations of compute-intensive MCP Gateway plugins, built with PyO3 for seamless Python integration.
+High-performance Rust implementations of compute-intensive ContextForge plugins, built with PyO3 for seamless Python integration.
 
 ## 🚀 Performance Benefits
 

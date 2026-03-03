@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-HTMX and dynamic UI interaction tests for MCP Gateway Admin UI.
+HTMX and dynamic UI interaction tests for ContextForge Admin UI.
 """
 
 # Standard
@@ -24,7 +24,7 @@ from .pages.tools_page import ToolsPage
 
 
 class TestHTMXInteractions:
-    """HTMX and UI interaction tests for MCP Gateway Admin UI.
+    """HTMX and UI interaction tests for ContextForge Admin UI.
 
     Tests dynamic content loading, form submissions, modals, and real-time updates
     that are powered by HTMX in the admin interface.
@@ -362,14 +362,6 @@ class TestHTMXInteractions:
                 failed_requests.append(request.url)
 
         tools_page.page.on("requestfailed", handle_request_failed)
-
-        failed_requests = []
-
-        def handle_request_failed(request):
-            if "/admin/tools" in request.url and request.method == "POST":
-                failed_requests.append(request.url)
-
-        page.on("requestfailed", handle_request_failed)
 
         # Intercept network requests to simulate failure
         def handle_route(route):

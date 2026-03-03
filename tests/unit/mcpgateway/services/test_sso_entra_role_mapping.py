@@ -769,6 +769,7 @@ class TestIsAdminSyncOnLogin:
             "full_name": "Test User",
             "provider": "entra",
             "groups": ["Admin"],  # User is now in admin group
+            "email_verified": True,
         }
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -816,6 +817,7 @@ class TestIsAdminSyncOnLogin:
             "full_name": "Test User",
             "provider": "entra",
             "groups": ["Developer"],  # User no longer in admin group
+            "email_verified": True,
         }
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -868,6 +870,7 @@ class TestIsAdminSyncOnLogin:
             "full_name": "Test User",
             "provider": "entra",
             "groups": ["Admin"],  # Still in admin group
+            "email_verified": True,
         }
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -914,6 +917,7 @@ class TestIsAdminSyncOnLogin:
             "full_name": "Test User",
             "provider": "entra",
             "groups": ["Developer"],  # No longer in admin group
+            "email_verified": True,
         }
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:

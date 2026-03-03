@@ -319,7 +319,7 @@ class TestRegisterClient:
             call_kwargs = mock_client.post.call_args[1]
             request_json = call_kwargs["json"]
 
-            assert request_json["client_name"] == "MCP Gateway (Test Gateway)"
+            assert request_json["client_name"] == "ContextForge (Test Gateway)"
             assert request_json["redirect_uris"] == ["http://localhost:4444/callback"]
             # Only authorization_code when AS doesn't advertise refresh_token support
             assert request_json["grant_types"] == ["authorization_code"]

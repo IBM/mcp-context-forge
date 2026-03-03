@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-server.sh
-#  Purpose: Launch the MCP Gateway's Plugin API
+#  Purpose: Launch ContextForge's Plugin API
 #
 #  Description:
 #    This script launches a plugin API server supporting multiple transports:
@@ -23,7 +23,7 @@
 #    PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH : Client auth mode: 'none', 'optional', 'require' (default: require)
 #
 #    # Unix socket-specific settings:
-#    UNIX_SOCKET_PATH              : Path to Unix socket file (default: /tmp/mcpgateway-plugins.sock)
+#    PLUGINS_UNIX_SOCKET_PATH              : Path to Unix socket file (default: /tmp/mcpgateway-plugins.sock)
 #
 #  Usage:
 #    ./run-server.sh                          # Run with default transport (http)

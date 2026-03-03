@@ -6,7 +6,7 @@ Authors: Mihai Criveti
 
 Tag validation and normalization utilities.
 This module provides validation and normalization for tags used across
-all MCP Gateway entities (tools, resources, prompts, servers, gateways).
+all ContextForge entities (tools, resources, prompts, servers, gateways).
 """
 
 # Standard

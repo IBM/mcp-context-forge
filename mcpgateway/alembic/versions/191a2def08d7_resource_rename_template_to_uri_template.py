@@ -25,6 +25,9 @@ def upgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
+    if "resources" not in inspector.get_table_names():
+        return
+
     columns = [c["name"] for c in inspector.get_columns("resources")]
 
     # Only rename if old column exists
@@ -37,6 +40,9 @@ def downgrade() -> None:
     """Downgrade schema."""
     conn = op.get_bind()
     inspector = sa.inspect(conn)
+
+    if "resources" not in inspector.get_table_names():
+        return
 
     columns = [c["name"] for c in inspector.get_columns("resources")]
 

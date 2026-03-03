@@ -1,6 +1,6 @@
 # Well-Known URI Configuration
 
-Well-known URIs are standardized endpoints that web services expose for automated discovery and security contact purposes, as defined by RFC 8615. MCP Gateway provides configurable support for standard well-known URIs with security-first defaults.
+Well-known URIs are standardized endpoints that web services expose for automated discovery and security contact purposes, as defined by RFC 8615. ContextForge provides configurable support for standard well-known URIs with security-first defaults.
 
 ## Overview
 
@@ -46,7 +46,7 @@ WELL_KNOWN_CACHE_MAX_AGE=3600  # 1 hour default
 
 ```bash
 # Default: blocks all crawlers (security-first for private APIs)
-WELL_KNOWN_ROBOTS_TXT="User-agent: *\nDisallow: /\n\n# MCP Gateway is a private API gateway\n# Public crawling is disabled by default"
+WELL_KNOWN_ROBOTS_TXT="User-agent: *\nDisallow: /\n\n# ContextForge is a private API gateway\n# Public crawling is disabled by default"
 
 # Public API example: allow health checks, block admin
 WELL_KNOWN_ROBOTS_TXT="User-agent: *\nAllow: /health\nAllow: /docs\nDisallow: /admin\nDisallow: /tools\nDisallow: /"
@@ -79,7 +79,7 @@ Add organization-specific well-known files via JSON configuration:
 
 ```bash
 # AI usage policy
-WELL_KNOWN_CUSTOM_FILES='{"ai.txt": "# AI Usage Policy\n\nThis MCP Gateway uses AI for:\n- Tool orchestration\n- Response generation\n- Error handling\n\nWe do not use AI for:\n- User data analysis\n- Behavioral tracking\n- Decision making without human oversight"}'
+WELL_KNOWN_CUSTOM_FILES='{"ai.txt": "# AI Usage Policy\n\nThis ContextForge uses AI for:\n- Tool orchestration\n- Response generation\n- Error handling\n\nWe do not use AI for:\n- User data analysis\n- Behavioral tracking\n- Decision making without human oversight"}'
 
 # Multiple custom files
 WELL_KNOWN_CUSTOM_FILES='{"ai.txt": "AI Policy: Responsible use only", "dnt-policy.txt": "# Do Not Track Policy\n\nWe respect the DNT header.\nNo tracking cookies are used.\nOnly essential session data is stored.", "change-password": "https://mycompany.com/account/password"}'

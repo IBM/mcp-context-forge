@@ -227,7 +227,7 @@ def get_migration_pairs() -> Dict[str, List[Tuple[str, str]]]:
 
 # Example usage and documentation
 if __name__ == "__main__":
-    print("=== MCP Gateway Migration Test Version Configuration ===")
+    print("=== ContextForge Migration Test Version Configuration ===")
     print(f"Supported versions (n-2 policy): {get_supported_versions()}")
     print(f"All versions: {VersionConfig.get_all_versions()}")
     print()

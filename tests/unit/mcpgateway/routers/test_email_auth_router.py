@@ -38,11 +38,8 @@ class TestEmailAuthLoginPasswordChangeRequired:
         user.password_change_required = True
         user.failed_login_attempts = 0
         user.account_locked_until = None
-        user.auth_provider = "local"
         user.is_account_locked = MagicMock(return_value=False)
         user.reset_failed_attempts = MagicMock()
-        user.get_teams = MagicMock(return_value=[])
-        user.team_memberships = []
         return user
 
     @pytest.fixture
@@ -83,13 +80,9 @@ class TestEmailAuthLoginPasswordChangeRequired:
         # Create login request
         login_request = EmailLoginRequest(email="test@example.com", password="password123")
 
-        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService, \
-             patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
             mock_service = MockAuthService.return_value
             mock_service.authenticate_user = AsyncMock(return_value=mock_user_needs_password_change)
-
-            # Enable password change enforcement
-            mock_settings.password_change_enforcement_enabled = True
 
             # Call the login function - user.password_change_required is True
             response = await login(login_request, mock_request, mock_db)
@@ -137,9 +130,6 @@ class TestEmailAuthLoginPasswordChangeRequired:
                 mock_password_service.verify_password_async = AsyncMock(return_value=True)
 
                 with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
-                    mock_settings.password_change_enforcement_enabled = True
-                    mock_settings.detect_default_password_on_login = True
-                    mock_settings.require_password_change_for_default_password = True
                     mock_settings.default_user_password.get_secret_value.return_value = "default_password"
 
                     # Call the login function

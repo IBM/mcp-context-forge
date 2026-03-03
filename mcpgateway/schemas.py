@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Schema Definitions.
-This module provides Pydantic models for request/response validation in the MCP Gateway.
+ContextForge Schema Definitions.
+This module provides Pydantic models for request/response validation in ContextForge.
 It implements schemas for:
 - Tool registration and invocation
 - Resource management and subscriptions
@@ -38,7 +38,8 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -267,7 +268,7 @@ class AuthenticationValues(BaseModelWithConfigDict):
     Provides the authentication values for different types of authentication.
     """
 
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers or None")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders or None")
     auth_value: Optional[str] = Field(None, description="Encoded Authentication values")
 
     # Only For tool read and view tool
@@ -398,7 +399,7 @@ class ToolCreate(BaseModel):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
@@ -626,10 +627,8 @@ class ToolCreate(BaseModel):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 
@@ -943,7 +942,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
@@ -1045,10 +1044,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 
@@ -1985,7 +1982,8 @@ class ResourceSubscription(BaseModelWithConfigDict):
 
         Ensures the subscriber ID:
         - Is not empty
-        - Contains only alphanumeric characters, underscores, hyphens, and dots
+        - Contains only safe identifier characters
+        - Allows email-style IDs for authenticated subscribers
         - Does not contain HTML special characters
         - Follows standard identifier naming conventions
         - Does not exceed maximum length (255 characters)
@@ -2002,6 +2000,17 @@ class ResourceSubscription(BaseModelWithConfigDict):
         Raises:
             ValueError: If the subscriber ID violates naming conventions
         """
+        if not v:
+            raise ValueError("Subscriber ID cannot be empty")
+
+        # Allow email-like subscriber IDs while keeping strict character controls.
+        if re.match(r"^[A-Za-z0-9_.@+-]+$", v):
+            if re.search(SecurityValidator.VALIDATION_UNSAFE_URI_PATTERN, v):
+                raise ValueError("Subscriber ID cannot contain HTML special characters")
+            if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+                raise ValueError(f"Subscriber ID exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+            return v
+
         return SecurityValidator.validate_identifier(v, "Subscriber ID")
 
 
@@ -2484,7 +2493,7 @@ class GatewayCreate(BaseModel):
         url (Union[str, AnyHttpUrl]): Gateway endpoint URL.
         description (Optional[str]): Optional description of the gateway.
         transport (str): Transport used by the MCP server, default is "SSE".
-        auth_type (Optional[str]): Type of authentication (basic, bearer, headers, or none).
+        auth_type (Optional[str]): Type of authentication (basic, bearer, authheaders, or none).
         auth_username (Optional[str]): Username for basic authentication.
         auth_password (Optional[str]): Password for basic authentication.
         auth_token (Optional[str]): Token for bearer authentication.
@@ -2503,7 +2512,7 @@ class GatewayCreate(BaseModel):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -2600,7 +2609,7 @@ class GatewayCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description")
     @classmethod
@@ -2763,7 +2772,7 @@ class GatewayCreate(BaseModel):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -2780,7 +2789,7 @@ class GatewayCreate(BaseModel):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -2792,7 +2801,7 @@ class GatewayCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayCreate":
@@ -2845,7 +2854,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders or None")
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
     auth_password: Optional[str] = Field(None, description="password for basic authentication")
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
@@ -2923,7 +2932,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description", mode="before")
     @classmethod
@@ -3060,7 +3069,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -3077,7 +3086,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -3089,7 +3098,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayUpdate":
@@ -3119,18 +3128,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 # ---------------------------------------------------------------------------
 # OAuth config masking helper (used by GatewayRead.masked / A2AAgentRead.masked)
 # ---------------------------------------------------------------------------
-_SENSITIVE_OAUTH_KEYS = frozenset(
-    {
-        "client_secret",
-        "password",
-        "refresh_token",
-        "access_token",
-        "id_token",
-        "token",
-        "secret",
-        "private_key",
-    }
-)
+_SENSITIVE_OAUTH_KEYS = OAUTH_SENSITIVE_KEYS
 
 
 def _mask_oauth_config(oauth_config: Any) -> Any:
@@ -3165,7 +3163,7 @@ class GatewayRead(BaseModelWithConfigDict):
     - enabled status
     - reachable status
     - Last seen timestamp
-    - Authentication type: basic, bearer, headers, oauth
+    - Authentication type: basic, bearer, authheaders, oauth
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
 
@@ -3173,8 +3171,8 @@ class GatewayRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     """
 
     id: Optional[str] = Field(None, description="Unique ID of the gateway")
@@ -3192,7 +3190,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
     auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
@@ -3857,7 +3855,7 @@ class ServerCreate(BaseModel):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -4036,7 +4034,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -4075,6 +4073,7 @@ class ServerRead(BaseModelWithConfigDict):
     # is_active: bool
     enabled: bool
     associated_tools: List[str] = []
+    associated_tool_ids: List[str] = []
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
@@ -4141,6 +4140,17 @@ class ServerRead(BaseModelWithConfigDict):
         if data.get("associated_a2a_agents"):
             data["associated_a2a_agents"] = [getattr(agent, "id", agent) for agent in data["associated_a2a_agents"]]
         return data
+
+    def masked(self) -> "ServerRead":
+        """Return a masked model with oauth_config secrets redacted.
+
+        Returns:
+            ServerRead: Masked server model.
+        """
+        masked_data = self.model_dump()
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
+        return ServerRead.model_validate(masked_data)
 
 
 class GatewayTestRequest(BaseModelWithConfigDict):
@@ -4263,7 +4273,7 @@ class A2AAgentCreate(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -4331,7 +4341,7 @@ class A2AAgentCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod
@@ -4515,7 +4525,7 @@ class A2AAgentCreate(BaseModel):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -4532,7 +4542,7 @@ class A2AAgentCreate(BaseModel):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -4545,7 +4555,7 @@ class A2AAgentCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentCreate":
@@ -4668,7 +4678,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod
@@ -4854,7 +4864,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -4871,7 +4881,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -4884,7 +4894,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentUpdate":
@@ -4920,7 +4930,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Authentication type: basic, bearer, headers, oauth, query_param
+    - Authentication type: basic, bearer, authheaders, oauth, query_param
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
     - Query parameter authentication (key name and masked value)
@@ -4929,8 +4939,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     - Query param key: for query_param auth
     - Query param value (masked): for query_param auth
     """
@@ -4953,7 +4963,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     metrics: Optional[A2AAgentMetrics] = Field(None, description="Agent metrics (may be None in list operations)")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
 
     # OAuth 2.0 configuration

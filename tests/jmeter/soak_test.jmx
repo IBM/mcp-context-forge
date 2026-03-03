@@ -2,7 +2,7 @@
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Soak Test (24 Hours at 2,000 RPS)" enabled="true">
-      <stringProp name="TestPlan.comments">MCP Gateway soak test. 24-hour sustained load at 2,000 RPS for memory leak and stability detection.</stringProp>
+      <stringProp name="TestPlan.comments">ContextForge soak test. 24-hour sustained load at 2,000 RPS for memory leak and stability detection.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>

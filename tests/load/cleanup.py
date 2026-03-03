@@ -209,7 +209,7 @@ def truncate_all_tables(db, dry_run: bool = False) -> int:
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Clean up load test data from MCP Gateway database",
+        description="Clean up load test data from ContextForge database",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 

@@ -129,7 +129,7 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.source="https://github.com/contextforge/mcp-context-forge" \
       org.opencontainers.image.documentation="https://github.com/contextforge/mcp-context-forge/mcp-servers/python/mcp-eval-server" \
-      org.opencontainers.image.vendor="MCP Context Forge"
+      org.opencontainers.image.vendor="ContextForge"
 
 # hadolint ignore=DL3041
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \

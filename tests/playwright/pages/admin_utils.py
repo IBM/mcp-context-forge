@@ -2,33 +2,52 @@
 """Location: ./tests/playwright/pages/admin_utils.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Marek Dano
 
 Shared utility functions for admin page interactions.
 """
 
 # Standard
 import logging
+import os
+import urllib.parse
 
 # Third-Party
 from playwright.sync_api import Page
+
+# Local
+from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
 
 logger = logging.getLogger(__name__)
 
 
 def _get_auth_headers(page: Page) -> dict:
-    """Extract JWT token from browser cookies and return Authorization headers.
-
-    The server rejects cookie-based authentication for programmatic API
-    requests (page.request), requiring an Authorization header instead.
-    This extracts the jwt_token cookie set during login and converts it
-    to a Bearer token header.
-    """
-    cookies = page.context.cookies()
-    jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
+    """Extract JWT and CSRF tokens from browser cookies for API requests."""
+    headers: dict[str, str] = {}
+    jwt_cookie = None
+    csrf_cookie = None
+    for cookie in page.context.cookies():
+        if cookie.get("name") == "jwt_token":
+            jwt_cookie = cookie
+        elif cookie.get("name") == ADMIN_CSRF_COOKIE_NAME:
+            csrf_cookie = cookie
     if jwt_cookie:
-        return {"Authorization": f"Bearer {jwt_cookie['value']}"}
-    return {}
+        headers["Authorization"] = f"Bearer {jwt_cookie['value']}"
+    if csrf_cookie:
+        headers[ADMIN_CSRF_HEADER_NAME] = csrf_cookie["value"]
+    origin = None
+    parsed = urllib.parse.urlparse(page.url or "")
+    if parsed.scheme and parsed.netloc:
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+    elif os.getenv("TEST_BASE_URL"):
+        fallback = urllib.parse.urlparse(os.getenv("TEST_BASE_URL", ""))
+        if fallback.scheme and fallback.netloc:
+            origin = f"{fallback.scheme}://{fallback.netloc}"
+
+    if origin:
+        headers["Origin"] = origin
+        headers["Referer"] = f"{origin}/admin"
+    return headers
 
 
 def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
@@ -60,7 +79,8 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
                     return item
         else:
             logger.warning("find_entity_by_name: %s returned status=%d: %s", endpoint, response.status, response.text()[:200])
-        page.wait_for_timeout(500)
+        # Exponential backoff with cap under DB contention in full-suite runs.
+        page.wait_for_timeout(min(100 * (2**attempt), 1000))
     return None
 
 
@@ -95,7 +115,7 @@ def wait_for_entity_deleted(page: Page, endpoint: str, name: str, retries: int =
             data = payload if isinstance(payload, list) else payload.get("data", [])
             if not any(item.get("name") == name for item in data):
                 return True
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(min(100 * (2**attempt), 800))
     return False
 
 
@@ -348,3 +368,70 @@ def cleanup_agent(page: Page, agent_name: str) -> bool:
         True if agent was found and deleted, False otherwise
     """
     return cleanup_entity(page, "a2a", agent_name)
+
+
+# ==================== User Operations ====================
+
+
+def find_user(page: Page, user_email: str, retries: int = 5):
+    """Find user by email via admin API.
+
+    Args:
+        page: Playwright page object
+        user_email: User email to search for
+        retries: Number of retry attempts
+
+    Returns:
+        User dict if found, None otherwise
+    """
+    headers = _get_auth_headers(page)
+    for attempt in range(retries):
+        cache_bust = str(attempt)
+        url = f"/admin/users?per_page=500&cache_bust={cache_bust}"
+        response = page.request.get(url, headers=headers)
+        if response.ok:
+            payload = response.json()
+            data = payload if isinstance(payload, list) else payload.get("data", [])
+            for item in data:
+                if item.get("email") == user_email:
+                    return item
+        else:
+            logger.warning("find_user: returned status=%d: %s", response.status, response.text()[:200])
+        page.wait_for_timeout(min(100 * (2**attempt), 1000))
+    return None
+
+
+def delete_user(page: Page, user_email: str) -> bool:
+    """Delete user by email via admin API.
+
+    Args:
+        page: Playwright page object
+        user_email: User email to delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    headers = _get_auth_headers(page)
+    # URL-encode the email for the path
+    encoded_email = urllib.parse.quote(user_email, safe="")
+    response = page.request.delete(
+        f"/admin/users/{encoded_email}",
+        headers=headers,
+    )
+    return response.status < 400
+
+
+def cleanup_user(page: Page, user_email: str) -> bool:
+    """Find and delete a user by email (convenience method for test cleanup).
+
+    Args:
+        page: Playwright page object
+        user_email: User email to find and delete
+
+    Returns:
+        True if user was found and deleted, False otherwise
+    """
+    user = find_user(page, user_email)
+    if user:
+        return delete_user(page, user_email)
+    return False

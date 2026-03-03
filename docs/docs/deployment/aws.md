@@ -1,6 +1,6 @@
 # 🟧 AWS
 
-MCP Gateway can be deployed to AWS using multiple container-based services:
+ContextForge can be deployed to AWS using multiple container-based services:
 
 - **ECS (Fargate or EC2-backed)**
 - **EKS (Elastic Kubernetes Service)**
@@ -10,7 +10,7 @@ MCP Gateway can be deployed to AWS using multiple container-based services:
 
 ## 🚀 Option 1: ECS (Fargate)
 
-ECS is a fully managed container orchestration service. Use it to deploy MCP Gateway without managing servers.
+ECS is a fully managed container orchestration service. Use it to deploy ContextForge without managing servers.
 
 ### Steps
 

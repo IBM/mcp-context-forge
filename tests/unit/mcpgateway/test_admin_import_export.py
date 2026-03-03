@@ -65,7 +65,7 @@ async def test_admin_import_preview_missing_data():
     request = _make_json_request({})
     with pytest.raises(HTTPException) as exc:
         await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
-    assert exc.value.status_code == 500
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -82,7 +82,7 @@ async def test_admin_import_configuration_invalid_conflict_strategy():
     request = _make_json_request({"import_data": {"tools": []}, "conflict_strategy": "nope"})
     with pytest.raises(HTTPException) as exc:
         await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
-    assert exc.value.status_code == 500
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio

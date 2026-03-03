@@ -2,7 +2,7 @@
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="MCP JSON-RPC Baseline Test" enabled="true">
-      <stringProp name="TestPlan.comments">MCP Gateway JSON-RPC protocol baseline test. Tests MCP methods through the gateway RPC endpoint.</stringProp>
+      <stringProp name="TestPlan.comments">ContextForge JSON-RPC protocol baseline test. Tests MCP methods through the gateway RPC endpoint.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>

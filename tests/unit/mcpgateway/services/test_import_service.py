@@ -146,6 +146,9 @@ async def test_import_configuration_success(import_service, mock_db, valid_impor
     # Verify service calls - tools use bulk registration
     import_service.tool_service.register_tools_bulk.assert_called_once()
     import_service.gateway_service.register_gateway.assert_called_once()
+    gateway_call = import_service.gateway_service.register_gateway.await_args.kwargs
+    assert gateway_call["created_by"] == "test_user"
+    assert gateway_call["created_via"] == "import"
 
 
 @pytest.mark.asyncio
@@ -367,6 +370,9 @@ async def test_process_server_entities(import_service, mock_db):
 
     # Verify server service was called
     import_service.server_service.register_server.assert_called_once()
+    server_call = import_service.server_service.register_server.await_args.kwargs
+    assert server_call["created_by"] == "test_user"
+    assert server_call["created_via"] == "import"
 
 
 @pytest.mark.asyncio
@@ -2765,7 +2771,7 @@ async def test_add_multitenancy_context_defaults_and_tracking(import_service):
 
     assert result["team_id"] == "team-1"
     assert result["owner_email"] == "user@example.com"
-    assert result["visibility"] == "public"
+    assert result["visibility"] == "team"
     assert result["federation_source"] == "imported-by-user@example.com"
     # Should not mutate original input
     assert "team_id" not in entity_data
@@ -2810,10 +2816,12 @@ async def test_assign_imported_items_to_team_assigns_and_commits(import_service)
     # One orphaned item for "servers"
     orphan = SimpleNamespace(team_id=None, owner_email=None, visibility=None, federation_source="")
     server_query = MagicMock()
-    server_query.filter.return_value.all.return_value = [orphan]
+    server_query.filter.return_value = server_query
+    server_query.all.return_value = [orphan]
 
     empty_query = MagicMock()
-    empty_query.filter.return_value.all.return_value = []
+    empty_query.filter.return_value = empty_query
+    empty_query.all.return_value = []
 
     user_query = MagicMock()
     user_query.filter.return_value.first.return_value = user
@@ -2832,12 +2840,17 @@ async def test_assign_imported_items_to_team_assigns_and_commits(import_service)
     db = MagicMock()
     db.query.side_effect = query_side_effect
 
-    await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")
+    imported_after = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await import_service._assign_imported_items_to_team(db, imported_by="user@example.com", imported_after=imported_after)
 
     assert orphan.team_id == "team-1"
     assert orphan.owner_email == "user@example.com"
-    assert orphan.visibility == "public"
+    assert orphan.visibility == "team"
     assert orphan.federation_source == "imported-by-user@example.com"
+    filter_args = [arg for call in server_query.filter.call_args_list for arg in call.args]
+    assert any("created_by" in str(arg) for arg in filter_args)
+    assert any("created_via" in str(arg) for arg in filter_args)
+    assert any("created_at" in str(arg) for arg in filter_args)
     db.commit.assert_called_once()
 
 
@@ -2929,3 +2942,65 @@ async def test_process_tools_bulk_skips_restore_when_no_creates(import_service, 
     assert status.skipped_entities == 1
     # No DB queries for restore since nothing was created
     mock_db.execute.return_value.scalar_one_or_none.assert_not_called()
+
+
+def test_sanitize_import_scope_fields_removes_team_and_owner(import_service):
+    payload = {
+        "name": "tool-a",
+        "url": "https://api.example.com",
+        "team_id": "attacker-team",
+        "owner_email": "victim@example.com",
+        "visibility": "private",
+        "team": "attacker-team-name",
+    }
+
+    sanitized = import_service._sanitize_import_scope_fields("tools", payload)
+
+    assert "team_id" not in sanitized
+    assert "owner_email" not in sanitized
+    assert "visibility" not in sanitized
+    assert "team" not in sanitized
+    assert sanitized["name"] == "tool-a"
+
+
+def test_sanitize_import_scope_fields_leaves_unscoped_entities(import_service):
+    payload = {"uri": "file:///tmp/workspace", "name": "workspace-root", "owner_email": "keep@example.com"}
+
+    sanitized = import_service._sanitize_import_scope_fields("roots", payload)
+
+    assert sanitized["owner_email"] == "keep@example.com"
+
+
+@pytest.mark.asyncio
+async def test_process_entities_strips_untrusted_scope_fields_before_processing(import_service, mock_db):
+    status = ImportStatus("sanitize-entity-1")
+    entities = [
+        {
+            "name": "gw-1",
+            "url": "https://gateway.example.com",
+            "team_id": "attacker-team",
+            "owner_email": "victim@example.com",
+            "visibility": "private",
+            "team": "attacker-team-name",
+        }
+    ]
+
+    import_service._process_single_entity = AsyncMock(return_value=None)
+
+    await import_service._process_entities(
+        db=mock_db,
+        entity_type="gateways",
+        entity_list=entities,
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        rekey_secret=None,
+        status=status,
+        selected_entities=None,
+        imported_by="importer@example.com",
+    )
+
+    processed_entity = import_service._process_single_entity.await_args.args[2]
+    assert "team_id" not in processed_entity
+    assert "owner_email" not in processed_entity
+    assert "visibility" not in processed_entity
+    assert "team" not in processed_entity

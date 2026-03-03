@@ -47,6 +47,8 @@ TEAM_ADMIN_PERMISSIONS = sorted(
         "tools.execute",
         "resources.read",
         "prompts.read",
+        "llm.read",
+        "llm.invoke",
         "a2a.read",
         "gateways.create",
         "servers.create",
@@ -67,6 +69,10 @@ TEAM_ADMIN_PERMISSIONS = sorted(
         "prompts.delete",
         "a2a.delete",
         "a2a.invoke",
+        "tokens.create",
+        "tokens.read",
+        "tokens.update",
+        "tokens.revoke",
     ]
 )
 
@@ -76,11 +82,14 @@ DEVELOPER_PERMISSIONS = sorted(
         "gateways.read",
         "servers.read",
         "servers.use",
+        "teams.read",
         "teams.join",
         "tools.read",
         "tools.execute",
         "resources.read",
         "prompts.read",
+        "llm.read",
+        "llm.invoke",
         "a2a.read",
         "gateways.create",
         "servers.create",
@@ -101,6 +110,10 @@ DEVELOPER_PERMISSIONS = sorted(
         "prompts.delete",
         "a2a.delete",
         "a2a.invoke",
+        "tokens.create",
+        "tokens.read",
+        "tokens.update",
+        "tokens.revoke",
     ]
 )
 
@@ -109,11 +122,17 @@ VIEWER_PERMISSIONS = sorted(
         "admin.dashboard",
         "gateways.read",
         "servers.read",
+        "teams.read",
         "teams.join",
         "tools.read",
         "resources.read",
         "prompts.read",
+        "llm.read",
         "a2a.read",
+        "tokens.create",
+        "tokens.read",
+        "tokens.update",
+        "tokens.revoke",
     ]
 )
 
@@ -122,29 +141,30 @@ PLATFORM_VIEWER_PERMISSIONS = sorted(
         "admin.dashboard",
         "gateways.read",
         "servers.read",
+        "teams.read",
         "teams.join",
         "tools.read",
         "resources.read",
         "prompts.read",
+        "llm.read",
         "a2a.read",
+        "tokens.create",
+        "tokens.read",
+        "tokens.update",
+        "tokens.revoke",
     ]
 )
 
 # All permissions that exist in the system (excluding wildcard)
 ALL_PERMISSIONS = Permissions.get_all_permissions()
 
-# Permissions granted by fallback logic to ANY authenticated user:
-# - tokens.* via _check_token_fallback_permissions (all auth users can manage own tokens)
-# - teams.create, teams.read via _check_team_fallback_permissions (when no team_id)
-FALLBACK_PERMISSIONS = {"tokens.create", "tokens.read", "tokens.update", "tokens.revoke", "teams.create", "teams.read"}
-
-# Permissions that viewers should NOT have (mutations), excluding fallback-granted ones
+# Permissions that viewers should NOT have (mutations)
 MUTATION_PERMISSIONS = sorted(
     [
         p
         for p in ALL_PERMISSIONS
         if any(p.endswith(suffix) for suffix in (".create", ".update", ".delete", ".execute", ".invoke", ".revoke", ".share", ".manage", ".manage_members", ".invite"))
-        and p not in FALLBACK_PERMISSIONS
+        and p not in set(VIEWER_PERMISSIONS)
     ]
 )
 
@@ -327,7 +347,7 @@ class TestDeveloperPermissions:
 class TestDeveloperVsTeamAdmin:
     """Developer should lack team management permissions that team_admin has."""
 
-    @pytest.mark.parametrize("permission", ["teams.read", "teams.update", "teams.delete", "teams.manage_members"])
+    @pytest.mark.parametrize("permission", ["teams.update", "teams.delete", "teams.manage_members"])
     def test_developer_lacks_team_management(self, matrix_db, permission):
         db, roles, team_id = matrix_db
         svc = PermissionService(db, audit_enabled=False)
@@ -393,7 +413,7 @@ class TestPlatformViewerPermissions:
 
 
 class TestNoRoleUser:
-    """User with no roles should be denied everything except team fallbacks."""
+    """User with no roles should be denied all role-protected actions."""
 
     @pytest.mark.parametrize("permission", ["tools.read", "tools.create", "servers.read", "admin.system_config", "resources.read", "a2a.read"])
     def test_no_role_denied(self, matrix_db, permission):

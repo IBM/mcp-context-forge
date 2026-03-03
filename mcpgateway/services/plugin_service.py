@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Plugin service for managing and querying MCP Gateway plugins.
+Plugin service for managing and querying ContextForge plugins.
 This module provides a service layer for accessing plugin information,
 statistics, and configuration from the PluginManager.
 """

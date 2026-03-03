@@ -50,9 +50,6 @@ from mcpgateway.plugins.framework import (
 # Initialize logging service first
 logger = logging.getLogger(__name__)
 
-# Precompiled regex pattern for DSL parsing
-_DSL_ROLE_PATTERN_RE = re.compile(r"\[role:([A-Za-z0-9_]+):(resource|prompt|server|agent)/([^\]]+)\]")
-
 
 class CedarCodes(str, Enum):
     """CedarCodes implementation."""
@@ -548,7 +545,8 @@ class CedarPolicyPlugin(Plugin):
                             return ToolPostInvokeResult(continue_processing=True)
                         elif "view_redacted" in results_map and results_map["view_redacted"] == "Allow":
                             data = copy.deepcopy(payload.result)
-                            payload.result = self._redact_output(payload=data)
+                            redacted = self._redact_output(payload=data)
+                            payload = payload.model_copy(update={"result": redacted})
                             return ToolPostInvokeResult(continue_processing=True, modified_payload=payload)
                         else:
                             return ToolPostInvokeResult(continue_processing=True)

@@ -11,7 +11,7 @@ Create Date: 2025-10-30 15:31:25.115536
 import base64
 import logging
 import os
-from typing import Optional, Sequence, Union
+from typing import Dict, Optional, Sequence, Union
 
 # Third-Party
 from alembic import op
@@ -136,19 +136,36 @@ def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
         raise ValueError("Invalid Argon2id bundle") from e
 
 
-def _reflect(conn):
-    """Reflect relevant tables.
+def _get_existing_table_names(conn) -> set[str]:
+    """Return existing table names for the active connection.
 
     Args:
         conn: The database connection.
 
     Returns:
-        A dict of reflected tables.
+        set[str]: Existing table names.
+    """
+    inspector = sa.inspect(conn)
+    return set(inspector.get_table_names())
+
+
+def _reflect(conn, existing_tables: set[str]) -> Dict[str, sa.Table]:
+    """Reflect relevant tables if present.
+
+    Args:
+        conn: The database connection.
+        existing_tables: Set of currently existing table names.
+
+    Returns:
+        Dict[str, sa.Table]: Reflected tables keyed by name.
     """
     md = sa.MetaData()
-    gateways = sa.Table("gateways", md, autoload_with=conn)
-    a2a_agents = sa.Table("a2a_agents", md, autoload_with=conn)
-    return {"gateways": gateways, "a2a_agents": a2a_agents}
+    tables: Dict[str, sa.Table] = {}
+    if "gateways" in existing_tables:
+        tables["gateways"] = sa.Table("gateways", md, autoload_with=conn)
+    if "a2a_agents" in existing_tables:
+        tables["a2a_agents"] = sa.Table("a2a_agents", md, autoload_with=conn)
+    return tables
 
 
 def _is_json(col):
@@ -242,13 +259,22 @@ def _downgrade_value(old: Optional[str]) -> Optional[str]:
         return None
 
 
-def _upgrade_json_client_secret(conn, table):
+def _upgrade_json_client_secret(conn, table: Optional[sa.Table], table_name: str):
     """Upgrade JSON client_secret fields in the given table.
 
     Args:
         conn: The database connection.
-        table: The table to upgrade.
+        table: The table to upgrade, if available.
+        table_name: Table name for logging.
     """
+    if table is None:
+        logger.info("Skipping %s: table not found", table_name)
+        return
+
+    if "oauth_config" not in table.c:
+        logger.info("Skipping %s: oauth_config column not found", table_name)
+        return
+
     t = table
     sel = sa.select(t.c.id, t.c.oauth_config).where(t.c.oauth_config.isnot(None))
     for row in conn.execute(sel).mappings():
@@ -258,7 +284,7 @@ def _upgrade_json_client_secret(conn, table):
             try:
                 cfg = orjson.loads(cfg)
             except orjson.JSONDecodeError as e:
-                logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
+                logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table_name, rid, e)
                 continue
         if not isinstance(cfg, dict):
             continue
@@ -274,13 +300,22 @@ def _upgrade_json_client_secret(conn, table):
         conn.execute(upd)
 
 
-def _downgrade_json_client_secret(conn, table):
+def _downgrade_json_client_secret(conn, table: Optional[sa.Table], table_name: str):
     """Downgrade JSON client_secret fields in the given table.
 
     Args:
         conn: The database connection.
-        table: The table to downgrade.
+        table: The table to downgrade, if available.
+        table_name: Table name for logging.
     """
+    if table is None:
+        logger.info("Skipping %s: table not found", table_name)
+        return
+
+    if "oauth_config" not in table.c:
+        logger.info("Skipping %s: oauth_config column not found", table_name)
+        return
+
     t = table
     sel = sa.select(t.c.id, t.c.oauth_config).where(t.c.oauth_config.isnot(None))
     for row in conn.execute(sel).mappings():
@@ -290,7 +325,7 @@ def _downgrade_json_client_secret(conn, table):
             try:
                 cfg = orjson.loads(cfg)
             except orjson.JSONDecodeError as e:
-                logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
+                logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table_name, rid, e)
                 continue
         if not isinstance(cfg, dict):
             continue
@@ -309,115 +344,123 @@ def _downgrade_json_client_secret(conn, table):
 def upgrade() -> None:
     """Use Argon2id KDF for encryption key re-encryption."""
     bind = op.get_bind()
-
-    conn = op.get_bind()
-    t = _reflect(conn)
+    existing_tables = _get_existing_table_names(bind)
+    reflected_tables = _reflect(bind, existing_tables)
 
     # JSON: gateways.oauth_config.client_secret
-    _upgrade_json_client_secret(conn, t["gateways"])
+    _upgrade_json_client_secret(bind, reflected_tables.get("gateways"), "gateways")
 
     # JSON: a2a_agents.oauth_config.client_secret
-    _upgrade_json_client_secret(conn, t["a2a_agents"])
+    _upgrade_json_client_secret(bind, reflected_tables.get("a2a_agents"), "a2a_agents")
 
     # oauth_tokens: access_token, refresh_token
-    rows = (
-        bind.execute(
-            text(
-                """
-        SELECT id, access_token, refresh_token
-        FROM oauth_tokens
-        WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
-
-    for r in rows:
-        tid = r["id"]
-        at = r["access_token"]
-        rt = r["refresh_token"]
-        nat = _upgrade_value(at)
-        nrt = _upgrade_value(rt)
-        if nat or nrt:
+    if "oauth_tokens" in existing_tables:
+        rows = (
             bind.execute(
                 text(
                     """
-                    UPDATE oauth_tokens
-                    SET access_token  = COALESCE(:nat, access_token),
-                        refresh_token = COALESCE(:nrt, refresh_token)
-                    WHERE id = :id
-                """
-                ),
-                {"nat": nat, "nrt": nrt, "id": tid},
+            SELECT id, access_token, refresh_token
+            FROM oauth_tokens
+            WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
+        """
+                )
             )
+            .mappings()
+            .all()
+        )
+
+        for r in rows:
+            tid = r["id"]
+            at = r["access_token"]
+            rt = r["refresh_token"]
+            nat = _upgrade_value(at)
+            nrt = _upgrade_value(rt)
+            if nat or nrt:
+                bind.execute(
+                    text(
+                        """
+                        UPDATE oauth_tokens
+                        SET access_token  = COALESCE(:nat, access_token),
+                            refresh_token = COALESCE(:nrt, refresh_token)
+                        WHERE id = :id
+                    """
+                    ),
+                    {"nat": nat, "nrt": nrt, "id": tid},
+                )
+    else:
+        logger.info("Skipping oauth_tokens re-encryption: table not found")
 
     # registered_oauth_clients: client_secret_encrypted, registration_access_token_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
-        SELECT id, client_secret_encrypted, registration_access_token_encrypted
-        FROM registered_oauth_clients
-        WHERE client_secret_encrypted IS NOT NULL
-           OR registration_access_token_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
-
-    for r in rows:
-        rid = r["id"]
-        cs = r["client_secret_encrypted"]
-        rat = r["registration_access_token_encrypted"]
-        ncs = _upgrade_value(cs)
-        nrat = _upgrade_value(rat)
-        if ncs or nrat:
+    if "registered_oauth_clients" in existing_tables:
+        rows = (
             bind.execute(
                 text(
                     """
-                    UPDATE registered_oauth_clients
-                    SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
-                        registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
-                    WHERE id = :id
-                """
-                ),
-                {"ncs": ncs, "nrat": nrat, "id": rid},
+            SELECT id, client_secret_encrypted, registration_access_token_encrypted
+            FROM registered_oauth_clients
+            WHERE client_secret_encrypted IS NOT NULL
+               OR registration_access_token_encrypted IS NOT NULL
+        """
+                )
             )
+            .mappings()
+            .all()
+        )
+
+        for r in rows:
+            rid = r["id"]
+            cs = r["client_secret_encrypted"]
+            rat = r["registration_access_token_encrypted"]
+            ncs = _upgrade_value(cs)
+            nrat = _upgrade_value(rat)
+            if ncs or nrat:
+                bind.execute(
+                    text(
+                        """
+                        UPDATE registered_oauth_clients
+                        SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
+                            registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
+                        WHERE id = :id
+                    """
+                    ),
+                    {"ncs": ncs, "nrat": nrat, "id": rid},
+                )
+    else:
+        logger.info("Skipping registered_oauth_clients re-encryption: table not found")
 
     # sso_providers: client_secret_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
-        SELECT id, client_secret_encrypted
-        FROM sso_providers
-        WHERE client_secret_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
-
-    for r in rows:
-        sid = r["id"]
-        cs = r["client_secret_encrypted"]
-        ncs = _upgrade_value(cs)
-        if ncs:
+    if "sso_providers" in existing_tables:
+        rows = (
             bind.execute(
                 text(
                     """
-                    UPDATE sso_providers
-                    SET client_secret_encrypted = :ncs
-                    WHERE id = :id
-                """
-                ),
-                {"ncs": ncs, "id": sid},
+            SELECT id, client_secret_encrypted
+            FROM sso_providers
+            WHERE client_secret_encrypted IS NOT NULL
+        """
+                )
             )
+            .mappings()
+            .all()
+        )
+
+        for r in rows:
+            sid = r["id"]
+            cs = r["client_secret_encrypted"]
+            ncs = _upgrade_value(cs)
+            if ncs:
+                bind.execute(
+                    text(
+                        """
+                        UPDATE sso_providers
+                        SET client_secret_encrypted = :ncs
+                        WHERE id = :id
+                    """
+                    ),
+                    {"ncs": ncs, "id": sid},
+                )
+    else:
+        logger.info("Skipping sso_providers re-encryption: table not found")
 
     logger.info("Upgrade complete: PBKDF2 -> Argon2id bundle re-encryption.")
 
@@ -425,111 +468,122 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revert to PBKDF2HMAC KDF for encryption key re-encryption."""
     bind = op.get_bind()
+    existing_tables = _get_existing_table_names(bind)
+    reflected_tables = _reflect(bind, existing_tables)
 
     # JSON: gateways.oauth_config.client_secret
-    _downgrade_json_client_secret(bind, "gateways")
+    _downgrade_json_client_secret(bind, reflected_tables.get("gateways"), "gateways")
 
     # JSON: a2a_agents.oauth_config.client_secret
-    _downgrade_json_client_secret(bind, "a2a_agents")
+    _downgrade_json_client_secret(bind, reflected_tables.get("a2a_agents"), "a2a_agents")
 
     # oauth_tokens: access_token, refresh_token
-    rows = (
-        bind.execute(
-            text(
-                """
-        SELECT id, access_token, refresh_token
-        FROM oauth_tokens
-        WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
-
-    for r in rows:
-        tid = r["id"]
-        at = r["access_token"]
-        rt = r["refresh_token"]
-        nat = _downgrade_value(at)
-        nrt = _downgrade_value(rt)
-        if nat or nrt:
+    if "oauth_tokens" in existing_tables:
+        rows = (
             bind.execute(
                 text(
                     """
-                    UPDATE oauth_tokens
-                    SET access_token  = COALESCE(:nat, access_token),
-                        refresh_token = COALESCE(:nrt, refresh_token)
-                    WHERE id = :id
-                """
-                ),
-                {"nat": nat, "nrt": nrt, "id": tid},
+            SELECT id, access_token, refresh_token
+            FROM oauth_tokens
+            WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
+        """
+                )
             )
+            .mappings()
+            .all()
+        )
+
+        for r in rows:
+            tid = r["id"]
+            at = r["access_token"]
+            rt = r["refresh_token"]
+            nat = _downgrade_value(at)
+            nrt = _downgrade_value(rt)
+            if nat or nrt:
+                bind.execute(
+                    text(
+                        """
+                        UPDATE oauth_tokens
+                        SET access_token  = COALESCE(:nat, access_token),
+                            refresh_token = COALESCE(:nrt, refresh_token)
+                        WHERE id = :id
+                    """
+                    ),
+                    {"nat": nat, "nrt": nrt, "id": tid},
+                )
+    else:
+        logger.info("Skipping oauth_tokens downgrade re-encryption: table not found")
 
     # registered_oauth_clients: client_secret_encrypted, registration_access_token_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
-        SELECT id, client_secret_encrypted, registration_access_token_encrypted
-        FROM registered_oauth_clients
-        WHERE client_secret_encrypted IS NOT NULL
-           OR registration_access_token_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
-
-    for r in rows:
-        rid = r["id"]
-        cs = r["client_secret_encrypted"]
-        rat = r["registration_access_token_encrypted"]
-        ncs = _downgrade_value(cs)
-        nrat = _downgrade_value(rat)
-        if ncs or nrat:
+    if "registered_oauth_clients" in existing_tables:
+        rows = (
             bind.execute(
                 text(
                     """
-                    UPDATE registered_oauth_clients
-                    SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
-                        registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
-                    WHERE id = :id
-                """
-                ),
-                {"ncs": ncs, "nrat": nrat, "id": rid},
+            SELECT id, client_secret_encrypted, registration_access_token_encrypted
+            FROM registered_oauth_clients
+            WHERE client_secret_encrypted IS NOT NULL
+               OR registration_access_token_encrypted IS NOT NULL
+        """
+                )
             )
+            .mappings()
+            .all()
+        )
+
+        for r in rows:
+            rid = r["id"]
+            cs = r["client_secret_encrypted"]
+            rat = r["registration_access_token_encrypted"]
+            ncs = _downgrade_value(cs)
+            nrat = _downgrade_value(rat)
+            if ncs or nrat:
+                bind.execute(
+                    text(
+                        """
+                        UPDATE registered_oauth_clients
+                        SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
+                            registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
+                        WHERE id = :id
+                    """
+                    ),
+                    {"ncs": ncs, "nrat": nrat, "id": rid},
+                )
+    else:
+        logger.info("Skipping registered_oauth_clients downgrade re-encryption: table not found")
 
     # sso_providers: client_secret_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
-        SELECT id, client_secret_encrypted
-        FROM sso_providers
-        WHERE client_secret_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
-
-    for r in rows:
-        sid = r["id"]
-        cs = r["client_secret_encrypted"]
-        ncs = _downgrade_value(cs)
-        if ncs:
+    if "sso_providers" in existing_tables:
+        rows = (
             bind.execute(
                 text(
                     """
-                    UPDATE sso_providers
-                    SET client_secret_encrypted = :ncs
-                    WHERE id = :id
-                """
-                ),
-                {"ncs": ncs, "id": sid},
+            SELECT id, client_secret_encrypted
+            FROM sso_providers
+            WHERE client_secret_encrypted IS NOT NULL
+        """
+                )
             )
+            .mappings()
+            .all()
+        )
+
+        for r in rows:
+            sid = r["id"]
+            cs = r["client_secret_encrypted"]
+            ncs = _downgrade_value(cs)
+            if ncs:
+                bind.execute(
+                    text(
+                        """
+                        UPDATE sso_providers
+                        SET client_secret_encrypted = :ncs
+                        WHERE id = :id
+                    """
+                    ),
+                    {"ncs": ncs, "id": sid},
+                )
+    else:
+        logger.info("Skipping sso_providers downgrade re-encryption: table not found")
 
     logger.info("Downgrade complete: Argon2id bundle -> PBKDF2 legacy re-encryption.")

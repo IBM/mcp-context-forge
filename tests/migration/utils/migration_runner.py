@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Migration test runner for comprehensive database migration testing.
 
 This module orchestrates migration testing scenarios across different
-MCP Gateway versions with detailed logging and validation.
+ContextForge versions with detailed logging and validation.
 """
 
 # Standard

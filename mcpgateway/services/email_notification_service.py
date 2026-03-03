@@ -125,7 +125,7 @@ class AuthEmailNotificationService:
             bool: True when message is sent successfully.
         """
         from_email = str(getattr(settings, "smtp_from_email", "") or "")
-        from_name = str(getattr(settings, "smtp_from_name", "MCP Gateway") or "MCP Gateway")
+        from_name = str(getattr(settings, "smtp_from_name", "ContextForge") or "ContextForge")
         smtp_user = getattr(settings, "smtp_user", None)
         smtp_password = self._smtp_password()
 
@@ -176,8 +176,8 @@ class AuthEmailNotificationService:
         Returns:
             bool: True when message is sent successfully.
         """
-        display_name = full_name or to_email.split("@")[0]
-        subject = "Reset your MCP Gateway password"
+        display_name = full_name or to_email.split("@", maxsplit=1)[0]
+        subject = "Reset your ContextForge password"
         body = self._render_template(
             template_name="password_reset_email.html",
             context={"display_name": display_name, "reset_url": reset_url, "expires_minutes": expires_minutes, "recipient_email": to_email},
@@ -196,8 +196,8 @@ class AuthEmailNotificationService:
         Returns:
             bool: True when message is sent successfully.
         """
-        display_name = full_name or to_email.split("@")[0]
-        subject = "Your MCP Gateway password was changed"
+        display_name = full_name or to_email.split("@", maxsplit=1)[0]
+        subject = "Your ContextForge password was changed"
         body = self._render_template(
             template_name="password_reset_confirmation_email.html",
             context={"display_name": display_name, "recipient_email": to_email},
@@ -218,8 +218,8 @@ class AuthEmailNotificationService:
         Returns:
             bool: True when message is sent successfully.
         """
-        display_name = full_name or to_email.split("@")[0]
-        subject = "Your MCP Gateway account was temporarily locked"
+        display_name = full_name or to_email.split("@", maxsplit=1)[0]
+        subject = "Your ContextForge account was temporarily locked"
         body = self._render_template(
             template_name="account_lockout_email.html",
             context={"display_name": display_name, "locked_until": locked_until_iso, "reset_url": reset_url, "recipient_email": to_email},

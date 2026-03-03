@@ -1,12 +1,12 @@
 # 🏷️ Tags System
 
-MCP Gateway provides a comprehensive tag system for organizing and filtering entities. Tags help categorize tools, resources, prompts, servers, and gateways, making them easier to discover and manage.
+ContextForge provides a comprehensive tag system for organizing and filtering entities. Tags help categorize tools, resources, prompts, servers, and gateways, making them easier to discover and manage.
 
 ---
 
 ## 📋 Overview
 
-Tags are metadata labels that can be attached to any entity in MCP Gateway:
+Tags are metadata labels that can be attached to any entity in ContextForge:
 
 - **Tools** - Categorize by functionality (e.g., `api`, `database`, `utility`)
 - **Resources** - Group by content type (e.g., `documentation`, `config`, `data`)
@@ -155,7 +155,7 @@ Returns the same data in a flattened structure for easier UI rendering.
 
 ## ✨ Tag Normalization
 
-MCP Gateway automatically normalizes tags to ensure consistency and prevent duplicates:
+ContextForge automatically normalizes tags to ensure consistency and prevent duplicates:
 
 ### **Automatic Transformations**
 

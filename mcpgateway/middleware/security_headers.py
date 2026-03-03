@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Security Headers Middleware for MCP Gateway.
+Security Headers Middleware for ContextForge.
 
 This module implements essential security headers to prevent common attacks including
 XSS, clickjacking, MIME sniffing, and cross-origin attacks.

@@ -262,7 +262,7 @@ plugins_rust/target/
 plugins_rust/Cargo.lock
 
 # ========================================
-# Project-Specific (MCP Gateway)
+# Project-Specific (ContextForge)
 # ========================================
 
 # Certificates & JWT
@@ -303,6 +303,7 @@ debug_login_page.png
 docs/pstats.png
 docs/docs/coverage/
 docs/docs/images/coverage.svg
+docs/docs/images/contextforge-*.svg
 docs/docs/design/images/code2flow.dot
 docs/docs/test/
 mcp.prof

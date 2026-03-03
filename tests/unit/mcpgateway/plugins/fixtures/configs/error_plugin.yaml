@@ -4,7 +4,7 @@ plugins:
     kind: "tests.unit.mcpgateway.plugins.fixtures.plugins.error.ErrorPlugin"
     description: "An error plugin."
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge Team"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_post_invoke", "tool_pre_invoke"]
     tags: ["plugin", "error"]
     mode: "enforce"  # enforce | permissive | disabled

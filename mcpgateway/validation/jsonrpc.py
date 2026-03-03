@@ -282,21 +282,21 @@ def validate_response(response: Dict[str, Any]) -> None:
     has_error = "error" in response
 
     if not has_result and not has_error:
-        raise JSONRPCError(INVALID_REQUEST, "Response must contain either result or error", request_id=id)
+        raise JSONRPCError(INVALID_REQUEST, "Response must contain either result or error", request_id=response_id)
     if has_result and has_error:
-        raise JSONRPCError(INVALID_REQUEST, "Response cannot contain both result and error", request_id=id)
+        raise JSONRPCError(INVALID_REQUEST, "Response cannot contain both result and error", request_id=response_id)
 
     # Validate error object
     if has_error:
         error = response["error"]
         if not isinstance(error, dict):
-            raise JSONRPCError(INVALID_REQUEST, "Invalid error object type", request_id=id)
+            raise JSONRPCError(INVALID_REQUEST, "Invalid error object type", request_id=response_id)
 
         if "code" not in error or "message" not in error:
-            raise JSONRPCError(INVALID_REQUEST, "Error must contain code and message", request_id=id)
+            raise JSONRPCError(INVALID_REQUEST, "Error must contain code and message", request_id=response_id)
 
         if not isinstance(error["code"], int):
-            raise JSONRPCError(INVALID_REQUEST, "Error code must be integer", request_id=id)
+            raise JSONRPCError(INVALID_REQUEST, "Error code must be integer", request_id=response_id)
 
         if not isinstance(error["message"], str):
-            raise JSONRPCError(INVALID_REQUEST, "Error message must be string", request_id=id)
+            raise JSONRPCError(INVALID_REQUEST, "Error message must be string", request_id=response_id)

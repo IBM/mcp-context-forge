@@ -1,12 +1,12 @@
 # RBAC Configuration
 
-Role-based access control (RBAC) defines which actions users or teams can perform in MCP Gateway. This document covers the two-layer security model, token scoping semantics, permission system, and best practices for access control.
+Role-based access control (RBAC) defines which actions users or teams can perform in ContextForge. This document covers the two-layer security model, token scoping semantics, permission system, and best practices for access control.
 
 ---
 
 ## Overview
 
-MCP Gateway implements a **two-layer security model**:
+ContextForge implements a **two-layer security model**:
 
 1. **Token Scoping (Layer 1)**: Controls what resources a user CAN SEE (data filtering)
 2. **RBAC (Layer 2)**: Controls what actions a user CAN DO (action authorization)
@@ -63,10 +63,10 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
-| `developer` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
-| `viewer` | team | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
-| `platform_viewer` | global | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
+| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `developer` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `viewer` | team | admin.dashboard, gateways.read, servers.read, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `platform_viewer` | global | admin.dashboard, gateways.read, servers.read, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
 !!! info "Default Role Assignment"
     **New users automatically receive up to two roles upon creation:**
@@ -167,13 +167,56 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
     A missing `teams` key always results in public-only access, even for admins.
     An empty `teams: []` also results in public-only access, even for admins.
 
+### `is_admin`, `teams`, and `token_use` (Mental Model)
+
+These three values are related, but they control different things:
+
+| Field | Purpose | Where It Is Enforced |
+|-------|---------|----------------------|
+| `is_admin` | User/admin identity flag | RBAC permission checks (`PermissionService`) |
+| `teams` | Visibility/data scope (`None`, `[]`, or team list) | Token scoping and service query filtering |
+| `token_use` | Token interpretation mode (`session` vs `api`) | Auth pipeline (`get_current_user`) |
+
+Key points:
+
+1. `is_admin` does **not** automatically mean "see everything".
+2. Visibility comes from normalized `token_teams`:
+   - `None` = admin bypass scope
+   - `[]` = public-only scope
+   - `["t1", ...]` = team-scoped visibility
+3. `token_use` decides where teams come from:
+   - `session`: teams are resolved from DB/cache on each request
+   - `api`/legacy: teams come from JWT claim via `normalize_token_teams()`
+
+### End-to-End Authorization Pipeline
+
+1. **Authenticate token and resolve user**
+   - Verify JWT/API token.
+   - Resolve `token_use`.
+2. **Normalize/resolve teams**
+   - `token_use=session` → resolve from DB (`_resolve_teams_from_db()`).
+   - `token_use!=session` → normalize JWT `teams` (`normalize_token_teams()`).
+3. **Layer 1: Token scoping**
+   - Filter accessible resources by `token_teams`.
+   - Public-only tokens cannot access team/private resources.
+4. **Layer 2: RBAC permission check**
+   - Validate action permission (`tools.read`, `admin.system_config`, etc.).
+   - Public-only guard: `admin.*` permissions are denied when `token_teams=[]`.
+
+!!! info "Why Public-Only Admin Tokens Can Still Be Useful"
+    A token can represent an admin identity (`is_admin=true`) while still being visibility-restricted (`teams=[]`).
+    This allows controlled automation tokens with reduced blast radius.
+
 ### Return Value Semantics
 
 | Return Value | Meaning | Query Behavior |
 |--------------|---------|----------------|
-| `None` | Admin bypass | Skip ALL team filtering |
-| `[]` (empty list) | Public-only | Filter to `visibility='public'` ONLY |
-| `["t1", "t2"]` | Team-scoped | Filter to team resources + public |
+| `None` | Admin bypass | Skip ALL visibility filtering (requires `user_email=None` in the service layer) |
+| `[]` (empty list) | Public-only | Filter to `visibility='public'` ONLY — owner and team access are both suppressed |
+| `["t1", "t2"]` | Team-scoped | Filter to team resources + public + user's own private resources |
+
+!!! note "Owner Access is Scoped to Private Visibility"
+    Owner-based access (`owner_email` matching) grants visibility **only** for resources with `visibility='private'`. Resource owners cannot use ownership to bypass team scoping — a team-visibility resource is only visible if the user's `token_teams` includes that team.
 
 ### Security Design Principles
 
@@ -251,7 +294,7 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
 
 ### Visibility Levels
 
-Resources in MCP Gateway have three visibility levels:
+Resources in ContextForge have three visibility levels:
 
 | Visibility | Description | Who Can See |
 |------------|-------------|-------------|
@@ -293,6 +336,17 @@ Token scoping is enforced consistently across all access paths:
 | WebSocket | ✅ | ✅ | Forwards auth to /rpc |
 | MCP Transport | ✅ | N/A | Streamable HTTP protocol filtering |
 
+### Method-Level RBAC Examples
+
+The `/rpc` endpoint applies method-level authorization for sensitive operations.
+These checks are aligned with equivalent REST endpoints.
+
+| Method / Endpoint | Required Permission | Notes |
+|-------------------|---------------------|-------|
+| JSON-RPC `logging/setLevel` (`POST /rpc`) | `admin.system_config` | Same permission as `POST /logging/setLevel` |
+| Utility SSE (`GET /sse`) | `tools.execute` | Canonical tool execution permission |
+| Utility message relay (`POST /message`) | `tools.execute` | Canonical tool execution permission |
+
 ---
 
 ## Token Types and Use Cases
@@ -304,15 +358,18 @@ Generated when users log in via the Admin UI:
 ```json
 {
   "sub": "admin@example.com",
-  "is_admin": true,
-  "teams": null,
+  "user": {
+    "email": "admin@example.com",
+    "is_admin": true
+  },
+  "token_use": "session",
   "iss": "mcpgateway",
   "aud": "mcpgateway-api",
   "exp": 1234567890
 }
 ```
 
-**Behavior**: Admin session tokens should set `teams: null` (explicit null) combined with `is_admin: true` to enable admin bypass (unrestricted access to all resources).
+**Behavior**: Session tokens resolve teams server-side per request. For admin users, resolved teams become `None` (admin bypass). For non-admin users, resolved teams become their DB membership list (or `[]` if none).
 
 ### API Tokens (Programmatic Access)
 
@@ -355,25 +412,23 @@ For CI/CD, monitoring, or public API access:
 ### Using the CLI Tool
 
 ```bash
-# Unrestricted admin token (no teams key)
+# Unrestricted admin-bypass API token (explicit teams=null + is_admin=true)
 python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com \
+  --data '{"sub":"admin@example.com","is_admin":true,"teams":null,"token_use":"api"}' \
   --exp 60 \
   --secret $JWT_SECRET_KEY
 
 # Team-scoped token
 python3 -m mcpgateway.utils.create_jwt_token \
-  --username user@example.com \
+  --data '{"sub":"user@example.com","is_admin":false,"teams":["team-uuid-1"],"token_use":"api"}' \
   --exp 60 \
-  --secret $JWT_SECRET_KEY \
-  --teams '["team-uuid-1"]'
+  --secret $JWT_SECRET_KEY
 
 # Public-only scoped token (for automation)
 python3 -m mcpgateway.utils.create_jwt_token \
-  --username ci@example.com \
+  --data '{"sub":"ci@example.com","is_admin":false,"teams":[],"token_use":"api"}' \
   --exp 60 \
-  --secret $JWT_SECRET_KEY \
-  --teams '[]'
+  --secret $JWT_SECRET_KEY
 ```
 
 ### Using the Admin UI
@@ -450,31 +505,21 @@ Permissions are defined in the `Permissions` class and control what actions user
 └─────────────────────────────┘
     │
     ▼
-┌─────────────────────────────┐
-│ Fallback Permission Check   │ ← Implicit permissions (see below)
-└─────────────────────────────┘
-    │
-    ▼
   GRANT or DENY
 ```
 
-### Fallback Permissions
+### Explicit Team/Token Defaults
 
-The system grants implicit permissions without explicit role assignment. These are **not** shown in `/rbac/my/permissions` but are effective:
+Team and token management behavior is now controlled through explicit role permissions, not implicit fallback checks.
 
-| User Context | Implicit Permissions |
-|--------------|---------------------|
-| Any authenticated user | teams.create, teams.read |
-| Team member | teams.read (for their teams) |
-| Team owner | teams.read, teams.update, teams.delete, teams.manage_members |
-| Any authenticated user | tokens.* (for own tokens only) |
+| Role | Explicit Baseline Grants |
+|------|--------------------------|
+| `team_admin` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
+| `developer` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
+| `viewer` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
+| `platform_viewer` | `teams.read`, `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` |
 
-!!! info "Why Fallback Permissions Exist"
-    Fallback permissions enable basic functionality without requiring explicit role assignment:
-
-    - Users can always create and view teams they belong to
-    - Team owners automatically have management rights
-    - Users can always manage their own API tokens
+Users without role assignments do not receive implicit team/token permissions.
 
 ### Admin API RBAC
 
@@ -620,7 +665,7 @@ If REST and RPC endpoints return different results:
 
 ## Bootstrap Custom Roles
 
-MCP Gateway allows you to define custom roles that are automatically created during database bootstrap. This is useful for organizations that need to pre-configure roles before deployment.
+ContextForge allows you to define custom roles that are automatically created during database bootstrap. This is useful for organizations that need to pre-configure roles before deployment.
 
 ### Configuration
 

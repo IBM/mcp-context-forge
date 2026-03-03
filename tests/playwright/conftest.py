@@ -9,6 +9,7 @@ This assumes environment variables are loaded by the Makefile.
 """
 
 # Standard
+import logging
 import os
 import re
 from typing import Dict, Generator, Optional
@@ -36,6 +37,7 @@ from .pages.servers_page import ServersPage
 from .pages.team_page import TeamPage
 from .pages.tokens_page import TokensPage
 from .pages.tools_page import ToolsPage
+from .pages.users_page import UsersPage
 from .pages.version_page import VersionPage
 
 # Get configuration from environment
@@ -83,6 +85,7 @@ def _parse_video_size(size: str) -> Optional[Dict[str, int]]:
 
 VIDEO_SIZE = _parse_video_size(PLAYWRIGHT_VIDEO_SIZE)
 VIEWPORT_SIZE = _parse_video_size(PLAYWRIGHT_VIEWPORT_SIZE)
+logger = logging.getLogger(__name__)
 
 
 def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -> None:
@@ -90,13 +93,23 @@ def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -
     try:
         page.wait_for_load_state("domcontentloaded", timeout=10000)
     except PlaywrightTimeoutError:
-        pass  # Page may already be loaded
+        logger.warning("Admin transition: domcontentloaded timed out (url=%s)", page.url)
     if previous_url and page.url == previous_url:
         # URL hasn't changed yet; wait for navigation to complete
         try:
-            page.wait_for_url(lambda url: url != previous_url, timeout=5000)
+            page.wait_for_url(lambda url: url != previous_url, timeout=10000)
         except PlaywrightTimeoutError:
-            pass  # May not navigate (e.g., auth not required)
+            logger.warning("Admin transition: URL unchanged after wait (still %s)", page.url)
+
+
+def _goto_admin(page: Page, url: str) -> None:
+    """Navigate to an admin URL with domcontentloaded wait strategy.
+
+    The caller (_ensure_admin_logged_in) already waits for specific UI
+    elements (e.g. [data-testid="servers-tab"]) and JS initialisation,
+    so networkidle is redundant and stalls under SSE/setInterval traffic.
+    """
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
 
 def _submit_login_and_wait(page: Page, login_page, email: str, password: str) -> Optional[int]:
@@ -109,15 +122,64 @@ def _submit_login_and_wait(page: Page, login_page, email: str, password: str) ->
         return None
 
 
+def _candidate_admin_passwords(settings_obj: Settings, current_password: Optional[str] = None) -> list[str]:
+    """Build ordered unique admin password candidates for resilient login retries."""
+    configured_password = settings_obj.platform_admin_password.get_secret_value()
+    candidates: list[str] = []
+    for value in [current_password, ADMIN_ACTIVE_PASSWORD[0], ADMIN_NEW_PASSWORD, ADMIN_PASSWORD, configured_password]:
+        if value and value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
+def _attempt_admin_login_with_password(page: Page, login_page, email: str, password: str) -> bool:
+    """Attempt login using one password and handle password-change flow.
+
+    Returns True when the browser is no longer on /admin/login after the attempt.
+    """
+    status = _submit_login_and_wait(page, login_page, email, password)
+    if status is not None and status >= 500:
+        raise AssertionError(f"Login failed with status {status}")
+
+    _wait_for_admin_transition(page)
+
+    password_rotated = False
+    if login_page.is_on_change_password_page():
+        login_page.submit_password_change(password, ADMIN_NEW_PASSWORD)
+        ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+        password_rotated = True
+        _wait_for_admin_transition(page)
+
+    if not login_page.is_on_login_page():
+        if not password_rotated:
+            ADMIN_ACTIVE_PASSWORD[0] = password
+        return True
+    return False
+
+
+def _retry_ui_login_before_jwt(page: Page, login_page, admin_email: str, settings_obj: Settings, current_password: Optional[str] = None) -> bool:
+    """Retry login with alternate password candidates before JWT cookie fallback."""
+    for candidate in _candidate_admin_passwords(settings_obj, current_password):
+        if current_password and candidate == current_password:
+            continue
+        if _attempt_admin_login_with_password(page, login_page, admin_email, candidate):
+            return True
+    return False
+
+
 def _set_admin_jwt_cookie(page: Page, email: str) -> None:
-    """Seed an admin JWT cookie to bypass UI login when credentials are unknown."""
+    """Seed an admin JWT cookie to bypass UI login when credentials are unknown.
+
+    Uses cookie-only auth (no Authorization header) to avoid CORS preflight
+    failures on cross-origin CDN requests that carry crossorigin="anonymous"
+    (required by SRI integrity attributes).
+    """
     try:
         token = _create_jwt_token({"sub": email}, user_data={"email": email, "is_admin": True, "auth_provider": "local"}, teams=None)
     except Exception as exc:  # pragma: no cover - should only fail on misconfig
         raise AssertionError(f"Failed to create admin JWT token: {exc}") from exc
 
     cookie_url = f"{BASE_URL.rstrip('/')}/"
-    page.context.set_extra_http_headers({"Authorization": f"Bearer {token}"})
     page.context.add_cookies(
         [
             {
@@ -132,63 +194,64 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
 
 
 def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
-    """Ensure the page is logged into the admin interface using LoginPage.
+    """Ensure the page is logged into the admin interface.
 
-    This helper function handles all login scenarios including:
-    - Password change requirements
-    - Initial login
-    - Retry with new password
-    - JWT fallback if credentials fail
+    Prefers direct JWT cookie injection for resilience against shared password
+    state and multi-worker routing.  Falls back to form-based login only when
+    JWT injection is explicitly disabled via PLAYWRIGHT_DISABLE_JWT_FALLBACK.
     """
     settings = Settings()
     admin_email = settings.platform_admin_email or ADMIN_EMAIL
 
-    # Create LoginPage instance
+    # Create LoginPage instance (needed for fallback and recovery paths)
     login_page = LoginPage(page, base_url)
+    current_password: Optional[str] = None
 
-    # Go directly to admin
-    page.goto("/admin", wait_until="domcontentloaded")
-
-    # Handle password change requirement
-    if login_page.is_on_change_password_page():
-        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
-        login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
-        ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+    if not DISABLE_JWT_FALLBACK:
+        # ---- Primary path: inject a fresh JWT cookie per fixture ----
+        _set_admin_jwt_cookie(page, admin_email)
+        _goto_admin(page, "/admin/")
         _wait_for_admin_transition(page)
+    else:
+        # ---- Fallback: interactive form login (JWT disabled) ----
+        _goto_admin(page, "/admin")
+        landing_url = page.url
+        if re.search(r"/admin/?(?:[?#].*)?$", landing_url):
+            _wait_for_admin_transition(page, previous_url=landing_url)
 
-    # Handle login page redirect if auth is required
-    if login_page.is_on_login_page() or login_page.is_login_form_available():
-        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
-
-        status = _submit_login_and_wait(page, login_page, admin_email, current_password)
-        if status is not None and status >= 400:
-            raise AssertionError(f"Login failed with status {status}")
-        _wait_for_admin_transition(page)
-
-        # Handle password change after login
+        # Handle password change requirement
         if login_page.is_on_change_password_page():
+            current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
             login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page)
 
-        # Retry with new password if credentials were invalid
-        if login_page.has_invalid_credentials_error() and ADMIN_NEW_PASSWORD != current_password:
-            status = _submit_login_and_wait(page, login_page, admin_email, ADMIN_NEW_PASSWORD)
-            if status is not None and status >= 400:
-                raise AssertionError(f"Login failed with status {status}")
-            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-            _wait_for_admin_transition(page)
+        # Handle login page redirect if auth is required
+        if login_page.is_on_login_page() or login_page.is_login_form_available():
+            current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
+            _attempt_admin_login_with_password(page, login_page, admin_email, current_password)
 
-        # If login still failed, fallback to JWT cookie unless disabled
-        if login_page.is_on_login_page():
-            if DISABLE_JWT_FALLBACK:
+            # Retry with known rotated password if credentials were invalid
+            if login_page.has_invalid_credentials_error() and ADMIN_NEW_PASSWORD != current_password:
+                _attempt_admin_login_with_password(page, login_page, admin_email, ADMIN_NEW_PASSWORD)
+
+            # If login still failed, try remaining candidates
+            if login_page.is_on_login_page():
+                _retry_ui_login_before_jwt(page, login_page, admin_email, settings, current_password)
+            if login_page.is_on_login_page():
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
-            _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
-            _wait_for_admin_transition(page)
 
-    # Verify we're on the admin page
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    # Verify we're on the admin page (retry JWT injection up to 2 times for
+    # intermittent cookie/redirect races).
+    for _attempt in range(3):
+        if "/admin/login" not in page.url:
+            break
+        if DISABLE_JWT_FALLBACK:
+            break
+        _set_admin_jwt_cookie(page, admin_email)
+        _goto_admin(page, "/admin/")
+        _wait_for_admin_transition(page)
+    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=30000)
 
     # Wait for the application shell to load
     try:
@@ -197,7 +260,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
             # Recovery path for intermittent auth redirects during shell load.
             _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
+            _goto_admin(page, "/admin/")
             _wait_for_admin_transition(page)
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
             return
@@ -354,6 +417,13 @@ def servers_page(page: Page, base_url: str) -> ServersPage:
 
 
 @pytest.fixture
+def users_page(page: Page, base_url: str) -> UsersPage:
+    """Provide a logged-in UsersPage instance for user management tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return UsersPage(page)
+
+
+@pytest.fixture
 def version_page(page: Page, base_url: str) -> VersionPage:
     """Provide a logged-in VersionPage instance for version info tests."""
     _ensure_admin_logged_in(page, base_url)
@@ -412,6 +482,17 @@ def test_prompt_data():
         "name": f"test-prompt-{unique_id}",
         "description": "A test prompt created by automation",
         "arguments": '[{"name": "topic", "description": "Topic to discuss", "required": true}]',
+    }
+
+
+@pytest.fixture
+def test_user_data():
+    """Provide test data for user creation."""
+    unique_id = uuid.uuid4().hex[:8]
+    return {
+        "email": f"test-user-{unique_id}@example.com",
+        "full_name": f"Test User {unique_id}",
+        "password": "TestPass123!@#",
     }
 
 

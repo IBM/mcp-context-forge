@@ -1,4 +1,4 @@
-# Claude Desktop × MCP Gateway
+# Claude Desktop × ContextForge
 
 [Claude Desktop](https://www.anthropic.com/index/claude-desktop) can launch a local **stdio**
 process for every chat "backend".

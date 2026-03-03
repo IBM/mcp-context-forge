@@ -52,7 +52,7 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
       version="1.0.0-RC-1" \
-      description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
+      description="ContextForge: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
 ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'

@@ -7,7 +7,7 @@
 
 ## Context and Problem Statement
 
-Some upstream MCP servers (notably Tavily) require API key authentication via URL query parameters rather than HTTP headers. The existing authentication mechanisms in Context Forge Gateway (Basic, Bearer, OAuth, Custom Headers) all work through HTTP headers, making it impossible to connect to these services.
+Some upstream MCP servers (notably Tavily) require API key authentication via URL query parameters rather than HTTP headers. The existing authentication mechanisms in ContextForge Gateway (Basic, Bearer, OAuth, Custom Headers) all work through HTTP headers, making it impossible to connect to these services.
 
 Users need to register and use MCP servers that mandate query parameter authentication for their API keys. Without this capability, the gateway cannot federate these services.
 

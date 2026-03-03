@@ -175,7 +175,7 @@ sweep-json: check-server $(OUTPUT_DIR)
 # Specialized Tests
 # ============================================================================
 
-# Test against MCP Gateway
+# Test against ContextForge
 benchmark-gateway: URL=http://localhost:4444/health
 benchmark-gateway: benchmark
 

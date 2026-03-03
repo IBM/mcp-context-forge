@@ -2,7 +2,7 @@
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Admin UI Baseline Test" enabled="true">
-      <stringProp name="TestPlan.comments">MCP Gateway Admin UI baseline. Simulates 50 users navigating the HTMX-based admin interface with realistic think times.</stringProp>
+      <stringProp name="TestPlan.comments">ContextForge Admin UI baseline. Simulates 50 users navigating the HTMX-based admin interface with realistic think times.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>

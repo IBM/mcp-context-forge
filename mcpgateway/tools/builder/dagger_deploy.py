@@ -18,6 +18,8 @@ Features:
 # Standard
 import asyncio
 from pathlib import Path
+import re
+import shlex
 import subprocess  # nosec B404
 from typing import List, Optional
 
@@ -164,13 +166,18 @@ class MCPStackDagger(CICDModule):
         Raises:
             dagger.ExecError: If certificate generation command fails (when using local generation)
             dagger.QueryError: If Dagger query fails (when using local generation)
+            ValueError: If a plugin name contains invalid characters
         """
         config = load_config(config_file)
 
         # Check if using cert-manager
         cert_config = config.certificates
         use_cert_manager = cert_config.use_cert_manager if cert_config else False
-        validity_days = cert_config.validity_days if cert_config else 825
+        raw_validity_days = cert_config.validity_days if cert_config else 825
+        validity_days = 825 if raw_validity_days is None else int(raw_validity_days)
+        if validity_days <= 0:
+            raise ValueError("Certificate validity_days must be a positive integer")
+        cert_days = shlex.quote(str(validity_days))
 
         if use_cert_manager:
             # Skip local generation - cert-manager will handle certificate creation
@@ -201,16 +208,19 @@ class MCPStackDagger(CICDModule):
                 )
 
                 # Generate CA
-                container = container.with_exec(["sh", "-c", f"make certs-mcp-ca MCP_CERT_DAYS={validity_days}"])
+                container = container.with_exec(["sh", "-c", f"make certs-mcp-ca MCP_CERT_DAYS={cert_days}"])
 
                 # Generate gateway cert
-                container = container.with_exec(["sh", "-c", f"make certs-mcp-gateway MCP_CERT_DAYS={validity_days}"])
+                container = container.with_exec(["sh", "-c", f"make certs-mcp-gateway MCP_CERT_DAYS={cert_days}"])
 
                 # Generate plugin certificates
                 plugins = config.plugins
+                _safe_name_re = re.compile(r"^[a-zA-Z0-9_-]+$")
                 for plugin in plugins:
                     plugin_name = plugin.name
-                    container = container.with_exec(["sh", "-c", f"make certs-mcp-plugin PLUGIN_NAME={plugin_name} MCP_CERT_DAYS={validity_days}"])
+                    if not _safe_name_re.match(plugin_name):
+                        raise ValueError(f"Plugin name contains invalid characters: {plugin_name!r}")
+                    container = container.with_exec(["sh", "-c", f"make certs-mcp-plugin PLUGIN_NAME={shlex.quote(plugin_name)} MCP_CERT_DAYS={cert_days}"])
 
                 # Export certificates back to host
                 output = container.directory("/workspace/certs")

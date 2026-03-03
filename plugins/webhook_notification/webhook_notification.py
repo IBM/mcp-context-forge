@@ -232,7 +232,7 @@ class WebhookNotificationPlugin(Plugin):
             return
 
         # Prepare headers
-        headers = {"Content-Type": "application/json", "User-Agent": "MCP-Gateway-Webhook-Plugin/1.0"}
+        headers = {"Content-Type": "application/json", "User-Agent": "ContextForge-Webhook-Plugin/1.0"}
 
         # Add authentication
         auth_config = webhook.authentication

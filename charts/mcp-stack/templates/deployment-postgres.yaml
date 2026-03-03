@@ -15,6 +15,10 @@
 {{- $postgresImage = printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag -}}
 {{- end -}}
 
+{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") (not .Values.minio.enabled) -}}
+{{- fail "postgres.upgrade.enabled=true requires minio.enabled=true (chart uses MinIO for PostgreSQL upgrade backup/restore flow)" -}}
+{{- end -}}
+
 {{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
 apiVersion: apps/v1
 kind: Deployment
@@ -29,11 +33,10 @@ spec:
   selector:
     matchLabels:
       app: {{ include "mcp-stack.fullname" . }}-postgres
-  {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") }}
-  # For PostgreSQL 18 upgrade, we need to perform a rolling update
+  # Force non-overlapping updates for single-writer Postgres PVCs.
+  # StatefulSet is the long-term direction; Recreate is immediate protection.
   strategy:
-    type: Recreate  # Recreate strategy to ensure clean transition during upgrade
-  {{- end }}
+    type: Recreate
   template:
     metadata:
       labels:
@@ -49,6 +52,11 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: {{ .Values.postgres.terminationGracePeriodSeconds }}
       initContainers:
       {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") .Values.postgres.upgrade.backupCompleted }}
         # Init container to upgrade PostgreSQL data from version 17 to 18
@@ -154,10 +162,13 @@ spec:
             - name: postgres-initdb
               mountPath: /docker-entrypoint-initdb.d
           securityContext:
+            allowPrivilegeEscalation: false
             runAsUser: 0  # Run as root to have permission to move files
       {{- end }}
       containers:
         - name: postgres
+          securityContext:
+            allowPrivilegeEscalation: false
           image: "{{ $postgresImage }}"
           imagePullPolicy: "{{ .Values.postgres.image.pullPolicy }}"
 
@@ -177,11 +188,8 @@ spec:
 {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
-          # ConfigMap holds non-secret tuning (postgresql.conf, etc.)
-          # Secret stores POSTGRES_USER / POSTGRES_PASSWORD.
+          # Secret stores POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB.
           envFrom:
-            - configMapRef:
-                name: {{ include "mcp-stack.postgresConfigName" . }}
             - secretRef:
                 name: {{ include "mcp-stack.postgresSecretName" . | trim | quote }}
 
@@ -189,6 +197,21 @@ spec:
           env:
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+
+          {{- if .Values.postgres.lifecycle.preStop.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "PreStop hook: stopping PostgreSQL cleanly"
+                    PGDATA_DIR="${PGDATA:-/var/lib/postgresql/data/pgdata}"
+                    if [ -d "$PGDATA_DIR" ]; then
+                      pg_ctl -D "$PGDATA_DIR" -m fast -w stop || true
+                    fi
+          {{- end }}
 
           # Mount PVC for data durability
           volumeMounts:
