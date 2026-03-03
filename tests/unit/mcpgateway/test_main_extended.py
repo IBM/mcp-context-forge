@@ -1355,6 +1355,48 @@ class TestAdminAuthMiddleware:
         # .get() returns last value (hex UUID), which IS in token_teams
         mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
 
+    @pytest.mark.asyncio
+    async def test_admin_auth_non_uuid_team_id_matches_legacy_token_teams(self, monkeypatch):
+        """Non-UUID team_id should still match when token_teams contains the same non-UUID string (legacy/CLI tokens)."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token"},
+            query_params={"team_id": "team-slug-123"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_user = SimpleNamespace(is_active=True, is_admin=False)
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch(
+                "mcpgateway.main.verify_jwt_token",
+                # Non-session token (no token_use="session") uses normalize_token_teams
+                new=AsyncMock(return_value={"sub": "dev@example.com", "teams": ["team-slug-123"], "user": {"is_admin": False}}),
+            ),
+            # normalize_token_teams returns the raw strings from the JWT
+            patch("mcpgateway.main.normalize_token_teams", return_value=["team-slug-123"]),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        # Non-UUID kept as-is, matches token_teams
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-slug-123")
+
 
 class TestMCPPathRewriteMiddleware:
     """Cover MCPPathRewriteMiddleware branches."""
