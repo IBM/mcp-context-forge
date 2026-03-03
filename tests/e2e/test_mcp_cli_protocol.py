@@ -30,50 +30,37 @@ Usage:
     MCP_CLI_BASE_URL=http://localhost:4444 pytest tests/e2e/test_mcp_cli_protocol.py -v -s
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import json
 import os
-import shutil
+from pathlib import Path
 import subprocess
 import sys
-import threading
-import time
-from pathlib import Path
-from typing import Any
 
+# Third-Party
 import pytest
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
-ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
-TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes
-MCP_CLI_TIMEOUT = int(os.getenv("MCP_CLI_TIMEOUT", "30"))  # seconds per command
-WRAPPER_PYTHON = os.getenv("MCP_CLI_PYTHON", sys.executable)
-
-
-# ---------------------------------------------------------------------------
-# Skip conditions
-# ---------------------------------------------------------------------------
-def _mcp_cli_available() -> bool:
-    return shutil.which("mcp-cli") is not None
-
-
-def _gateway_reachable() -> bool:
-    try:
-        import httpx
-
-        resp = httpx.get(f"{BASE_URL}/health", timeout=5)
-        return resp.status_code == 200
-    except Exception:
-        return False
-
-
-skip_no_mcp_cli = pytest.mark.skipif(not _mcp_cli_available(), reason="mcp-cli not installed (pip install 'mcp-cli[cli]')")
-skip_no_gateway = pytest.mark.skipif(not _gateway_reachable(), reason=f"ContextForge not reachable at {BASE_URL}")
+# Local
+from .mcp_test_helpers import (
+    ADMIN_EMAIL,
+    BASE_URL,
+)
+from .mcp_test_helpers import (
+    JWT_SECRET,
+)
+from .mcp_test_helpers import (
+    skip_no_gateway,
+    skip_no_mcp_cli,
+    TOKEN_EXPIRY,
+    WRAPPER_PYTHON,
+)
+from .mcp_test_helpers import build_initialize as _build_initialize
+from .mcp_test_helpers import extract_json_from_output as _extract_json_from_output
+from .mcp_test_helpers import run_mcp_cli as _run_mcp_cli
+from .mcp_test_helpers import send_jsonrpc_via_wrapper as _send_jsonrpc_via_wrapper
 
 pytestmark = [pytest.mark.e2e, skip_no_mcp_cli, skip_no_gateway]
 
@@ -120,106 +107,8 @@ def config_file(jwt_token: str, tmp_path_factory: pytest.TempPathFactory) -> Pat
     return config_path
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _run_mcp_cli(config_path: Path, subcommand: str, *extra_args: str, timeout: int = MCP_CLI_TIMEOUT) -> subprocess.CompletedProcess[str]:
-    cmd = ["mcp-cli", subcommand, "--config-file", str(config_path), "--server", "contextforge", *extra_args]
-    return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-
-
-def _extract_json_from_output(text: str) -> Any:
-    """Extract first JSON array or object from mcp-cli output (which includes banner lines)."""
-    lines = text.splitlines()
-    json_start = None
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("[") or stripped.startswith("{"):
-            json_start = i
-            break
-    if json_start is None:
-        raise ValueError(f"No JSON found in output:\n{text}")
-    json_text = "\n".join(lines[json_start:])
-    return json.loads(json_text)
-
-
-def _send_jsonrpc_via_wrapper(
-    env: dict[str, str],
-    messages: list[dict[str, Any]],
-    timeout: int = 15,
-    settle_seconds: float = 3.0,
-) -> list[dict[str, Any]]:
-    """Send JSON-RPC messages to mcpgateway.wrapper via Popen.
-
-    The wrapper cancels in-flight requests when stdin closes (EOF triggers shutdown).
-    We use Popen to write messages, wait for responses to arrive, then close stdin.
-    """
-    proc = subprocess.Popen(
-        [WRAPPER_PYTHON, "-m", "mcpgateway.wrapper"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
-
-    # Collect stdout lines in a background thread
-    stdout_lines: list[str] = []
-    read_done = threading.Event()
-
-    def _reader() -> None:
-        assert proc.stdout is not None
-        for raw_line in proc.stdout:
-            stdout_lines.append(raw_line.rstrip("\n"))
-        read_done.set()
-
-    reader_thread = threading.Thread(target=_reader, daemon=True)
-    reader_thread.start()
-
-    # Write all messages
-    assert proc.stdin is not None
-    for msg in messages:
-        proc.stdin.write(json.dumps(msg) + "\n")
-        proc.stdin.flush()
-
-    # Wait for responses to arrive before closing stdin
-    time.sleep(settle_seconds)
-
-    # Close stdin to trigger graceful shutdown
-    proc.stdin.close()
-
-    # Wait for process to finish
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-
-    read_done.wait(timeout=5)
-
-    # Parse JSON-RPC responses
-    responses = []
-    for line in stdout_lines:
-        line = line.strip()
-        if line and line.startswith("{"):
-            try:
-                responses.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
-    return responses
-
-
-def _build_initialize(request_id: int = 1) -> dict[str, Any]:
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-03-26",
-            "capabilities": {},
-            "clientInfo": {"name": "mcp-cli-test", "version": "1.0.0"},
-        },
-    }
+# Helpers _run_mcp_cli, _extract_json_from_output, _send_jsonrpc_via_wrapper,
+# and _build_initialize are imported from .mcp_test_helpers above.
 
 
 # ---------------------------------------------------------------------------
