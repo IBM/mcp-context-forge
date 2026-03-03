@@ -624,10 +624,11 @@ class TestMcpToolCallByRole:
     """Tool execution enforcement through MCP protocol.
 
     NOTE: The default /mcp endpoint enforces tools.execute via RBAC without
-    team context (check_any_team=False, team_id=None). Non-admin users
-    auto-receive the platform_viewer role (global scope) which includes
-    tools.execute, so all authenticated users can execute tools on the
-    default endpoint. See issue #3329 / PR #3390.
+    team context (check_any_team=False, team_id=None). This means only users
+    with global-scope permissions (is_admin=True) can execute tools on the
+    default endpoint. Team-scoped roles (developer, viewer, team_admin) have
+    tools.execute in their team scope but NOT in global scope, so they are
+    correctly denied on the default MCP endpoint.
     """
 
     def test_admin_calls_tool_success(self, test_users: dict) -> None:
@@ -638,32 +639,28 @@ class TestMcpToolCallByRole:
         assert len(text) > 0
         print(f"    -> Admin call fast-time-get-system-time = {text}")
 
-    def test_developer_calls_tool_success(self, test_users: dict) -> None:
-        """Developer has global tools.execute via platform_viewer role (auto-assigned on user creation)."""
+    def test_developer_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
+        """Developer has team-scoped tools.execute but default /mcp checks global scope only."""
         resp = _mcp_tool_call(test_users["developer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
         result = resp.get("result", {})
-        assert not result.get("isError", False), f"Developer tool call should succeed (platform_viewer grants global tools.execute): {result}"
+        assert result.get("isError", False), f"Developer should be denied tools.execute on default endpoint: {result}"
         text = result.get("content", [{}])[0].get("text", "")
-        assert len(text) > 0
-        print(f"    -> Developer call fast-time-get-system-time = {text}")
+        assert "tools.execute" in text.lower() or "permission" in text.lower()
+        print(f"    -> Developer denied tools.execute (expected): {text}")
 
-    def test_team_admin_calls_tool_success(self, test_users: dict) -> None:
-        """Team admin has global tools.execute via platform_viewer role (auto-assigned on user creation)."""
+    def test_team_admin_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
+        """Team admin has team-scoped tools.execute but default /mcp checks global scope only."""
         resp = _mcp_tool_call(test_users["team_admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
         result = resp.get("result", {})
-        assert not result.get("isError", False), f"Team admin tool call should succeed (platform_viewer grants global tools.execute): {result}"
-        text = result.get("content", [{}])[0].get("text", "")
-        assert len(text) > 0
-        print(f"    -> Team admin call fast-time-get-system-time = {text}")
+        assert result.get("isError", False), f"Team admin should be denied on default endpoint: {result}"
+        print("    -> Team admin denied tools.execute on default endpoint (expected)")
 
-    def test_outsider_calls_tool_success(self, outsider_user: dict) -> None:
-        """Outsider has global tools.execute via platform_viewer role (auto-assigned on user creation)."""
+    def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
+        """Outsider has no RBAC role, should be denied tools.execute."""
         resp = _mcp_tool_call(outsider_user["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
         result = resp.get("result", {})
-        assert not result.get("isError", False), f"Outsider tool call should succeed (platform_viewer grants global tools.execute): {result}"
-        text = result.get("content", [{}])[0].get("text", "")
-        assert len(text) > 0
-        print(f"    -> Outsider call fast-time-get-system-time = {text}")
+        assert result.get("isError", False), f"Outsider should be denied tools.execute: {result}"
+        print("    -> Outsider denied tools.execute (expected)")
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
         resp = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
@@ -671,14 +668,12 @@ class TestMcpToolCallByRole:
         assert has_error, f"Expected error for non-existent tool: {resp}"
         print("    -> Outsider nonexistent tool: error (expected)")
 
-    def test_viewer_calls_tool_success(self, test_users: dict) -> None:
-        """Viewer has global tools.execute via platform_viewer role (auto-assigned on user creation)."""
+    def test_viewer_denied_tools_execute(self, test_users: dict) -> None:
+        """Viewer has tools.read but NOT tools.execute even in team scope."""
         resp = _mcp_tool_call(test_users["viewer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
         result = resp.get("result", {})
-        assert not result.get("isError", False), f"Viewer tool call should succeed (platform_viewer grants global tools.execute): {result}"
-        text = result.get("content", [{}])[0].get("text", "")
-        assert len(text) > 0
-        print(f"    -> Viewer call fast-time-get-system-time = {text}")
+        assert result.get("isError", False) or "error" in resp, f"Viewer should be denied tools.execute: {resp}"
+        print("    -> Viewer denied tools.execute (expected)")
 
 
 # ---------------------------------------------------------------------------

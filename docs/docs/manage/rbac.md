@@ -65,8 +65,8 @@ Logical groups that:
 | `platform_admin` | global | `["*"]` (all permissions) |
 | `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
 !!! info "Default Role Assignment"
     **New users automatically receive up to two roles upon creation:**
@@ -82,7 +82,7 @@ Logical groups that:
     **Non-admin users** (`is_admin: false`) receive:
 
     1. `platform_viewer` role with **global scope** (`scope_id` = None)
-       - Grants read and test access to all platform resources
+       - Grants read-only access to all platform resources
     2. `team_admin` role with **team scope** (`scope_id` = personal team ID)
        - Grants full management of their personal team resources
        - Only assigned if personal team creation succeeds
@@ -119,7 +119,7 @@ Logical groups that:
        - Enables management of personal team resources
     2. `platform_viewer` role with **global scope**
        - `scope_id` = None
-       - Provides read and test access to platform resources
+       - Provides read-only access to platform resources
 
     **Migration behavior:**
     - Only affects users without existing role assignments
