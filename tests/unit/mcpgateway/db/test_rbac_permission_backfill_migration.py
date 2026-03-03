@@ -2,7 +2,7 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for Alembic migration abf8ac3b6008 (backfill admin.overview and tools.execute).
+"""Tests for Alembic migration abf8ac3b6008 (backfill admin.overview, tools.execute, servers.use).
 
 Tests verify:
 - Migration module structure (import, revision IDs, function signatures)
