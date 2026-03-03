@@ -13,6 +13,7 @@ Enhanced with additional test cases for better coverage.
 # Standard
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from uuid import UUID, uuid4
@@ -18175,6 +18176,94 @@ class TestPaginationVariableCascade:
         assert values["TOOLS_TOTAL_PAGES"] == 1
         assert values["GATEWAYS_TOTAL_ITEMS"] == 150
         assert values["GATEWAYS_TOTAL_PAGES"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Pagination outerHTML swap style for table-targeted partials (#3396)
+# ---------------------------------------------------------------------------
+
+
+class TestPaginationSwapStyle:
+    """Verify table-targeted partials set swapStyle to outerHTML (#3396).
+
+    When pagination_controls.html is included in an OOB block that targets a
+    ``<table>`` element, the Alpine.js ``swapStyle`` must be ``outerHTML``.
+    Using ``innerHTML`` on a ``<table>`` whose HTMX response starts with
+    ``<table>`` produces invalid nested HTML, leaving the visible table empty.
+    """
+
+    @staticmethod
+    def _render_pagination_controls(hx_swap=None):
+        """Render pagination_controls.html with the given hx_swap value."""
+        # Third-Party
+        from jinja2 import Environment, FileSystemLoader
+
+        templates_dir = str(Path(__file__).resolve().parents[3] / "mcpgateway" / "templates")
+        env = Environment(loader=FileSystemLoader(templates_dir))
+        template = env.get_template("pagination_controls.html")
+        ctx = {
+            "pagination": {
+                "page": 1,
+                "per_page": 50,
+                "total_items": 75,
+                "total_pages": 2,
+                "has_next": True,
+                "has_prev": False,
+            },
+            "base_url": "/admin/tools/partial",
+            "hx_target": "#tools-table",
+            "hx_indicator": "#tools-loading",
+            "table_name": "tools",
+        }
+        if hx_swap is not None:
+            ctx["hx_swap"] = hx_swap
+        return template.render(**ctx)
+
+    def test_default_swap_is_innerhtml(self):
+        """Without hx_swap set, swapStyle defaults to innerHTML."""
+        html = self._render_pagination_controls()
+        assert "swapStyle: 'innerHTML'" in html
+
+    def test_outerhtml_swap_when_set(self):
+        """When hx_swap='outerHTML', swapStyle is outerHTML."""
+        html = self._render_pagination_controls(hx_swap="outerHTML")
+        assert "swapStyle: 'outerHTML'" in html
+
+    @pytest.mark.parametrize(
+        "partial_template",
+        [
+            "tools_partial.html",
+            "servers_partial.html",
+            "gateways_partial.html",
+            "prompts_partial.html",
+            "resources_partial.html",
+            "agents_partial.html",
+            "metrics_top_performers_partial.html",
+        ],
+    )
+    def test_table_partial_sets_outerhtml_swap(self, partial_template):
+        """All table-targeted partial templates must set hx_swap='outerHTML' before including pagination_controls.html.
+
+        This prevents the innerHTML-on-table nesting bug where htmx.ajax
+        inserts a ``<table>`` response inside an existing ``<table>``.
+        """
+        import re
+
+        templates_dir = Path(__file__).resolve().parents[3] / "mcpgateway" / "templates"
+        source = (templates_dir / partial_template).read_text()
+
+        # Find all OOB pagination blocks: a div with hx-swap-oob that includes pagination_controls
+        oob_blocks = re.findall(
+            r'<div\s+id="[^"]*pagination[^"]*"\s+hx-swap-oob="true">(.*?)(?:</div>)',
+            source,
+            re.DOTALL,
+        )
+        assert oob_blocks, f"{partial_template}: no OOB pagination block found"
+        for block in oob_blocks:
+            assert "{% set hx_swap = 'outerHTML' %}" in block, (
+                f"{partial_template}: OOB pagination block must set hx_swap='outerHTML'"
+            )
+            assert "{% include 'pagination_controls.html' %}" in block
 
 
 # ── ALLOW_PUBLIC_VISIBILITY guard tests ──────────────────────────────────────
