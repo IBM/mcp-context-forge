@@ -656,4 +656,3 @@ class TestGlobalSearchInIframe:
             results.wait_for(state="hidden", timeout=5000)
         except PlaywrightTimeoutError:
             pass  # Dropdown may stay open if navigation is blocked in iframe sandbox
-

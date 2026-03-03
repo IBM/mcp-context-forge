@@ -49,10 +49,10 @@ def error_collector(page: Page):
     """Collect JavaScript errors and failed API calls during test execution."""
     js_errors: List[str] = []
     failed_requests: List[Dict[str, Any]] = []
-    
+
     def _on_pageerror(error: Any) -> None:
         js_errors.append(str(error))
-    
+
     def _on_response(response: Any) -> None:
         if response.status >= 400:
             failed_requests.append({
@@ -60,12 +60,12 @@ def error_collector(page: Page):
                 "status": response.status,
                 "method": response.request.method,
             })
-    
+
     page.on("pageerror", _on_pageerror)
     page.on("response", _on_response)
-    
+
     yield {"js_errors": js_errors, "failed_requests": failed_requests}
-    
+
     page.remove_listener("pageerror", _on_pageerror)
     page.remove_listener("response", _on_response)
 
@@ -116,7 +116,7 @@ class TestVirtualServerCRUD:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: Create virtual server succeeds without errors.
-        
+
         Steps:
         1. Navigate to Servers tab
         2. Click "Add Server" button
@@ -130,19 +130,19 @@ class TestVirtualServerCRUD:
         servers_tab = admin_page.locator('[data-testid="servers-tab"]')
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
-        
+
         # Step 2: Click Add Server button
         add_button = admin_page.locator('button:has-text("Add Server"), button:has-text("Create Server")')
         expect(add_button.first).to_be_visible(timeout=5_000)
         add_button.first.click()
-        
+
         # Step 3: Fill in server details
         server_name = f"regression-test-server-{admin_page.evaluate('Date.now()')}"
-        
+
         name_input = admin_page.locator('input[name="name"], input[id="name"]')
         expect(name_input).to_be_visible(timeout=5_000)
         name_input.fill(server_name)
-        
+
         # Fill other required fields if present
         try:
             url_input = admin_page.locator('input[name="url"], input[id="url"]')
@@ -150,21 +150,21 @@ class TestVirtualServerCRUD:
                 url_input.fill("http://localhost:8080")
         except PlaywrightTimeoutError:
             pass
-        
+
         # Step 4: Submit form
         submit_button = admin_page.locator('button[type="submit"]:has-text("Create"), button[type="submit"]:has-text("Save")')
         expect(submit_button.first).to_be_visible(timeout=5_000)
         submit_button.first.click()
-        
+
         # Step 5: Verify server appears in list
         admin_page.wait_for_timeout(2_000)  # Wait for list refresh
         server_row = admin_page.locator(f'tr:has-text("{server_name}"), div:has-text("{server_name}")')
         expect(server_row.first).to_be_visible(timeout=10_000)
-        
+
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
-        
+
         assert js_errors == [], (
             f"JavaScript errors during server creation:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
@@ -178,7 +178,7 @@ class TestVirtualServerCRUD:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: Edit virtual server saves changes correctly.
-        
+
         Steps:
         1. Navigate to Servers tab
         2. Find existing server or create one
@@ -193,43 +193,43 @@ class TestVirtualServerCRUD:
         servers_tab = admin_page.locator('[data-testid="servers-tab"]')
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
-        
+
         admin_page.wait_for_timeout(2_000)
-        
+
         # Step 2: Find first server row with edit button
         edit_button = admin_page.locator('button[data-action="edit"], button:has-text("Edit")').first
-        
+
         if not edit_button.is_visible(timeout=3_000):
             pytest.skip("No servers available to edit")
-        
+
         # Get server name before edit
         server_row = edit_button.locator('xpath=ancestor::tr')
         original_name = server_row.locator('td').first.text_content()
-        
+
         # Step 3: Click edit button
         edit_button.click()
-        
+
         # Step 4: Modify server details
         name_input = admin_page.locator('input[name="name"], input[id="name"]')
         expect(name_input).to_be_visible(timeout=5_000)
-        
+
         updated_name = f"{original_name}-edited-{admin_page.evaluate('Date.now()')}"
         name_input.fill(updated_name)
-        
+
         # Step 5: Save changes
         save_button = admin_page.locator('button[type="submit"]:has-text("Save"), button[type="submit"]:has-text("Update")')
         expect(save_button.first).to_be_visible(timeout=5_000)
         save_button.first.click()
-        
+
         # Step 6: Verify changes persisted
         admin_page.wait_for_timeout(2_000)
         updated_row = admin_page.locator(f'tr:has-text("{updated_name}"), div:has-text("{updated_name}")')
         expect(updated_row.first).to_be_visible(timeout=10_000)
-        
+
         # Step 7 & 8: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
-        
+
         assert js_errors == [], (
             f"JavaScript errors during server edit:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
@@ -243,7 +243,7 @@ class TestVirtualServerCRUD:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: Delete virtual server succeeds.
-        
+
         Steps:
         1. Navigate to Servers tab
         2. Find server to delete
@@ -257,22 +257,22 @@ class TestVirtualServerCRUD:
         servers_tab = admin_page.locator('[data-testid="servers-tab"]')
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
-        
+
         admin_page.wait_for_timeout(2_000)
-        
+
         # Step 2: Find delete button
         delete_button = admin_page.locator('button[data-action="delete"], button:has-text("Delete")').first
-        
+
         if not delete_button.is_visible(timeout=3_000):
             pytest.skip("No servers available to delete")
-        
+
         # Get server name before deletion
         server_row = delete_button.locator('xpath=ancestor::tr')
         server_name = server_row.locator('td').first.text_content()
-        
+
         # Step 3: Click delete button
         delete_button.click()
-        
+
         # Step 4: Confirm deletion (if confirmation dialog appears)
         try:
             confirm_button = admin_page.locator('button:has-text("Confirm"), button:has-text("Yes"), button:has-text("Delete")')
@@ -280,16 +280,16 @@ class TestVirtualServerCRUD:
                 confirm_button.first.click()
         except PlaywrightTimeoutError:
             pass  # No confirmation dialog
-        
+
         # Step 5: Verify server removed
         admin_page.wait_for_timeout(2_000)
         deleted_row = admin_page.locator(f'tr:has-text("{server_name}")')
         expect(deleted_row).not_to_be_visible(timeout=5_000)
-        
+
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
-        
+
         assert js_errors == [], (
             f"JavaScript errors during server deletion:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
@@ -314,7 +314,7 @@ class TestStatePersistence:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: Selected tab state retained after page refresh.
-        
+
         Steps:
         1. Navigate to a specific tab (e.g., Tools)
         2. Refresh the page
@@ -325,20 +325,20 @@ class TestStatePersistence:
         tools_tab = admin_page.locator('[data-testid="tools-tab"]')
         expect(tools_tab).to_be_visible(timeout=10_000)
         tools_tab.click()
-        
+
         admin_page.wait_for_timeout(1_000)
-        
+
         # Verify tab is active
         expect(tools_tab).to_have_attribute("aria-selected", "true", timeout=5_000)
-        
+
         # Step 2: Refresh page
         admin_page.reload()
         admin_page.wait_for_load_state("networkidle")
-        
+
         # Step 3: Verify tab still selected
         tools_tab_after = admin_page.locator('[data-testid="tools-tab"]')
         expect(tools_tab_after).to_have_attribute("aria-selected", "true", timeout=10_000)
-        
+
         # Step 4: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
@@ -350,7 +350,7 @@ class TestStatePersistence:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: Team context retained after page refresh.
-        
+
         Steps:
         1. Select a team from team selector
         2. Verify URL contains team_id parameter
@@ -361,37 +361,37 @@ class TestStatePersistence:
         """
         # Step 1: Try to open team selector
         team_selector = admin_page.locator('[data-testid="team-selector-toggle"], button:has-text("Team")')
-        
+
         if not team_selector.is_visible(timeout=3_000):
             pytest.skip("Team selector not available (single-team deployment)")
-        
+
         team_selector.click()
         admin_page.wait_for_timeout(1_000)
-        
+
         # Click first team item
         team_item = admin_page.locator('.team-selector-item').first
         if not team_item.is_visible(timeout=3_000):
             pytest.skip("No teams available in selector")
-        
+
         team_item.click()
         admin_page.wait_for_timeout(1_500)
-        
+
         # Step 2: Verify URL contains team_id
         current_url = admin_page.url
         if "team_id=" not in current_url:
             pytest.skip("Team selection did not update URL")
-        
+
         # Step 3: Refresh page
         admin_page.reload()
         admin_page.wait_for_load_state("networkidle")
-        
+
         # Step 4: Verify team_id still in URL
         refreshed_url = admin_page.url
         assert "team_id=" in refreshed_url, "Team context lost after refresh"
-        
+
         # Step 5: Verify team selector shows correct team (best effort)
         admin_page.wait_for_timeout(1_000)
-        
+
         # Step 6: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
@@ -403,7 +403,7 @@ class TestStatePersistence:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: Filter/search state retained after page refresh.
-        
+
         Steps:
         1. Navigate to a tab with search/filter (e.g., Tools)
         2. Enter search term
@@ -416,32 +416,32 @@ class TestStatePersistence:
         tools_tab = admin_page.locator('[data-testid="tools-tab"]')
         expect(tools_tab).to_be_visible(timeout=10_000)
         tools_tab.click()
-        
+
         admin_page.wait_for_timeout(1_000)
-        
+
         # Step 2: Find search input
         search_input = admin_page.locator('input[type="search"], input[placeholder*="Search" i]').first
-        
+
         if not search_input.is_visible(timeout=3_000):
             pytest.skip("Search input not available on this tab")
-        
+
         search_term = "test"
         search_input.fill(search_term)
         admin_page.wait_for_timeout(1_000)
-        
+
         # Step 3: Verify URL contains search parameter
         current_url = admin_page.url
         if "search=" not in current_url and "q=" not in current_url:
             pytest.skip("Search did not update URL")
-        
+
         # Step 4: Refresh page
         admin_page.reload()
         admin_page.wait_for_load_state("networkidle")
-        
+
         # Step 5: Verify search term persists
         search_input_after = admin_page.locator('input[type="search"], input[placeholder*="Search" i]').first
         expect(search_input_after).to_have_value(search_term, timeout=5_000)
-        
+
         # Step 6: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
@@ -464,7 +464,7 @@ class TestErrorMonitoring:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: No JavaScript errors on admin page load.
-        
+
         Steps:
         1. Navigate to admin page
         2. Wait for page to fully load
@@ -472,7 +472,7 @@ class TestErrorMonitoring:
         """
         # Page already loaded by fixture
         admin_page.wait_for_timeout(2_000)
-        
+
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
             f"JavaScript errors on page load:\n"
@@ -483,7 +483,7 @@ class TestErrorMonitoring:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: No failed API calls on admin page load.
-        
+
         Steps:
         1. Navigate to admin page
         2. Wait for all network requests to complete
@@ -492,7 +492,7 @@ class TestErrorMonitoring:
         # Page already loaded by fixture
         admin_page.wait_for_load_state("networkidle")
         admin_page.wait_for_timeout(2_000)
-        
+
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
         assert failed_requests == [], (
             f"Failed API calls on page load:\n"
@@ -503,7 +503,7 @@ class TestErrorMonitoring:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: No JavaScript errors when navigating between tabs.
-        
+
         Steps:
         1. Navigate through all major tabs
         2. Verify no console errors during navigation
@@ -515,13 +515,13 @@ class TestErrorMonitoring:
             "users-tab",
             "tokens-tab",
         ]
-        
+
         for tab_id in tabs:
             tab = admin_page.locator(f'[data-testid="{tab_id}"]')
             if tab.is_visible(timeout=2_000):
                 tab.click()
                 admin_page.wait_for_timeout(1_000)
-        
+
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
             f"JavaScript errors during tab navigation:\n"
@@ -532,10 +532,10 @@ class TestErrorMonitoring:
         self, admin_page: Page, error_collector: Dict[str, Any]
     ) -> None:
         """Regression: All data-action buttons work without console errors.
-        
+
         This test verifies that the innerHTML guard fix (data-action pattern)
         works correctly for all dynamically loaded buttons.
-        
+
         Steps:
         1. Navigate to Tools tab
         2. Find and click various data-action buttons
@@ -545,16 +545,16 @@ class TestErrorMonitoring:
         tools_tab = admin_page.locator('[data-testid="tools-tab"]')
         expect(tools_tab).to_be_visible(timeout=10_000)
         tools_tab.click()
-        
+
         admin_page.wait_for_timeout(2_000)
-        
+
         # Find data-action buttons
         action_buttons = admin_page.locator('[data-action]')
         button_count = action_buttons.count()
-        
+
         if button_count == 0:
             pytest.skip("No data-action buttons found")
-        
+
         # Click first few buttons (up to 3) to test delegation
         for i in range(min(3, button_count)):
             try:
@@ -562,7 +562,7 @@ class TestErrorMonitoring:
                 if button.is_visible(timeout=1_000):
                     button.click()
                     admin_page.wait_for_timeout(500)
-                    
+
                     # Close any modals that opened
                     close_button = admin_page.locator('button:has-text("Close"), button:has-text("Cancel")').first
                     if close_button.is_visible(timeout=1_000):
@@ -570,7 +570,7 @@ class TestErrorMonitoring:
                         admin_page.wait_for_timeout(500)
             except PlaywrightTimeoutError:
                 continue
-        
+
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         assert js_errors == [], (
             f"JavaScript errors when clicking data-action buttons:\n"

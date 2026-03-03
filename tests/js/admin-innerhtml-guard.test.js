@@ -762,4 +762,3 @@ describe("displayMetrics empty-state — data-action retry button", () => {
         section.remove();
     });
 });
-

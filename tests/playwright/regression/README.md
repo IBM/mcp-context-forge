@@ -77,12 +77,12 @@ pytest tests/playwright/regression/ -v --screenshot on --video retain-on-failure
    # or
    python -m mcpgateway.main
    ```
-   
+
    **Important**: `make dev` runs on port 8000 by default. Set the test base URL to match:
    ```bash
    export TEST_BASE_URL=http://localhost:8000
    ```
-   
+
    Or if running on a different port:
    ```bash
    export TEST_BASE_URL=http://localhost:YOUR_PORT

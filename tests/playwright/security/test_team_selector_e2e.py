@@ -868,4 +868,3 @@ class TestTeamSelectorDropdownE2E:
             f"Uncaught JS errors during team selector click inside iframe:\n"
             + "\n".join(f"  - {e}" for e in critical_errors)
         )
-
