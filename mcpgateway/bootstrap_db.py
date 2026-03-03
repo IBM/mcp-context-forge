@@ -251,6 +251,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
                         "servers.use",
@@ -298,6 +299,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
                         "servers.use",
@@ -342,11 +344,13 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
                         "teams.read",
                         "teams.join",
                         "tools.read",
+                        "tools.execute",
                         "resources.read",
                         "prompts.read",
                         "llm.read",
@@ -364,11 +368,13 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "global",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
                         "teams.read",
                         "teams.join",
                         "tools.read",
+                        "tools.execute",
                         "resources.read",
                         "prompts.read",
                         "llm.read",
