@@ -2073,11 +2073,17 @@ async def complete(
         MCP-compliant completion fields.
 
     Raises:
+        PermissionError: If the caller lacks ``tools.read`` permission.
         Exception: If completion handling fails internally. The method
             logs the exception and returns an empty completion structure.
     """
     # Derive caller visibility scope from the current request context.
     server_id, _, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude tools.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "tools.read"):
+            raise PermissionError("Insufficient permissions. Required: tools.read")
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.

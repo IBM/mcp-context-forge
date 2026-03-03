@@ -10813,3 +10813,22 @@ async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
     ctx = user_context_var.get()
     assert ctx["scoped_permissions"] == ["tools.read", "tools.execute", "servers.use"]
     assert ctx["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_complete_denied_by_token_scope(monkeypatch):
+    """Token without tools.read should be denied completion/complete."""
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    from mcp import types as mcp_types
+
+    ref = mcp_types.PromptReference(type="ref/prompt", name="test-prompt")
+    argument = mcp_types.CompleteRequest(
+        method="completion/complete",
+        params=mcp_types.CompleteRequestParams(ref=ref, argument=mcp_types.CompletionArgument(name="arg", value="val")),
+    )
+
+    with pytest.raises(PermissionError, match="tools.read"):
+        await complete(ref, argument)
