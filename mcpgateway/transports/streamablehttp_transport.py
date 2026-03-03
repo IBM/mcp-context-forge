@@ -1408,6 +1408,11 @@ async def list_tools() -> List[types.Tool]:
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
+    # Token scope cap: deny early if scoped permissions exclude tools.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "tools.read"):
+            raise PermissionError("Insufficient permissions. Required: tools.read")
+
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
     # Use None as default to distinguish "no teams specified" from "empty teams array"
@@ -1521,6 +1526,11 @@ async def list_prompts() -> List[types.Prompt]:
     """
     server_id, _, user_context = await _get_request_context_or_default()
 
+    # Token scope cap: deny early if scoped permissions exclude prompts.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "prompts.read"):
+            raise PermissionError("Insufficient permissions. Required: prompts.read")
+
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
     # Use None as default to distinguish "no teams specified" from "empty teams array"
@@ -1586,6 +1596,11 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         'GetPromptResult'
     """
     server_id, _, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude prompts.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "prompts.read"):
+            raise PermissionError("Insufficient permissions. Required: prompts.read")
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -1661,6 +1676,11 @@ async def list_resources() -> List[types.Resource]:
         typing.List[mcp.types.Resource]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude resources.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "resources.read"):
+            raise PermissionError("Insufficient permissions. Required: resources.read")
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1767,6 +1787,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         typing.Union[str, bytes]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude resources.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "resources.read"):
+            raise PermissionError("Insufficient permissions. Required: resources.read")
 
     # Extract authorization parameters from user context (same pattern as list_resources)
     user_email = user_context.get("email") if user_context else None
@@ -1898,6 +1923,12 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     """
     # Extract filtering parameters from user context (same pattern as list_resources)
     server_id, _, user_context = await _get_request_context_or_default()
+
+    # Token scope cap: deny early if scoped permissions exclude resources.read
+    if _should_enforce_streamable_rbac(user_context):
+        if not _check_scoped_permission(user_context, "resources.read"):
+            raise PermissionError("Insufficient permissions. Required: resources.read")
+
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
@@ -1968,6 +1999,10 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         await _check_server_oauth_enforcement(server_id, user_context)
 
     if _should_enforce_streamable_rbac(user_context):
+        # Layer 1: Token scope cap
+        if not _check_scoped_permission(user_context, "admin.system_config"):
+            raise PermissionError("Insufficient permissions. Required: admin.system_config")
+        # Layer 2: RBAC check
         has_admin_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="admin.system_config",

@@ -10640,3 +10640,88 @@ async def test_call_tool_allowed_with_empty_scoped_permissions(monkeypatch):
 
     await call_tool("mytool", {"foo": "bar"})
     tool_service.invoke_tool.assert_called_once()
+
+
+def _scoped_user_context(scoped_permissions):
+    """Build an authenticated user context with scoped permissions for testing."""
+    return {
+        "email": "dev@example.com",
+        "teams": ["team-1"],
+        "is_admin": False,
+        "is_authenticated": True,
+        "scoped_permissions": scoped_permissions,
+    }
+
+
+def _patch_request_context(monkeypatch, user_context):
+    """Patch _get_request_context_or_default with given user context."""
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, user_context)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_tools_denied_by_token_scope(monkeypatch):
+    """Token without tools.read should be denied list_tools."""
+    from mcpgateway.transports.streamablehttp_transport import list_tools
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="tools.read"):
+        await list_tools()
+
+
+@pytest.mark.asyncio
+async def test_list_resources_denied_by_token_scope(monkeypatch):
+    """Token without resources.read should be denied list_resources."""
+    from mcpgateway.transports.streamablehttp_transport import list_resources
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="resources.read"):
+        await list_resources()
+
+
+@pytest.mark.asyncio
+async def test_read_resource_denied_by_token_scope(monkeypatch):
+    """Token without resources.read should be denied read_resource."""
+    from mcpgateway.transports.streamablehttp_transport import read_resource
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="resources.read"):
+        await read_resource("resource://test")
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_denied_by_token_scope(monkeypatch):
+    """Token without prompts.read should be denied list_prompts."""
+    from mcpgateway.transports.streamablehttp_transport import list_prompts
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="prompts.read"):
+        await list_prompts()
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_denied_by_token_scope(monkeypatch):
+    """Token without prompts.read should be denied get_prompt."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="prompts.read"):
+        await get_prompt("test-prompt")
+
+
+@pytest.mark.asyncio
+async def test_list_resource_templates_denied_by_token_scope(monkeypatch):
+    """Token without resources.read should be denied list_resource_templates."""
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="resources.read"):
+        await list_resource_templates()
