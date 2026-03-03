@@ -20033,7 +20033,7 @@ class TestAdminPersonalTeamFiltering:
             )
 
             assert len(result) == 2
-            assert any(t.id == "personal-team-123" for t in result)
+            assert any(t["id"] == "personal-team-123" for t in result)
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_excludes_inactive_personal_team(self, mock_admin_user, mock_personal_team):
@@ -20067,7 +20067,7 @@ class TestAdminPersonalTeamFiltering:
             )
 
             assert len(result) == 1
-            assert not any(t.id == "personal-team-123" for t in result)
+            assert not any(t["id"] == "personal-team-123" for t in result)
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_excludes_personal_team_wrong_visibility(self, mock_admin_user, mock_personal_team):
@@ -20100,7 +20100,7 @@ class TestAdminPersonalTeamFiltering:
                 user={"email": "admin@example.com", "db": mock_db}
             )
 
-            assert not any(t.id == "personal-team-123" for t in result)
+            assert not any(t["id"] == "personal-team-123" for t in result)
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_excludes_personal_team_no_search_match(self, mock_admin_user, mock_personal_team):
@@ -20133,7 +20133,7 @@ class TestAdminPersonalTeamFiltering:
                 user={"email": "admin@example.com", "db": mock_db}
             )
 
-            assert not any(t.id == "personal-team-123" for t in result)
+            assert not any(t["id"] == "personal-team-123" for t in result)
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_respects_limit(self, mock_admin_user, mock_personal_team):
@@ -20169,7 +20169,7 @@ class TestAdminPersonalTeamFiltering:
 
             # Should not exceed limit
             assert len(result) == 5
-            assert not any(t.id == "personal-team-123" for t in result)
+            assert not any(t["id"] == "personal-team-123" for t in result)
 
     # Tests for admin_teams_partial_html
     @pytest.mark.asyncio
