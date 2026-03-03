@@ -10555,3 +10555,280 @@ async def test_streamable_http_auth_unexpected_exception_returns_401(monkeypatch
     assert result is False
     assert sent and sent[0]["type"] == "http.response.start"
     assert sent[0]["status"] == 401
+
+
+# ── Token scope enforcement tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_call_tool_denied_by_token_scope(monkeypatch):
+    """Token with tools.read but not tools.execute should be denied call_tool via scope check."""
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True, "scoped_permissions": ["servers.use", "tools.read"]},
+            )
+        ),
+    )
+    # RBAC would allow, but token scope should deny
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock())
+
+    with pytest.raises(PermissionError, match="tools.execute"):
+        await call_tool("mytool", {"foo": "bar"})
+
+    tool_service.invoke_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_allowed_by_token_scope(monkeypatch):
+    """Token with tools.execute in scope should be allowed."""
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True, "scoped_permissions": ["servers.use", "tools.execute"]},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    from mcp import types as mcp_types
+
+    tool_result = MagicMock()
+    tool_result.content = [mcp_types.TextContent(type="text", text="ok")]
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=tool_result))
+
+    await call_tool("mytool", {"foo": "bar"})
+    tool_service.invoke_tool.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_allowed_with_empty_scoped_permissions(monkeypatch):
+    """Token with no scoped permissions (defer to RBAC) should be allowed if RBAC passes."""
+    from mcp import types as mcp_types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    tool_result = MagicMock()
+    tool_result.content = [mcp_types.TextContent(type="text", text="ok")]
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=tool_result))
+
+    await call_tool("mytool", {"foo": "bar"})
+    tool_service.invoke_tool.assert_called_once()
+
+
+def _scoped_user_context(scoped_permissions):
+    """Build an authenticated user context with scoped permissions for testing."""
+    return {
+        "email": "dev@example.com",
+        "teams": ["team-1"],
+        "is_admin": False,
+        "is_authenticated": True,
+        "scoped_permissions": scoped_permissions,
+    }
+
+
+def _patch_request_context(monkeypatch, user_context):
+    """Patch _get_request_context_or_default with given user context."""
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, user_context)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_tools_denied_by_token_scope(monkeypatch):
+    """Token without tools.read should be denied list_tools."""
+    from mcpgateway.transports.streamablehttp_transport import list_tools
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="tools.read"):
+        await list_tools()
+
+
+@pytest.mark.asyncio
+async def test_list_resources_denied_by_token_scope(monkeypatch):
+    """Token without resources.read should be denied list_resources."""
+    from mcpgateway.transports.streamablehttp_transport import list_resources
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="resources.read"):
+        await list_resources()
+
+
+@pytest.mark.asyncio
+async def test_read_resource_denied_by_token_scope(monkeypatch):
+    """Token without resources.read should be denied read_resource."""
+    from mcpgateway.transports.streamablehttp_transport import read_resource
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="resources.read"):
+        await read_resource("resource://test")
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_denied_by_token_scope(monkeypatch):
+    """Token without prompts.read should be denied list_prompts."""
+    from mcpgateway.transports.streamablehttp_transport import list_prompts
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="prompts.read"):
+        await list_prompts()
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_denied_by_token_scope(monkeypatch):
+    """Token without prompts.read should be denied get_prompt."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="prompts.read"):
+        await get_prompt("test-prompt")
+
+
+@pytest.mark.asyncio
+async def test_list_resource_templates_denied_by_token_scope(monkeypatch):
+    """Token without resources.read should be denied list_resource_templates."""
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError, match="resources.read"):
+        await list_resource_templates()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_allowed_with_wildcard_scoped_permissions(monkeypatch):
+    """Token with wildcard scoped permissions should pass scope check."""
+    from mcp import types as mcp_types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True, "scoped_permissions": ["*"]},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    tool_result = MagicMock()
+    tool_result.content = [mcp_types.TextContent(type="text", text="ok")]
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=tool_result))
+
+    await call_tool("mytool", {"foo": "bar"})
+    tool_service.invoke_tool.assert_called_once()
+
+
+def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
+    """API token with scopes.permissions should include scoped_permissions in context."""
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
+
+    raw = {
+        "sub": "user@example.com",
+        "token_use": "api",
+        "teams": ["team-a"],
+        "scopes": {"permissions": ["tools.read", "servers.use"]},
+    }
+    result = _normalize_jwt_payload(raw)
+    assert result["scoped_permissions"] == ["tools.read", "servers.use"]
+    assert result["is_authenticated"] is True
+
+
+@pytest.mark.asyncio
+async def test_set_logging_level_denied_by_token_scope(monkeypatch):
+    """Token without admin.system_config should be denied set_logging_level."""
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use", "tools.read"]))
+
+    with pytest.raises(PermissionError, match="admin.system_config"):
+        await set_logging_level("error")
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
+    """_auth_jwt should propagate scopes.permissions into user_context_var."""
+    from mcpgateway.transports.streamablehttp_transport import (
+        _StreamableHttpAuthHandler,
+        user_context_var,
+    )
+
+    jwt_payload = {
+        "sub": "user@example.com",
+        "is_admin": True,
+        "token_use": "api",
+        "scopes": {"permissions": ["tools.read", "tools.execute", "servers.use"]},
+    }
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    # Admin with normalize_token_teams returning None bypasses team membership check
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: None)
+
+    handler = _StreamableHttpAuthHandler(
+        scope={"type": "http", "headers": []},
+        receive=AsyncMock(),
+        send=AsyncMock(),
+    )
+
+    result = await handler._auth_jwt(token="fake-token")
+    assert result is True
+
+    ctx = user_context_var.get()
+    assert ctx["scoped_permissions"] == ["tools.read", "tools.execute", "servers.use"]
+    assert ctx["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_complete_denied_by_token_scope(monkeypatch):
+    """Token without tools.read should be denied completion/complete."""
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    from mcp import types as mcp_types
+
+    ref = mcp_types.PromptReference(type="ref/prompt", name="test-prompt")
+    argument = mcp_types.CompleteRequest(
+        method="completion/complete",
+        params=mcp_types.CompleteRequestParams(ref=ref, argument=mcp_types.CompletionArgument(name="arg", value="val")),
+    )
+
+    with pytest.raises(PermissionError, match="tools.read"):
+        await complete(ref, argument)
