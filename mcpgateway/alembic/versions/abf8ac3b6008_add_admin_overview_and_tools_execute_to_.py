@@ -23,7 +23,6 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import text
 
-
 # revision identifiers, used by Alembic.
 revision: str = "abf8ac3b6008"
 down_revision: Union[str, Sequence[str], None] = "d9e0f1a2b3c4"
