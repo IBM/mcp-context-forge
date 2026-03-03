@@ -42,6 +42,7 @@ from uuid import uuid4
 
 # Third-Party
 import anyio
+from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
 from mcp import ClientSession, types
@@ -51,6 +52,7 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
 import orjson
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND
@@ -62,6 +64,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
@@ -89,6 +92,7 @@ mcp_app: Server[Any] = Server("mcp-streamable-http")
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+_oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 _shared_session_registry: Optional[Any] = None
 
 # ------------------------------ Event store ------------------------------
@@ -366,7 +370,7 @@ class InMemoryEventStore(EventStore):
         # O(1) lookup in event_index
         last_event = self.event_index.get(last_event_id)
         if last_event is None:
-            logger.warning(f"Event ID {last_event_id} not found in store")
+            logger.warning("Event ID %s not found in store", last_event_id)
             return None
 
         buffer = self.streams.get(last_event.stream_id)
@@ -477,6 +481,115 @@ def _should_enforce_streamable_rbac(user_context: Optional[dict[str, Any]]) -> b
     return isinstance(user_context, dict) and "is_authenticated" in user_context
 
 
+def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
+    """Construct the RFC 9728 OAuth Protected Resource Metadata URL from ASGI scope.
+
+    Inspects ``x-forwarded-proto`` and ``host`` headers first (reverse-proxy
+    scenario), then falls back to ``scope["scheme"]`` and ``scope["server"]``.
+    Includes ``scope["root_path"]`` so that deployments behind a reverse proxy
+    with a path prefix emit the correct public URL.
+
+    Args:
+        scope: ASGI connection scope.
+        server_id: Virtual-server identifier.
+
+    Returns:
+        Fully-qualified URL string, or ``""`` if construction fails.
+    """
+    try:
+        headers = Headers(scope=scope)
+        forwarded_proto = headers.get("x-forwarded-proto")
+        if forwarded_proto:
+            proto = forwarded_proto.split(",")[0].strip().lower()
+        else:
+            proto = scope.get("scheme", "https")
+        if proto not in ("http", "https"):
+            proto = "https"
+
+        host = headers.get("host")
+        if not host:
+            server_tuple = scope.get("server")
+            if server_tuple:
+                host_addr, port = server_tuple
+                # Wrap IPv6 addresses in brackets per RFC 2732
+                if ":" in str(host_addr):
+                    host_addr = f"[{host_addr}]"
+                default_port = 443 if proto == "https" else 80
+                host = f"{host_addr}:{port}" if port != default_port else host_addr
+            else:
+                return ""
+
+        root_path = scope.get("root_path", "").rstrip("/")
+        return f"{proto}://{host}{root_path}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
+    except Exception:
+        return ""
+
+
+async def _check_server_oauth_enforcement(server_id: str, user_context: Optional[dict[str, Any]]) -> None:
+    """Reject unauthenticated callers when a server requires OAuth.
+
+    Looks up the server's ``oauth_enabled`` flag and raises
+    ``OAuthRequiredError`` when the flag is set but the caller is not
+    authenticated.  This closes the gap where OAuth capability is
+    *advertised* (via RFC 9728 ``experimental.oauth``) but never
+    *enforced* on subsequent MCP requests.
+
+    The result is cached in ``_oauth_checked_var`` for the lifetime of
+    the request so that handler-level defense-in-depth calls do not
+    repeat the DB query already performed by the middleware.
+
+    .. note::
+        SSE transport is not covered here because it already requires
+        authentication unconditionally.
+
+    Args:
+        server_id: Virtual-server identifier extracted from the URL path.
+        user_context: User context set by ``streamable_http_auth`` middleware.
+
+    Raises:
+        OAuthRequiredError: When the server requires OAuth and the caller has
+            not provided valid authentication credentials.
+        OAuthEnforcementUnavailableError: When the database or session is
+            unavailable and the server's ``oauth_enabled`` flag cannot be
+            verified (fail-closed).
+    """
+    if _oauth_checked_var.get(False):
+        return  # Already checked during this request
+
+    if not server_id or server_id == "default_server_id":
+        return  # No server context — nothing to enforce
+
+    is_authenticated = (user_context or {}).get("is_authenticated", False)
+    if is_authenticated:
+        _oauth_checked_var.set(True)
+        return  # Already authenticated — no need to check
+
+    # Lazy DB lookup to avoid import-time side-effects
+    # Third-Party
+    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+    try:
+        async with get_db() as db:
+            server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+            if server and server.oauth_enabled:
+                logger.warning("OAuth required for server %s but caller is unauthenticated", server_id)
+                raise OAuthRequiredError(
+                    "This server requires OAuth authentication. Please provide a valid access token.",
+                    server_id=server_id,
+                )
+            _oauth_checked_var.set(True)
+    except SQLAlchemyError as exc:
+        # DB lookup failure — fail-closed for security.
+        logger.error("OAuth enforcement DB lookup failed for server %s: %s", server_id, exc)
+        raise OAuthEnforcementUnavailableError(
+            f"Unable to verify OAuth requirements for server {server_id}",
+            server_id=server_id,
+        ) from exc
+
+
 async def _check_streamable_permission(
     *,
     user_context: dict[str, Any],
@@ -510,7 +623,7 @@ async def _check_streamable_permission(
                 check_any_team=check_any_team,
             )
     except Exception as exc:
-        logger.warning(f"Streamable HTTP RBAC check failed for {user_email} / {permission}: {exc}")
+        logger.warning("Streamable HTTP RBAC check failed for %s / %s: %s", user_email, permission, exc)
         return False
 
 
@@ -553,7 +666,7 @@ async def _claim_streamable_session_owner(session_id: str, owner_email: str) -> 
     try:
         return await session_registry.claim_session_owner(session_id, owner_email)
     except Exception as exc:
-        logger.warning(f"Failed to claim session owner for {session_id}: {exc}")
+        logger.warning("Failed to claim session owner for %s: %s", session_id, exc)
         return None
 
 
@@ -596,7 +709,7 @@ async def _validate_streamable_session_access(
     try:
         session_owner = await session_registry.get_session_owner(mcp_session_id)
     except Exception as exc:
-        logger.warning(f"Failed to get session owner for {mcp_session_id}: {exc}")
+        logger.warning("Failed to get session owner for %s: %s", mcp_session_id, exc)
         return False, HTTP_403_FORBIDDEN, "Session ownership unavailable"
 
     if session_owner:
@@ -609,7 +722,7 @@ async def _validate_streamable_session_access(
     try:
         session_exists = await session_registry.session_exists(mcp_session_id)
     except Exception as exc:
-        logger.warning(f"Failed to check session existence for {mcp_session_id}: {exc}")
+        logger.warning("Failed to check session existence for %s: %s", mcp_session_id, exc)
         return False, HTTP_403_FORBIDDEN, "Session ownership unavailable"
 
     if session_exists is False:
@@ -649,14 +762,14 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
                 params = None
                 if meta:
                     params = PaginatedRequestParams(_meta=meta)
-                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
                 # List tools with _meta forwarded
                 result = await session.list_tools(params=params)
                 return result.tools
 
     except Exception as e:
-        logger.exception(f"Error proxying tools/list to gateway {gateway.id}: {e}")
+        logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
         return []
 
 
@@ -683,9 +796,9 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 if header_value:
                     headers[header_name] = header_value
 
-        logger.info(f"Proxying resources/list to gateway {gateway.id} at {gateway.url}")
+        logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
-            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+            logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
         # Use MCP SDK to connect and list resources
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -696,16 +809,16 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 params = None
                 if meta:
                     params = PaginatedRequestParams(_meta=meta)
-                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
                 # List resources with _meta forwarded
                 result = await session.list_resources(params=params)
 
-                logger.info(f"Received {len(result.resources)} resources from gateway {gateway.id}")
+                logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
                 return result.resources
 
     except Exception as e:
-        logger.exception(f"Error proxying resources/list to gateway {gateway.id}: {e}")
+        logger.exception("Error proxying resources/list to gateway %s: %s", gateway.id, e)
         return []
 
 
@@ -740,9 +853,9 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 if header_value:
                     headers[header_name] = header_value
 
-        logger.info(f"Proxying resources/read for {resource_uri} to gateway {gateway.id} at {gateway.url}")
+        logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
-            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+            logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
         # Use MCP SDK to connect and read resource
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -765,11 +878,11 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                     # No _meta, use simple read_resource
                     result = await session.read_resource(uri=resource_uri)
 
-                logger.info(f"Received {len(result.contents)} content items from gateway {gateway.id} for resource {resource_uri}")
+                logger.info("Received %s content items from gateway %s for resource %s", len(result.contents), gateway.id, resource_uri)
                 return result.contents
 
     except Exception as e:
-        logger.exception(f"Error proxying resources/read to gateway {gateway.id} for resource {resource_uri}: {e}")
+        logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)
         return []
 
 
@@ -839,6 +952,15 @@ async def call_tool(name: str, arguments: dict) -> Union[
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     if _should_enforce_streamable_rbac(user_context):
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
@@ -864,10 +986,10 @@ async def call_tool(name: str, arguments: dict) -> Union[
                 if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
                     if not await check_gateway_access(check_db, gateway, user_email, token_teams):
-                        logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {user_email}")
+                        logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id_from_header, user_email)
                         return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], isError=True)
 
-                    logger.info(f"Using direct_proxy mode for tool '{name}' via gateway {gateway_id_from_header}")
+                    logger.info("Using direct_proxy mode for tool '%s' via gateway %s", name, gateway_id_from_header)
 
                     # Use direct proxy method - returns raw CallToolResult from remote server
                     # Return it directly without any normalization
@@ -881,7 +1003,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         token_teams=token_teams,
                     )
         except Exception as e:
-            logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")
+            logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
             return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
 
     # Normal mode: use standard tool invocation with normalization
@@ -920,7 +1042,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         if url:
                             await pool.register_session_mapping(mcp_session_id, url, gateway_id, transport_type, user_email)
             except Exception as e:
-                logger.error(f"Failed to pre-register session mapping for Streamable HTTP: {e}")
+                logger.error("Failed to pre-register session mapping for Streamable HTTP: %s", e)
 
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
@@ -989,7 +1111,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                 meta_data=meta_data,
             )
             if not result or not result.content:
-                logger.warning(f"No content returned by tool: {name}")
+                logger.warning("No content returned by tool: %s", name)
                 return []
 
             # Normalize unstructured content to MCP SDK types, preserving metadata (annotations, _meta, size)
@@ -1102,7 +1224,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
 
             return unstructured
     except Exception as e:
-        logger.exception(f"Error calling tool '{name}': {e}")
+        logger.exception("Error calling tool '%s': %s", name, e)
         # Re-raise the exception so the MCP SDK can properly convert it to an error response
         # This ensures error details are propagated to the client instead of returning empty results
         raise
@@ -1173,7 +1295,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
             else:
                 user_ctx = {}
         except Exception as e:
-            logger.warning(f"Failed to recover user context in stateful session: {e}")
+            logger.warning("Failed to recover user context in stateful session: %s", e)
             user_ctx = {}
 
         return s_id, req_headers, user_ctx
@@ -1182,7 +1304,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         # Not in a request context
         return s_id, request_headers_var.get(), user_context_var.get()
     except Exception as e:
-        logger.error(f"Error recovering context in stateful session: {e}", exc_info=True)
+        logger.exception("Error recovering context in stateful session: %s", e)
         return s_id, request_headers_var.get(), user_context_var.get()
 
 
@@ -1272,6 +1394,15 @@ async def list_tools() -> List[types.Tool]:
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     if server_id:
         try:
             async with get_db() as db:
@@ -1290,7 +1421,7 @@ async def list_tools() -> List[types.Tool]:
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
-                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id, user_email)
                             return []  # Return empty list for unauthorized access
 
                         # Direct proxy mode: forward request to remote MCP server
@@ -1299,15 +1430,21 @@ async def list_tools() -> List[types.Tool]:
                         try:
                             request_ctx = mcp_app.request_context
                             meta = request_ctx.meta
-                            logger.info(f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
+                            logger.info(
+                                "[LIST TOOLS] Using direct_proxy mode for server %s, gateway %s (from %s header). Meta Attached: %s",
+                                server_id,
+                                gateway.id,
+                                GATEWAY_ID_HEADER,
+                                meta is not None,
+                            )
                         except (LookupError, AttributeError) as e:
-                            logger.debug(f"No request context available for _meta extraction: {e}")
+                            logger.debug("No request context available for _meta extraction: %s", e)
 
                         return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta)
                     if gateway:
-                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                        logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, getattr(gateway, "gateway_mode", "cache"))
                     else:
-                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+                        logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
                 # Check if server exists for cache mode
                 # Third-Party
@@ -1318,14 +1455,14 @@ async def list_tools() -> List[types.Tool]:
 
                 server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
                 if not server:
-                    logger.warning(f"Server {server_id} not found in database")
+                    logger.warning("Server %s not found in database", server_id)
                     return []
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
-            logger.error(f"Error listing tools:{e}")
+            logger.error("Error listing tools:%s", e)
             return []
     else:
         try:
@@ -1333,7 +1470,7 @@ async def list_tools() -> List[types.Tool]:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
-            logger.exception(f"Error listing tools:{e}")
+            logger.exception("Error listing tools:%s", e)
             return []
 
 
@@ -1370,13 +1507,22 @@ async def list_prompts() -> List[types.Prompt]:
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     if server_id:
         try:
             async with get_db() as db:
                 prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
-            logger.exception(f"Error listing Prompts:{e}")
+            logger.exception("Error listing Prompts:%s", e)
             return []
     else:
         try:
@@ -1384,7 +1530,7 @@ async def list_prompts() -> List[types.Prompt]:
                 prompts, _ = await prompt_service.list_prompts(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
-            logger.exception(f"Error listing prompts:{e}")
+            logger.exception("Error listing prompts:%s", e)
             return []
 
 
@@ -1425,6 +1571,15 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     meta_data = None
     # Extract _meta from request context if available
     try:
@@ -1448,15 +1603,15 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     _meta_data=meta_data,
                 )
             except Exception as e:
-                logger.exception(f"Error getting prompt '{prompt_id}': {e}")
+                logger.exception("Error getting prompt '%s': %s", prompt_id, e)
                 return []
             if not result or not result.messages:
-                logger.warning(f"No content returned by prompt: {prompt_id}")
+                logger.warning("No content returned by prompt: %s", prompt_id)
                 return []
             message_dicts = [message.model_dump() for message in result.messages]
             return types.GetPromptResult(messages=message_dicts, description=result.description)
     except Exception as e:
-        logger.exception(f"Error getting prompt '{prompt_id}': {e}")
+        logger.exception("Error getting prompt '%s': %s", prompt_id, e)
         return []
 
 
@@ -1493,6 +1648,15 @@ async def list_resources() -> List[types.Resource]:
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     if server_id:
         try:
             async with get_db() as db:
@@ -1511,7 +1675,7 @@ async def list_resources() -> List[types.Resource]:
                     if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
-                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id, user_email)
                             return []  # Return empty list for unauthorized access
 
                         # Direct proxy mode: forward request to remote MCP server
@@ -1520,21 +1684,27 @@ async def list_resources() -> List[types.Resource]:
                         try:
                             request_ctx = mcp_app.request_context
                             meta = request_ctx.meta
-                            logger.info(f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
+                            logger.info(
+                                "[LIST RESOURCES] Using direct_proxy mode for server %s, gateway %s (from %s header). Meta Attached: %s",
+                                server_id,
+                                gateway.id,
+                                GATEWAY_ID_HEADER,
+                                meta is not None,
+                            )
                         except (LookupError, AttributeError) as e:
-                            logger.debug(f"No request context available for _meta extraction: {e}")
+                            logger.debug("No request context available for _meta extraction: %s", e)
 
                         return await _proxy_list_resources_to_gateway(gateway, request_headers, user_context, meta)
                     if gateway:
-                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                        logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, gateway.gateway_mode)
                     else:
-                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+                        logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
-            logger.exception(f"Error listing Resources:{e}")
+            logger.exception("Error listing Resources:%s", e)
             return []
     else:
         try:
@@ -1542,7 +1712,7 @@ async def list_resources() -> List[types.Resource]:
                 resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
-            logger.exception(f"Error listing resources:{e}")
+            logger.exception("Error listing resources:%s", e)
             return []
 
 
@@ -1582,6 +1752,15 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     meta_data = None
     # Extract _meta from request context if available
     try:
@@ -1609,7 +1788,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                 if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
                     if not await check_gateway_access(db, gateway, user_email, token_teams):
-                        logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                        logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id, user_email)
                         return ""
 
                     # Direct proxy mode: forward request to remote MCP server
@@ -1618,9 +1797,16 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     try:
                         request_ctx = mcp_app.request_context
                         meta = request_ctx.meta
-                        logger.info(f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header), forwarding _meta: {meta}")
+                        logger.info(
+                            "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta: %s",
+                            resource_uri,
+                            server_id,
+                            gateway.id,
+                            GATEWAY_ID_HEADER,
+                            meta,
+                        )
                     except (LookupError, AttributeError) as e:
-                        logger.debug(f"No request context available for _meta extraction: {e}")
+                        logger.debug("No request context available for _meta extraction: %s", e)
 
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
                     if contents:
@@ -1632,9 +1818,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                             return first_content.blob
                     return ""
                 if gateway:
-                    logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                    logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, gateway.gateway_mode)
                 else:
-                    logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+                    logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
             # Default cache mode: use database
             try:
@@ -1647,7 +1833,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     meta_data=meta_data,
                 )
             except Exception as e:
-                logger.exception(f"Error reading resource '{resource_uri}': {e}")
+                logger.exception("Error reading resource '%s': %s", resource_uri, e)
                 return ""
 
             # Return blob content if available (binary resources)
@@ -1659,10 +1845,10 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                 return result.text
 
             # No content found
-            logger.warning(f"No content returned by resource: {resource_uri}")
+            logger.warning("No content returned by resource: %s", resource_uri)
             return ""
     except Exception as e:
-        logger.exception(f"Error reading resource '{resource_uri}': {e}")
+        logger.exception("Error reading resource '%s': %s", resource_uri, e)
         return ""
 
 
@@ -1683,7 +1869,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         'list'
     """
     # Extract filtering parameters from user context (same pattern as list_resources)
-    _, _, user_context = await _get_request_context_or_default()
+    server_id, _, user_context = await _get_request_context_or_default()
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
@@ -1696,6 +1882,15 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     try:
         async with get_db() as db:
             try:
@@ -1706,10 +1901,10 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
                 )
                 return [template.model_dump(by_alias=True) for template in resource_templates]
             except Exception as e:
-                logger.exception(f"Error listing resource templates: {e}")
+                logger.exception("Error listing resource templates: %s", e)
                 return []
     except Exception as e:
-        logger.exception(f"Error listing resource templates: {e}")
+        logger.exception("Error listing resource templates: %s", e)
         return []
 
 
@@ -1733,7 +1928,17 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         >>> list(sig.parameters.keys())
         ['level']
     """
-    _, _, user_context = await _get_request_context_or_default()
+    server_id, _, user_context = await _get_request_context_or_default()
+
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     if _should_enforce_streamable_rbac(user_context):
         has_admin_permission = await _check_streamable_permission(
             user_context=user_context,
@@ -1760,7 +1965,7 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
     except PermissionError:
         raise
     except Exception as e:
-        logger.exception(f"Error setting logging level: {e}")
+        logger.exception("Error setting logging level: %s", e)
         return types.EmptyResult()
 
 
@@ -1790,9 +1995,19 @@ async def complete(
         Exception: If completion handling fails internally. The method
             logs the exception and returns an empty completion structure.
     """
+    # Derive caller visibility scope from the current request context.
+    server_id, _, user_context = await _get_request_context_or_default()
+
+    # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
+    # When mcp_require_auth=True, the middleware already guarantees authentication.
+    # Note: OAuthEnforcementUnavailableError is intentionally uncaught here —
+    # the middleware (streamable_http_auth) catches it and returns 503.  If the
+    # middleware is somehow bypassed, an uncaught 500 is acceptable and will be
+    # logged by the ASGI server.
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+
     try:
-        # Derive caller visibility scope from the current request context.
-        _, _, user_context = await _get_request_context_or_default()
         user_email = user_context.get("email") if user_context else None
         token_teams = user_context.get("teams") if user_context else None
         is_admin = user_context.get("is_admin", False) if user_context else False
@@ -1850,7 +2065,7 @@ async def complete(
             return types.Completion(values=[], total=0, hasMore=False)
 
     except Exception as e:
-        logger.exception(f"Error handling completion: {e}")
+        logger.exception("Error handling completion: %s", e)
         return types.Completion(values=[], total=0, hasMore=False)
 
 
@@ -1986,7 +2201,7 @@ class SessionManagerWrapper:
         mcp_session_id = headers.get("mcp-session-id", "not-provided")
         method = scope.get("method", "UNKNOWN")
         query_string = scope.get("query_string", b"").decode("utf-8")
-        logger.debug(f"[STATEFUL] Streamable HTTP {method} {path} | MCP-Session-Id: {mcp_session_id} | Query: {query_string} | Stateful: {settings.use_stateful_sessions}")
+        logger.debug("[STATEFUL] Streamable HTTP %s %s | MCP-Session-Id: %s | Query: %s | Stateful: %s", method, path, mcp_session_id, query_string, settings.use_stateful_sessions)
 
         # Note: mcp-session-id from client is used for gateway-internal session affinity
         # routing (stored in request_headers_var), but is NOT renamed or forwarded to
@@ -2012,7 +2227,7 @@ class SessionManagerWrapper:
                 mcp_session_id = "not-provided"
 
         # Log session manager ID for debugging
-        logger.debug(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)}")
+        logger.debug("[SESSION_MGR_DEBUG] Manager ID: %s", id(self.session_manager))
 
         # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
@@ -2031,7 +2246,7 @@ class SessionManagerWrapper:
                 return
 
         if is_internally_forwarded:
-            logger.debug(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: {method} | Session: {mcp_session_id}")
+            logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
 
             # Only route POST requests with JSON-RPC body to /rpc
             # DELETE and other methods should return success (session cleanup is local)
@@ -2064,7 +2279,7 @@ class SessionManagerWrapper:
 
                 json_body = orjson.loads(body)
                 rpc_method = json_body.get("method", "")
-                logger.debug(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
+                logger.debug("[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: %s", rpc_method)
 
                 session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
                     mcp_session_id=mcp_session_id,
@@ -2131,10 +2346,10 @@ class SessionManagerWrapper:
                             "body": response.content,
                         }
                     )
-                    logger.debug(f"[HTTP_AFFINITY_FORWARDED] Response sent | Status: {response.status_code}")
+                    logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
                     return
             except Exception as e:
-                logger.error(f"[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: {e}")
+                logger.error("[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: %s", e)
                 # Fall through to SDK handling as fallback
 
         if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions and mcp_session_id != "not-provided" and not is_internally_forwarded:
@@ -2145,11 +2360,11 @@ class SessionManagerWrapper:
 
                 pool = get_mcp_session_pool()
                 owner = await pool.get_streamable_http_session_owner(mcp_session_id)
-                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
+                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
 
                 if owner and owner != WORKER_ID:
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
+                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
 
                     # Read request body
                     body_parts = []
@@ -2192,17 +2407,17 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
+                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
 
                 elif owner == WORKER_ID and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug(f"[HTTP_AFFINITY_LOCAL] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner is us, routing to /rpc")
+                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
 
                     # Read request body
                     body_parts = []
@@ -2226,7 +2441,7 @@ class SessionManagerWrapper:
                     try:
                         json_body = orjson.loads(body)
                         rpc_method = json_body.get("method", "")
-                        logger.debug(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
+                        logger.debug("[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: %s", rpc_method)
 
                         session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
                             mcp_session_id=mcp_session_id,
@@ -2253,7 +2468,7 @@ class SessionManagerWrapper:
                             json_body["params"]["server_id"] = server_id
                             # Re-serialize body with injected server_id
                             body = orjson.dumps(json_body)
-                            logger.debug(f"[HTTP_AFFINITY_LOCAL] Injected server_id {server_id} into /rpc params")
+                            logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
                         async with httpx.AsyncClient() as client:
                             rpc_headers = {
@@ -2290,17 +2505,17 @@ class SessionManagerWrapper:
                                     "body": response.content,
                                 }
                             )
-                            logger.debug(f"[HTTP_AFFINITY_LOCAL] Response sent | Status: {response.status_code}")
+                            logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
                             return
                     except Exception as e:
-                        logger.error(f"[HTTP_AFFINITY_LOCAL] Error routing to /rpc: {e}")
+                        logger.error("[HTTP_AFFINITY_LOCAL] Error routing to /rpc: %s", e)
                         # Fall through to SDK handling as fallback
 
             except RuntimeError:
                 # Pool not initialized - proceed with local handling
                 pass
             except Exception as e:
-                logger.debug(f"Session affinity check failed, proceeding locally: {e}")
+                logger.debug("Session affinity check failed, proceeding locally: %s", e)
 
         # Store headers in context for tool invocations
         request_headers_var.set(headers)
@@ -2337,13 +2552,17 @@ class SessionManagerWrapper:
 
         try:
             await self.session_manager.handle_request(scope, receive, send_with_capture)
-            logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
+            logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
 
             # Register ownership for the session we just handled
             # This captures both existing sessions (mcp_session_id from request)
             # and new sessions (captured_session_id from response)
             logger.debug(
-                f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}"
+                "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s",
+                settings.mcpgateway_session_affinity_enabled,
+                settings.use_stateful_sessions,
+                captured_session_id,
+                mcp_session_id,
             )
             if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
                 session_to_register: Optional[str] = None
@@ -2357,7 +2576,7 @@ class SessionManagerWrapper:
                     if requester_email:
                         effective_owner = await _claim_streamable_session_owner(captured_session_id, requester_email)
                         if effective_owner and effective_owner != requester_email and not bool(user_context.get("is_admin", False)):
-                            logger.warning(f"Session owner mismatch for {captured_session_id[:8]}... " f"(requester={requester_email}, owner={effective_owner})")
+                            logger.warning("Session owner mismatch for %s... (requester=%s, owner=%s)", captured_session_id[:8], requester_email, effective_owner)
                 elif mcp_session_id != "not-provided":
                     # Existing client-provided IDs may only refresh affinity when they
                     # are already bound to the caller's principal.
@@ -2369,7 +2588,7 @@ class SessionManagerWrapper:
                     if session_allowed:
                         session_to_register = mcp_session_id
 
-                logger.debug(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
+                logger.debug("[HTTP_AFFINITY_DEBUG] session_to_register=%s", session_to_register)
                 if session_to_register:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
@@ -2378,110 +2597,189 @@ class SessionManagerWrapper:
 
                         pool = get_mcp_session_pool()
                         await pool.register_pool_session_owner(session_to_register)
-                        logger.debug(f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after SDK handling")
+                        logger.debug("[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling", WORKER_ID, session_to_register[:8])
                     except Exception as e:
-                        logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
-                        logger.warning(f"Failed to register session ownership: {e}")
+                        logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)
+                        logger.warning("Failed to register session ownership: %s", e)
 
         except anyio.ClosedResourceError:
             # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
-            logger.error(f"[STATEFUL] Streamable HTTP request failed | Session: {mcp_session_id} | Error: {e}")
-            logger.exception(f"Error handling streamable HTTP request: {e}")
+            logger.error("[STATEFUL] Streamable HTTP request failed | Session: %s | Error: %s", mcp_session_id, e)
+            logger.exception("Error handling streamable HTTP request: %s", e)
             raise
 
 
 # ------------------------- Authentication for /mcp routes ------------------------------
 
 
-async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
-    """
-    Perform authentication check in middleware context (ASGI scope).
-
-    This function is intended to be used in middleware wrapping ASGI apps.
-    It authenticates only requests targeting paths ending in "/mcp" or "/mcp/".
-
-    Behavior:
-    - If the path does not end with "/mcp", authentication is skipped.
-    - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
-    - If mcp_require_auth=False (permissive mode):
-      - Requests without auth are allowed but get public-only access (token_teams=[]).
-      - Valid tokens get full scoped access based on their teams.
-      - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
-    - If a Bearer token is present, it is verified using `verify_credentials`.
+def _set_proxy_user_context(proxy_user: str) -> None:
+    """Set user context for a proxy-authenticated request (no team context, non-admin).
 
     Args:
-        scope: The ASGI scope dictionary, which includes request metadata.
-        receive: ASGI receive callable used to receive events.
-        send: ASGI send callable used to send events (e.g. a 401 response).
-
-    Returns:
-        bool: True if authentication passes or is skipped.
-              False if authentication fails and a 401 response is sent.
-
-    Examples:
-        >>> # Test streamable_http_auth function exists
-        >>> callable(streamable_http_auth)
-        True
-
-        >>> # Test function signature
-        >>> import inspect
-        >>> sig = inspect.signature(streamable_http_auth)
-        >>> list(sig.parameters.keys())
-        ['scope', 'receive', 'send']
+        proxy_user: Email address of the proxy-authenticated user.
     """
-    path = scope.get("path", "")
-    if not path.endswith("/mcp") and not path.endswith("/mcp/"):
-        # No auth needed for other paths in this middleware usage
-        return True
-    if path.startswith("/.well-known/"):
-        # RFC 9728 metadata endpoints are intentionally public and may end with /mcp.
-        return True
+    user_context_var.set(
+        {
+            "email": proxy_user,
+            "teams": [],
+            "is_authenticated": True,
+            "is_admin": False,
+        }
+    )
 
-    headers = Headers(scope=scope)
 
-    # CORS preflight (OPTIONS + Origin + Access-Control-Request-Method) cannot carry auth headers
-    method = scope.get("method", "")
-    if method == "OPTIONS":
-        origin = headers.get("origin")
-        if origin and headers.get("access-control-request-method"):
+class _StreamableHttpAuthHandler:
+    """Per-request handler that authenticates MCP StreamableHTTP requests.
+
+    Encapsulates the ASGI triple (scope, receive, send) so that helper methods
+    can send error responses without threading these values through every call.
+    """
+
+    __slots__ = ("scope", "receive", "send")
+
+    def __init__(self, scope: Any, receive: Any, send: Any) -> None:
+        self.scope = scope
+        self.receive = receive
+        self.send = send
+
+    async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
+        """Send an error response and return False (auth rejected).
+
+        Args:
+            detail: Error message for the JSON response body.
+            status_code: HTTP status code (default 401).
+            headers: Optional response headers (e.g. WWW-Authenticate).
+
+        Returns:
+            Always ``False`` so callers can ``return await self._send_error(...)``.
+        """
+        response = ORJSONResponse({"detail": detail}, status_code=status_code, headers=headers or {})
+        await response(self.scope, self.receive, self.send)
+        return False
+
+    async def authenticate(self) -> bool:
+        """Perform authentication check in middleware context (ASGI scope).
+
+        Authenticates only requests targeting paths ending in "/mcp" or "/mcp/".
+
+        Behavior:
+        - If the path does not end with "/mcp", authentication is skipped.
+        - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
+        - If mcp_require_auth=False (permissive mode):
+          - Requests without auth are allowed but get public-only access (token_teams=[]).
+          - EXCEPTION: if the target server has oauth_enabled=True, unauthenticated
+            requests are rejected with 401 regardless of the global setting.
+          - Valid tokens get full scoped access based on their teams.
+          - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
+        - If a Bearer token is present, it is verified using ``verify_credentials``.
+
+        Returns:
+            True if authentication passes or is skipped.
+            False if authentication fails and a 401 response is sent.
+        """
+        path = self.scope.get("path", "")
+        if (not path.endswith("/mcp") and not path.endswith("/mcp/")) or path.startswith("/.well-known/"):
+            # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
-    authorization = headers.get("authorization")
-    proxy_user = headers.get(settings.proxy_user_header) if is_proxy_auth_trust_active(settings) else None
+        # Reset per-request OAuth enforcement cache so keep-alive connections
+        # re-evaluate on every request instead of inheriting a stale True.
+        _oauth_checked_var.set(False)
 
-    # Determine authentication strategy based on settings
-    if is_proxy_auth_trust_active(settings):
-        # Client auth disabled → allow proxy header
-        if proxy_user:
-            # Set enriched user context for proxy-authenticated sessions
-            user_context_var.set(
-                {
-                    "email": proxy_user,
-                    "teams": [],  # Proxy auth has no team context
-                    "is_authenticated": True,
-                    "is_admin": False,
-                }
-            )
+        headers = Headers(scope=self.scope)
+
+        # CORS preflight (OPTIONS + Origin + Access-Control-Request-Method) cannot carry auth headers
+        method = self.scope.get("method", "")
+        if method == "OPTIONS":
+            origin = headers.get("origin")
+            if origin and headers.get("access-control-request-method"):
+                return True
+
+        authorization = headers.get("authorization")
+        proxy_trusted = is_proxy_auth_trust_active(settings)
+        proxy_user = headers.get(settings.proxy_user_header) if proxy_trusted else None
+
+        # Determine authentication strategy based on settings
+        if proxy_trusted and proxy_user:
+            _set_proxy_user_context(proxy_user)
             return True  # Trusted proxy supplied user
 
-    # --- Standard JWT authentication flow (client auth enabled) ---
-    token: str | None = None
-    bearer_header_supplied = False
-    if authorization:
-        scheme, credentials = get_authorization_scheme_param(authorization)
-        if scheme.lower() == "bearer":
-            bearer_header_supplied = True
-            if credentials:
-                token = credentials
+        # --- Standard JWT authentication flow (client auth enabled) ---
+        token: str | None = None
+        bearer_header_supplied = False
+        if authorization:
+            scheme, credentials = get_authorization_scheme_param(authorization)
+            if scheme.lower() == "bearer":
+                bearer_header_supplied = True
+                if credentials:
+                    token = credentials
 
-    try:
         if token is None:
-            raise Exception("No token provided")
-        user_payload = await verify_credentials(token)
-        # Store enriched user context with normalized teams
-        if isinstance(user_payload, dict):
+            return await self._auth_no_token(path=path, bearer_header_supplied=bearer_header_supplied)
+
+        return await self._auth_jwt(token=token)
+
+    async def _auth_no_token(self, *, path: str, bearer_header_supplied: bool) -> bool:
+        """Handle unauthenticated MCP requests (no Bearer token present).
+
+        Args:
+            path: Request path (used for per-server OAuth enforcement).
+            bearer_header_supplied: True when Authorization: Bearer was present but empty.
+
+        Returns:
+            True if the request is allowed with public-only access, False if rejected.
+        """
+        # If client supplied a Bearer header but with empty credentials, fail closed
+        if bearer_header_supplied:
+            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
+
+        # Strict mode: require authentication
+        if settings.mcp_require_auth:
+            return await self._send_error(detail="Authentication required for MCP endpoints", headers={"WWW-Authenticate": "Bearer"})
+
+        # Permissive mode: allow unauthenticated access with public-only scope
+        # BUT first check if this specific server requires OAuth (per-server enforcement)
+        match = _SERVER_ID_RE.search(path)
+        if match:
+            per_server_id = match.group("server_id")
+            try:
+                await _check_server_oauth_enforcement(per_server_id, {"is_authenticated": False})
+            except OAuthRequiredError:
+                resource_metadata = _build_resource_metadata_url(self.scope, per_server_id)
+                www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
+                return await self._send_error(detail="This server requires OAuth authentication", headers={"WWW-Authenticate": www_auth})
+            except OAuthEnforcementUnavailableError:
+                logger.exception("OAuth enforcement check failed for server %s", per_server_id)
+                return await self._send_error(detail="Service unavailable — unable to verify server authentication requirements", status_code=503)
+
+        # Set context indicating unauthenticated user with public-only access (teams=[])
+        user_context_var.set(
+            {
+                "email": None,
+                "teams": [],  # Empty list = public-only access
+                "is_authenticated": False,
+                "is_admin": False,
+            }
+        )
+        return True  # Allow request to proceed with public-only access
+
+    async def _auth_jwt(self, *, token: str) -> bool:
+        """Verify a JWT Bearer token and populate the user context.
+
+        Args:
+            token: Bearer token value extracted from the Authorization header.
+
+        Returns:
+            True if verification succeeds, False if rejected (401/403/503 sent).
+        """
+        try:
+            user_payload = await verify_credentials(token)
+            # Store enriched user context with normalized teams
+            if not isinstance(user_payload, dict):
+                return True
+
             jti = user_payload.get("jti")
             if jti:
                 # First-Party
@@ -2490,16 +2788,10 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 try:
                     is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
                 except Exception as exc:
-                    logger.warning(f"MCP token revocation check failed for jti={jti}; allowing request (fail-open): {exc}")
+                    logger.warning("MCP token revocation check failed for jti=%s; allowing request (fail-open): %s", jti, exc)
                     is_revoked = False
                 if is_revoked:
-                    response = ORJSONResponse(
-                        {"detail": "Token has been revoked"},
-                        status_code=HTTP_401_UNAUTHORIZED,
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                    await response(scope, receive, send)
-                    return False
+                    return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
 
             user_email = user_payload.get("sub") or user_payload.get("email")
             if user_email:
@@ -2512,25 +2804,13 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 except Exception as exc:
                     user_lookup_succeeded = False
                     user_record = None
-                    logger.warning(f"MCP user lookup failed for user={user_email}; allowing request (fail-open): {exc}")
+                    logger.warning("MCP user lookup failed for user=%s; allowing request (fail-open): %s", user_email, exc)
 
                 if user_lookup_succeeded:
                     if user_record and not getattr(user_record, "is_active", True):
-                        response = ORJSONResponse(
-                            {"detail": "Account disabled"},
-                            status_code=HTTP_401_UNAUTHORIZED,
-                            headers={"WWW-Authenticate": "Bearer"},
-                        )
-                        await response(scope, receive, send)
-                        return False
+                        return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
                     if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
-                        response = ORJSONResponse(
-                            {"detail": "User not found in database"},
-                            status_code=HTTP_401_UNAUTHORIZED,
-                            headers={"WWW-Authenticate": "Bearer"},
-                        )
-                        await response(scope, receive, send)
-                        return False
+                        return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
             # Resolve teams based on token_use claim
             token_use = user_payload.get("token_use")
@@ -2577,18 +2857,12 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 # Check cache first (60s TTL)
                 cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
                 if cached_result is False:
-                    logger.warning(f"MCP auth rejected: User {user_email} no longer member of teams (cached)")
-                    response = ORJSONResponse(
-                        {"detail": "Token invalid: User is no longer a member of the associated team"},
-                        status_code=HTTP_403_FORBIDDEN,
-                    )
-                    await response(scope, receive, send)
-                    return False
+                    logger.warning("MCP auth rejected: User %s no longer member of teams (cached)", user_email)
+                    return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
 
                 if cached_result is None:
                     # Cache miss - query database
-                    db = SessionLocal()
-                    try:
+                    with SessionLocal() as db:
                         memberships = (
                             db.execute(
                                 select(EmailTeamMember.team_id).where(
@@ -2605,25 +2879,12 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                         missing_teams = set(final_teams) - valid_team_ids
 
                         if missing_teams:
-                            logger.warning(f"MCP auth rejected: User {user_email} no longer member of teams: {missing_teams}")
+                            logger.warning("MCP auth rejected: User %s no longer member of teams: %s", user_email, missing_teams)
                             auth_cache.set_team_membership_valid_sync(user_email, final_teams, False)
-                            response = ORJSONResponse(
-                                {"detail": "Token invalid: User is no longer a member of the associated team"},
-                                status_code=HTTP_403_FORBIDDEN,
-                            )
-                            await response(scope, receive, send)
-                            return False
+                            return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
 
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
-                    finally:
-                        # Rollback any implicit transaction before closing to prevent
-                        # idle-in-transaction state if the connection is returned to pool
-                        try:
-                            db.rollback()
-                        except Exception:
-                            pass  # nosec B110 - Best effort rollback
-                        db.close()
 
             user_context_var.set(
                 {
@@ -2633,61 +2894,45 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                     "is_admin": is_admin,
                 }
             )
-        elif proxy_user:
-            # If using proxy auth, store the proxy user
-            user_context_var.set(
-                {
-                    "email": proxy_user,
-                    "teams": [],
-                    "is_authenticated": True,
-                    "is_admin": False,
-                }
-            )
-    except Exception:
-        # If JWT auth fails but we have a trusted proxy user, use that
-        if is_proxy_auth_trust_active(settings) and proxy_user:
-            user_context_var.set(
-                {
-                    "email": proxy_user,
-                    "teams": [],
-                    "is_authenticated": True,
-                    "is_admin": False,
-                }
-            )
-            return True  # Fall back to proxy authentication
+        except HTTPException:
+            # JWT verification failed (expired, malformed, bad signature, etc.)
+            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
+        except SQLAlchemyError:
+            # DB failure during team resolution or membership validation
+            logger.exception("Database error during MCP authentication")
+            return await self._send_error(detail="Service unavailable — unable to verify authentication", status_code=503)
+        except Exception:
+            # Unexpected error during authentication — fail closed with 401.
+            logger.exception("Unexpected error during MCP JWT authentication")
+            return await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
 
-        # If client supplied a Bearer token but verification failed (or token was empty),
-        # fail closed even in permissive mode to avoid silently downgrading bad auth.
-        if bearer_header_supplied:
-            response = ORJSONResponse(
-                {"detail": "Invalid authentication credentials"},
-                status_code=HTTP_401_UNAUTHORIZED,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            await response(scope, receive, send)
-            return False
+        return True
 
-        # Check mcp_require_auth setting to determine behavior
-        if settings.mcp_require_auth:
-            # Strict mode: require authentication, return 401 for unauthenticated requests
-            response = ORJSONResponse(
-                {"detail": "Authentication required for MCP endpoints"},
-                status_code=HTTP_401_UNAUTHORIZED,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            await response(scope, receive, send)
-            return False
 
-        # Permissive mode (default): allow unauthenticated access with public-only scope
-        # Set context indicating unauthenticated user with public-only access (teams=[])
-        user_context_var.set(
-            {
-                "email": None,
-                "teams": [],  # Empty list = public-only access
-                "is_authenticated": False,
-                "is_admin": False,
-            }
-        )
-        return True  # Allow request to proceed with public-only access
+async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
+    """Perform authentication check in middleware context (ASGI scope).
 
-    return True
+    Delegates to :class:`_StreamableHttpAuthHandler` which encapsulates the
+    ASGI triple so helper methods can send error responses directly.
+
+    Args:
+        scope: The ASGI scope dictionary, which includes request metadata.
+        receive: ASGI receive callable used to receive events.
+        send: ASGI send callable used to send events (e.g. a 401 response).
+
+    Returns:
+        bool: True if authentication passes or is skipped.
+              False if authentication fails and a 401 response is sent.
+
+    Examples:
+        >>> # Test streamable_http_auth function exists
+        >>> callable(streamable_http_auth)
+        True
+
+        >>> # Test function signature
+        >>> import inspect
+        >>> sig = inspect.signature(streamable_http_auth)
+        >>> list(sig.parameters.keys())
+        ['scope', 'receive', 'send']
+    """
+    return await _StreamableHttpAuthHandler(scope, receive, send).authenticate()

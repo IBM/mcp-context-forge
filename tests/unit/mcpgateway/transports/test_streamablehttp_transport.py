@@ -28,6 +28,7 @@ from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from fastapi import HTTPException
 import pytest
 from starlette.types import Scope
 
@@ -35,6 +36,7 @@ from starlette.types import Scope
 # ---------------------------------------------------------------------------
 # Import module under test - we only need the specific classes / functions
 # ---------------------------------------------------------------------------
+from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
@@ -123,7 +125,7 @@ async def test_event_store_replay_events_after_not_found(caplog):
     """replay_events_after returns None and logs if event not found."""
     store = InMemoryEventStore()
     sent = []
-    result = await store.replay_events_after("notfound", lambda x: sent.append(x))
+    result = await store.replay_events_after("notfound", sent.append)
     assert result is None
     assert sent == []
 
@@ -1102,6 +1104,8 @@ def _make_scope(path: str, headers: list[tuple[bytes, bytes]] | None = None, met
         "path": path,
         "headers": headers or [],
         "modified_path": path,
+        "scheme": "https",
+        "server": ("localhost", 4444),
     }
     if client is not None:
         scope["client"] = client
@@ -1137,7 +1141,7 @@ async def test_auth_failure(monkeypatch):
     """When verify_credentials raises and mcp_require_auth=True, auth func responds 401 and returns False."""
 
     async def fake_verify(_):  # noqa: D401 - stub that always fails
-        raise ValueError("bad token")
+        raise HTTPException(status_code=401, detail="bad token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
     # Enable strict auth mode to test 401 behavior
@@ -1257,6 +1261,8 @@ async def test_streamable_http_auth_no_authorization_permissive_mode(monkeypatch
     """Auth allows unauthenticated requests with public-only access when mcp_require_auth=False."""
     # Ensure permissive mode (default)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    # Stub out per-server OAuth check — this test validates permissive-mode plumbing, not OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
 
     scope = _make_scope("/servers/1/mcp")
     called = []
@@ -1884,6 +1890,10 @@ async def test_streamable_http_auth_validates_team_membership_on_cache_miss(monk
     mock_execute.scalars.return_value = mock_scalars
     mock_db.execute.return_value = mock_execute
 
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__enter__ = MagicMock(return_value=mock_db)
+    mock_session_local.return_value.__exit__ = MagicMock(return_value=False)
+
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
 
@@ -1892,7 +1902,7 @@ async def test_streamable_http_auth_validates_team_membership_on_cache_miss(monk
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -2476,7 +2486,7 @@ async def test_event_store_replay_skips_overwritten_slot():
     """replay_events_after skips slots where entry.seq_num != expected seq (line 381)."""
     store = InMemoryEventStore(max_events_per_stream=3)
     eid1 = await store.store_event("s1", {"id": 1})
-    eid2 = await store.store_event("s1", {"id": 2})
+    await store.store_event("s1", {"id": 2})
     # Manually corrupt the second slot so entry.seq_num != expected seq
     buffer = store.streams["s1"]
     idx = 1 % store.max_events_per_stream
@@ -2697,7 +2707,7 @@ def test_get_user_email_from_context_no_email_no_sub():
 async def test_call_tool_with_request_context_meta(monkeypatch):
     """Test call_tool extracts _meta from request context when available."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service, types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2779,7 +2789,7 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
 async def test_call_tool_admin_bypass(monkeypatch):
     """Test call_tool admin bypass sets user_email=None for unrestricted admin."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2821,7 +2831,7 @@ async def test_call_tool_admin_bypass(monkeypatch):
 async def test_call_tool_non_admin_no_teams_gets_public_only(monkeypatch):
     """Test call_tool sets token_teams=[] for non-admin without teams (line 534-535)."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2862,7 +2872,7 @@ async def test_call_tool_non_admin_no_teams_gets_public_only(monkeypatch):
 async def test_call_tool_with_mcp_session_header(monkeypatch):
     """Test call_tool extracts mcp-session-id from request headers (lines 543-544)."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, tool_service, types, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, tool_service, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -3847,18 +3857,13 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
 
 
 # ---------------------------------------------------------------------------
-# streamable_http_auth: proxy fallback on JWT failure (Lines 1862-1864, 1875-1883)
+# streamable_http_auth: proxy trust takes precedence over Bearer header
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypatch):
-    """Test auth falls back to proxy user when JWT verification fails (lines 1875-1883)."""
-
-    async def fake_verify(token):
-        raise ValueError("invalid token")
-
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+async def test_streamable_http_auth_proxy_user_with_bearer_header(monkeypatch):
+    """Proxy auth takes precedence over Bearer when proxy trust is active; JWT is never attempted."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
@@ -3877,8 +3882,8 @@ async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypat
         sent.append(msg)
 
     result = await streamable_http_auth(scope, None, send)
-    assert result is True  # Proxy fallback succeeded
-    assert sent == []  # No 401 sent
+    assert result is True
+    assert sent == []
 
     user_ctx = tr.user_context_var.get()
     assert user_ctx["email"] == "proxy_fallback@example.com"
@@ -3888,7 +3893,7 @@ async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypat
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch):
-    """Test auth uses proxy_user for context when user_payload is not a dict (line 1862-1864)."""
+    """Proxy auth takes precedence even when a valid JWT Bearer header is present."""
 
     async def fake_verify(token):
         # Return something that is truthy but not a dict
@@ -3951,6 +3956,10 @@ async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch)
     mock_execute.scalars.return_value = mock_scalars
     mock_db.execute.return_value = mock_execute
 
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__enter__ = MagicMock(return_value=mock_db)
+    mock_session_local.return_value.__exit__ = MagicMock(return_value=False)
+
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
 
@@ -3959,7 +3968,7 @@ async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch)
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -3976,8 +3985,8 @@ async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_auth_rollback_exception_ignored(monkeypatch):
-    """Test auth ignores rollback exception in finally block (lines 1850-1851)."""
+async def test_streamable_http_auth_db_context_manager(monkeypatch):
+    """Test auth uses SQLAlchemy context manager for DB lifecycle."""
     # Standard
     from unittest.mock import MagicMock, patch
 
@@ -3993,14 +4002,12 @@ async def test_streamable_http_auth_rollback_exception_ignored(monkeypatch):
     mock_auth_cache.get_team_membership_valid_sync.return_value = None
     mock_auth_cache.set_team_membership_valid_sync = MagicMock()
 
-    # Mock DB where rollback raises (line 1850-1851)
     mock_db = MagicMock()
     mock_scalars = MagicMock()
     mock_scalars.all.return_value = ["team_a"]
     mock_execute = MagicMock()
     mock_execute.scalars.return_value = mock_scalars
     mock_db.execute.return_value = mock_execute
-    mock_db.rollback.side_effect = Exception("rollback error")
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -4008,16 +4015,20 @@ async def test_streamable_http_auth_rollback_exception_ignored(monkeypatch):
     async def send(msg):
         sent.append(msg)
 
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__enter__ = MagicMock(return_value=mock_db)
+    mock_session_local.return_value.__exit__ = MagicMock(return_value=False)
+
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
-    # Should still succeed despite rollback failure
     assert result is True
     assert sent == []
-    mock_db.close.assert_called_once()
+    # Context manager handles close
+    mock_session_local.return_value.__exit__.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -4029,7 +4040,7 @@ async def test_streamable_http_auth_rollback_exception_ignored(monkeypatch):
 async def test_call_tool_structured_content_getattr_exception(monkeypatch):
     """Test call_tool handles getattr exception for structured_content (lines 737-738)."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     mock_db = MagicMock()
 
@@ -4070,7 +4081,7 @@ async def test_call_tool_structured_content_getattr_exception(monkeypatch):
 async def test_call_tool_structured_content_model_dump_exception(monkeypatch):
     """Test call_tool handles model_dump exception for structuredContent (lines 744-745)."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -4104,7 +4115,7 @@ async def test_call_tool_structured_content_model_dump_exception(monkeypatch):
 async def test_call_tool_meta_with_model_dump(monkeypatch):
     """Test call_tool converts meta with model_dump (lines 675-677)."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -4142,7 +4153,7 @@ async def test_call_tool_meta_with_model_dump(monkeypatch):
 async def test_call_tool_annotations_not_convertible(monkeypatch):
     """Test call_tool handles annotations that are not dict, None, or model_dump (line 660)."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -4226,6 +4237,8 @@ async def test_streamable_http_auth_no_proxy_user_when_client_auth_disabled(monk
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-forwarded-user")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    # Stub out per-server OAuth check — this test validates proxy-user plumbing, not OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
 
     # No proxy user header, no authorization - falls through to permissive mode
     scope = _make_scope("/servers/1/mcp")
@@ -4556,7 +4569,7 @@ async def test_list_resources_team_scoped_user(monkeypatch):
 async def test_call_tool_meta_not_convertible(monkeypatch):
     """Test _convert_meta returns None when meta is not dict, None, or has model_dump (line 677)."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -4899,7 +4912,6 @@ async def test_call_tool_session_affinity_invalid_session_id_fallthrough(monkeyp
         call_tool,
         request_headers_var,
         tool_service,
-        types,
         user_context_var,
     )
 
@@ -4947,7 +4959,6 @@ async def test_call_tool_session_affinity_pool_not_initialized(monkeypatch):
         call_tool,
         request_headers_var,
         tool_service,
-        types,
         user_context_var,
     )
 
@@ -4997,7 +5008,6 @@ async def test_call_tool_session_affinity_registration_failure(monkeypatch, capl
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
-        types,
         user_context_var,
     )
 
@@ -5260,7 +5270,7 @@ async def test_session_manager_wrapper_redis_event_store(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.streamable_http_event_ttl", 1800)
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
 
-    wrapper = SessionManagerWrapper()
+    SessionManagerWrapper()
 
     assert captured_config["stateless"] is False
     assert captured_config["event_store"] is not None
@@ -5446,7 +5456,6 @@ async def test_forwarded_non_post_returns_200(monkeypatch):
 async def test_forwarded_post_routes_to_rpc(monkeypatch):
     """Test forwarded POST routes to /rpc via httpx (lines 1393-1461)."""
     # Third-Party
-    import httpx
 
     class DummySessionManager:
         @asynccontextmanager
@@ -5890,6 +5899,7 @@ async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
 @pytest.mark.asyncio
 async def test_forwarded_post_denies_non_owner_session_access(monkeypatch):
     """Internally forwarded requests must deny when session owner does not match requester."""
+
     class DummySessionManager:
         @asynccontextmanager
         async def run(self):
@@ -6387,6 +6397,7 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
 @pytest.mark.asyncio
 async def test_local_affinity_post_denies_non_owner_session_access(monkeypatch):
     """Local affinity /rpc routing must deny cross-user stateful session replay."""
+
     class DummySessionManager:
         @asynccontextmanager
         async def run(self):
@@ -8325,7 +8336,7 @@ class TestCallToolDirectProxy:
                 with patch.object(tr.tool_service, "invoke_tool", mock_invoke_normal):
                     with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
                         mock_settings.mcpgateway_session_affinity_enabled = False
-                        result = await tr.call_tool("my_tool", {"arg": "value"})
+                        await tr.call_tool("my_tool", {"arg": "value"})
 
         # Normal mode invoke_tool was called since gateway is not direct_proxy
         mock_invoke_normal.assert_awaited_once()
@@ -8367,7 +8378,7 @@ class TestCallToolDirectProxy:
                         with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
                             mock_settings.mcpgateway_direct_proxy_enabled = False
                             mock_settings.mcpgateway_session_affinity_enabled = False
-                            result = await tr.call_tool("my_tool", {"arg": "value"})
+                            await tr.call_tool("my_tool", {"arg": "value"})
 
         # Direct proxy was NOT called since feature flag is disabled
         mock_invoke_direct.assert_not_awaited()
@@ -8384,7 +8395,7 @@ class TestCallToolDirectProxy:
 async def test_list_resources_gateway_found_not_direct_proxy_mode(monkeypatch):
     """Test list_resources when gateway is found but not in direct_proxy mode."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, resource_service, server_id_var
+    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, server_id_var
 
     mock_gateway = MagicMock()
     mock_gateway.id = "gw-cache"
@@ -8418,7 +8429,7 @@ async def test_list_resources_gateway_found_not_direct_proxy_mode(monkeypatch):
 async def test_list_resources_direct_proxy_disabled_setting(monkeypatch):
     """Test list_resources when gateway is direct_proxy but setting is disabled."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, resource_service, server_id_var
+    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, server_id_var
 
     mock_gateway = MagicMock()
     mock_gateway.id = "gw-direct"
@@ -8454,7 +8465,7 @@ async def test_list_resources_direct_proxy_disabled_setting(monkeypatch):
 async def test_list_resources_gateway_not_found_log(monkeypatch, caplog):
     """Test list_resources logs warning when gateway ID provided but not found."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, resource_service, server_id_var
+    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, server_id_var
 
     mock_db = MagicMock()
     mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
@@ -8760,8 +8771,8 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import streamable_http_auth, user_context_var
 
-    # Force verify_credentials to raise Exception
-    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(side_effect=Exception("Auth Service Down")))
+    # Force verify_credentials to raise HTTPException (its actual failure mode)
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(side_effect=HTTPException(status_code=401, detail="Auth Service Down")))
 
     # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
@@ -9036,8 +9047,7 @@ async def test_get_request_context_header_wins_over_cookie(monkeypatch):
 
             assert captured_tokens, "verify_credentials_cached was never called"
             assert captured_tokens[0] == "header-token-value", (
-                f"Expected header token to be used, got {captured_tokens[0]!r}. "
-                "Cookie-first bug: cookie token was used instead of Authorization header."
+                f"Expected header token to be used, got {captured_tokens[0]!r}. " "Cookie-first bug: cookie token was used instead of Authorization header."
             )
             assert user == normalized
     finally:
@@ -9128,7 +9138,7 @@ async def test_call_tool_uses_recovered_email_not_stale_contextvar(monkeypatch):
     extracts email from the already-recovered user_context dict.
     """
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, server_id_var, tool_service, types, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var
 
     # Set ContextVar to a STALE email that should NOT be used
     stale_ctx = {"email": "stale-user@old.com", "teams": [], "is_admin": False, "is_authenticated": True}
@@ -9331,13 +9341,15 @@ async def test_call_tool_rehydrate_unknown_type_produces_valid_json(monkeypatch)
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(return_value={
-        "result": {
-            "content": [
-                {"type": "custom_widget", "data": {"enabled": False, "count": 42}},
-            ],
-        },
-    })
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={
+            "result": {
+                "content": [
+                    {"type": "custom_widget", "data": {"enabled": False, "count": 42}},
+                ],
+            },
+        }
+    )
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -9382,13 +9394,15 @@ async def test_call_tool_rehydrate_fallback_on_validation_error(monkeypatch):
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(return_value={
-        "result": {
-            "content": [
-                {"type": "image", "invalid_field": True, "nested": {"active": False}},
-            ],
-        },
-    })
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={
+            "result": {
+                "content": [
+                    {"type": "image", "invalid_field": True, "nested": {"active": False}},
+                ],
+            },
+        }
+    )
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -9453,3 +9467,1091 @@ async def test_call_tool_unknown_content_type_local_path(monkeypatch):
     parsed = json.loads(text)
     assert parsed["payload"]["active"] is False
     assert "False" not in text
+
+
+# ---------------------------------------------------------------------------
+# _check_server_oauth_enforcement tests (Bug #3304)
+# ---------------------------------------------------------------------------
+
+
+def _make_cm_db_mock(**execute_kwargs):
+    """Create a MagicMock that works as ``session = SessionLocal(); with session.begin() as db: ...``."""
+    mock_session = MagicMock(**execute_kwargs)
+    mock_session.begin.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.begin.return_value.__exit__ = MagicMock(return_value=False)
+    return mock_session
+
+
+def _make_fake_get_db(mock_db):
+    """Create a fake async ``get_db()`` context manager that yields *mock_db*."""
+
+    @asynccontextmanager
+    async def _fake():
+        yield mock_db
+
+    return _fake
+
+
+class TestCheckServerOauthEnforcement:
+    """Verify per-server OAuth enforcement via _check_server_oauth_enforcement."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_oauth_checked(self):
+        """Reset the _oauth_checked_var ContextVar between tests."""
+        token = tr._oauth_checked_var.set(False)
+        yield
+        tr._oauth_checked_var.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_no_server_id_is_noop(self):
+        """No server context → nothing to enforce."""
+        await tr._check_server_oauth_enforcement("", {"is_authenticated": False})
+        await tr._check_server_oauth_enforcement("default_server_id", {"is_authenticated": False})
+
+    @pytest.mark.asyncio
+    async def test_authenticated_user_passes(self):
+        """Authenticated callers are never blocked by oauth_enabled."""
+        await tr._check_server_oauth_enforcement("abc123", {"is_authenticated": True})
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_oauth_enabled_raises(self, monkeypatch):
+        """Unauthenticated caller + oauth_enabled server → OAuthRequiredError."""
+        mock_server = MagicMock()
+        mock_server.oauth_enabled = True
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+        with pytest.raises(OAuthRequiredError, match="OAuth authentication") as exc_info:
+            await tr._check_server_oauth_enforcement("abc123", {"is_authenticated": False})
+        assert exc_info.value.server_id == "abc123"
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_oauth_disabled_passes(self, monkeypatch):
+        """Unauthenticated caller + oauth_enabled=False → allowed (permissive mode)."""
+        mock_server = MagicMock()
+        mock_server.oauth_enabled = False
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+        await tr._check_server_oauth_enforcement("abc123", {"is_authenticated": False})
+
+    @pytest.mark.asyncio
+    async def test_server_not_found_passes(self, monkeypatch):
+        """Non-existent server → no enforcement (handled elsewhere)."""
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+        await tr._check_server_oauth_enforcement("abc123", {"is_authenticated": False})
+
+    @pytest.mark.asyncio
+    async def test_none_user_context_treated_as_unauthenticated(self, monkeypatch):
+        """None user_context → treated as unauthenticated."""
+        mock_server = MagicMock()
+        mock_server.oauth_enabled = True
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+        with pytest.raises(OAuthRequiredError, match="OAuth authentication"):
+            await tr._check_server_oauth_enforcement("abc123", None)
+
+
+# ---------------------------------------------------------------------------
+# streamable_http_auth: per-server OAuth enforcement in permissive mode (#3304)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_unauthenticated_oauth_server(monkeypatch):
+    """Permissive mode rejects unauthenticated requests to servers with oauth_enabled=True."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is False
+    assert len(called) == 2  # response start + body
+    assert called[0]["status"] == 401
+    # Verify WWW-Authenticate includes resource_metadata URL per RFC 9728
+    www_auth = dict(called[0].get("headers", [])).get(b"www-authenticate", b"").decode()
+    assert "resource_metadata=" in www_auth
+    assert "abc123def" in www_auth
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_allows_unauthenticated_non_oauth_server(monkeypatch):
+    """Permissive mode allows unauthenticated requests to servers without oauth_enabled."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = False
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is True
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_allows_authenticated_oauth_server(monkeypatch):
+    """Authenticated requests to oauth_enabled servers pass through normally."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": ["team1"],
+            "user": {"is_admin": False},
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    # Mock auth_cache to return valid membership (skip DB lookup)
+    mock_auth_cache = MagicMock()
+    mock_auth_cache.get_team_membership_valid_sync.return_value = True
+
+    scope = _make_scope("/servers/abc123def/mcp", headers=[(b"authorization", b"Bearer valid-token")])
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache):
+        result = await streamable_http_auth(scope, None, send)
+    assert result is True
+    assert called == []
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("is_authenticated") is True
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_returns_503_on_db_failure(monkeypatch):
+    """Middleware returns 503 when DB is unavailable (OAuthEnforcementUnavailableError)."""
+    from sqlalchemy.exc import OperationalError
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = OperationalError("SELECT ...", {}, Exception("connection refused"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is False
+    assert len(called) == 2  # response start + body
+    assert called[0]["status"] == 503
+
+
+# ---------------------------------------------------------------------------
+# _check_server_oauth_enforcement: DB failure paths (fail-closed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_server_oauth_enforcement_db_query_failure_raises(monkeypatch):
+    """DB query failure wraps in OAuthEnforcementUnavailableError — fail-closed."""
+    from sqlalchemy.exc import OperationalError
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = OperationalError("SELECT ...", {}, Exception("connection refused"))
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+        with pytest.raises(OAuthEnforcementUnavailableError) as exc_info:
+            await tr._check_server_oauth_enforcement("abc123", {"is_authenticated": False})
+        assert exc_info.value.server_id == "abc123"
+        assert isinstance(exc_info.value.__cause__, OperationalError)
+    finally:
+        tr._oauth_checked_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Handler-level OAuth enforcement (lines 1330, 1432, 1491, 1563, 1656)
+# These exercise the _check_server_oauth_enforcement call inside each handler
+# when _should_enforce_streamable_rbac returns True (user_context has
+# "is_authenticated" key).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_tools_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """list_tools calls _check_server_oauth_enforcement when middleware context is present (line 1330)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_db = MagicMock()
+    mock_tool = MagicMock()
+    mock_tool.name = "t"
+    mock_tool.description = "desc"
+    mock_tool.input_schema = {"type": "object"}
+    mock_tool.output_schema = None
+    mock_tool.annotations = {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "list_server_tools", AsyncMock(return_value=[mock_tool]))
+
+    # Authenticated context triggers _should_enforce_streamable_rbac → True
+    ctx_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    sid_token = server_id_var.set("test-server")
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        result = await list_tools()
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    assert len(result) == 1
+    assert result[0].name == "t"
+
+    user_context_var.reset(ctx_token)
+    server_id_var.reset(sid_token)
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """list_prompts calls _check_server_oauth_enforcement when middleware context is present (line 1432)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_db = MagicMock()
+    mock_prompt = MagicMock()
+    mock_prompt.name = "p"
+    mock_prompt.description = "prompt desc"
+    mock_prompt.arguments = []
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tr.prompt_service, "list_server_prompts", AsyncMock(return_value=[mock_prompt]))
+
+    ctx_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    sid_token = server_id_var.set("test-server")
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        result = await list_prompts()
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    assert len(result) == 1
+    assert result[0].name == "p"
+
+    user_context_var.reset(ctx_token)
+    server_id_var.reset(sid_token)
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """get_prompt calls _check_server_oauth_enforcement when middleware context is present (line 1491)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, server_id_var, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_db = MagicMock()
+    mock_message = MagicMock()
+    mock_message.model_dump.return_value = {"role": "user", "content": {"type": "text", "text": "hi"}}
+    mock_result = MagicMock()
+    mock_result.messages = [mock_message]
+    mock_result.description = "test prompt"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tr.prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+
+    ctx_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    sid_token = server_id_var.set("test-server")
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        result = await get_prompt("test-prompt", None)
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    assert result.description == "test prompt"
+
+    user_context_var.reset(ctx_token)
+    server_id_var.reset(sid_token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """list_resources calls _check_server_oauth_enforcement when middleware context is present (line 1563)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_db = MagicMock()
+    mock_resource = MagicMock()
+    mock_resource.uri = "file:///test"
+    mock_resource.name = "r"
+    mock_resource.description = "resource desc"
+    mock_resource.mime_type = "text/plain"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tr.resource_service, "list_server_resources", AsyncMock(return_value=[mock_resource]))
+
+    ctx_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    sid_token = server_id_var.set("test-server")
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        result = await list_resources()
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    assert len(result) == 1
+    assert result[0].name == "r"
+
+    user_context_var.reset(ctx_token)
+    server_id_var.reset(sid_token)
+
+
+@pytest.mark.asyncio
+async def test_read_resource_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """read_resource calls _check_server_oauth_enforcement when middleware context is present (line 1656)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, server_id_var, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.blob = None
+    mock_result.text = "hello"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tr.resource_service, "read_resource", AsyncMock(return_value=mock_result))
+
+    ctx_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    sid_token = server_id_var.set("test-server")
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        result = await read_resource("file:///test")
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    assert result == "hello"
+
+    user_context_var.reset(ctx_token)
+    server_id_var.reset(sid_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """call_tool calls _check_server_oauth_enforcement in permissive mode."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "test-server",
+                {},
+                {"email": "user@test.com", "teams": ["t1"], "is_admin": False, "is_authenticated": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+
+    mock_db = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "ok"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result = MagicMock()
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        await call_tool("mytool", {"foo": "bar"})
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_admin": False, "is_authenticated": True})
+
+
+@pytest.mark.asyncio
+async def test_list_resource_templates_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """list_resource_templates calls _check_server_oauth_enforcement in permissive mode."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_db = MagicMock()
+    mock_template = MagicMock()
+    mock_template.model_dump = MagicMock(return_value={"uri_template": "file:///{path}", "name": "Files"})
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tr.resource_service, "list_resource_templates", AsyncMock(return_value=[mock_template]))
+
+    ctx_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    sid_token = tr.server_id_var.set("test-server")
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        result = await list_resource_templates()
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+    assert len(result) == 1
+
+    user_context_var.reset(ctx_token)
+    tr.server_id_var.reset(sid_token)
+
+
+# ---------------------------------------------------------------------------
+# _build_resource_metadata_url tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildResourceMetadataUrl:
+    """Verify RFC 9728 resource metadata URL construction from ASGI scope."""
+
+    def test_host_header(self):
+        """Uses host header when present."""
+        scope = _make_scope("/servers/s1/mcp", headers=[(b"host", b"example.com")])
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "https://example.com/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_x_forwarded_proto(self):
+        """Respects x-forwarded-proto header over scope scheme."""
+        scope = _make_scope("/servers/s1/mcp", headers=[(b"host", b"example.com"), (b"x-forwarded-proto", b"http")])
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "http://example.com/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_server_tuple_fallback(self):
+        """Falls back to scope["server"] tuple when no host header."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "https",
+            "server": ("10.0.0.1", 8443),
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "https://10.0.0.1:8443/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_server_tuple_standard_port_https(self):
+        """Standard HTTPS port (443) is excluded from host."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "https",
+            "server": ("example.com", 443),
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "https://example.com/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_server_tuple_standard_port_http(self):
+        """Standard HTTP port (80) is excluded from host."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "http",
+            "server": ("example.com", 80),
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "http://example.com/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_server_tuple_nonstandard_port_included(self):
+        """Non-standard port (e.g. 443 on HTTP) is included in host."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "http",
+            "server": ("example.com", 443),
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "http://example.com:443/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_root_path_included(self):
+        """Includes root_path for deployments behind a reverse proxy with a path prefix."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [(b"host", b"example.com")],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "https",
+            "server": ("example.com", 443),
+            "root_path": "/gateway/v1",
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "https://example.com/gateway/v1/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_root_path_trailing_slash_stripped(self):
+        """Trailing slash on root_path does not produce double slash."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [(b"host", b"example.com")],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "https",
+            "server": ("example.com", 443),
+            "root_path": "/gateway/v1/",
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "https://example.com/gateway/v1/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_empty_root_path_no_prefix(self):
+        """Empty root_path produces no prefix (default deployment)."""
+        scope = _make_scope("/servers/s1/mcp", headers=[(b"host", b"example.com")])
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert "//." not in url  # no double-slash before .well-known
+        assert url == "https://example.com/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_empty_on_failure(self):
+        """Returns empty string when no host info is available."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "https",
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == ""
+
+    def test_ipv6_address_bracketed(self):
+        """IPv6 addresses are wrapped in brackets per RFC 2732."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "https",
+            "server": ("::1", 4444),
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "https://[::1]:4444/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+    def test_ipv6_address_standard_port(self):
+        """IPv6 on standard port omits port but keeps brackets."""
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/servers/s1/mcp",
+            "headers": [],
+            "modified_path": "/servers/s1/mcp",
+            "scheme": "https",
+            "server": ("::1", 443),
+        }
+        url = tr._build_resource_metadata_url(scope, "s1")
+        assert url == "https://[::1]/.well-known/oauth-protected-resource/servers/s1/mcp"
+
+
+# ---------------------------------------------------------------------------
+# _oauth_checked_var caching test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oauth_checked_var_caching(monkeypatch):
+    """Second call to _check_server_oauth_enforcement skips DB when _oauth_checked_var is True."""
+    mock_db = MagicMock()
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        # First call: DB is accessed
+        mock_server = MagicMock()
+        mock_server.oauth_enabled = False
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+        await tr._check_server_oauth_enforcement("abc123", {"is_authenticated": False})
+        assert mock_db.execute.call_count == 1
+
+        # Second call: _oauth_checked_var is True, DB is NOT accessed again
+        mock_db.execute.reset_mock()
+        await tr._check_server_oauth_enforcement("abc123", {"is_authenticated": False})
+        mock_db.execute.assert_not_called()
+    finally:
+        tr._oauth_checked_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_resets_oauth_checked_var(monkeypatch):
+    """streamable_http_auth resets _oauth_checked_var so keep-alive requests re-check."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    # Simulate a stale True left over from a previous request on the same task context
+    token = tr._oauth_checked_var.set(True)
+    try:
+        scope = _make_scope("/servers/abc123def/mcp")
+        called = []
+
+        async def send(msg):
+            called.append(msg)
+
+        result = await streamable_http_auth(scope, None, send)
+        # Must still reject: the reset means the DB is re-checked
+        assert result is False
+        assert called[0]["status"] == 401
+    finally:
+        tr._oauth_checked_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Handler-level OAuth enforcement: set_logging_level and complete (#3304)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_logging_level_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """set_logging_level calls _check_server_oauth_enforcement in permissive mode."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "test-server",
+                {},
+                {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr(tr.logging_service, "set_level", AsyncMock())
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        await set_logging_level("info")
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": True})
+
+
+@pytest.mark.asyncio
+async def test_complete_oauth_enforcement_with_authenticated_context(monkeypatch):
+    """complete calls _check_server_oauth_enforcement in permissive mode."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "test-server",
+                {},
+                {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False},
+            )
+        ),
+    )
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tr.completion_service, "handle_completion", AsyncMock(return_value={"completion": {"values": ["val1"], "total": 1, "hasMore": False}}))
+
+    mock_ref = MagicMock()
+    mock_ref.model_dump.return_value = {"type": "ref/prompt", "name": "test"}
+    mock_arg = MagicMock()
+    mock_arg.model_dump.return_value = {"name": "arg1", "value": "v"}
+
+    with patch.object(tr, "_check_server_oauth_enforcement") as mock_check:
+        await complete(mock_ref, mock_arg)
+
+    mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
+
+
+@pytest.mark.asyncio
+async def test_set_logging_level_oauth_enforcement_rejects_unauthenticated(monkeypatch):
+    """OAuthRequiredError propagates out of set_logging_level (not swallowed)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("oauth-server", {}, {"is_authenticated": False})),
+    )
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        with pytest.raises(OAuthRequiredError):
+            await set_logging_level("info")
+    finally:
+        tr._oauth_checked_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_complete_oauth_enforcement_rejects_unauthenticated(monkeypatch):
+    """OAuthRequiredError propagates out of complete (not swallowed by broad except)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("oauth-server", {}, {"is_authenticated": False})),
+    )
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    mock_ref = MagicMock()
+    mock_ref.model_dump.return_value = {"type": "ref/prompt", "name": "test"}
+    mock_arg = MagicMock()
+    mock_arg.model_dump.return_value = {"name": "arg1", "value": "v"}
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        with pytest.raises(OAuthRequiredError):
+            await complete(mock_ref, mock_arg)
+    finally:
+        tr._oauth_checked_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# _build_resource_metadata_url: additional coverage
+# ---------------------------------------------------------------------------
+
+
+def test_build_resource_metadata_url_invalid_proto_fallback():
+    """Invalid forwarded proto should fall back to https (line 476)."""
+    scope = {
+        "type": "http",
+        "headers": [
+            (b"x-forwarded-proto", b"ftp"),
+            (b"host", b"example.com"),
+        ],
+    }
+    url = tr._build_resource_metadata_url(scope, "srv-1")
+    assert url.startswith("https://")
+    assert "/servers/srv-1/mcp" in url
+
+
+def test_build_resource_metadata_url_exception_returns_empty():
+    """When scope is completely broken, function returns empty string (lines 493-494)."""
+    url = tr._build_resource_metadata_url(None, "srv-1")
+    assert url == ""
+
+
+# ---------------------------------------------------------------------------
+# _check_streamable_permission: exception path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_streamable_permission_exception_returns_false(monkeypatch):
+    """RBAC check exception should log warning and return False (line 598)."""
+
+    @asynccontextmanager
+    async def exploding_db():
+        raise RuntimeError("DB gone")
+        yield  # noqa: unreachable — required for generator syntax
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", exploding_db)
+
+    result = await tr._check_streamable_permission(
+        user_context={"email": "user@example.com", "teams": ["t1"], "is_admin": False, "is_authenticated": True},
+        permission="tools.execute",
+    )
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _claim_streamable_session_owner: exception path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_claim_streamable_session_owner_exception_returns_none(monkeypatch):
+    """Registry exception should log warning and return None (line 641)."""
+    session_registry = MagicMock()
+    session_registry.claim_session_owner = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    result = await tr._claim_streamable_session_owner("sess-1", "user@example.com")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _validate_streamable_session_access: exception paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_validate_session_access_get_owner_exception(monkeypatch):
+    """get_session_owner exception should return 403 (line 684)."""
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-abc",
+        user_context={"email": "dev@example.com", "is_admin": False, "is_authenticated": True},
+        rpc_method="ping",
+    )
+    assert allowed is False
+    assert status == 403
+    assert "unavailable" in detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_session_access_session_exists_exception(monkeypatch):
+    """session_exists exception should return 403 (line 697)."""
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(return_value=None)
+    session_registry.session_exists = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-xyz",
+        user_context={"email": "dev@example.com", "is_admin": False, "is_authenticated": True},
+        rpc_method="tools/call",
+    )
+    assert allowed is False
+    assert status == 403
+    assert "unavailable" in detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# Session owner mismatch warning (line 2529)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_owner_mismatch_logs_warning(monkeypatch, caplog):
+    """When _claim_streamable_session_owner returns a different owner, a warning is logged (line 2529)."""
+    import logging
+
+    # _claim returns a DIFFERENT owner than the requester (non-admin)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._claim_streamable_session_owner", AsyncMock(return_value="actual_owner@example.com"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send):
+            send_func = send
+            # Emit a session ID in the response to trigger the ownership code
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
+            await send_func({"type": "http.response.body", "body": b"ok"})
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[])
+
+    mock_pool = MagicMock()
+    mock_pool.register_pool_session_owner = AsyncMock()
+
+    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+            token = tr.user_context_var.set(
+                {
+                    "email": "requester@example.com",
+                    "teams": ["t1"],
+                    "is_authenticated": True,
+                    "is_admin": False,
+                }
+            )
+            try:
+                with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
+                    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+            finally:
+                tr.user_context_var.reset(token)
+
+    await wrapper.shutdown()
+    assert any("Session owner mismatch" in msg for msg in caplog.messages)
+
+
+# ---------------------------------------------------------------------------
+# streamable_http_auth: SQLAlchemyError returns 503
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_sqlalchemy_error_returns_503(monkeypatch):
+    """SQLAlchemyError during JWT team resolution returns 503."""
+    # Third-Party
+    from sqlalchemy.exc import SQLAlchemyError
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "email": "user@example.com",
+            "teams": ["team-1"],
+            "is_admin": False,
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    # normalize_token_teams is imported locally from mcpgateway.auth
+    monkeypatch.setattr(
+        "mcpgateway.auth.normalize_token_teams",
+        MagicMock(side_effect=SQLAlchemyError("DB connection lost")),
+    )
+
+    scope = _make_scope(
+        "/servers/1/mcp",
+        headers=[(b"authorization", b"Bearer good-token")],
+    )
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 503
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_unexpected_exception_returns_401(monkeypatch):
+    """Unexpected (non-HTTPException, non-SQLAlchemy) error during JWT auth returns 401."""
+
+    async def fake_verify(token):
+        raise RuntimeError("Something completely unexpected")
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    scope = _make_scope(
+        "/servers/1/mcp",
+        headers=[(b"authorization", b"Bearer bad-token")],
+    )
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 401
