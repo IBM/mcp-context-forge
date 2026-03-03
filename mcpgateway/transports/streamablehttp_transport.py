@@ -1397,6 +1397,9 @@ async def list_tools() -> List[types.Tool]:
         A list of Tool objects containing metadata such as name, description, and input schema.
         Logs and returns an empty list on failure.
 
+    Raises:
+        PermissionError: If the caller lacks ``tools.read`` permission.
+
     Examples:
         >>> # Test list_tools function signature
         >>> import inspect
@@ -1516,6 +1519,9 @@ async def list_prompts() -> List[types.Prompt]:
         A list of Prompt objects containing metadata such as name, description, and arguments.
         Logs and returns an empty list on failure.
 
+    Raises:
+        PermissionError: If the user context indicates insufficient permissions (e.g., missing "prompts.read" scope).
+
     Examples:
         >>> import inspect
         >>> sig = inspect.signature(list_prompts)
@@ -1584,6 +1590,9 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     Returns:
         GetPromptResult: Object containing the prompt messages and description.
         Returns an empty list on failure or if no prompt content is found.
+
+    Raises:
+        PermissionError: If the user context indicates insufficient permissions (e.g., missing "prompts.read" scope).
 
     Logs exceptions if any errors occur during retrieval.
 
@@ -1666,6 +1675,9 @@ async def list_resources() -> List[types.Resource]:
     Returns:
         A list of Resource objects containing metadata such as uri, name, description, and mimeType.
         Logs and returns an empty list on failure.
+
+    Raises:
+        PermissionError: If the user context indicates insufficient permissions (e.g., missing "resources.read" scope).
 
     Examples:
         >>> import inspect
@@ -1775,6 +1787,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     Returns:
         Union[str, bytes]: The content of the resource as text or binary data.
         Returns empty string on failure or if no content is found.
+
+    Raises:
+        PermissionError: If the user does not have the required permissions to read resources.
 
     Logs exceptions if any errors occur during reading.
 
@@ -1912,6 +1927,9 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
 
     Returns:
         List[types.ResourceTemplate]: A list of resource templates with their URIs and metadata.
+
+    Raises:
+        PermissionError: If the caller lacks ``resources.read`` permission.
 
     Examples:
         >>> import inspect

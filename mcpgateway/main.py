@@ -530,6 +530,9 @@ def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
 def _extract_scoped_permissions(request: Request) -> set[str] | None:
     """Extract token scopes.permissions from cached JWT payload.
 
+    Args:
+        request: Incoming request context.
+
     Returns:
         None: no explicit scope cap (empty permissions or no JWT — defer to RBAC)
         set: explicit permission set (may contain '*' for wildcard)
