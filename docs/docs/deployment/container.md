@@ -30,6 +30,87 @@ You can now access the UI at [http://localhost:4444/admin](http://localhost:4444
 !!! info "Authentication"
     The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
+---
+
+## 🔄 Multi-Instance Deployments with Redis
+
+When running multiple gateway containers behind a load balancer (e.g., Docker Swarm, Kubernetes), configure Redis for shared metrics caching to ensure consistent metrics display.
+
+### Why Redis is Required
+
+Without Redis, each container maintains its own in-memory metrics cache, causing:
+- **Fluctuating metrics values** on page refresh
+- **Non-monotonic totals** (values appear to decrease)
+- **Inconsistent dashboards** across instances
+
+See [Issue #2643](https://github.com/IBM/mcp-context-forge/issues/2643) for details.
+
+### Docker Compose with Redis
+
+```yaml
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mcp
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  gateway:
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+    ports:
+      - "4444:4444"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "4444"
+      DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres:5432/mcp"
+      REDIS_URL: "redis://redis:6379"
+      METRICS_CACHE_USE_REDIS: "true"
+      METRICS_CACHE_TTL_SECONDS: "60"
+      JWT_SECRET_KEY: "your-secret-key"
+      PLATFORM_ADMIN_EMAIL: "admin@example.com"
+      PLATFORM_ADMIN_PASSWORD: "changeme"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    deploy:
+      replicas: 3  # Multiple instances
+
+volumes:
+  postgres_data:
+```
+
+### Verification
+
+```bash
+# Check gateway logs for Redis initialization
+docker logs gateway-1 | grep "Redis backend"
+# Should show: "MetricsCache initialized with Redis backend"
+
+# Connect to Redis and verify cache
+docker exec -it redis redis-cli
+> KEYS metrics:*
+> GET metrics:aggregate:total_executions
+```
+
 ### Multi-architecture containers
 Note: the container build process creates container images for 'amd64', 'arm64', 's390x', and 'ppc64le' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION`
 points to a manifest so that all commands will pull the correct image for the architecture being used (whether that be locally or on Kubernetes or OpenShift).

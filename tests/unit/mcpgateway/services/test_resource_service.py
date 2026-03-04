@@ -2195,14 +2195,15 @@ class TestResourceServiceMetricsExtended:
             patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
             patch("mcpgateway.services.metrics_query_service.get_top_performers_combined") as mock_combined,
         ):
-            mock_cache.get.return_value = cached
+            mock_cache.get_async = AsyncMock(return_value=cached)
+            mock_cache.set_async = AsyncMock()
 
             result = await resource_service.get_top_resources(db, limit=2)
 
         assert result is cached
         mock_combined.assert_not_called()
-        mock_cache.get.assert_called_once()
-        mock_cache.set.assert_not_called()
+        mock_cache.get_async.assert_called_once()
+        mock_cache.set_async.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_top_resources_skips_cache_when_disabled(self, resource_service, mock_db):
@@ -4261,8 +4262,8 @@ class TestResourceServiceCoverageEdges:
             patch("mcpgateway.services.resource_service.get_for_update", side_effect=_gfu_side_effect),
             patch("mcpgateway.services.resource_service._get_registry_cache", return_value=cache),
             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache.invalidate_tags", new_callable=AsyncMock),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate_prefix"),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate"),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate_prefix_async", new_callable=AsyncMock),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate_async", new_callable=AsyncMock),
             patch.object(svc, "_notify_resource_updated", new_callable=AsyncMock),
             patch.object(svc, "convert_resource_to_read", return_value="resource_read"),
         ):
@@ -4303,8 +4304,8 @@ class TestResourceServiceCoverageEdges:
             patch("mcpgateway.services.resource_service.get_for_update", side_effect=_gfu_side_effect),
             patch("mcpgateway.services.resource_service._get_registry_cache", return_value=cache),
             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache.invalidate_tags", new_callable=AsyncMock),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate_prefix"),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate"),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate_prefix_async", new_callable=AsyncMock),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.invalidate_async", new_callable=AsyncMock),
             patch.object(svc, "_notify_resource_updated", new_callable=AsyncMock),
             patch.object(svc, "convert_resource_to_read", return_value="resource_read"),
         ):
@@ -4456,7 +4457,7 @@ class TestResourceServiceCoverageEdges:
 
         with (
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.get", return_value=cached),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.get_async", return_value=cached),
         ):
             out = await svc.aggregate_metrics(db)
         assert out.total_executions == 1
@@ -4483,8 +4484,8 @@ class TestResourceServiceCoverageEdges:
 
         with (
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.get", return_value=None),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.set") as mock_set,
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.get_async", return_value=None),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.set_async") as mock_set,
             patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=combined),
         ):
             out = await svc.aggregate_metrics(db)
@@ -4513,8 +4514,8 @@ class TestResourceServiceCoverageEdges:
 
         with (
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=False),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.get") as mock_get,
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.set") as mock_set,
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.get_async") as mock_get,
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.set_async") as mock_set,
             patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=combined),
         ):
             out = await svc.aggregate_metrics(db)

@@ -432,7 +432,7 @@ class A2AAgentService(BaseService):
                 # First-Party
                 from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-                metrics_cache.invalidate("a2a")
+                await metrics_cache.invalidate_async("a2a")
             except Exception as cache_error:
                 logger.warning(f"Cache invalidation failed after agent commit: {cache_error}")
 
@@ -1534,7 +1534,7 @@ class A2AAgentService(BaseService):
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         if is_cache_enabled():
-            cached = metrics_cache.get("a2a")
+            cached = await metrics_cache.get_async("a2a")
             if cached is not None:
                 return cached
 
@@ -1567,7 +1567,7 @@ class A2AAgentService(BaseService):
 
         # Cache the result (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("a2a", metrics)
+            await metrics_cache.set_async("a2a", metrics)
 
         return metrics
 
@@ -1590,7 +1590,7 @@ class A2AAgentService(BaseService):
         # First-Party
         from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-        metrics_cache.invalidate("a2a")
+        await metrics_cache.invalidate_async("a2a")
 
         logger.info("Reset A2A agent metrics" + (f" for agent {agent_id}" if agent_id else ""))
 
