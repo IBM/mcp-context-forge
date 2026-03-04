@@ -20,6 +20,7 @@ pattern do not break core admin functionality.
 from __future__ import annotations
 
 # Standard
+import re
 from typing import Any, Dict, List
 # Third-Party
 from playwright.sync_api import Page, expect
@@ -129,35 +130,29 @@ class TestVirtualServerCRUD:
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
 
-        # Step 2: Click Add Server button
-        add_button = admin_page.locator('button:has-text("Add Server"), button:has-text("Create Server")')
-        expect(add_button.first).to_be_visible(timeout=5_000)
-        add_button.first.click()
+        # Step 2: Click Add Server button (use visible filter — hidden form also has "Add Server")
+        add_button = admin_page.locator('button:has-text("Add Server"):visible, button:has-text("Create Server"):visible').first
+        expect(add_button).to_be_visible(timeout=5_000)
+        add_button.click()
 
         # Step 3: Fill in server details
         server_name = f"regression-test-server-{admin_page.evaluate('Date.now()')}"
 
-        name_input = admin_page.locator('input[name="name"], input[id="name"]')
+        name_input = admin_page.locator('#server-name')
         expect(name_input).to_be_visible(timeout=5_000)
         name_input.fill(server_name)
 
-        # Fill other required fields if present
-        try:
-            url_input = admin_page.locator('input[name="url"], input[id="url"]')
-            if url_input.is_visible(timeout=2_000):
-                url_input.fill("http://localhost:8080")
-        except PlaywrightTimeoutError:
-            pass
+        # Step 4: Submit form (the "Add Server" button is the submit button within the catalog panel)
+        submit_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Add Server"):visible').first
+        expect(submit_button).to_be_visible(timeout=5_000)
+        submit_button.click()
 
-        # Step 4: Submit form
-        submit_button = admin_page.locator('button[type="submit"]:has-text("Create"), button[type="submit"]:has-text("Save")')
-        expect(submit_button.first).to_be_visible(timeout=5_000)
-        submit_button.first.click()
-
-        # Step 5: Verify server appears in list
-        admin_page.wait_for_timeout(2_000)  # Wait for list refresh
-        server_row = admin_page.locator(f'tr:has-text("{server_name}"), div:has-text("{server_name}")')
-        expect(server_row.first).to_be_visible(timeout=10_000)
+        # Step 5: Verify server was created (search to handle pagination)
+        admin_page.wait_for_timeout(2_000)
+        search_box = admin_page.locator('#catalog-panel input[type="text"][placeholder*="Search" i]').first
+        search_box.fill(server_name)
+        server_cell = admin_page.locator(f'#catalog-panel td:has-text("{server_name}")')
+        expect(server_cell.first).to_be_visible(timeout=10_000)
 
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
@@ -195,34 +190,39 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
 
         # Step 2: Find first server row with edit button
-        edit_button = admin_page.locator('button[data-action="edit"], button:has-text("Edit")').first
+        edit_button = admin_page.locator('#catalog-panel button:has-text("Edit"):visible').first
 
-        if not edit_button.is_visible(timeout=3_000):
+        try:
+            edit_button.wait_for(state="visible", timeout=3_000)
+        except PlaywrightTimeoutError:
             pytest.skip("No servers available to edit")
 
-        # Get server name before edit
-        server_row = edit_button.locator('xpath=ancestor::tr')
-        original_name = server_row.locator('td').first.text_content()
-
-        # Step 3: Click edit button
+        # Step 3: Click edit button to open modal
         edit_button.click()
 
-        # Step 4: Modify server details
-        name_input = admin_page.locator('input[name="name"], input[id="name"]')
-        expect(name_input).to_be_visible(timeout=5_000)
+        # Step 4: Wait for edit modal and modify server name
+        edit_modal = admin_page.locator('#server-edit-modal')
+        edit_modal.wait_for(state="visible", timeout=5_000)
 
+        modal_name_input = edit_modal.locator('input[name="name"]')
+        expect(modal_name_input).to_be_visible(timeout=5_000)
+
+        # Get current name from modal input and update it
+        original_name = modal_name_input.input_value()
         updated_name = f"{original_name}-edited-{admin_page.evaluate('Date.now()')}"
-        name_input.fill(updated_name)
+        modal_name_input.fill(updated_name)
 
-        # Step 5: Save changes
-        save_button = admin_page.locator('button[type="submit"]:has-text("Save"), button[type="submit"]:has-text("Update")')
-        expect(save_button.first).to_be_visible(timeout=5_000)
-        save_button.first.click()
+        # Step 5: Save changes via modal submit button
+        save_button = edit_modal.locator('button[type="submit"]').first
+        expect(save_button).to_be_visible(timeout=5_000)
+        save_button.click()
 
-        # Step 6: Verify changes persisted
+        # Step 6: Verify changes persisted (search to handle pagination)
         admin_page.wait_for_timeout(2_000)
-        updated_row = admin_page.locator(f'tr:has-text("{updated_name}"), div:has-text("{updated_name}")')
-        expect(updated_row.first).to_be_visible(timeout=10_000)
+        search_box = admin_page.locator('#catalog-panel input[type="text"][placeholder*="Search" i]').first
+        search_box.fill(updated_name)
+        updated_cell = admin_page.locator(f'#catalog-panel td:has-text("{updated_name}")')
+        expect(updated_cell.first).to_be_visible(timeout=10_000)
 
         # Step 7 & 8: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
@@ -258,31 +258,24 @@ class TestVirtualServerCRUD:
 
         admin_page.wait_for_timeout(2_000)
 
-        # Step 2: Find delete button
-        delete_button = admin_page.locator('button[data-action="delete"], button:has-text("Delete")').first
+        # Step 2: Find delete button within catalog panel
+        server_rows = admin_page.locator('[data-testid="server-list"] [data-testid="server-item"]')
+        delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
 
-        if not delete_button.is_visible(timeout=3_000):
+        try:
+            delete_button.wait_for(state="visible", timeout=3_000)
+        except PlaywrightTimeoutError:
             pytest.skip("No servers available to delete")
 
-        # Get server name before deletion
-        server_row = delete_button.locator('xpath=ancestor::tr')
-        server_name = server_row.locator('td').first.text_content()
+        initial_count = server_rows.count()
 
-        # Step 3: Click delete button
+        # Step 3 & 4: Accept native confirm() dialogs and click delete
+        admin_page.on("dialog", lambda d: d.accept())
         delete_button.click()
 
-        # Step 4: Confirm deletion (if confirmation dialog appears)
-        try:
-            confirm_button = admin_page.locator('button:has-text("Confirm"), button:has-text("Yes"), button:has-text("Delete")')
-            if confirm_button.is_visible(timeout=2_000):
-                confirm_button.first.click()
-        except PlaywrightTimeoutError:
-            pass  # No confirmation dialog
-
-        # Step 5: Verify server removed
-        admin_page.wait_for_timeout(2_000)
-        deleted_row = admin_page.locator(f'tr:has-text("{server_name}")')
-        expect(deleted_row).not_to_be_visible(timeout=5_000)
+        # Step 5: Verify server removed (count decreases after page reload)
+        admin_page.wait_for_load_state("load", timeout=15_000)
+        expect(server_rows).to_have_count(initial_count - 1, timeout=10_000)
 
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
@@ -326,16 +319,16 @@ class TestStatePersistence:
 
         admin_page.wait_for_timeout(1_000)
 
-        # Verify tab is active
-        expect(tools_tab).to_have_attribute("aria-selected", "true", timeout=5_000)
+        # Verify tab is active (tabs use CSS class "active", not aria-selected)
+        expect(tools_tab).to_have_class(re.compile(r"\bactive\b"), timeout=5_000)
 
-        # Step 2: Refresh page
+        # Step 2: Refresh page (use "load" to wait for Alpine.js initialization)
         admin_page.reload()
-        admin_page.wait_for_load_state("domcontentloaded")
+        admin_page.wait_for_load_state("load", timeout=15_000)
 
-        # Step 3: Verify tab still selected
+        # Step 3: Verify tab still selected (URL hash #tools persists)
         tools_tab_after = admin_page.locator('[data-testid="tools-tab"]')
-        expect(tools_tab_after).to_have_attribute("aria-selected", "true", timeout=10_000)
+        expect(tools_tab_after).to_have_class(re.compile(r"\bactive\b"), timeout=10_000)
 
         # Step 4: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
@@ -358,9 +351,11 @@ class TestStatePersistence:
         6. Verify no console errors
         """
         # Step 1: Try to open team selector
-        team_selector = admin_page.locator('[data-testid="team-selector-toggle"], button:has-text("Team")')
+        team_selector = admin_page.locator('#team-selector-button')
 
-        if not team_selector.is_visible(timeout=3_000):
+        try:
+            team_selector.wait_for(state="visible", timeout=3_000)
+        except PlaywrightTimeoutError:
             pytest.skip("Team selector not available (single-team deployment)")
 
         team_selector.click()
@@ -379,9 +374,9 @@ class TestStatePersistence:
         if "team_id=" not in current_url:
             pytest.skip("Team selection did not update URL")
 
-        # Step 3: Refresh page
+        # Step 3: Refresh page (use "load" to wait for Alpine.js initialization)
         admin_page.reload()
-        admin_page.wait_for_load_state("domcontentloaded")
+        admin_page.wait_for_load_state("load", timeout=15_000)
 
         # Step 4: Verify team_id still in URL
         refreshed_url = admin_page.url
@@ -432,9 +427,9 @@ class TestStatePersistence:
         if "search=" not in current_url and "q=" not in current_url:
             pytest.skip("Search did not update URL")
 
-        # Step 4: Refresh page
+        # Step 4: Refresh page (use "load" to wait for Alpine.js initialization)
         admin_page.reload()
-        admin_page.wait_for_load_state("domcontentloaded")
+        admin_page.wait_for_load_state("load", timeout=15_000)
 
         # Step 5: Verify search term persists
         search_input_after = admin_page.locator('input[type="search"], input[placeholder*="Search" i]').first
@@ -574,5 +569,3 @@ class TestErrorMonitoring:
             "JavaScript errors when clicking data-action buttons:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
-
-# Made with Bob
