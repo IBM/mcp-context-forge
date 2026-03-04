@@ -14698,7 +14698,7 @@ class TestAuthLogin:
 
         # Mock verify_jwt_token_cached to return a valid payload
         mock_verify = AsyncMock(return_value={"sub": "admin@test.com", "is_admin": True})
-        monkeypatch.setattr("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
 
         result = await admin_login_page(request)
 
@@ -14724,15 +14724,15 @@ class TestAuthLogin:
         request.cookies = {"jwt_token": "invalid-or-expired-token"}
         request.app = MagicMock()
         request.app.state.templates = MagicMock()
-        
+
         # Create a mock template response
         mock_template_response = HTMLResponse("<html>Login</html>")
         request.app.state.templates.TemplateResponse.return_value = mock_template_response
 
         # Mock verify_jwt_token_cached to raise exception (invalid token)
         mock_verify = AsyncMock(side_effect=Exception("Invalid token"))
-        monkeypatch.setattr("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", mock_verify)
-        
+        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+
         # Mock load_sri_hashes
         monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
 

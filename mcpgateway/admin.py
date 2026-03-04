@@ -3772,9 +3772,6 @@ async def admin_login_page(request: Request) -> Response:
     if jwt_token:
         try:
             # Verify the token is valid
-            # First-Party
-            from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
-
             payload = await verify_jwt_token_cached(jwt_token, request)
             if payload:
                 # User is authenticated, redirect to dashboard
