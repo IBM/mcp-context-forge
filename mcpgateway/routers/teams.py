@@ -99,7 +99,14 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team creation is currently disabled")
 
         service = TeamManagementService(db)
-        team = await service.create_team(name=request.name, description=request.description, created_by=current_user_ctx["email"], visibility=request.visibility, max_members=request.max_members, skip_limits=bool(current_user_ctx.get("is_admin")))
+        team = await service.create_team(
+            name=request.name,
+            description=request.description,
+            created_by=current_user_ctx["email"],
+            visibility=request.visibility,
+            max_members=request.max_members,
+            skip_limits=bool(current_user_ctx.get("is_admin")),
+        )
 
         # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
         response = TeamResponse(
