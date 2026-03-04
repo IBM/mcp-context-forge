@@ -1062,6 +1062,16 @@
               "description": "Redis leader election TTL in seconds",
               "default": "15"
             },
+            "MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN": {
+              "type": "string",
+              "description": "CSV/JSON list of UI sections to hide for admin users. When empty, admins see all sections. Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS.",
+              "default": ""
+            },
+            "MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN": {
+              "type": "string",
+              "description": "CSV/JSON list of header items to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_HEADER_ITEMS.",
+              "default": ""
+            },
             "REDIS_MAX_BACKOFF_SECONDS": {
               "type": "string",
               "description": "Max backoff cap in seconds (jitter \u00b125% applied after)",
