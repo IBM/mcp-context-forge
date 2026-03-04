@@ -175,6 +175,33 @@ class GatewaysPage(BasePage):
         return self.page.locator("#auth-headers-fields-gw")
 
     @property
+    def add_header_btn(self) -> Locator:
+        """Add Header button inside the custom headers section."""
+        return self.auth_headers_fields.get_by_role("button", name="Add Header")
+
+    @property
+    def auth_headers_json_input(self) -> Locator:
+        """Hidden JSON input that stores the serialised header list."""
+        return self.page.locator("#auth-headers-json-gw")
+
+    def add_auth_header(self, key: str, value: str) -> None:
+        """Click Add Header, type key and value into the new row.
+
+        Args:
+            key: Header name (e.g. ``X-API-Key``).
+            value: Header value.
+        """
+        self.add_header_btn.click()
+        # The last header row just appended
+        last_row = self.page.locator("#auth-headers-container-gw > div").last
+        last_row.locator(".auth-header-key").fill(key)
+        last_row.locator(".auth-header-value").fill(value)
+
+    def get_auth_headers_json(self) -> str:
+        """Return the current value of the hidden auth-headers JSON input."""
+        return self.auth_headers_json_input.input_value()
+
+    @property
     def auth_query_param_fields(self) -> Locator:
         """Query parameter auth fields container."""
         return self.page.locator("#auth-query_param-fields-gw")
@@ -293,8 +320,9 @@ class GatewaysPage(BasePage):
     # ==================== High-Level Navigation Methods ====================
 
     def navigate_to_gateways_tab(self) -> None:
-        """Navigate to Gateways tab and wait for panel to be visible."""
+        """Navigate to Gateways tab and wait for the table to finish loading."""
         self.sidebar.click_gateways_tab()
+        self.wait_for_gateways_table_loaded()
 
     # ==================== High-Level Gateway Operations ====================
 
@@ -314,6 +342,7 @@ class GatewaysPage(BasePage):
         except AssertionError:
             # Alpine.js x-init / HTMX load race: reload to re-run the sequence
             self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
             self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=timeout)
             self.wait_for_attached(self.gateways_table_body, timeout=timeout)
 
@@ -484,6 +513,7 @@ class GatewaysPage(BasePage):
         Args:
             show: True to show inactive gateways, False to hide them
         """
+        self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=15000)
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
@@ -612,7 +642,7 @@ class GatewaysPage(BasePage):
                     delete_btn.click(force=True)
             else:
                 delete_btn.click(force=True)
-                self.page.wait_for_timeout(1000)
+                self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=10000)
         finally:
             self.page.remove_listener("dialog", _handle_dialog)
 
@@ -627,7 +657,6 @@ class GatewaysPage(BasePage):
 
         # Scroll the row into view first
         gateway_row.scroll_into_view_if_needed()
-        self.page.wait_for_timeout(500)
 
         # Find the delete button within the row's action column
         delete_btn = gateway_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
@@ -654,7 +683,6 @@ class GatewaysPage(BasePage):
         # Find the specific row by name and click its delete button
         gateway_row = self.get_gateway_row_by_name(gateway_name)
         gateway_row.first.scroll_into_view_if_needed()
-        self.page.wait_for_timeout(500)
 
         delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
         self._click_delete_and_wait(delete_btn, confirm)
@@ -704,14 +732,24 @@ class GatewaysPage(BasePage):
                 logger.info("Deleted gateway '%s' with URL '%s'", gateway_name, gateway_url)
                 deleted_any = True
 
-                # Reload to see updated table
-                self.page.reload()
-                self.wait_for_gateways_table_loaded()
-                self.page.wait_for_timeout(1000)
+                # Reload to see updated table — use tolerant navigation
+                try:
+                    self.page.reload(wait_until="domcontentloaded")
+                except PlaywrightTimeoutError:
+                    self.page.goto("/admin#gateways", wait_until="domcontentloaded")
+                try:
+                    self.navigate_to_gateways_tab()
+                    self.wait_for_gateways_table_loaded()
+                except (PlaywrightTimeoutError, AssertionError):
+                    # If we can't reload cleanly, just return — the delete succeeded
+                    return deleted_any
 
             except Exception as e:
                 logger.warning("Could not delete gateway '%s' with URL '%s': %s", gateway_name, gateway_url, e)
-                self.clear_search()
+                try:
+                    self.clear_search()
+                except Exception:
+                    pass
                 return deleted_any
 
     # ==================== Authentication Configuration Methods ====================
@@ -835,3 +873,256 @@ class GatewaysPage(BasePage):
         gateway_row = self.gateway_rows.nth(gateway_index)
         visibility_badge = gateway_row.locator(f'span:has-text("{expected_visibility}")')
         expect(visibility_badge).to_be_visible()
+
+    # ==================== Test Gateway Modal Elements ====================
+
+    @property
+    def test_modal(self) -> Locator:
+        """Test Gateway Connectivity modal container."""
+        return self.page.locator("#gateway-test-modal")
+
+    @property
+    def test_modal_title(self) -> Locator:
+        """Test modal heading."""
+        return self.test_modal.locator("h2")
+
+    @property
+    def test_modal_url_input(self) -> Locator:
+        """Server URL input in test modal."""
+        return self.page.locator("#gateway-test-url")
+
+    @property
+    def test_modal_method_select(self) -> Locator:
+        """HTTP method select in test modal."""
+        return self.page.locator("#gateway-test-method")
+
+    @property
+    def test_modal_path_input(self) -> Locator:
+        """Path input in test modal."""
+        return self.page.locator("#gateway-test-path")
+
+    @property
+    def test_modal_content_type_select(self) -> Locator:
+        """Content-Type select in test modal."""
+        return self.page.locator("#gateway-test-content-type")
+
+    @property
+    def test_modal_submit_btn(self) -> Locator:
+        """Test submit button in test modal."""
+        return self.page.locator("#gateway-test-submit")
+
+    @property
+    def test_modal_close_btn(self) -> Locator:
+        """Close button in test modal."""
+        return self.page.locator("#gateway-test-close")
+
+    @property
+    def test_modal_response(self) -> Locator:
+        """Response display area in test modal."""
+        return self.page.locator("#gateway-test-response")
+
+    # ==================== View Gateway Modal Elements ====================
+
+    @property
+    def view_modal(self) -> Locator:
+        """View Gateway Details modal container."""
+        return self.page.locator("#gateway-modal")
+
+    @property
+    def view_modal_title(self) -> Locator:
+        """View modal heading."""
+        return self.view_modal.locator("h3")
+
+    @property
+    def view_modal_details(self) -> Locator:
+        """View modal details container."""
+        return self.page.locator("#gateway-details")
+
+    @property
+    def view_modal_close_btn(self) -> Locator:
+        """Close button in view modal."""
+        return self.view_modal.locator('button:has-text("Close")')
+
+    # ==================== Edit Gateway Modal Elements ====================
+
+    @property
+    def edit_modal(self) -> Locator:
+        """Edit Gateway modal container."""
+        return self.page.locator("#gateway-edit-modal")
+
+    @property
+    def edit_modal_title(self) -> Locator:
+        """Edit modal heading."""
+        return self.edit_modal.locator("h3")
+
+    @property
+    def edit_modal_name_input(self) -> Locator:
+        """Name input in edit modal."""
+        return self.page.locator("#edit-gateway-name")
+
+    @property
+    def edit_modal_url_input(self) -> Locator:
+        """URL input in edit modal."""
+        return self.page.locator("#edit-gateway-url")
+
+    @property
+    def edit_modal_description_input(self) -> Locator:
+        """Description textarea in edit modal."""
+        return self.edit_modal.locator('[name="description"]')
+
+    @property
+    def edit_modal_tags_input(self) -> Locator:
+        """Tags input in edit modal."""
+        return self.edit_modal.locator('[name="tags"]')
+
+    @property
+    def edit_modal_transport_select(self) -> Locator:
+        """Transport type select in edit modal."""
+        return self.edit_modal.locator('[name="transport"]')
+
+    @property
+    def edit_modal_auth_type_select(self) -> Locator:
+        """Auth type select in edit modal."""
+        return self.page.locator("#auth-type-gw-edit")
+
+    @property
+    def edit_modal_visibility_public(self) -> Locator:
+        """Public visibility radio in edit modal."""
+        return self.page.locator("#edit-gateway-visibility-public")
+
+    @property
+    def edit_modal_visibility_team(self) -> Locator:
+        """Team visibility radio in edit modal."""
+        return self.page.locator("#edit-gateway-visibility-team")
+
+    @property
+    def edit_modal_visibility_private(self) -> Locator:
+        """Private visibility radio in edit modal."""
+        return self.page.locator("#edit-gateway-visibility-private")
+
+    @property
+    def edit_modal_one_time_auth(self) -> Locator:
+        """One-time auth checkbox in edit modal."""
+        return self.page.locator("#single-use-auth-gw-edit")
+
+    @property
+    def edit_modal_passthrough_headers(self) -> Locator:
+        """Passthrough headers input in edit modal."""
+        return self.page.locator("#edit-gateway-passthrough-headers")
+
+    @property
+    def edit_modal_cancel_btn(self) -> Locator:
+        """Cancel button in edit modal."""
+        return self.edit_modal.locator('button:has-text("Cancel")')
+
+    @property
+    def edit_modal_save_btn(self) -> Locator:
+        """Save Changes button in edit modal."""
+        return self.edit_modal.locator('button:has-text("Save Changes")')
+
+    # ==================== Edit Modal Auth Fields ====================
+
+    @property
+    def edit_auth_basic_fields(self) -> Locator:
+        """Basic auth fields in edit modal."""
+        return self.page.locator("#auth-basic-fields-gw-edit")
+
+    @property
+    def edit_auth_bearer_fields(self) -> Locator:
+        """Bearer token fields in edit modal."""
+        return self.page.locator("#auth-bearer-fields-gw-edit")
+
+    @property
+    def edit_auth_headers_fields(self) -> Locator:
+        """Custom headers fields in edit modal."""
+        return self.page.locator("#auth-headers-fields-gw-edit")
+
+    @property
+    def edit_oauth_fields(self) -> Locator:
+        """OAuth fields in edit modal."""
+        return self.page.locator("#auth-oauth-fields-gw-edit")
+
+    @property
+    def edit_auth_query_param_fields(self) -> Locator:
+        """Query param fields in edit modal."""
+        return self.page.locator("#auth-query_param-fields-gw-edit")
+
+    # ==================== Pagination Elements ====================
+
+    @property
+    def per_page_select(self) -> Locator:
+        """Per-page items select in pagination."""
+        return self.pagination_controls.locator("select")
+
+    @property
+    def pagination_info(self) -> Locator:
+        """Pagination info text (e.g. 'Showing 1 - 10 of 25 items')."""
+        return self.pagination_controls.locator('[class*="text-sm"]').first
+
+    # ==================== OAuth Conditional Fields ====================
+
+    @property
+    def oauth_authorization_code_fields(self) -> Locator:
+        """Container for authorization_code-specific fields (auth URL, redirect URI, token mgmt)."""
+        return self.page.locator("#oauth-authcode-fields-gw")
+
+    @property
+    def oauth_password_fields(self) -> Locator:
+        """Container for password grant-specific fields (username, password)."""
+        return self.page.locator("#oauth-password-fields-gw")
+
+    # ==================== Modal Helper Methods ====================
+
+    def open_test_modal(self, gateway_index: int = 0) -> None:
+        """Click Test on a gateway row and wait for the test modal to appear."""
+        self.click_test_button(gateway_index)
+        self.page.wait_for_selector("#gateway-test-modal", state="visible", timeout=10000)
+
+    def close_test_modal(self) -> None:
+        """Close the test modal."""
+        self.test_modal_close_btn.click()
+        self.page.wait_for_selector("#gateway-test-modal", state="hidden", timeout=5000)
+
+    def open_view_modal(self, gateway_index: int = 0) -> None:
+        """Click View on a gateway row and wait for the view modal to appear.
+
+        Retries the click once if the modal doesn't appear, to handle cases
+        where HTMX table swap hasn't yet reconnected event listeners.
+        """
+        self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
+        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
+
+        self.click_view_button(gateway_index)
+        try:
+            self.page.wait_for_selector("#gateway-modal:not(.hidden)", state="visible", timeout=10000)
+        except PlaywrightTimeoutError:
+            self.click_view_button(gateway_index)
+            self.page.wait_for_selector("#gateway-modal:not(.hidden)", state="visible", timeout=10000)
+
+    def close_view_modal(self) -> None:
+        """Close the view modal."""
+        self.view_modal_close_btn.click()
+        self.page.wait_for_selector("#gateway-modal", state="hidden", timeout=5000)
+
+    def open_edit_modal(self, gateway_index: int = 0) -> None:
+        """Click Edit on a gateway row and wait for the edit modal to appear.
+
+        Retries the click once if the modal doesn't appear, to handle cases
+        where HTMX table swap hasn't yet reconnected event listeners.
+        """
+        # Ensure gateway rows are present and JS handlers are ready
+        self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
+        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
+
+        self.click_edit_button(gateway_index)
+        try:
+            self.page.wait_for_selector("#gateway-edit-modal:not(.hidden)", state="visible", timeout=10000)
+        except PlaywrightTimeoutError:
+            # Retry: table may have been swapped by HTMX after our first click
+            self.click_edit_button(gateway_index)
+            self.page.wait_for_selector("#gateway-edit-modal:not(.hidden)", state="visible", timeout=10000)
+
+    def close_edit_modal(self) -> None:
+        """Close the edit modal via Cancel."""
+        self.edit_modal_cancel_btn.click()
+        self.page.wait_for_selector("#gateway-edit-modal", state="hidden", timeout=5000)

@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-OAuth Router for MCP Gateway.
+OAuth Router for ContextForge.
 
 This module handles OAuth 2.0 Authorization Code flow endpoints including:
 - Initiating OAuth flows
@@ -25,11 +25,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -68,6 +71,178 @@ def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) ->
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
+
+
+def _require_admin_user(current_user: EmailUserResponse) -> None:
+    """Require admin context for DCR management endpoints.
+
+    Args:
+        current_user: Authenticated user context from RBAC dependency.
+
+    Raises:
+        HTTPException: If requester is not an admin user.
+    """
+    is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
+
+def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
+    """Resolve token teams for scoped ownership checks using normalized token semantics.
+
+    Args:
+        request: Incoming request with token scoping state.
+        current_user: Authenticated user context.
+
+    Returns:
+        ``None`` for unrestricted admin scope, or a normalized team list for scoped access.
+    """
+    is_admin = False
+    if hasattr(current_user, "is_admin"):
+        is_admin = bool(getattr(current_user, "is_admin", False))
+    elif isinstance(current_user, dict):
+        is_admin = bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+
+    _not_set = object()
+    token_teams = getattr(request.state, "token_teams", _not_set)
+    if token_teams is _not_set or not (token_teams is None or isinstance(token_teams, list)):
+        cached = getattr(request.state, "_jwt_verified_payload", None)
+        if cached and isinstance(cached, tuple) and len(cached) == 2:
+            _, payload = cached
+            if payload:
+                token_teams = normalize_token_teams(payload)
+                is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
+        # Fail closed when request.state contains an unexpected token_teams value.
+        if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
+            token_teams = _not_set
+
+    if token_teams is _not_set:
+        token_teams = None if is_admin else []
+
+    # Empty-team scoped tokens are public-only and must never receive admin bypass.
+    if isinstance(token_teams, list) and len(token_teams) == 0:
+        is_admin = False
+
+    if is_admin and token_teams is None:
+        return None
+    return token_teams
+
+
+def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
+    """Extract requester email from typed or dict user contexts.
+
+    Args:
+        current_user: Authenticated user context.
+
+    Returns:
+        Lowercased email when available, otherwise ``None``.
+    """
+    if hasattr(current_user, "email"):
+        email = getattr(current_user, "email", None)
+        if isinstance(email, str) and email.strip():
+            return email.strip().lower()
+    if isinstance(current_user, dict):
+        email = current_user.get("email") or current_user.get("user", {}).get("email")
+        if isinstance(email, str) and email.strip():
+            return email.strip().lower()
+    return None
+
+
+def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
+    """Extract admin flag from typed or dict user contexts.
+
+    Args:
+        current_user: Authenticated user context.
+
+    Returns:
+        ``True`` when the user context indicates admin privileges.
+    """
+    if hasattr(current_user, "is_admin"):
+        return bool(getattr(current_user, "is_admin", False))
+    if isinstance(current_user, dict):
+        return bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+    return False
+
+
+async def _enforce_gateway_access(
+    gateway_id: str,
+    gateway: Gateway,
+    current_user: EmailUserResponse,
+    db: Session,
+    request: Request | None = None,
+) -> None:
+    """Enforce gateway visibility and ownership checks for OAuth endpoints.
+
+    Args:
+        gateway_id: Gateway identifier used for scoped ownership checks.
+        gateway: Gateway record being accessed.
+        current_user: Authenticated requester context.
+        db: Active database session.
+        request: Optional request carrying token-scoping context.
+
+    Raises:
+        HTTPException: If authentication is missing or access is not permitted.
+    """
+    requester_email = _extract_user_email(current_user)
+    if not requester_email:
+        raise HTTPException(status_code=401, detail="User authentication required")
+
+    requester_is_admin = _extract_is_admin(current_user)
+
+    if request is not None:
+        token_teams = _resolve_token_teams_for_scope_check(request, current_user)
+        if token_teams is None:
+            if requester_is_admin:
+                return
+            token_teams = []
+
+        if not token_scoping_middleware._check_resource_team_ownership(
+            f"/gateways/{gateway_id}",
+            token_teams,
+            db=db,
+            _user_email=requester_email,
+        ):
+            raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+
+    if requester_is_admin:
+        return
+
+    visibility = str(getattr(gateway, "visibility", "team") or "team").lower()
+    gateway_owner = getattr(gateway, "owner_email", None)
+    gateway_team_id = getattr(gateway, "team_id", None)
+
+    if visibility == "public":
+        return
+
+    if visibility == "team":
+        if not gateway_team_id:
+            raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        auth_service = EmailAuthService(db)
+        user = await auth_service.get_user_by_email(requester_email)
+        if not user or not user.is_team_member(gateway_team_id):
+            raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        return
+
+    if visibility in {"private", "user"}:
+        if gateway_owner and gateway_owner.strip().lower() == requester_email:
+            return
+        raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+
+    if gateway_owner and gateway_owner.strip().lower() == requester_email:
+        return
+    if gateway_team_id:
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        auth_service = EmailAuthService(db)
+        user = await auth_service.get_user_by_email(requester_email)
+        if user and user.is_team_member(gateway_team_id):
+            return
+
+    raise HTTPException(status_code=403, detail="You don't have access to this gateway")
 
 
 @oauth_router.get("/authorize/{gateway_id}")
@@ -110,24 +285,7 @@ async def initiate_oauth_flow(
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
 
-        # Check gateway access permission
-        # Admins can access any gateway; otherwise check team membership if gateway has team_id
-        user_email = current_user.email if hasattr(current_user, "email") else current_user.get("email")
-        is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
-
-        # Get team_id safely (may not exist on all gateway objects)
-        gateway_team_id = getattr(gateway, "team_id", None)
-
-        if not is_admin and gateway_team_id:
-            # Import here to avoid circular imports
-            # First-Party
-            from mcpgateway.services.email_auth_service import EmailAuthService
-
-            auth_service = EmailAuthService(db)
-            user = await auth_service.get_user_by_email(user_email)
-            if not user or not user.is_team_member(gateway_team_id):
-                logger.warning(f"OAuth access denied: user {user_email} not member of gateway team {gateway_team_id}")
-                raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         if not gateway.oauth_config:
             raise HTTPException(status_code=400, detail="Gateway is not configured for OAuth")
@@ -202,8 +360,9 @@ async def initiate_oauth_flow(
                         oauth_config["token_url"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
-                    # Update gateway's oauth_config and auth_type in database for future use
-                    gateway.oauth_config = oauth_config
+                    # Update gateway's oauth_config and auth_type in database for future use.
+                    # Protect sensitive fields before persistence to keep service-layer behavior consistent.
+                    gateway.oauth_config = await protect_oauth_config_for_storage(oauth_config, existing_oauth_config=gateway.oauth_config)
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 
@@ -231,10 +390,11 @@ async def initiate_oauth_flow(
             raise HTTPException(status_code=400, detail="OAuth configuration missing client_id")
 
         # Initiate OAuth flow with user context (now includes PKCE from existing implementation)
+        requester_email = _extract_user_email(current_user)
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=current_user.get("email"))
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
 
-        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.get('email')}")
+        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {requester_email}")
 
         # Redirect user to OAuth provider
         return RedirectResponse(url=auth_data["authorization_url"])
@@ -325,45 +485,12 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        # Extract gateway_id from state parameter
-        # Try new base64-encoded JSON format first
-        # Standard
-        import base64
+        def _invalid_state_response() -> HTMLResponse:
+            """Return an HTML error page for invalid or missing OAuth state.
 
-        # Third-Party
-        import orjson
-
-        try:
-            # Expect state as base64url(payload || signature) where the last 32 bytes
-            # are the signature. Decode to bytes first so we can split payload vs sig.
-            state_raw = base64.urlsafe_b64decode(state.encode())
-            if len(state_raw) <= 32:
-                raise ValueError("State too short to contain payload and signature")
-
-            # Split payload and signature. Signature is the last 32 bytes.
-            payload_bytes = state_raw[:-32]
-            # signature_bytes = state_raw[-32:]
-
-            # Parse the JSON payload only (not including signature bytes)
-            try:
-                state_data = orjson.loads(payload_bytes)
-            except Exception as decode_exc:
-                raise ValueError(f"Failed to parse state payload JSON: {decode_exc}")
-
-            gateway_id = state_data.get("gateway_id")
-            if not gateway_id:
-                raise ValueError("No gateway_id in state")
-        except Exception as e:
-            # Fallback to legacy format (gateway_id_random)
-            logger.warning(f"Failed to decode state as JSON, trying legacy format: {e}")
-            if "_" not in state:
-                return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
-            gateway_id = state.split("_")[0]
-
-        # Get gateway configuration
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
-
-        if not gateway:
+            Returns:
+                HTMLResponse: A 400 error page describing the invalid state.
+            """
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -371,23 +498,7 @@ async def oauth_callback(
                 <head><title>OAuth Authorization Failed</title></head>
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Gateway not found</p>
-                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
-                </body>
-                </html>
-                """,
-                status_code=404,
-            )
-
-        if not gateway.oauth_config:
-            return HTMLResponse(
-                content=f"""
-                <!DOCTYPE html>
-                <html>
-                <head><title>OAuth Authorization Failed</title></head>
-                <body>
-                    <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Gateway has no OAuth configuration</p>
+                    <p>Error: Invalid OAuth state parameter.</p>
                     <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
@@ -395,8 +506,24 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        # Complete OAuth flow
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
+        gateway_id = await oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        if not gateway_id:
+            logger.warning("OAuth callback received invalid or unknown state token")
+            return _invalid_state_response()
+
+        # Get gateway configuration
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+
+        if not gateway:
+            logger.warning("OAuth callback state resolved to unknown gateway id")
+            return _invalid_state_response()
+
+        if not gateway.oauth_config:
+            logger.warning("OAuth callback state resolved to gateway without OAuth configuration")
+            return _invalid_state_response()
+
+        # Complete OAuth flow
 
         # RFC 8707: Add resource parameter for JWT access tokens
         # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow
@@ -477,7 +604,9 @@ async def oauth_callback(
 
                 try {{
                     const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id))}', {{
-                        method: 'POST'
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {{ 'Accept': 'text/html' }}
                     }});
 
                     const result = await response.json();
@@ -585,6 +714,7 @@ async def oauth_callback(
 @oauth_router.get("/status/{gateway_id}")
 async def get_oauth_status(
     gateway_id: str,
+    request: Request,
     current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -597,6 +727,7 @@ async def get_oauth_status(
         gateway_id: ID of the gateway
         current_user: Authenticated user (enforces authentication)
         db: Database session
+        request: Request with token-scoping context.
 
     Returns:
         OAuth status information
@@ -611,23 +742,7 @@ async def get_oauth_status(
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
 
-        # Check team-based authorization (same pattern as initiate_oauth_flow)
-        user_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
-        is_admin = current_user.get("is_admin", False) if isinstance(current_user, dict) else getattr(current_user, "is_admin", False)
-        # Also check nested user.is_admin for JWT tokens
-        if isinstance(current_user, dict) and not is_admin:
-            is_admin = current_user.get("user", {}).get("is_admin", False)
-
-        gateway_team_id = getattr(gateway, "team_id", None)
-
-        if not is_admin and gateway_team_id:
-            # First-Party
-            from mcpgateway.services.email_auth_service import EmailAuthService
-
-            auth_service = EmailAuthService(db)
-            user = await auth_service.get_user_by_email(user_email)
-            if not user or not user.is_team_member(gateway_team_id):
-                raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         if not gateway.oauth_config:
             return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
@@ -665,11 +780,18 @@ async def get_oauth_status(
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
-async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:
+@require_permission("gateways.update")
+async def fetch_tools_after_oauth(
+    gateway_id: str,
+    request: Request,
+    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
     """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
     Args:
         gateway_id: ID of the gateway to fetch tools for
+        request: Incoming request used for token scope context
         current_user: The authenticated user fetching tools
         db: Database session
 
@@ -680,15 +802,24 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
         HTTPException: If fetching tools fails
     """
     try:
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+        if not gateway:
+            raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
+
+        requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
+
         # First-Party
         from mcpgateway.services.gateway_service import GatewayService
 
         gateway_service = GatewayService()
-        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.get("email"))
+        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email)
         tools_count = len(result.get("tools", []))
 
         return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {str(e)}")
@@ -716,6 +847,8 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
     Raises:
         HTTPException: If user lacks permissions or database error occurs
     """
+    _require_admin_user(current_user)
+
     try:
         # First-Party
         from mcpgateway.db import RegisteredOAuthClient
@@ -768,6 +901,8 @@ async def get_registered_client_for_gateway(
     Raises:
         HTTPException: If gateway or registered client not found
     """
+    _require_admin_user(current_user)
+
     try:
         # First-Party
         from mcpgateway.db import RegisteredOAuthClient
@@ -819,6 +954,8 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     Raises:
         HTTPException: If client not found or deletion fails
     """
+    _require_admin_user(current_user)
+
     try:
         # First-Party
         from mcpgateway.db import RegisteredOAuthClient

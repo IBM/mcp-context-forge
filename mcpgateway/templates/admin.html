@@ -22,18 +22,25 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
     {% else %}
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     {% endif %}
     <script>
-      tailwind.config = {
-        darkMode: "class",
-      };
+      if (window.tailwind && typeof window.tailwind === "object") {
+        window.tailwind.config = {
+          darkMode: "class",
+        };
+      }
     </script>
     <!-- HTMX for dynamic interactions -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
     {% else %}
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script
+      src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"
+      integrity="{{ sri_hashes.htmx }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <script>
       // Configure HTMX to swap content on 4xx responses (for inline error display)
@@ -60,11 +67,17 @@
       document.addEventListener("htmx:configRequest", function (evt) {
         // Force include credentials for same-origin requests
         evt.detail.credentials = "same-origin";
+        evt.detail.headers = evt.detail.headers || {};
 
         // Add JWT token from cookie if available
         const jwtToken = getCookie("jwt_token");
         if (jwtToken) {
           evt.detail.headers["Authorization"] = "Bearer " + jwtToken;
+        }
+
+        const csrfToken = getCookie("mcpgateway_csrf_token");
+        if (csrfToken) {
+          evt.detail.headers["X-CSRF-Token"] = csrfToken;
         }
       });
 
@@ -73,7 +86,75 @@
         const value = "; " + document.cookie;
         const parts = value.split("; " + name + "=");
         if (parts.length == 2) return parts.pop().split(";").shift();
+        return "";
       }
+
+      function isUnsafeHttpMethod(method) {
+        const normalized = (method || "GET").toUpperCase();
+        return normalized !== "GET" && normalized !== "HEAD" && normalized !== "OPTIONS" && normalized !== "TRACE";
+      }
+
+      function isSameOriginRequest(resource) {
+        try {
+          if (resource instanceof Request) {
+            return new URL(resource.url, window.location.origin).origin === window.location.origin;
+          }
+          return new URL(String(resource), window.location.origin).origin === window.location.origin;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      // Ensure all same-origin fetch mutations carry the CSRF header.
+      (function wrapFetchWithCsrf() {
+        if (window.__mcpgatewayCsrfFetchWrapped || typeof window.fetch !== "function") {
+          return;
+        }
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = function(resource, init = {}) {
+          const requestInit = init ? { ...init } : {};
+          const methodFromRequest = resource instanceof Request ? resource.method : null;
+          const method = (requestInit.method || methodFromRequest || "GET").toUpperCase();
+          if (isUnsafeHttpMethod(method) && isSameOriginRequest(resource)) {
+            const csrfToken = getCookie("mcpgateway_csrf_token");
+            if (csrfToken) {
+              const nextHeaders = new Headers(requestInit.headers || (resource instanceof Request ? resource.headers : undefined));
+              nextHeaders.set("X-CSRF-Token", csrfToken);
+              requestInit.headers = nextHeaders;
+            }
+          }
+          return originalFetch(resource, requestInit);
+        };
+        window.__mcpgatewayCsrfFetchWrapped = true;
+      })();
+
+      // Add CSRF token to same-origin non-GET forms as a hidden field.
+      document.addEventListener("submit", function (event) {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) {
+          return;
+        }
+        const method = (form.getAttribute("method") || "GET").toUpperCase();
+        if (!isUnsafeHttpMethod(method)) {
+          return;
+        }
+        const action = form.getAttribute("action") || window.location.href;
+        if (!isSameOriginRequest(action)) {
+          return;
+        }
+        const csrfToken = getCookie("mcpgateway_csrf_token");
+        if (!csrfToken) {
+          return;
+        }
+        let tokenInput = form.querySelector('input[name="csrf_token"]');
+        if (!tokenInput) {
+          tokenInput = document.createElement("input");
+          tokenInput.type = "hidden";
+          tokenInput.name = "csrf_token";
+          form.appendChild(tokenInput);
+        }
+        tokenInput.value = csrfToken;
+      });
 
       // Helper function to get pagination parameters from URL (namespaced per table)
       function getPaginationParams(tableName) {
@@ -180,13 +261,41 @@
     <script src="{{ root_path }}/static/vendor/codemirror/mode/go/go.min.js"></script>
     <script src="{{ root_path }}/static/vendor/codemirror/mode/rust/rust.min.js"></script>
     {% else %}
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/mode/simple.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/shell/shell.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/go/go.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/rust/rust.min.js"></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js"
+      integrity="{{ sri_hashes.codemirror_js }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/addon/mode/simple.min.js"
+      integrity="{{ sri_hashes.codemirror_addon_simple }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/javascript/javascript.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_javascript }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/python/python.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_python }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/shell/shell.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_shell }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/go/go.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_go }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/rust/rust.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_rust }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <!-- Alpine.js -->
     {% if ui_airgapped %}
@@ -196,7 +305,9 @@
     ></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.8/dist/cdn.min.js"
+      integrity="{{ sri_hashes.alpinejs }}"
+      crossorigin="anonymous"
       defer
     ></script>
     {% endif %}
@@ -205,7 +316,11 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
     {% else %}
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+      integrity="{{ sri_hashes.chartjs }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     {% endif %}
     <!-- Markdown and Sanitization -->
@@ -213,8 +328,16 @@
     <script src="{{ root_path }}/static/vendor/marked/marked.min.js"></script>
     <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
     {% else %}
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js"
+      integrity="{{ sri_hashes.marked }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.1/dist/purify.min.js"
+      integrity="{{ sri_hashes.dompurify }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
     {% if is_admin %}
@@ -233,19 +356,28 @@
     />
     {% else %}
     <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css"
       rel="stylesheet"
+      integrity="{{ sri_hashes.codemirror_css }}"
+      crossorigin="anonymous"
     />
     <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/monokai.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css"
       rel="stylesheet"
+      integrity="{{ sri_hashes.codemirror_theme_monokai }}"
+      crossorigin="anonymous"
     />
     {% endif %}
     <!-- Font Awesome -->
     {% if ui_airgapped %}
     <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
     {% else %}
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      integrity="{{ sri_hashes.fontawesome }}"
+      crossorigin="anonymous"
+    />
     {% endif %}
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
@@ -283,7 +415,7 @@
   <body class="bg-gray-100 dark:bg-gray-900">
     {% set hidden_sections = ui_hidden_sections | default([]) %}
     {% set hidden_header_items = ui_hidden_header_items | default([]) %}
-    <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }">
+    <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }" @resize.window="if (window.innerWidth >= 1024) sidebarOpen = true">
 
       <!-- Mobile sidebar backdrop -->
       <div
@@ -321,12 +453,12 @@
         <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0"
              :class="sidebarCollapsed ? 'justify-center' : 'justify-between'">
           <a href="{{ root_path }}/admin" class="flex items-center" x-show="!sidebarCollapsed">
-            <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge" class="h-8 dark:hidden" />
-            <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge" class="h-8 hidden dark:block" />
+            <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge logo" class="h-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge logo" class="h-8 hidden dark:block" />
           </a>
           <button @click="sidebarCollapsed = false" class="flex items-center justify-center" x-show="sidebarCollapsed" title="Expand sidebar">
-            <img src="{{ root_path }}/static/contextforge-icon.png" alt="ContextForge" class="h-8 w-8 dark:hidden" />
-            <img src="{{ root_path }}/static/contextforge-icon-white.png" alt="ContextForge" class="h-8 w-8 hidden dark:block" />
+            <img src="{{ root_path }}/static/contextforge-icon.png" alt="ContextForge icon" class="h-8 w-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-icon-white.png" alt="ContextForge icon" class="h-8 w-8 hidden dark:block" />
           </button>
           <button
             @click="sidebarCollapsed = !sidebarCollapsed"
@@ -700,26 +832,30 @@
                   selectedTeamName: 'All Teams',
                   init() {
                     const urlParams = new URLSearchParams(window.location.search);
-                    this.selectedTeam = urlParams.get('team_id') || '';
-                    if (this.selectedTeam) {
-                      // Try to find team name from USER_TEAMS_DATA
-                      const teams = window.USER_TEAMS_DATA || [];
-                      const team = teams.find(t => t.id === this.selectedTeam);
-                      this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
+                    const requestedTeamId = urlParams.get('team_id') || '';
+                    this.selectedTeam = '';
+                    this.selectedTeamName = 'All Teams';
+
+                    if (requestedTeamId) {
+                      // Keep team scope only when it exists in known visible teams.
+                      const teams = (Array.isArray(window.USER_TEAMS_DATA) && window.USER_TEAMS_DATA.length > 0)
+                        ? window.USER_TEAMS_DATA
+                        : (Array.isArray(window.USER_TEAMS) ? window.USER_TEAMS : []);
+                      const team = teams.find(t => t.id === requestedTeamId);
+
+                      if (team) {
+                        this.selectedTeam = requestedTeamId;
+                        this.selectedTeamName = team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name;
+                      } else if (teams.length > 0) {
+                        // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
+                        const cleanUrl = new URL(window.location.href);
+                        cleanUrl.searchParams.delete('team_id');
+                        safeReplaceState({}, '', cleanUrl);
+                      }
                     }
                   },
                   loadTeams() {
-                    // Load teams via HTMX when dropdown opens
-                    if (this.open) {
-                      const container = document.getElementById('team-selector-items');
-                      if (container && !container.dataset.loaded) {
-                        htmx.ajax('GET', '{{ root_path }}/admin/teams/partial?page=1&per_page=10&render=selector', {
-                          target: '#team-selector-items',
-                          swap: 'innerHTML'
-                        });
-                        container.dataset.loaded = 'true';
-                      }
-                    }
+                    if (this.open) { window.loadTeamSelectorDropdown(); }
                   }
                 }"
                 @click.away="open = false"
@@ -1946,7 +2082,7 @@
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMProviderModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+            <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
               <form id="llm-provider-form" onsubmit="saveLLMProvider(event)">
                 <input type="hidden" id="llm-provider-id" name="provider_id" value="">
                 <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
@@ -2044,7 +2180,7 @@
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMModelModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+            <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
               <form id="llm-model-form" onsubmit="saveLLMModel(event)">
                 <input type="hidden" id="llm-model-id" name="model_id" value="">
                 <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
@@ -2340,10 +2476,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (servers|length if servers is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = servers|length if servers is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -2603,14 +2739,14 @@
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
-                        onclick="viewServer('{{ server.id }}')"
+                        onclick="viewServer({{ server.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View server details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editServer('{{ server.id }}')"
+                        onclick="editServer({{ server.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit server settings and configuration'"
                       >
@@ -2619,7 +2755,7 @@
 
                       <!-- Row 2: Export Config -->
                       <button
-                        onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')"
+                        onclick="showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Generate client configuration files for this server'"
                       >
@@ -2665,7 +2801,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
                           class="contents"
-                          onsubmit="return handleDeleteSubmit(event, 'server', '{{ server.name }}', 'servers')"
+                          onsubmit="return handleDeleteSubmit(event, 'server', {{ server.name|tojson_attr }}, 'servers')"
                         >
                           <button
                             type="submit"
@@ -2774,6 +2910,13 @@
                       <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
                     </div>
                   </div>
+                  <p
+                    id="noGatewayMessage"
+                    class="text-gray-700 dark:text-gray-300 mt-2"
+                    style="display: none"
+                  >
+                    No MCP server found containing "<span id="searchQueryServers"></span>"
+                  </p>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
                       type="button"
@@ -2916,6 +3059,13 @@
                     <span class="ml-2">Loading resources...</span>
                   </div>
                 </div>
+                <p
+                  id="noResourcesMessage"
+                  class="text-gray-700 dark:text-gray-300 mt-2"
+                  style="display: none"
+                >
+                  No resource found containing "<span id="searchResourcesQuery"></span>"
+                </p>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
                     type="button"
@@ -2976,6 +3126,13 @@
                     <span class="ml-2">Loading prompts...</span>
                   </div>
                 </div>
+                <p
+                  id="noPromptsMessage"
+                  class="text-gray-700 dark:text-gray-300 mt-2"
+                  style="display: none"
+                >
+                  No prompt found containing "<span id="searchPromptsQuery"></span>"
+                </p>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
                     type="button"
@@ -3046,6 +3203,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -3061,6 +3219,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -3091,6 +3250,27 @@
                 </div>
               </div>
             </div>
+
+            {% if selected_team_id %}
+            <!-- View Public toggle for team-scoped server creation -->
+            <div class="mt-4" id="add-server-view-public-container">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="add-server-view-public"
+                  class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                />
+                <label
+                  for="add-server-view-public"
+                  class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                >
+              </div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+              </p>
+            </div>
+            {% endif %}
 
             <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
             <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -3288,10 +3468,10 @@
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (tools|length if tools is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = tools|length if tools is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -3422,7 +3602,7 @@
     "auth_value": "your-openweather-api-key-here",
     "headers": {
       "Accept": "application/json",
-      "User-Agent": "MCP-Gateway/1.0"
+      "User-Agent": "ContextForge/1.0"
     },
     "input_schema": {
       "type": "object",
@@ -3915,6 +4095,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -3930,6 +4111,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4400,6 +4582,7 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4415,6 +4598,7 @@
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4667,6 +4851,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4682,6 +4867,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >🌍Public</label
                   >
                 </div>
+
                 <div class="flex items-center">
                   <input
                     type="radio"
@@ -4829,10 +5015,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
-          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (gateways|length if gateways is defined else 0))) %}
-          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set page = page if page is defined else 1 %}
+          {% set per_page = per_page if per_page is defined else 50 %}
+          {% set total_items = gateways|length if gateways is defined else 0 %}
+          {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
           {% set has_prev = page > 1 %}
           {% set has_next = (page * per_page) < total_items %}
 
@@ -5069,7 +5255,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: Test -->
                       <button
-                        onclick="testGateway('{{ gateway.url }}')"
+                        onclick="testGateway({{ gateway.url|tojson_attr }})"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Test connection to this MCP Server'"
                       >
@@ -5086,7 +5272,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         🔐 Authorize
                       </a>
                       <button
-                        onclick="fetchToolsForGateway('{{ gateway.id }}', '{{ gateway.name }}')"
+                        onclick="fetchToolsForGateway({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }})"
                         class="flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'🔧 Fetch Tools from MCP Server'"
                         id="fetch-tools-{{ gateway.id }}"
@@ -5096,14 +5282,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 3: View | Edit -->
                       <button
-                        onclick="viewGateway('{{ gateway.id }}')"
+                        onclick="viewGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editGateway('{{ gateway.id }}')"
+                        onclick="editGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -5112,14 +5298,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       {% else %}
                       <!-- Row 2: View | Edit (for non-OAuth) -->
                       <button
-                        onclick="viewGateway('{{ gateway.id }}')"
+                        onclick="viewGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editGateway('{{ gateway.id }}')"
+                        onclick="editGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -5261,6 +5447,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   Visibility
                 </label>
                 <div class="mt-1 flex space-x-6">
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -5276,6 +5463,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       >🌍Public</label
                     >
                   </div>
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -6368,6 +6556,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                     For team-level access, select a specific team from the header above before creating a token.
                                 </p>
                             </div>
+                            <p class="mt-2 text-xs text-yellow-700 dark:text-yellow-300 ml-8">
+                                The header team selector is global. It filters tools, servers, prompts, and other tabs to that team context.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -6449,6 +6640,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Create Token
               </button>
             </div>
+            <!-- Inline error/status display for token creation; populated by createToken() on failure -->
+            <div id="token-creation-messages" class="mt-3" role="alert" aria-live="polite"></div>
           </form>
         </div>
 
@@ -6506,12 +6699,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else 0)) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = 0 %}
+            {% set total_pages = 0 %}
             {% set has_prev = page > 1 %}
-            {% set has_next = (page * per_page) < total_items %}
+            {% set has_next = false %}
 
             {% set pagination = {
               'page': page,
@@ -6652,10 +6845,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Pagination Controls -->
             {# ---- compute safe pagination values first ---- #}
-            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (a2a_agents|length if a2a_agents is defined else 0))) %}
-            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set page = page if page is defined else 1 %}
+            {% set per_page = per_page if per_page is defined else 50 %}
+            {% set total_items = a2a_agents|length if a2a_agents is defined else 0 %}
+            {% set total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0 %}
             {% set has_prev = page > 1 %}
             {% set has_next = (page * per_page) < total_items %}
 
@@ -6728,7 +6921,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           <!-- Row 1: Test (full width) -->
                           <button
 
-                            onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
+                            onclick="testA2AAgent({{ agent.id|tojson_attr }}, {{ agent.name|tojson_attr }}, {{ agent.endpointUrl|tojson_attr }})"
                             class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 transition-colors"
                             x-tooltip="'💡Execute this A2A Agent test'"
                           >
@@ -6737,14 +6930,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                           <!-- Row 2: View | Edit -->
                           <button
-                            onclick="viewAgent('{{ agent.id }}')"
+                            onclick="viewAgent({{ agent.id|tojson_attr }})"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 transition-colors"
                             x-tooltip="'💡View agent details'"
                           >
                             View
                           </button>
                           <button
-                            onclick="editA2AAgent('{{ agent.id }}')"
+                            onclick="editA2AAgent({{ agent.id|tojson_attr }})"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
                             x-tooltip="'💡Edit agent configuration'"
                           >
@@ -6777,7 +6970,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             </form>
                             {% endif %}
 
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'a2a agent', '{{ agent.name }}', 'a2a-agents')">
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'a2a agent', {{ agent.name|tojson_attr }}, 'a2a-agents')">
                               <button
                                 type="submit"
                                 class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 transition-colors"
@@ -7400,6 +7593,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >Visibility</label
                 >
                 <div class="flex gap-x-6 mt-2">
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -7415,6 +7609,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       >🌍 Public</label
                     >
                   </div>
+
                   <div class="flex items-center">
                     <input
                       type="radio"
@@ -7657,10 +7852,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">Visibility</label>
                 <div class="flex items-center space-x-4">
+
                   <div class="flex items-center">
                     <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-public" checked />
                     <label for="grpc-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Public</label>
                   </div>
+
                   <div class="flex items-center">
                     <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-team" />
                     <label for="grpc-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Team</label>
@@ -7754,7 +7951,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </button>
                     </form>
                     <button
-                      onclick="viewGrpcMethods('{{ service.id }}')"
+                      onclick="viewGrpcMethods({{ service.id|tojson_attr }})"
                       class="px-3 py-1 text-sm font-medium bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200"
                     >
                       View Methods
@@ -7848,14 +8045,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <div class="grid grid-cols-2 gap-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
-                        onclick="viewRoot('{{ root.uri }}')"
+                        onclick="viewRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View root directory details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editRoot('{{ root.uri }}')"
+                        onclick="editRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit root directory settings and configuration'"
                       >
@@ -7864,7 +8061,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 2: Export | Delete -->
                       <button
-                        onclick="exportRoot('{{ root.uri }}')"
+                        onclick="exportRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Export root directory configuration'"
                       >
@@ -8103,11 +8300,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8411,12 +8608,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <!-- Increased max width (sm:max-w-2xl) for a larger modal -->
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8503,11 +8700,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8785,6 +8982,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     >
                     <div class="flex gap-x-6 mt-2">
                       <!-- Add gap-x-6 for more space between radio options -->
+
                       <div class="flex items-center">
                         <input
                           type="radio"
@@ -8799,6 +8997,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >🌍Public</label
                         >
                       </div>
+
                       <div class="flex items-center">
                         <input
                           type="radio"
@@ -8861,11 +9060,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -8904,13 +9103,13 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
           <!-- Overlay -->
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
 
           <!-- Modal Panel -->
           <div
-            class="inline-block align-bottom bg-white dark:bg-gray-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
 
@@ -8992,11 +9191,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9099,6 +9298,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         >Visibility</label
                       >
                       <div class="flex gap-x-6 mt-2">
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9113,6 +9313,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9173,11 +9374,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9213,11 +9414,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9322,6 +9523,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         >Visibility</label
                       >
                       <div class="flex gap-x-6 mt-2">
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9336,6 +9538,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9399,12 +9602,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <!-- Increased max width (sm:max-w-2xl) for a larger modal -->
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9502,11 +9705,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9694,11 +9897,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9774,6 +9977,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       >
                       <div class="flex gap-x-6 mt-2">
                         <!-- Add gap-x-6 for more space between radio options -->
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -9788,6 +9992,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
@@ -10176,7 +10381,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             <p class="mt-1 text-sm text-blue-600 font-medium">
                               💡 Use:
                               <code class="bg-blue-100 px-1 rounded"
-                                >http://localhost:4444/oauth/callback</code
+                                >{{ request.base_url }}oauth/callback</code
                               >
                             </p>
                           </div>
@@ -10274,11 +10479,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- A2A Agent Edit Modal -->
        <div id="a2a-edit-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
               <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
             </div>
             <div
-              class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+              class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
             >
               <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
@@ -10721,37 +10926,39 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
                         <div class="flex gap-x-6 mt-2">
-                          <label class="flex items-center">
+
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="public"
-                              id="a2a-visibility-public-edit"
+                              id="edit-a2a-visibility-public"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                               checked
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</span>
-                          </label>
-                          <label class="flex items-center">
+                            <label for="edit-a2a-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</label>
+                          </div>
+
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="team"
-                              id="a2a-visibility-team-edit"
+                              id="edit-a2a-visibility-team"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</span>
-                          </label>
-                          <label class="flex items-center">
+                            <label for="edit-a2a-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</label>
+                          </div>
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="private"
-                              id="a2a-visibility-private-edit"
+                              id="edit-a2a-visibility-private"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</span>
-                          </label>
+                            <label for="edit-a2a-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</label>
+                          </div>
                         </div>
                       </div>
 
@@ -10811,11 +11018,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -10851,11 +11058,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -10948,30 +11155,32 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       >
                       <div class="flex gap-x-6 mt-2">
                         <!-- Add gap-x-6 for more space between radio options -->
+
                         <div class="flex items-center">
                           <input
                             type="radio"
                             name="visibility"
                             value="public"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-public"
+                            id="edit-server-visibility-public"
                           />
                           <label
-                            for="edit-visibility-public"
+                            for="edit-server-visibility-public"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >🌍Public</label
                           >
                         </div>
+
                         <div class="flex items-center">
                           <input
                             type="radio"
                             name="visibility"
                             value="team"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-team"
+                            id="edit-server-visibility-team"
                           />
                           <label
-                            for="edit-visibility-team"
+                            for="edit-server-visibility-team"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >👥Team</label
                           >
@@ -10982,10 +11191,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="visibility"
                             value="private"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-private"
+                            id="edit-server-visibility-private"
                           />
                           <label
-                            for="edit-visibility-private"
+                            for="edit-server-visibility-private"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >🔒Private</label
                           >
@@ -10993,6 +11202,26 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       </div>
                     </div>
                   </div>
+                  {% if selected_team_id %}
+                  <!-- View Public toggle for team-scoped server editing -->
+                  <div class="mt-4" id="edit-server-view-public-container">
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="edit-server-view-public"
+                        class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      />
+                      <label
+                        for="edit-server-view-public"
+                        class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >View Public &mdash; Include publicly available MCP servers, tools, resources, and prompts</label
+                      >
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      When enabled, public items from across the platform are shown alongside your team's items in the selectors below.
+                    </p>
+                  </div>
+                  {% endif %}
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                     <div
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
@@ -11021,6 +11250,13 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
                     </div>
                   </div>
+                  <p
+                    id="noEditGatewayMessage"
+                    class="text-gray-700 dark:text-gray-300 mt-2"
+                    style="display: none"
+                  >
+                    No MCP server found containing "<span id="searchQueryEditServers"></span>"
+                  </p>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
                       type="button"
@@ -11076,7 +11312,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-tools"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
@@ -11375,11 +11611,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11437,7 +11673,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 class="mt-1 px-1.5 block w-full rounded-md shadow-sm p-2 bg-gray-200 dark:bg-gray-800"
                 placeholder="Enter your query (e.g., calc: 5*10+2 or weather: Dallas)"
                 aria-describedby="a2a-test-query-help"
-              >Hello from MCP Gateway Admin UI test!</textarea>
+              >Hello from ContextForge Admin UI test!</textarea>
               <p id="a2a-test-query-help" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Enter the message/query to send to the A2A agent
               </p>
@@ -11490,11 +11726,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11581,11 +11817,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11666,11 +11902,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11706,11 +11942,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
-          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            class="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -11797,20 +12033,21 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       // Build mapping objects using your existing tools, resources, and prompts arrays
       window.toolMapping = {};
       {% for tool in tools %}
-      window.toolMapping["{{ tool.id }}"] = "{{ tool.name }}";
+      window.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
       {% endfor %}
 
       window.resourceMapping = {};
       {% for resource in resources %}
-      window.resourceMapping["{{ resource.id }}"] = "{{ resource.name }}";
+      window.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
       {% endfor %}
 
       window.promptMapping = {};
       {% for prompt in prompts %}
-      window.promptMapping["{{ prompt.id }}"] = "{{ prompt.displayName or prompt.originalName or prompt.name }}";
+      window.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
+      window.ALLOW_PUBLIC_VISIBILITY = {{ allow_public_visibility | tojson }};
       window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
       window.MAX_NAME_LENGTH = {{ max_name_length | tojson }};
       window.USER_TEAMS = {{ user_teams | default([]) | tojson }};
@@ -14413,7 +14650,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div id="user-edit-modal-content">
             <!-- Content will be loaded here -->
@@ -14438,7 +14675,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6"
         >
           <div>
             <div class="flex items-center justify-between mb-4">
@@ -14618,7 +14855,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
           style="max-height: 90vh; overflow-y: auto"
         >
           <div id="team-edit-modal-content">
@@ -14644,7 +14881,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div class="flex justify-between items-center mb-4">
             <h3 class="text-lg font-medium text-gray-900 dark:text-white">
@@ -14693,7 +14930,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div>
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -14810,7 +15047,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div>
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -15099,7 +15336,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             "auth_value": "your-openweather-api-key-here",
             "headers": {
               "Accept": "application/json",
-              "User-Agent": "MCP-Gateway/1.0"
+              "User-Agent": "ContextForge/1.0"
             },
             "input_schema": {
               "type": "object",
@@ -15156,7 +15393,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               "properties": {
                 "channel": {"type": "string", "description": "Slack channel (e.g., #general)"},
                 "text": {"type": "string", "description": "Message text"},
-                "username": {"type": "string", "description": "Bot username", "default": "MCP Gateway"}
+                "username": {"type": "string", "description": "Bot username", "default": "ContextForge"}
               },
               "required": ["text"]
             },

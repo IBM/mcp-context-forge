@@ -93,6 +93,8 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -328,7 +330,7 @@ class OAuthToolValidationError(GatewayConnectionError):
     """Raised when tool validation fails during OAuth-driven fetch."""
 
 
-class GatewayService:  # pylint: disable=too-many-instance-attributes
+class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
     """Service for managing federated gateways.
 
     Handles:
@@ -337,6 +339,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
     - Federation events
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbGateway
 
     def __init__(self) -> None:
         """Initialize the gateway service.
@@ -384,16 +388,36 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self._active_gateways: Set[str] = set()  # Track active gateway URLs
         self._stream_response = None
         self._pending_responses = {}
-        # Prefer using the globally-initialized singletons from mcpgateway.main
-        # (created at application startup). Import lazily to avoid circular
-        # import issues during module import time. Fall back to creating
-        # local instances if the singletons are not available.
-        # Use the globally-exported singletons from the service modules so
-        # events propagate via their initialized EventService/Redis clients.
+        # Prefer using the globally-initialized singletons from the service modules
+        # so events propagate via their initialized EventService/Redis clients.
+        # Import lazily and fall back to creating local instances when the module-level
+        # __getattr__ singletons are not yet available (e.g. circular import during
+        # Gunicorn --preload).
         # First-Party
-        from mcpgateway.services.prompt_service import prompt_service
-        from mcpgateway.services.resource_service import resource_service
-        from mcpgateway.services.tool_service import tool_service
+        try:
+            # First-Party
+            from mcpgateway.services.prompt_service import prompt_service
+        except ImportError:
+            # First-Party
+            from mcpgateway.services.prompt_service import PromptService
+
+            prompt_service = PromptService()
+        try:
+            # First-Party
+            from mcpgateway.services.resource_service import resource_service
+        except ImportError:
+            # First-Party
+            from mcpgateway.services.resource_service import ResourceService
+
+            resource_service = ResourceService()
+        try:
+            # First-Party
+            from mcpgateway.services.tool_service import tool_service
+        except ImportError:
+            # First-Party
+            from mcpgateway.services.tool_service import ToolService
+
+            tool_service = ToolService()
 
         self.tool_service = tool_service
         self.prompt_service = prompt_service
@@ -818,7 +842,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             else:
                 authentication_headers = None
 
-            oauth_config = getattr(gateway, "oauth_config", None)
+            oauth_config = await protect_oauth_config_for_storage(getattr(gateway, "oauth_config", None))
             ca_certificate = getattr(gateway, "ca_certificate", None)
 
             # Check if gateway is in direct_proxy mode
@@ -1267,7 +1291,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
-            app_user_email: MCP Gateway user email for token retrieval
+            app_user_email: ContextForge user email for token retrieval
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -1317,9 +1341,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Debug: Check if token was decrypted
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
-                logger.error(f"Token appears to be encrypted! Encryption service may have failed. Token length: {len(access_token)}")
+                logger.error("OAuth token decryption may have failed before gateway initialization")
             else:
-                logger.info(f"Using decrypted OAuth token for {gateway.name} (length: {len(access_token)})")
+                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
@@ -1466,56 +1490,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    def _apply_visibility_filter(
-        self,
-        query,
-        user_email: Optional[str],
-        token_teams: List[str],
-        team_id: Optional[str] = None,
-    ) -> Any:
-        """Apply visibility-based access control to query.
-
-        Access rules (matching tools/resources/prompts/agents):
-        - public: visible to all
-        - team: visible to team members (token_teams contains team_id)
-        - private: visible only to owner, BUT NOT for public-only tokens
-
-        Args:
-            query: SQLAlchemy query to filter
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. [] = public-only (no owner access)
-            team_id: Optional specific team filter
-
-        Returns:
-            Filtered query
-        """
-        # Check if this is a public-only token (empty teams array)
-        # Public-only tokens can ONLY see public resources - no owner access
-        is_public_only_token = len(token_teams) == 0
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbGateway.visibility == "public"]
-
-        if team_id:
-            # User requesting specific team - verify access
-            if team_id not in token_teams:
-                # Return query that matches nothing (will return empty result)
-                return query.where(False)
-
-            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email))
-            return query.where(or_(*access_conditions))
-
-        # Only include owner access for non-public-only tokens with user_email
-        if not is_public_only_token and user_email:
-            access_conditions.append(DbGateway.owner_email == user_email)
-
-        if token_teams:
-            access_conditions.append(and_(DbGateway.team_id.in_(token_teams), DbGateway.visibility.in_(["team", "public"])))
-
-        return query.where(or_(*access_conditions))
-
     async def list_gateways(
         self,
         db: Session,
@@ -1607,24 +1581,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not include_inactive:
             query = query.where(DbGateway.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public gateways
-        if user_email or token_teams is not None:
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            # Default is public-only access (empty teams) when no teams are available.
-            effective_teams: List[str] = []
-            if token_teams is not None:
-                effective_teams = token_teams
-            elif user_email:
-                # Look up user's teams from DB (for admin UI / first-party access)
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                effective_teams = [team.id for team in user_teams]
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
-
-            if visibility:
-                query = query.where(DbGateway.visibility == visibility)
+        if visibility:
+            query = query.where(DbGateway.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -1967,7 +1927,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
-                    gateway.oauth_config = gateway_update.oauth_config
+                    gateway.oauth_config = await protect_oauth_config_for_storage(gateway_update.oauth_config, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token
@@ -3583,7 +3543,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             url: Gateway URL to connect to
             authentication: Optional authentication headers for the connection
             transport: Transport protocol - "SSE" or "StreamableHTTP"
-            auth_type: Authentication type - "basic", "bearer", "headers", "oauth", "query_param" or None
+            auth_type: Authentication type - "basic", "bearer", "authheaders", "oauth", "query_param" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
             ca_certificate: CA certificate for SSL verification
             pre_auth_headers: Pre-authenticated headers to skip OAuth token fetch (for reuse)
@@ -3670,7 +3630,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             tools = []
             resources = []
             prompts = []
-            if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
+            if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)

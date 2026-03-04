@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser, TokenRevocation, TokenUsageLog, utc_now
+from mcpgateway.db import EmailApiToken, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
@@ -225,7 +225,7 @@ class TokenCatalogService:
 
         This internal method creates a properly formatted JWT token with all
         necessary claims including user identity, scopes, team membership,
-        and expiration. The token follows the MCP Gateway JWT structure.
+        and expiration. The token follows ContextForge JWT structure.
 
         Args:
             user_email: User's email address for the token subject
@@ -288,6 +288,14 @@ class TokenCatalogService:
                 "ip_restrictions": [],
                 "time_restrictions": {},
             }
+
+        # Auto-inject servers.use for tokens with explicit MCP-related permissions.
+        # Without servers.use, the token scoping middleware blocks /rpc and /mcp
+        # transport access, making MCP-method permissions useless.
+        permissions = scopes_dict["permissions"]
+        if permissions and "*" not in permissions and "servers.use" not in permissions:
+            if any(p.startswith(Permissions.MCP_METHOD_PREFIXES) for p in permissions):
+                scopes_dict["permissions"] = [*permissions, "servers.use"]
 
         # Generate JWT token using the centralized token creation utility
         # Pass structured data to the enhanced create_jwt_token function
@@ -453,13 +461,18 @@ class TokenCatalogService:
             if not membership:
                 raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
-        # Check for duplicate active token name for this user+team
-        existing_token = self.db.execute(
-            select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True)))
-        ).scalar_one_or_none()
+        # Check for duplicate active token name for this user within the same team scope,
+        # matching DB constraint uq_email_api_tokens_user_name_team (user_email, name, team_id).
+        # team_id=None tokens are scoped to the global (no-team) bucket.
+        if team_id:
+            name_check = and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True))
+        else:
+            name_check = and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id.is_(None), EmailApiToken.is_active.is_(True))
+        existing_token = self.db.execute(select(EmailApiToken).where(name_check)).scalar_one_or_none()
 
         if existing_token:
-            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in team {team_id}. Please choose a different name.")
+            scope_label = f"team '{team_id}'" if team_id else "the global scope (no team)"
+            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in {scope_label}. Token names must be unique per user per team. Please choose a different name.")
 
         # CALCULATE EXPIRATION DATE
         expires_at = None

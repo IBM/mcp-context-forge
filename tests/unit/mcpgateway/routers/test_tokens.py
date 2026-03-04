@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Third-Party
 import pytest
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -235,6 +236,91 @@ class TestCreateToken:
             # Verify is_active=False was passed to service
             call_args = mock_service.create_token.call_args
             assert call_args[1]["is_active"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "constraint_fragment",
+        [
+            "uq_email_api_tokens_user_name_team",
+            "uq_email_api_tokens_user_name",
+            "uq_email_api_tokens_user_email_name",
+            "email_api_tokens.user_email, email_api_tokens.name",
+        ],
+    )
+    async def test_create_token_integrity_error_name_conflict(self, mock_db, mock_current_user, constraint_fragment):
+        """IntegrityError with a known token-name constraint returns 409 with specific message."""
+        request = TokenCreateRequest(name="Dup Token")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: constraint_fragment
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "already exists" in exc_info.value.detail
+            assert "unique per user" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_create_token_integrity_error_generic_conflict(self, mock_db, mock_current_user):
+        """IntegrityError with an unrecognised constraint returns 409 with generic message."""
+        request = TokenCreateRequest(name="Dup Token")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: "some_other_constraint"
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "conflict" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_create_token_integrity_error_calls_rollback(self, mock_db, mock_current_user):
+        """IntegrityError handler must call db.rollback() before raising."""
+        request = TokenCreateRequest(name="Dup Token")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: "uq_email_api_tokens_user_name_team"
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException):
+                await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_token_integrity_error_global_scope_partial_index(self, mock_db, mock_current_user):
+        """IntegrityError from the partial unique index for global-scope tokens (team_id IS NULL) returns specific 409."""
+        request = TokenCreateRequest(name="Global Dup")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: "uq_email_api_tokens_user_name_global"
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "already exists" in exc_info.value.detail
 
 
 class TestListTokens:
@@ -643,6 +729,72 @@ class TestTeamTokens:
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "User is not team owner" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "constraint_fragment",
+        [
+            "uq_email_api_tokens_user_name_team",
+            "uq_email_api_tokens_user_name",
+            "uq_email_api_tokens_user_email_name",
+            "email_api_tokens.user_email, email_api_tokens.name",
+        ],
+    )
+    async def test_create_team_token_integrity_error_name_conflict(self, mock_db, mock_current_user, constraint_fragment):
+        """IntegrityError with a known token-name constraint returns 409 with specific message."""
+        request = TokenCreateRequest(name="Dup Team Token")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: constraint_fragment
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "already exists" in exc_info.value.detail
+            assert "unique per user" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_create_team_token_integrity_error_generic_conflict(self, mock_db, mock_current_user):
+        """IntegrityError with an unrecognised constraint returns 409 with generic message."""
+        request = TokenCreateRequest(name="Dup Team Token")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: "some_other_constraint"
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "conflict" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_create_team_token_integrity_error_calls_rollback(self, mock_db, mock_current_user):
+        """IntegrityError handler must call db.rollback() before raising."""
+        request = TokenCreateRequest(name="Dup Team Token")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: "uq_email_api_tokens_user_name_team"
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException):
+                await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
+
+            mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_list_team_tokens_success(self, mock_db, mock_current_user, mock_token_record):

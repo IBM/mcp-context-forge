@@ -106,18 +106,82 @@ async def test_set_get_delete_user_config_in_memory():
 
 
 @pytest.mark.asyncio
+async def test_get_user_config_in_memory_respects_ttl(monkeypatch: pytest.MonkeyPatch):
+    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+    start = 1000.0
+    monkeypatch.setattr(llmchat_router.time, "monotonic", lambda: start)
+    await llmchat_router.set_user_config("u1", config)
+
+    monkeypatch.setattr(llmchat_router.time, "monotonic", lambda: start + llmchat_router.USER_CONFIG_TTL + 1)
+    assert await llmchat_router.get_user_config("u1") is None
+    assert "u1" not in llmchat_router.user_configs
+
+
+@pytest.mark.asyncio
 async def test_set_get_delete_user_config_redis(monkeypatch: pytest.MonkeyPatch):
+    config = llmchat_router.build_config(
+        ConnectInput(
+            user_id="u1",
+            llm=LLMInput(model="gpt", config={"api_key": "llm-secret"}),
+            server=ServerInput(url="https://api.example.com/mcp", auth_token="server-secret"),
+        )
+    )
+    redis_mock = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    await llmchat_router.set_user_config("u1", config)
+    redis_mock.set.assert_awaited_once()
+    set_args = redis_mock.set.await_args
+    assert set_args.kwargs["ex"] == llmchat_router.USER_CONFIG_TTL
+    serialized_payload = set_args.args[1]
+    parsed_payload = llmchat_router.orjson.loads(serialized_payload)
+    assert llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY in parsed_payload
+    assert b"llm-secret" not in serialized_payload
+    assert b"server-secret" not in serialized_payload
+
+    redis_mock.get.return_value = serialized_payload
+    assert await llmchat_router.get_user_config("u1") == config
+    await llmchat_router.delete_user_config("u1")
+    redis_mock.get.assert_awaited()
+    redis_mock.delete.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_user_config_redis_supports_legacy_plaintext(monkeypatch: pytest.MonkeyPatch):
     config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
     redis_mock = AsyncMock()
     redis_mock.get.return_value = llmchat_router.orjson.dumps(config.model_dump())
     monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
 
-    await llmchat_router.set_user_config("u1", config)
-    assert await llmchat_router.get_user_config("u1") == config
-    await llmchat_router.delete_user_config("u1")
-    redis_mock.set.assert_awaited()
-    redis_mock.get.assert_awaited()
-    redis_mock.delete.assert_awaited()
+    result = await llmchat_router.get_user_config("u1")
+    assert result == config
+
+
+def test_deserialize_user_config_rejects_invalid_payload(caplog: pytest.LogCaptureFixture):
+    caplog.set_level("WARNING")
+    assert llmchat_router._deserialize_user_config_from_storage(b"{not-json") is None
+    assert "Failed to parse stored LLM chat config payload" in caplog.text
+
+
+def test_deserialize_user_config_rejects_missing_or_invalid_encrypted_payload(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    caplog.set_level("WARNING")
+
+    missing_payload = llmchat_router.orjson.dumps(
+        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: ""}
+    )
+    assert llmchat_router._deserialize_user_config_from_storage(missing_payload) is None
+
+    monkeypatch.setattr(llmchat_router, "decode_auth", lambda *_args, **_kwargs: ["invalid"])
+    invalid_decoded = llmchat_router.orjson.dumps(
+        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: "ciphertext"}
+    )
+    assert llmchat_router._deserialize_user_config_from_storage(invalid_decoded) is None
+    assert "Decoded encrypted LLM chat config is invalid" in caplog.text
+
+
+def test_deserialize_user_config_rejects_non_dict_legacy_payload():
+    legacy_non_dict = llmchat_router.orjson.dumps(["not-a-dict"])
+    assert llmchat_router._deserialize_user_config_from_storage(legacy_non_dict) is None
 
 
 @pytest.mark.asyncio
@@ -281,11 +345,84 @@ async def test_connect_success(monkeypatch: pytest.MonkeyPatch):
 
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token=""))
 
-    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert result["status"] == "connected"
     assert result["tool_count"] == 1
     assert await llmchat_router.get_active_session("user1") is not None
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_ssrf_server_url(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    def _reject_url(_url: str, _field_name: str = "URL") -> str:
+        raise ValueError("localhost is blocked")
+
+    monkeypatch.setattr(llmchat_router.SecurityValidator, "validate_url", _reject_url)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="http://127.0.0.1/mcp", auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "Invalid server URL"
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_private_server_url_in_strict_ssrf_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    class StrictSSRFSettings:
+        ssrf_protection_enabled = True
+        ssrf_allow_localhost = False
+        ssrf_allow_private_networks = False
+        ssrf_allowed_networks = []
+        ssrf_blocked_networks = ["169.254.169.254/32"]
+        ssrf_blocked_hosts = []
+        ssrf_dns_fail_closed = False
+
+    monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="http://127.0.0.1/mcp", auth_token="token"))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "Invalid server URL"
+
+
+@pytest.mark.asyncio
+async def test_connect_validates_user_supplied_server_url(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+    seen: dict[str, str] = {}
+
+    def _accept_url(url: str, _field_name: str = "URL") -> str:
+        seen["url"] = url
+        return url
+
+    monkeypatch.setattr(llmchat_router.SecurityValidator, "validate_url", _accept_url)
+
+    request = MagicMock()
+    request.cookies = {}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(url="https://api.example.com/mcp", auth_token="token"))
+
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert result["status"] == "connected"
+    assert seen["url"] == "https://api.example.com/mcp"
 
 
 @pytest.mark.asyncio
@@ -300,7 +437,7 @@ async def test_connect_invalid_resolved_user_id(monkeypatch: pytest.MonkeyPatch)
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1"})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 400
 
@@ -321,7 +458,7 @@ async def test_connect_existing_session_shutdown_error(monkeypatch: pytest.Monke
 
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
-    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert result["status"] == "connected"
     assert isinstance(llmchat_router.active_sessions["user1"], DummyChatService)
@@ -338,7 +475,7 @@ async def test_connect_build_config_error(monkeypatch: pytest.MonkeyPatch):
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1"})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 400
 
@@ -360,7 +497,7 @@ async def test_connect_chat_service_connection_error(monkeypatch: pytest.MonkeyP
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert excinfo.value.status_code == 503
     assert delete_config.await_count == 1
@@ -377,7 +514,7 @@ async def test_connect_requires_auth_token(monkeypatch: pytest.MonkeyPatch):
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token=""))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert excinfo.value.status_code == 401
 
@@ -389,7 +526,7 @@ async def test_chat_non_streaming_success(monkeypatch: pytest.MonkeyPatch):
 
     input_data = ChatInput(user_id="user1", message="hi", streaming=False)
 
-    result = await llmchat_router.chat(input_data, user={"id": "user1"})
+    result = await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert result["response"] == "echo:hi"
 
@@ -401,7 +538,7 @@ async def test_chat_streaming_returns_streaming_response(monkeypatch: pytest.Mon
 
     input_data = ChatInput(user_id="user1", message="hi", streaming=True)
 
-    response = await llmchat_router.chat(input_data, user={"id": "user1"})
+    response = await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert response.media_type == "text/event-stream"
 
@@ -411,7 +548,7 @@ async def test_chat_no_session():
     input_data = ChatInput(user_id="user1", message="hi", streaming=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.chat(input_data, user={"id": "user1"})
+        await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 400
 
@@ -421,7 +558,7 @@ async def test_disconnect_clears_session(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
     llmchat_router.active_sessions["user1"] = DummyChatService(config=None, user_id="user1")
 
-    result = await llmchat_router.disconnect(DisconnectInput(user_id="user1"), user={"id": "user1"})
+    result = await llmchat_router.disconnect(DisconnectInput(user_id="user1"), user={"id": "user1", "email": "user1@test.com"})
 
     assert result["status"] == "disconnected"
     assert await llmchat_router.get_active_session("user1") is None
@@ -429,7 +566,7 @@ async def test_disconnect_clears_session(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.asyncio
 async def test_disconnect_no_active_session():
-    result = await llmchat_router.disconnect(DisconnectInput(user_id="user1"), user={"id": "user1"})
+    result = await llmchat_router.disconnect(DisconnectInput(user_id="user1"), user={"id": "user1", "email": "user1@test.com"})
 
     assert result["status"] == "no_active_session"
 
@@ -442,7 +579,7 @@ async def test_disconnect_with_errors():
 
     llmchat_router.active_sessions["user1"] = ErrorChatService(config=None, user_id="user1")
 
-    result = await llmchat_router.disconnect(DisconnectInput(user_id="user1"), user={"id": "user1"})
+    result = await llmchat_router.disconnect(DisconnectInput(user_id="user1"), user={"id": "user1", "email": "user1@test.com"})
 
     assert result["status"] == "disconnected_with_errors"
     assert "warning" in result
@@ -453,26 +590,46 @@ async def test_status_connected(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
     llmchat_router.active_sessions["user1"] = DummyChatService(config=None, user_id="user1")
 
-    result = await llmchat_router.status("user1", user={"id": "user1"})
+    result = await llmchat_router.status("user1", user={"id": "user1", "email": "user1@test.com"})
 
     assert result["connected"] is True
 
 
 @pytest.mark.asyncio
 async def test_get_config_sanitizes(monkeypatch: pytest.MonkeyPatch):
-    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+    config = llmchat_router.build_config(
+        ConnectInput(
+            user_id="u1",
+            llm=LLMInput(model="gpt"),
+            server=ServerInput(url="https://api.example.com/mcp", auth_token="server-token"),
+        )
+    )
     await llmchat_router.set_user_config("u1", config)
 
-    result = await llmchat_router.get_config("u1", user={"id": "u1"})
+    result = await llmchat_router.get_config("u1", user={"id": "u1", "email": "u1@test.com"})
 
-    assert "api_key" not in result["llm"]["config"]
-    assert "auth_token" not in result["llm"]["config"]
+    assert result["mcp_server"]["auth_token"] == llmchat_router.settings.masked_auth_value
+
+
+def test_mask_sensitive_config_values_masks_nested_fields():
+    data = {
+        "api_key": "k",
+        "nested": {"client_secret": "s"},
+        "list": [{"password": "p"}],
+        "plain": "value",
+    }
+
+    masked = llmchat_router._mask_sensitive_config_values(data)
+    assert masked["api_key"] == llmchat_router.settings.masked_auth_value
+    assert masked["nested"]["client_secret"] == llmchat_router.settings.masked_auth_value
+    assert masked["list"][0]["password"] == llmchat_router.settings.masked_auth_value
+    assert masked["plain"] == "value"
 
 
 @pytest.mark.asyncio
 async def test_get_config_missing():
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.get_config("u1", user={"id": "u1"})
+        await llmchat_router.get_config("u1", user={"id": "u1", "email": "u1@test.com"})
 
     assert excinfo.value.status_code == 404
 
@@ -525,7 +682,17 @@ async def test_get_gateway_models_success(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db_module, "SessionLocal", lambda: DummySession())
     monkeypatch.setattr(lps, "LLMProviderService", DummyService)
 
-    result = await llmchat_router.get_gateway_models(_user={"id": "user1"})
+    # Provide db in user context so RBAC wrapper doesn't open fresh_db_session
+    class DummyPermissionService:
+        def __init__(self, _db):
+            pass
+
+        async def check_permission(self, **kwargs):
+            return True
+
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
+
+    result = await llmchat_router.get_gateway_models(_user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert result["count"] == 1
     assert result["models"][0]["id"] == "m1"
@@ -550,8 +717,18 @@ async def test_get_gateway_models_failure(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db_module, "SessionLocal", lambda: DummySession())
     monkeypatch.setattr(lps, "LLMProviderService", DummyService)
 
+    # Provide db in user context so RBAC wrapper doesn't open fresh_db_session
+    class DummyPermissionService:
+        def __init__(self, _db):
+            pass
+
+        async def check_permission(self, **kwargs):
+            return True
+
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
+
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.get_gateway_models(_user={"id": "user1"})
+        await llmchat_router.get_gateway_models(_user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert excinfo.value.status_code == 500
 
@@ -593,7 +770,7 @@ async def test_chat_session_not_initialized():
     input_data = ChatInput(user_id="user1", message="hi", streaming=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.chat(input_data, user={"id": "user1"})
+        await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 503
     assert "not properly initialized" in excinfo.value.detail
@@ -609,7 +786,7 @@ async def test_chat_runtime_error():
     input_data = ChatInput(user_id="user1", message="hi", streaming=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.chat(input_data, user={"id": "user1"})
+        await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 503
 
@@ -624,7 +801,7 @@ async def test_chat_connection_error():
     input_data = ChatInput(user_id="user1", message="hi", streaming=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.chat(input_data, user={"id": "user1"})
+        await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 503
 
@@ -639,7 +816,7 @@ async def test_chat_timeout_error():
     input_data = ChatInput(user_id="user1", message="hi", streaming=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.chat(input_data, user={"id": "user1"})
+        await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 504
 
@@ -654,7 +831,7 @@ async def test_chat_unexpected_error():
     input_data = ChatInput(user_id="user1", message="hi", streaming=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.chat(input_data, user={"id": "user1"})
+        await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 500
 
@@ -665,7 +842,7 @@ async def test_chat_empty_message():
     input_data = ChatInput(user_id="user1", message="   ", streaming=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.chat(input_data, user={"id": "user1"})
+        await llmchat_router.chat(input_data, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 400
     assert "empty" in excinfo.value.detail
@@ -783,7 +960,7 @@ async def test_connect_init_value_error(monkeypatch: pytest.MonkeyPatch):
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert excinfo.value.status_code == 400
     assert "Invalid LLM configuration" in excinfo.value.detail
@@ -806,7 +983,7 @@ async def test_connect_init_generic_error(monkeypatch: pytest.MonkeyPatch):
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert excinfo.value.status_code == 500
     assert "Service initialization failed" in excinfo.value.detail
@@ -823,7 +1000,7 @@ async def test_connect_build_config_generic_error(monkeypatch: pytest.MonkeyPatc
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1"})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 400
     assert "Configuration error" in excinfo.value.detail
@@ -841,7 +1018,7 @@ async def test_connect_unexpected_error(monkeypatch: pytest.MonkeyPatch):
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.connect(input_data, request, user={"id": "user1"})
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com"})
 
     assert excinfo.value.status_code == 500
     assert "Unexpected connection error" in excinfo.value.detail
@@ -857,7 +1034,7 @@ async def test_connect_no_server(monkeypatch: pytest.MonkeyPatch):
 
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=None)
 
-    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert result["status"] == "connected"
 
@@ -891,7 +1068,7 @@ async def test_connect_tool_extraction_error(monkeypatch: pytest.MonkeyPatch):
 
     input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token="token"))
 
-    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "db": MagicMock()})
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert result["status"] == "connected"
     assert result["tool_count"] == 0
@@ -1029,3 +1206,128 @@ async def test_get_user_config_redis_no_data(monkeypatch: pytest.MonkeyPatch):
 
     result = await llmchat_router.get_user_config("u1")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# C-86 regression: RBAC decorators on LLM Chat endpoints
+# ---------------------------------------------------------------------------
+class TestLLMChatRBACDecorators:
+    """C-86 regression: All LLM Chat endpoints must have @require_permission decorators.
+
+    The require_permission decorator wraps endpoints with a closure that checks
+    user_context before calling the original function. We verify decoration by
+    checking __wrapped__ exists and that calling without auth user raises 401.
+    """
+
+    def test_connect_is_wrapped(self):
+        """POST /connect must be decorated (has __wrapped__)."""
+        assert hasattr(llmchat_router.connect, "__wrapped__"), "connect() is missing @require_permission decorator"
+
+    def test_chat_is_wrapped(self):
+        """POST /chat must be decorated (has __wrapped__)."""
+        assert hasattr(llmchat_router.chat, "__wrapped__"), "chat() is missing @require_permission decorator"
+
+    def test_disconnect_is_wrapped(self):
+        """POST /disconnect must be decorated (has __wrapped__)."""
+        assert hasattr(llmchat_router.disconnect, "__wrapped__"), "disconnect() is missing @require_permission decorator"
+
+    def test_status_is_wrapped(self):
+        """GET /status/{user_id} must be decorated (has __wrapped__)."""
+        assert hasattr(llmchat_router.status, "__wrapped__"), "status() is missing @require_permission decorator"
+
+    def test_get_config_is_wrapped(self):
+        """GET /config/{user_id} must be decorated (has __wrapped__)."""
+        assert hasattr(llmchat_router.get_config, "__wrapped__"), "get_config() is missing @require_permission decorator"
+
+    def test_get_gateway_models_is_wrapped(self):
+        """GET /gateway/models must be decorated (has __wrapped__)."""
+        assert hasattr(llmchat_router.get_gateway_models, "__wrapped__"), "get_gateway_models() is missing @require_permission decorator"
+
+    @pytest.mark.asyncio
+    async def test_connect_denies_insufficient_permissions(self, monkeypatch):
+        """POST /connect must return 403 when permission check fails."""
+
+        class DenyPermissionService:
+            def __init__(self, _db):
+                pass
+
+            async def check_permission(self, **kwargs):
+                return False
+
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DenyPermissionService)
+        with pytest.raises(HTTPException) as exc:
+            await llmchat_router.connect(
+                input_data=ConnectInput(user_id="u1", llm=LLMInput(model="gpt")),
+                request=MagicMock(),
+                user={"id": "viewer1", "email": "viewer@test.com", "db": MagicMock()},
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_chat_denies_insufficient_permissions(self, monkeypatch):
+        """POST /chat must return 403 when permission check fails."""
+
+        class DenyPermissionService:
+            def __init__(self, _db):
+                pass
+
+            async def check_permission(self, **kwargs):
+                return False
+
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DenyPermissionService)
+        with pytest.raises(HTTPException) as exc:
+            await llmchat_router.chat(
+                input_data=ChatInput(user_id="u1", message="hi"),
+                user={"id": "viewer1", "email": "viewer@test.com", "db": MagicMock()},
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_status_denies_insufficient_permissions(self, monkeypatch):
+        """GET /status must return 403 when permission check fails."""
+
+        class DenyPermissionService:
+            def __init__(self, _db):
+                pass
+
+            async def check_permission(self, **kwargs):
+                return False
+
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DenyPermissionService)
+        with pytest.raises(HTTPException) as exc:
+            await llmchat_router.status(
+                user_id="u1",
+                user={"id": "viewer1", "email": "viewer@test.com", "db": MagicMock()},
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_connect_rejects_unauthenticated_user(self):
+        """POST /connect must reject calls without proper user context."""
+        with pytest.raises(HTTPException) as exc:
+            await llmchat_router.connect(
+                input_data=ConnectInput(user_id="u1", llm=LLMInput(model="gpt")),
+                request=MagicMock(),
+                user=None,
+            )
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_chat_rejects_unauthenticated_user(self):
+        """POST /chat must reject calls without proper user context."""
+        with pytest.raises(HTTPException) as exc:
+            await llmchat_router.chat(
+                input_data=ChatInput(user_id="u1", message="hi"),
+                user=None,
+            )
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_disconnect_rejects_unauthenticated_user(self):
+        """POST /disconnect must reject calls without proper user context."""
+        with pytest.raises(HTTPException) as exc:
+            await llmchat_router.disconnect(
+                input_data=DisconnectInput(user_id="u1"),
+                user=None,
+            )
+        assert exc.value.status_code == 401

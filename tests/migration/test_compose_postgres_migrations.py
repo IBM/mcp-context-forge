@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 PostgreSQL docker-compose migration tests.
 
 This module tests database migrations using PostgreSQL via docker-compose
-stacks across different MCP Gateway versions with comprehensive validation.
+stacks across different ContextForge versions with comprehensive validation.
 """
 
 # Standard

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MCP Gateway v0.7.0 Multitenancy Resource Fix
+"""ContextForge v0.7.0 Multitenancy Resource Fix
 
 This script finds and fixes resources that lack proper team assignments
 after the v0.7.0 → v0.7.0 multitenancy migration. This can happen if:
@@ -34,7 +34,7 @@ except ImportError as e:
 def fix_unassigned_resources():
     """Fix resources that lack proper team assignments."""
 
-    print("🔧 MCP Gateway - Fix Unassigned Resources")
+    print("🔧 ContextForge - Fix Unassigned Resources")
     print("=" * 50)
 
     try:

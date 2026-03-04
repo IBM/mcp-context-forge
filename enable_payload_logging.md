@@ -1,4 +1,4 @@
-# Enable Request Payload Logging in MCP Gateway
+# Enable Request Payload Logging in ContextForge
 
 This guide shows how to enable request payload logging to debug and validate tool registration requests and other API calls.
 

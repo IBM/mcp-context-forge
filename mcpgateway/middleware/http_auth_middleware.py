@@ -125,8 +125,18 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                     # Reference: https://stackoverflow.com/questions/69934160/python-how-to-manipulate-fastapi-request-headers-to-be-mutable
                     modified_headers_dict = pre_result.modified_payload.root
 
-                    # Merge modified headers with original headers (modified headers take precedence)
+                    # Security: prevent plugin hooks from overriding auth-sensitive
+                    # headers that were already present on the inbound request.
+                    # Plugins MAY create new auth headers (e.g. x-api-key → authorization
+                    # transform) but MUST NOT replace values the client already sent.
                     original_headers = dict(request.headers)
+                    _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
+                    overridden = {k for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_headers}
+                    if overridden:
+                        logger.warning("Pre-request hook attempted to override existing auth headers (stripped): %s", overridden)
+                        modified_headers_dict = {k: v for k, v in modified_headers_dict.items() if k.lower() not in overridden}
+
+                    # Merge modified headers with original headers (modified headers take precedence)
                     merged_headers = {**original_headers, **modified_headers_dict}
 
                     # Update request.scope["headers"] which is the raw header list Starlette uses

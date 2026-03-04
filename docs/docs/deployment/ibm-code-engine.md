@@ -1,6 +1,6 @@
 # ⚙️ IBM Code Engine
 
-This guide covers two supported deployment paths for the **MCP Gateway**:
+This guide covers two supported deployment paths for the **ContextForge**:
 
 1. **Makefile automation** - a single-command workflow that wraps `ibmcloud` CLI.
 2. **Manual IBM Cloud CLI** - the raw commands the Makefile executes, for fine-grained control.
@@ -250,7 +250,7 @@ ibmcloud ce application delete --name "$IBMCLOUD_CODE_ENGINE_APP" -f
 
 ## 7 - Using IBM Cloud Databases for PostgreSQL
 
-Need durable data, high availability, and automated backups? Provision **IBM Cloud Databases for PostgreSQL** and connect MCP Gateway to it.
+Need durable data, high availability, and automated backups? Provision **IBM Cloud Databases for PostgreSQL** and connect ContextForge to it.
 
 ```bash
 ###############################################################################
@@ -332,7 +332,7 @@ For production workloads you **must** switch to a managed database or mount a pe
 ## 8 - Adding IBM Cloud Databases for Redis (optional cache layer)
 
 Need a high-performance shared cache? Provision **IBM Cloud Databases for Redis**
-and point MCP Gateway at it.
+and point ContextForge at it.
 
 ```bash
 ###############################################################################

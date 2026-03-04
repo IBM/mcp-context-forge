@@ -26,11 +26,13 @@ def test_normalize_teams_and_client_ip():
     assert middleware._normalize_teams(None) == []
     assert middleware._normalize_teams([{"id": "t1"}, "t2", {"name": "x"}]) == ["t1", "t2"]
 
+    # _get_client_ip now uses request.client.host directly (proxy headers are
+    # handled by ProxyHeadersMiddleware which rewrites client.host).
     req = SimpleNamespace(headers={"X-Forwarded-For": "1.2.3.4"}, client=SimpleNamespace(host="9.9.9.9"))
-    assert middleware._get_client_ip(req) == "1.2.3.4"
+    assert middleware._get_client_ip(req) == "9.9.9.9"
 
     req = SimpleNamespace(headers={"X-Real-IP": "5.6.7.8"}, client=SimpleNamespace(host="9.9.9.9"))
-    assert middleware._get_client_ip(req) == "5.6.7.8"
+    assert middleware._get_client_ip(req) == "9.9.9.9"
 
 
 def test_check_ip_restrictions_invalid():
@@ -71,12 +73,94 @@ def test_check_time_restrictions_weekend(monkeypatch: pytest.MonkeyPatch):
     assert middleware._check_time_restrictions({"weekdays_only": True}) is False
 
 
+def test_check_usage_limits_hourly_exceeded():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    hourly_count_result = MagicMock()
+    hourly_count_result.scalar.return_value = 3
+    mock_db.execute.return_value = hourly_count_result
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_hour": 3})
+
+    assert allowed is False
+    assert reason == "Hourly request limit exceeded"
+    mock_db.rollback.assert_called_once()
+    mock_db.close.assert_called_once()
+
+
+def test_check_usage_limits_daily_exceeded():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    daily_count_result = MagicMock()
+    daily_count_result.scalar.return_value = 7
+    mock_db.execute.return_value = daily_count_result
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_day": 7})
+
+    assert allowed is False
+    assert reason == "Daily request limit exceeded"
+
+
+def test_check_usage_limits_allows_when_under_limits():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    hourly_count_result = MagicMock()
+    hourly_count_result.scalar.return_value = 2
+    daily_count_result = MagicMock()
+    daily_count_result.scalar.return_value = 5
+    mock_db.execute.side_effect = [hourly_count_result, daily_count_result]
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits(
+            "jti-123",
+            {"requests_per_hour": 3, "requests_per_day": 10},
+        )
+
+    assert allowed is True
+    assert reason is None
+
+
+def test_check_usage_limits_ignores_non_positive_limits_without_db_call():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_hour": "bad", "requests_per_day": 0})
+
+    assert allowed is True
+    assert reason is None
+    mock_db.execute.assert_not_called()
+
+
+def test_check_usage_limits_db_failure_fails_open():
+    middleware = TokenScopingMiddleware()
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = RuntimeError("db-error")
+
+    with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+        allowed, reason = middleware._check_usage_limits("jti-123", {"requests_per_day": 3})
+
+    assert allowed is True
+    assert reason is None
+    mock_db.rollback.assert_called_once()
+    mock_db.close.assert_called_once()
+
+
 def test_check_server_and_permission_restrictions():
     middleware = TokenScopingMiddleware()
     assert middleware._check_server_restriction("/servers/abc/tools", "abc") is True
     assert middleware._check_server_restriction("/health", "abc") is True
     assert middleware._check_permission_restrictions("/tools", "GET", ["*"]) is True
     assert middleware._check_permission_restrictions("/tools", "POST", ["tools.read"]) is False
+
+
+def test_check_restrictions_normalize_app_root_path(monkeypatch):
+    middleware = TokenScopingMiddleware()
+    monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.app_root_path", "/forge")
+    assert middleware._check_server_restriction("/forge/servers/abc/tools", "abc") is True
+    assert middleware._check_permission_restrictions("/forge/tools", "GET", ["tools.read"]) is True
 
 
 @pytest.mark.asyncio
@@ -159,7 +243,7 @@ class TestResourceTeamOwnershipServers:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/servers/{_SRV_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True  # Not found = allow through
+        assert result is False
 
     def test_server_public_allowed(self):
         middleware = TokenScopingMiddleware()
@@ -226,7 +310,7 @@ class TestResourceTeamOwnershipTools:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/tools/{_TOOL_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_tool_public_allowed(self):
         middleware = TokenScopingMiddleware()
@@ -265,7 +349,7 @@ class TestResourceTeamOwnershipResources:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/resources/{_RES_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_resource_team_denied(self):
         middleware = TokenScopingMiddleware()
@@ -290,7 +374,7 @@ class TestResourceTeamOwnershipPrompts:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/prompts/{_PROMPT_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_prompt_public_allowed(self):
         middleware = TokenScopingMiddleware()
@@ -336,7 +420,7 @@ class TestResourceTeamOwnershipGateways:
         middleware = TokenScopingMiddleware()
         db = self._make_db_with_entity(None)
         result = middleware._check_resource_team_ownership(f"/gateways/{_GW_ID}", ["team-1"], db=db, _user_email="u@t.com")
-        assert result is True
+        assert result is False
 
     def test_gateway_public_allowed(self):
         middleware = TokenScopingMiddleware()

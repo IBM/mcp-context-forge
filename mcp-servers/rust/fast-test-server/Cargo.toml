@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Ultra-fast MCP test server with echo and time tools"
 license = "Apache-2.0"
-authors = ["MCP Gateway Contributors"]
+authors = ["ContextForge Contributors"]
 
 [dependencies]
 # MCP protocol implementation

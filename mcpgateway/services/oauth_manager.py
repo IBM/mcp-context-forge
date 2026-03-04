@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-OAuth 2.0 Manager for MCP Gateway.
+OAuth 2.0 Manager for ContextForge.
 
 This module handles OAuth 2.0 authentication flows including:
 - Client Credentials (Machine-to-Machine)
@@ -16,7 +16,6 @@ import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
-import hmac
 import logging
 import secrets
 from typing import Any, Dict, Optional
@@ -29,7 +28,7 @@ from requests_oauthlib import OAuth2Session
 
 # First-Party
 from mcpgateway.config import get_settings
-from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 
@@ -38,6 +37,9 @@ logger = logging.getLogger(__name__)
 # In-memory storage for OAuth states with expiration (fallback for single-process)
 # Format: {state_key: {"state": state, "gateway_id": gateway_id, "expires_at": datetime}}
 _oauth_states: Dict[str, Dict[str, Any]] = {}
+# Reverse lookup for callback handlers that only receive state.
+# Format: {state: gateway_id}
+_oauth_state_lookup: Dict[str, str] = {}
 # Lock for thread-safe state operations
 _state_lock = asyncio.Lock()
 
@@ -183,9 +185,14 @@ class OAuthManager:
             >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
             'tok'
 
-            Authorization code fallback to client credentials:
-            >>> asyncio.run(mgr.get_access_token({'grant_type': 'authorization_code'}))
-            'tok'
+            Authorization code flow requires interactive completion:
+            >>> def _auth_code_requires_consent():
+            ...     try:
+            ...         asyncio.run(mgr.get_access_token({'grant_type': 'authorization_code'}))
+            ...     except OAuthError:
+            ...         return True
+            >>> _auth_code_requires_consent()
+            True
 
             Unsupported grant type raises ValueError:
             >>> def _unsupported():
@@ -204,21 +211,29 @@ class OAuthManager:
         if grant_type == "password":
             return await self._password_flow(credentials)
         if grant_type == "authorization_code":
-            # For authorization code flow in gateway initialization, we need to handle this differently
-            # Since this is called during gateway setup, we'll try to use client credentials as fallback
-            # or provide a more helpful error message
-            logger.warning("Authorization code flow requires user interaction. " + "For gateway initialization, consider using 'client_credentials' grant type instead.")
-            # Try to use client credentials flow if possible (some OAuth providers support this)
-            try:
-                return await self._client_credentials_flow(credentials)
-            except Exception as e:
-                raise OAuthError(
-                    f"Authorization code flow cannot be used for automatic gateway initialization. "
-                    f"Please use 'client_credentials' grant type or complete the OAuth flow manually first. "
-                    f"Error: {str(e)}"
-                )
-        else:
-            raise ValueError(f"Unsupported grant type: {grant_type}")
+            raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
+        raise ValueError(f"Unsupported grant type: {grant_type}")
+
+    @staticmethod
+    async def _prepare_runtime_credentials(credentials: Dict[str, Any], flow_name: str) -> Dict[str, Any]:
+        """Return runtime-ready oauth credentials with sensitive fields decrypted.
+
+        Args:
+            credentials: Stored oauth_config payload.
+            flow_name: Flow label for diagnostic logging.
+
+        Returns:
+            Dict[str, Any]: Runtime-ready credentials.
+        """
+        try:
+            settings = get_settings()
+            encryption = get_encryption_service(settings.auth_encryption_secret)
+            runtime_credentials = await decrypt_oauth_config_for_runtime(credentials, encryption=encryption)
+            if isinstance(runtime_credentials, dict):
+                return runtime_credentials
+        except Exception as exc:
+            logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
+        return credentials
 
     async def _client_credentials_flow(self, credentials: Dict[str, Any]) -> str:
         """Machine-to-machine authentication using client credentials.
@@ -232,25 +247,11 @@ class OAuthManager:
         Raises:
             OAuthError: If token acquisition fails after all retries
         """
-        client_id = credentials["client_id"]
-        client_secret = credentials["client_secret"]
-        token_url = credentials["token_url"]
-        scopes = credentials.get("scopes", [])
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "client_credentials")
+        client_id = runtime_credentials["client_id"]
+        client_secret = runtime_credentials["client_secret"]
+        token_url = runtime_credentials["token_url"]
+        scopes = runtime_credentials.get("scopes", [])
 
         # Prepare token request data
         token_data = {
@@ -319,30 +320,16 @@ class OAuthManager:
         Raises:
             OAuthError: If token acquisition fails after all retries
         """
-        client_id = credentials.get("client_id")
-        client_secret = credentials.get("client_secret")
-        token_url = credentials["token_url"]
-        username = credentials.get("username")
-        password = credentials.get("password")
-        scopes = credentials.get("scopes", [])
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "password")
+        client_id = runtime_credentials.get("client_id")
+        client_secret = runtime_credentials.get("client_secret")
+        token_url = runtime_credentials["token_url"]
+        username = runtime_credentials.get("username")
+        password = runtime_credentials.get("password")
+        scopes = runtime_credentials.get("scopes", [])
 
         if not username or not password:
             raise OAuthError("Username and password are required for password grant type")
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
         # Prepare token request data
         token_data = {
@@ -442,25 +429,11 @@ class OAuthManager:
         Raises:
             OAuthError: If token exchange fails
         """
-        client_id = credentials["client_id"]
-        client_secret = credentials.get("client_secret")  # Optional for public clients (PKCE-only)
-        token_url = credentials["token_url"]
-        redirect_uri = credentials["redirect_uri"]
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "authorization_code_exchange")
+        client_id = runtime_credentials["client_id"]
+        client_secret = runtime_credentials.get("client_secret")  # Optional for public clients (PKCE-only)
+        token_url = runtime_credentials["token_url"]
+        redirect_uri = runtime_credentials["redirect_uri"]
 
         # Prepare token exchange data
         token_data = {
@@ -522,7 +495,7 @@ class OAuthManager:
         Args:
             gateway_id: ID of the gateway being configured
             credentials: OAuth configuration with client_id, authorization_url, etc.
-            app_user_email: MCP Gateway user email to associate with tokens
+            app_user_email: ContextForge user email to associate with tokens
 
         Returns:
             Dict containing authorization_url and state
@@ -536,7 +509,12 @@ class OAuthManager:
 
         # Store state with code_verifier in session/cache for validation
         if self.token_storage:
-            await self._store_authorization_state(gateway_id, state, code_verifier=pkce_params["code_verifier"])
+            await self._store_authorization_state(
+                gateway_id,
+                state,
+                code_verifier=pkce_params["code_verifier"],
+                app_user_email=app_user_email,
+            )
 
         # Generate authorization URL with PKCE
         auth_url = self._create_authorization_url_with_pkce(credentials, state, pkce_params["code_challenge"], pkce_params["code_challenge_method"])
@@ -566,36 +544,16 @@ class OAuthManager:
             raise OAuthError("Invalid or expired state parameter - possible replay attack")
 
         code_verifier = state_data.get("code_verifier")
+        app_user_email = state_data.get("app_user_email")
 
-        # Decode state to extract user context and verify HMAC
-        try:
-            # Decode base64
-            state_with_sig = base64.urlsafe_b64decode(state.encode())
-
-            # Split state and signature (HMAC-SHA256 is 32 bytes)
-            state_bytes = state_with_sig[:-32]
-            received_signature = state_with_sig[-32:]
-
-            # Verify HMAC signature
-            secret_key = self.settings.auth_encryption_secret.get_secret_value().encode() if self.settings.auth_encryption_secret else b"default-secret-key"
-            expected_signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
-
-            if not hmac.compare_digest(received_signature, expected_signature):
-                raise OAuthError("Invalid state signature - possible CSRF attack")
-
-            # Parse state data
-            state_json = state_bytes.decode()
-            state_payload = orjson.loads(state_json)
-            app_user_email = state_payload.get("app_user_email")
-            state_gateway_id = state_payload.get("gateway_id")
-
-            # Validate gateway ID matches
-            if state_gateway_id != gateway_id:
-                raise OAuthError("State parameter gateway mismatch")
-        except Exception as e:
-            # Fallback for legacy state format (gateway_id_random)
-            logger.warning(f"Failed to decode state JSON, trying legacy format: {e}")
-            app_user_email = None
+        # Backward compatibility for in-flight legacy states that embedded user context.
+        if not app_user_email:
+            legacy_state_payload = self._extract_legacy_state_payload(state)
+            if legacy_state_payload:
+                legacy_gateway_id = legacy_state_payload.get("gateway_id")
+                if legacy_gateway_id and legacy_gateway_id != gateway_id:
+                    raise OAuthError("State parameter gateway mismatch")
+                app_user_email = legacy_state_payload.get("app_user_email")
 
         # Exchange code for tokens with PKCE code_verifier
         token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
@@ -626,7 +584,7 @@ class OAuthManager:
 
         Args:
             gateway_id: ID of the gateway
-            app_user_email: MCP Gateway user email
+            app_user_email: ContextForge user email
 
         Returns:
             Valid access token or None if not available
@@ -635,39 +593,124 @@ class OAuthManager:
             return await self.token_storage.get_user_token(gateway_id, app_user_email)
         return None
 
-    def _generate_state(self, gateway_id: str, app_user_email: str = None) -> str:
-        """Generate a unique state parameter with user context for CSRF protection.
+    def _generate_state(self, _gateway_id: str, _app_user_email: str = None) -> str:
+        """Generate an opaque state token for CSRF protection.
 
         Args:
-            gateway_id: ID of the gateway
-            app_user_email: MCP Gateway user email (optional but recommended)
+            _gateway_id: Gateway identifier (reserved for compatibility with
+                prior embedded-state call sites).
+            _app_user_email: ContextForge user email (reserved for
+                compatibility with prior embedded-state call sites).
 
         Returns:
-            Unique state string with embedded user context and HMAC signature
+            Opaque random state token
         """
-        # Include user email in state for secure user association
-        state_data = {"gateway_id": gateway_id, "app_user_email": app_user_email, "nonce": secrets.token_urlsafe(16), "timestamp": datetime.now(timezone.utc).isoformat()}
+        return secrets.token_urlsafe(48)
 
-        # Encode state as JSON (orjson produces compact output by default)
-        state_bytes = orjson.dumps(state_data)
+    @staticmethod
+    def _extract_legacy_state_payload(state: str) -> Optional[Dict[str, Any]]:
+        """Best-effort decode of legacy state payloads used before opaque states.
 
-        # Create HMAC signature
-        secret_key = self.settings.auth_encryption_secret.get_secret_value().encode() if self.settings.auth_encryption_secret else b"default-secret-key"
-        signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+        Legacy formats supported:
+        - base64url(payload || signature) where payload is JSON
+        - gateway_id_random suffix format
 
-        # Combine state and signature, then base64 encode
-        state_with_sig = state_bytes + signature
-        state_encoded = base64.urlsafe_b64encode(state_with_sig).decode()
+        Args:
+            state: Callback state token to decode.
 
-        return state_encoded
+        Returns:
+            Decoded legacy payload when format is recognized; otherwise ``None``.
+        """
+        try:
+            state_raw = base64.urlsafe_b64decode(state.encode())
+            if len(state_raw) <= 32:
+                return None
 
-    async def _store_authorization_state(self, gateway_id: str, state: str, code_verifier: str = None) -> None:
+            payload_bytes = state_raw[:-32]
+            payload = orjson.loads(payload_bytes)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            # Fall back to legacy gateway_id_random format
+            if "_" in state:
+                gateway_id = state.split("_", 1)[0]
+                if gateway_id:
+                    return {"gateway_id": gateway_id}
+        return None
+
+    async def resolve_gateway_id_from_state(self, state: str, allow_legacy_fallback: bool = True) -> Optional[str]:
+        """Resolve gateway ID for a callback state token without consuming it.
+
+        Args:
+            state: OAuth callback state parameter
+            allow_legacy_fallback: Whether to decode legacy callback state formats.
+
+        Returns:
+            Gateway ID when resolvable, otherwise ``None``.
+        """
+        settings = get_settings()
+
+        if settings.cache_type == "redis":
+            redis = await _get_redis_client()
+            if redis:
+                try:
+                    lookup_key = f"oauth:state_lookup:{state}"
+                    gateway_id = await redis.get(lookup_key)
+                    if gateway_id:
+                        if isinstance(gateway_id, bytes):
+                            gateway_id = gateway_id.decode("utf-8")
+                        return gateway_id
+                except Exception as e:
+                    logger.warning(f"Failed to resolve state gateway in Redis: {e}")
+
+        if settings.cache_type == "database":
+            try:
+                # First-Party
+                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+
+                db_gen = get_db()
+                db = next(db_gen)
+                try:
+                    oauth_state = db.query(OAuthState).filter(OAuthState.state == state).first()
+                    if oauth_state:
+                        return oauth_state.gateway_id
+                finally:
+                    db_gen.close()
+            except Exception as e:
+                logger.warning(f"Failed to resolve state gateway in database: {e}")
+
+        async with _state_lock:
+            now = datetime.now(timezone.utc)
+            expired_keys = [key for key, data in _oauth_states.items() if datetime.fromisoformat(data["expires_at"]) < now]
+            for key in expired_keys:
+                expired_state = _oauth_states[key].get("state")
+                del _oauth_states[key]
+                if expired_state:
+                    _oauth_state_lookup.pop(expired_state, None)
+            gateway_id = _oauth_state_lookup.get(state)
+            if gateway_id:
+                return gateway_id
+
+        if allow_legacy_fallback:
+            legacy_payload = self._extract_legacy_state_payload(state)
+            if legacy_payload:
+                return legacy_payload.get("gateway_id")
+        return None
+
+    async def _store_authorization_state(
+        self,
+        gateway_id: str,
+        state: str,
+        code_verifier: str = None,
+        app_user_email: str = None,
+    ) -> None:
         """Store authorization state for validation with TTL.
 
         Args:
             gateway_id: ID of the gateway
             state: State parameter to store
             code_verifier: Optional PKCE code verifier (RFC 7636)
+            app_user_email: Requesting user email for token association
         """
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
         settings = get_settings()
@@ -678,9 +721,18 @@ class OAuthManager:
             if redis:
                 try:
                     state_key = f"oauth:state:{gateway_id}:{state}"
-                    state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
+                    lookup_key = f"oauth:state_lookup:{state}"
+                    state_data = {
+                        "state": state,
+                        "gateway_id": gateway_id,
+                        "code_verifier": code_verifier,
+                        "app_user_email": app_user_email,
+                        "expires_at": expires_at.isoformat(),
+                        "used": False,
+                    }
                     # Store in Redis with TTL
                     await redis.setex(state_key, STATE_TTL_SECONDS, orjson.dumps(state_data))
+                    await redis.setex(lookup_key, STATE_TTL_SECONDS, gateway_id)
                     logger.debug(f"Stored OAuth state in Redis for gateway {gateway_id}")
                     return
                 except Exception as e:
@@ -699,7 +751,17 @@ class OAuthManager:
                     db.query(OAuthState).filter(OAuthState.expires_at < datetime.now(timezone.utc)).delete()
 
                     # Store new state with code_verifier
-                    oauth_state = OAuthState(gateway_id=gateway_id, state=state, code_verifier=code_verifier, expires_at=expires_at, used=False)
+                    oauth_state_kwargs = {
+                        "gateway_id": gateway_id,
+                        "state": state,
+                        "code_verifier": code_verifier,
+                        "expires_at": expires_at,
+                        "used": False,
+                    }
+                    if hasattr(OAuthState, "app_user_email"):
+                        oauth_state_kwargs["app_user_email"] = app_user_email
+
+                    oauth_state = OAuthState(**oauth_state_kwargs)
                     db.add(oauth_state)
                     db.commit()
                     logger.debug(f"Stored OAuth state in database for gateway {gateway_id}")
@@ -714,14 +776,25 @@ class OAuthManager:
             # Clean up expired states first
             now = datetime.now(timezone.utc)
             state_key = f"oauth:state:{gateway_id}:{state}"
-            state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
+            state_data = {
+                "state": state,
+                "gateway_id": gateway_id,
+                "code_verifier": code_verifier,
+                "app_user_email": app_user_email,
+                "expires_at": expires_at.isoformat(),
+                "used": False,
+            }
             expired_states = [key for key, data in _oauth_states.items() if datetime.fromisoformat(data["expires_at"]) < now]
             for key in expired_states:
+                expired_state_value = _oauth_states[key].get("state")
                 del _oauth_states[key]
+                if expired_state_value:
+                    _oauth_state_lookup.pop(expired_state_value, None)
                 logger.debug(f"Cleaned up expired state: {key[:20]}...")
 
             # Store the new state with expiration
             _oauth_states[state_key] = state_data
+            _oauth_state_lookup[state] = gateway_id
             logger.debug(f"Stored OAuth state in memory for gateway {gateway_id}")
 
     async def _validate_authorization_state(self, gateway_id: str, state: str) -> bool:
@@ -742,8 +815,10 @@ class OAuthManager:
             if redis:
                 try:
                     state_key = f"oauth:state:{gateway_id}:{state}"
+                    lookup_key = f"oauth:state_lookup:{state}"
                     # Get and delete state atomically (single-use)
                     state_json = await redis.getdel(state_key)
+                    await redis.delete(lookup_key)
                     if not state_json:
                         logger.warning(f"State not found in Redis for gateway {gateway_id}")
                         return False
@@ -838,6 +913,7 @@ class OAuthManager:
             if expires_at < datetime.now(timezone.utc):
                 logger.warning(f"State has expired for gateway {gateway_id}")
                 del _oauth_states[state_key]  # Clean up expired state
+                _oauth_state_lookup.pop(state, None)
                 return False
 
             # Check if state has already been used (prevent replay)
@@ -847,6 +923,7 @@ class OAuthManager:
 
             # Mark state as used and remove it (single-use)
             del _oauth_states[state_key]
+            _oauth_state_lookup.pop(state, None)
             logger.debug(f"Successfully validated OAuth state from memory for gateway {gateway_id}")
             return True
 
@@ -868,7 +945,9 @@ class OAuthManager:
             if redis:
                 try:
                     state_key = f"oauth:state:{gateway_id}:{state}"
+                    lookup_key = f"oauth:state_lookup:{state}"
                     state_json = await redis.getdel(state_key)  # Atomic get+delete
+                    await redis.delete(lookup_key)
                     if not state_json:
                         return None
 
@@ -919,7 +998,14 @@ class OAuthManager:
                         return None
 
                     # Build state data
-                    state_data = {"state": oauth_state.state, "gateway_id": oauth_state.gateway_id, "code_verifier": oauth_state.code_verifier, "expires_at": oauth_state.expires_at.isoformat()}
+                    state_data = {
+                        "state": oauth_state.state,
+                        "gateway_id": oauth_state.gateway_id,
+                        "code_verifier": oauth_state.code_verifier,
+                        "expires_at": oauth_state.expires_at.isoformat(),
+                    }
+                    if hasattr(oauth_state, "app_user_email"):
+                        state_data["app_user_email"] = getattr(oauth_state, "app_user_email", None)
 
                     # Mark as used and delete
                     db.delete(oauth_state)
@@ -945,10 +1031,12 @@ class OAuthManager:
 
             if expires_at < datetime.now(timezone.utc):
                 del _oauth_states[state_key]
+                _oauth_state_lookup.pop(state, None)
                 return None
 
             # Remove from memory (single-use)
             del _oauth_states[state_key]
+            _oauth_state_lookup.pop(state, None)
             return state_data
 
     def _create_authorization_url(self, credentials: Dict[str, Any], state: str) -> tuple[str, str]:
@@ -1083,25 +1171,11 @@ class OAuthManager:
         Raises:
             OAuthError: If token exchange fails
         """
-        client_id = credentials["client_id"]
-        client_secret = credentials.get("client_secret")  # Optional for public clients (PKCE-only)
-        token_url = credentials["token_url"]
-        redirect_uri = credentials["redirect_uri"]
-
-        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
-        if client_secret:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted_secret is None:
-                        logger.warning("Failed to decrypt client secret, using encrypted version")
-                    else:
-                        client_secret = decrypted_secret
-                        logger.debug("Successfully decrypted client secret")
-            except Exception as e:
-                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "authorization_code_exchange_with_pkce")
+        client_id = runtime_credentials["client_id"]
+        client_secret = runtime_credentials.get("client_secret")  # Optional for public clients (PKCE-only)
+        token_url = runtime_credentials["token_url"]
+        redirect_uri = runtime_credentials["redirect_uri"]
 
         # Prepare token exchange data
         token_data = {
@@ -1121,8 +1195,8 @@ class OAuthManager:
 
         # Add resource parameter to request JWT access token (RFC 8707)
         # The resource identifies the MCP server (resource server), not the OAuth server
-        resource = credentials.get("resource")
-        scopes = credentials.get("scopes", [])
+        resource = runtime_credentials.get("resource")
+        scopes = runtime_credentials.get("scopes", [])
         if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
                 # RFC 8707 allows multiple resource parameters - use list of tuples
@@ -1192,12 +1266,13 @@ class OAuthManager:
         if not refresh_token:
             raise OAuthError("No refresh token available")
 
-        token_url = credentials.get("token_url")
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "refresh_token")
+        token_url = runtime_credentials.get("token_url")
         if not token_url:
             raise OAuthError("No token URL configured for OAuth provider")
 
-        client_id = credentials.get("client_id")
-        client_secret = credentials.get("client_secret")
+        client_id = runtime_credentials.get("client_id")
+        client_secret = runtime_credentials.get("client_secret")
 
         if not client_id:
             raise OAuthError("No client_id configured for OAuth provider")
@@ -1215,8 +1290,8 @@ class OAuthManager:
 
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type
-        resource = credentials.get("resource")
-        scopes = credentials.get("scopes", [])
+        resource = runtime_credentials.get("resource")
+        scopes = runtime_credentials.get("scopes", [])
         if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
                 # RFC 8707 allows multiple resource parameters - use list of tuples
@@ -1305,3 +1380,56 @@ class OAuthError(Exception):
         ...     isinstance(e, OAuthError)
         True
     """
+
+
+class OAuthRequiredError(OAuthError):
+    """Raised when a server requires OAuth but the caller is unauthenticated.
+
+    Carries ``server_id`` so the middleware can identify which server
+    triggered the rejection when constructing the ``WWW-Authenticate``
+    header.
+
+    Examples:
+        >>> err = OAuthRequiredError("auth required", server_id="s1")
+        >>> err.server_id
+        's1'
+        >>> isinstance(err, OAuthError)
+        True
+    """
+
+    def __init__(self, message: str, *, server_id: str = "") -> None:
+        """Initialize with message and optional server_id.
+
+        Args:
+            message: Human-readable error description.
+            server_id: Virtual-server identifier that triggered the rejection.
+        """
+        super().__init__(message)
+        self.server_id = server_id
+
+
+class OAuthEnforcementUnavailableError(OAuthError):
+    """Raised when OAuth enforcement cannot be performed due to infrastructure failure.
+
+    Used when the database or other backing services needed to check a
+    server's ``oauth_enabled`` flag are unavailable.  The middleware
+    translates this into an HTTP 503 to avoid silently allowing
+    unauthenticated access (fail-closed).
+
+    Examples:
+        >>> err = OAuthEnforcementUnavailableError("DB down", server_id="s1")
+        >>> err.server_id
+        's1'
+        >>> isinstance(err, OAuthError)
+        True
+    """
+
+    def __init__(self, message: str, *, server_id: str = "") -> None:
+        """Initialize with message and optional server_id.
+
+        Args:
+            message: Human-readable error description.
+            server_id: Virtual-server identifier that triggered the rejection.
+        """
+        super().__init__(message)
+        self.server_id = server_id

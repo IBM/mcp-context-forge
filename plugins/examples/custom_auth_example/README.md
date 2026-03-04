@@ -1,6 +1,6 @@
 # Custom Authentication Example Plugin
 
-This plugin demonstrates the two-layer HTTP authentication hook architecture in MCP Gateway, showing how to implement custom authentication mechanisms.
+This plugin demonstrates the two-layer HTTP authentication hook architecture in ContextForge, showing how to implement custom authentication mechanisms.
 
 ## Overview
 
@@ -306,7 +306,7 @@ async def test_api_key_authentication(plugin):
 
 ## Integration with Authorization Flow
 
-This plugin integrates with MCP Gateway's authentication flow as documented in `docs/docs/architecture/authorization-flow.md`:
+This plugin integrates with ContextForge's authentication flow as documented in `docs/docs/architecture/authorization-flow.md`:
 
 ```
 Client Request

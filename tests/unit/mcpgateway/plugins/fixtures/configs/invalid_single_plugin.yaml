@@ -4,7 +4,7 @@ plugins:
     kind: "some.fake.nonexistentPlugin"
     description: "A plugin for finding and replacing words."
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge Team"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
     mode: "enforce"  # enforce | permissive | disabled

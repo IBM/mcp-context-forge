@@ -13,7 +13,7 @@ defined in the models.py module.
 from datetime import datetime, timedelta, timezone
 import json
 import os
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 # Third-Party
 from pydantic import ValidationError
@@ -456,6 +456,18 @@ class TestMCPTypes:
         assert minimal.tools is None
         assert minimal.logging is None
         assert minimal.experimental is None
+
+    def test_server_capabilities_non_boolean_values(self):
+        """Test ServerCapabilities accepts non-boolean values (MCP SDK extra='allow')."""
+        caps = ServerCapabilities(
+            prompts={"listChanged": True, "customField": "string_value"},
+            resources={"subscribe": True, "listChanged": True, "maxSize": 1024},
+            tools={"listChanged": True, "parallelism": 4, "metadata": {"key": "val"}},
+        )
+        assert caps.prompts == {"listChanged": True, "customField": "string_value"}
+        assert caps.resources["maxSize"] == 1024
+        assert caps.tools["parallelism"] == 4
+        assert caps.tools["metadata"] == {"key": "val"}
 
     def test_initialize_request(self):
         """Test InitializeRequest model."""
@@ -1032,6 +1044,48 @@ class TestSchemaValidators:
         assert empty_headers_tool.auth.auth_type == "authheaders"
         assert empty_headers_tool.auth.auth_value is None
 
+    def test_tool_create_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolCreate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "basic",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolCreate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "basic"
+        assert extra["auth_assembled"] is True
+
+    def test_tool_update_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolUpdate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "bearer",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolUpdate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "bearer"
+        assert extra["auth_assembled"] is True
+
     def test_tool_create_sets_default_timeout(self):
         """REST passthrough tools should default timeout_ms when missing."""
         tool = ToolCreate(name="rest-tool", integration_type="REST", request_type="GET", url="http://example.com")
@@ -1169,3 +1223,34 @@ class TestSchemaValidators:
             gateway_mode="direct_proxy",
         )
         assert gateway.gateway_mode == "direct_proxy"
+
+    def test_resource_subscription_rejects_empty_subscriber_id(self):
+        """ResourceSubscription should reject empty subscriber IDs."""
+        from mcpgateway.schemas import ResourceSubscription
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResourceSubscription(uri="resource://one", subscriber_id="")
+
+        assert "Subscriber ID cannot be empty" in str(exc_info.value)
+
+    def test_resource_subscription_rejects_unsafe_email_like_subscriber_id(self):
+        """Email-like IDs should still honor unsafe-character validation pattern."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.schemas import ResourceSubscription
+
+        with patch.object(SecurityValidator, "VALIDATION_UNSAFE_URI_PATTERN", "@"):
+            with pytest.raises(ValidationError) as exc_info:
+                ResourceSubscription(uri="resource://one", subscriber_id="user@example.com")
+
+        assert "Subscriber ID cannot contain HTML special characters" in str(exc_info.value)
+
+    def test_resource_subscription_rejects_too_long_email_like_subscriber_id(self):
+        """Email-like IDs should respect max-length limits."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.schemas import ResourceSubscription
+
+        long_subscriber = "a" * (SecurityValidator.MAX_NAME_LENGTH + 1)
+        with pytest.raises(ValidationError) as exc_info:
+            ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
+
+        assert "Subscriber ID exceeds maximum length" in str(exc_info.value)

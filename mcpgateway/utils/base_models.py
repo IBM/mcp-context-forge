@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Base model utilities for MCP Gateway.
+"""Base model utilities for ContextForge.
 
 This module provides shared base classes and utilities for Pydantic models
 to avoid circular dependencies between models.py and schemas.py.

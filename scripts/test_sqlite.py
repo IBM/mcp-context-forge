@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Comprehensive SQLite testing and diagnostics for MCP Gateway.
+Comprehensive SQLite testing and diagnostics for ContextForge.
 
 This script combines:
 1. System diagnostics (like diagnose_sqlite.sh)
 2. Direct SQLite access tests
-3. SQLAlchemy engine tests with MCP Gateway settings
+3. SQLAlchemy engine tests with ContextForge settings
 
 Usage:
     python3 scripts/test_sqlite.py [options]
@@ -272,16 +272,16 @@ class SQLiteDiagnostics:
         """Check for processes that might lock the database."""
         print(f"{Colors.BLUE}=== Process Checks ==={Colors.NC}")
 
-        # Check for MCP Gateway processes
+        # Check for ContextForge processes
         success, output, _ = run_command("pgrep -f 'mcpgateway|gunicorn'")
         if success and output:
-            print_warning("MCP Gateway processes running:")
+            print_warning("ContextForge processes running:")
             success, ps_output, _ = run_command("ps aux | grep -E '(mcpgateway|gunicorn)' | grep -v grep")
             if success:
                 print(ps_output)
             self.recommendations.append("Consider stopping processes: pkill -f mcpgateway")
         else:
-            print_status("No MCP Gateway processes running")
+            print_status("No ContextForge processes running")
 
         # Check for database locks (if lsof available)
         if os.path.exists(self.db_path):
@@ -464,7 +464,7 @@ class SQLiteDirectTest:
 
 
 class SQLAlchemyTest:
-    """SQLAlchemy engine tests using MCP Gateway settings."""
+    """SQLAlchemy engine tests using ContextForge settings."""
 
     def __init__(self, database_url=None, verbose=False):
         self.database_url = database_url or os.getenv("DATABASE_URL", "sqlite:///./mcp.db")
@@ -478,7 +478,7 @@ class SQLAlchemyTest:
         try:
             from sqlalchemy import create_engine, text, inspect
 
-            # Create engine with MCP Gateway settings
+            # Create engine with ContextForge settings
             engine = create_engine(
                 self.database_url,
                 pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
@@ -591,7 +591,7 @@ class SQLAlchemyTest:
 
 def main():
     """Main function with argument parsing."""
-    parser = argparse.ArgumentParser(description="Comprehensive SQLite testing and diagnostics for MCP Gateway", formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description="Comprehensive SQLite testing and diagnostics for ContextForge", formatter_class=argparse.RawDescriptionHelpFormatter)
 
     parser.add_argument("--db-path", default="mcp.db", help="Database file path (default: mcp.db)")
     parser.add_argument("--database-url", help="Database URL (overrides --db-path)")
@@ -602,7 +602,7 @@ def main():
 
     args = parser.parse_args()
 
-    print(f"{Colors.BLUE}MCP Gateway SQLite Test Suite{Colors.NC}")
+    print(f"{Colors.BLUE}ContextForge SQLite Test Suite{Colors.NC}")
     print("=" * 50)
 
     all_passed = True
@@ -633,14 +633,14 @@ def main():
     print("=" * 50)
     if all_passed:
         print_status("All tests completed successfully")
-        print("\n✓ SQLite database is working correctly with MCP Gateway")
+        print("\n✓ SQLite database is working correctly with ContextForge")
     else:
         print_status("Some tests failed or issues detected", False)
         print("\nTroubleshooting recommendations:")
         print("1. Review the diagnostic output above")
         print("2. Check the SQLite troubleshooting section in MIGRATION-0.7.0.md")
         print("3. Ensure proper file permissions and disk space")
-        print("4. Kill any hanging MCP Gateway processes")
+        print("4. Kill any hanging ContextForge processes")
         print("5. Remove WAL files if database was corrupted")
 
         if platform.system() == "Darwin":

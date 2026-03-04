@@ -18,7 +18,7 @@ Examples:
 import logging
 import time
 import traceback
-from typing import Callable
+from typing import Callable, Optional
 
 # Third-Party
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -30,6 +30,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
+from mcpgateway.plugins.framework.observability import current_trace_id as plugins_trace_id
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
 
 logger = logging.getLogger(__name__)
@@ -45,16 +46,17 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     MCPGATEWAY_OBSERVABILITY_ENABLED environment variable.
     """
 
-    def __init__(self, app, enabled: bool = None):
+    def __init__(self, app, enabled: bool = None, service: Optional[ObservabilityService] = None):
         """Initialize the observability middleware.
 
         Args:
             app: ASGI application
             enabled: Whether observability is enabled (defaults to settings)
+            service: Optional ObservabilityService instance
         """
         super().__init__(app)
         self.enabled = enabled if enabled is not None else getattr(settings, "observability_enabled", False)
-        self.service = ObservabilityService()
+        self.service = service or ObservabilityService()
         logger.info(f"Observability middleware initialized (enabled={self.enabled})")
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -134,6 +136,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
             # Set trace_id in context variable for access throughout async call stack
             current_trace_id.set(trace_id)
+            # Bridge: also set the framework's ContextVar so the plugin executor sees it
+            plugins_trace_id.set(trace_id)
 
             # Attach trace_id to database session for SQL query instrumentation
             attach_trace_to_session(db, trace_id)

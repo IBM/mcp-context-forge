@@ -9,6 +9,7 @@ Handles SSO login flows, provider configuration, and callback handling.
 """
 
 # Standard
+import secrets
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -215,6 +216,7 @@ def _validate_redirect_uri(redirect_uri: str, request: Request | None = None) ->
 async def initiate_sso_login(
     provider_id: str,
     request: Request,
+    response: Response,
     redirect_uri: str = Query(..., description="Callback URI after authentication"),
     scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes"),
     db: Session = Depends(get_db),
@@ -228,6 +230,7 @@ async def initiate_sso_login(
     Args:
         provider_id: SSO provider identifier (e.g., 'github', 'google')
         request: FastAPI request object
+        response: FastAPI response object used to set session-binding cookie
         redirect_uri: Callback URI after successful authentication
         scopes: Optional custom OAuth scopes (space-separated)
         db: Database session
@@ -257,8 +260,13 @@ async def initiate_sso_login(
 
     sso_service = SSOService(db)
     scope_list = scopes.split() if scopes else None
+    browser_session_binding = secrets.token_urlsafe(32)
 
-    auth_url = sso_service.get_authorization_url(provider_id, redirect_uri, scope_list)
+    try:
+        auth_url = sso_service.get_authorization_url(provider_id, redirect_uri, scope_list, session_binding=browser_session_binding)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     if not auth_url:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found or disabled")
 
@@ -269,6 +277,16 @@ async def initiate_sso_login(
     parsed = urllib.parse.urlparse(auth_url)
     params = urllib.parse.parse_qs(parsed.query)
     state = params.get("state", [""])[0]
+
+    use_secure = (settings.environment == "production") or settings.secure_cookies
+    response.set_cookie(
+        key="sso_session_id",
+        value=browser_session_binding,
+        httponly=True,
+        secure=use_secure,
+        samesite=settings.cookie_samesite,
+        path=settings.app_root_path or "/",
+    )
 
     return SSOLoginResponse(authorization_url=auth_url, state=state)
 
@@ -315,7 +333,14 @@ async def handle_sso_callback(
     user_info: Optional[Dict[str, object]] = None
     token_data: Dict[str, object] = {}
 
-    callback_result = await sso_service.handle_oauth_callback_with_tokens(provider_id, code, state)
+    browser_session_binding = request.cookies.get("sso_session_id") if request else None
+    if not browser_session_binding:
+        # Third-Party
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+
+    callback_result = await sso_service.handle_oauth_callback_with_tokens(provider_id, code, state, session_binding=browser_session_binding)
     if callback_result:
         user_info, token_data = callback_result
 
@@ -359,7 +384,7 @@ async def handle_sso_callback(
     id_token = token_data.get("id_token")
     if provider_id == "keycloak" and isinstance(id_token, str) and id_token:
         if len(id_token) > 3800:  # Leave room for cookie metadata within browser 4KB limit
-            logger.warning("Keycloak id_token too large for cookie storage (%d bytes). RP-initiated logout will not include id_token_hint.", len(id_token))
+            logger.warning("Keycloak id_token too large for cookie storage. RP-initiated logout will not include id_token_hint.")
         else:
             use_secure = (settings.environment == "production") or settings.secure_cookies
             redirect_response.set_cookie(
@@ -403,7 +428,10 @@ async def create_sso_provider(
     if existing:
         raise HTTPException(status_code=409, detail=f"SSO provider '{provider_data.id}' already exists")
 
-    provider = await sso_service.create_provider(provider_data.model_dump())
+    try:
+        provider = await sso_service.create_provider(provider_data.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     result = {
         "id": provider.id,
@@ -541,7 +569,11 @@ async def update_sso_provider(
     if not update_data:
         raise HTTPException(status_code=400, detail="No update data provided")
 
-    provider = await sso_service.update_provider(provider_id, update_data)
+    try:
+        provider = await sso_service.update_provider(provider_id, update_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 

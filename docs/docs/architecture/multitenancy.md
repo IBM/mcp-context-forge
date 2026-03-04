@@ -1,6 +1,6 @@
 # Multi-Tenancy Architecture
 
-The MCP Gateway implements a comprehensive multi-tenant architecture that provides secure isolation, flexible resource sharing, and granular access control. This document describes the complete multi-tenancy design, user lifecycle, team management, and resource scoping mechanisms.
+ContextForge implements a comprehensive multi-tenant architecture that provides secure isolation, flexible resource sharing, and granular access control. This document describes the complete multi-tenancy design, user lifecycle, team management, and resource scoping mechanisms.
 
 ## Overview
 
@@ -286,8 +286,9 @@ Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are
 
 - Private:
 
-  - Who sees it: Only the resource owner (owner_email).
+  - Who sees it: Only the resource owner (owner_email), and only when their token is not a public-only token (token_teams must be non-empty).
   - Team members cannot see or use it unless they are the owner.
+  - Public-only tokens (token_teams=[]) cannot access private resources even as the owner.
   - Mutations: Owner and Platform Admin can update/delete; team owners may be allowed by policy (see Enhancements).
 
 - Team:
@@ -302,7 +303,9 @@ Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are
 
 Enforcement summary:
 
-- Listing queries include resources where (a) owner_email == user.email, (b) team_id ∈ user_teams with visibility ∈ {team, public}, and (c) visibility == public.
+- Listing queries include resources where (a) visibility == public, (b) team_id ∈ token_teams with visibility ∈ {team, public}, or (c) owner_email == user.email with visibility == private.
+- Owner-based access applies only to private resources. Owners cannot use ownership to bypass team scoping for team-visibility resources outside their token scope.
+- Public-only tokens (token_teams=[]) see only public resources — owner and team access are both suppressed.
 - Read follows the same rules as list; write operations require ownership or delegated/team administrative rights.
 
 ---
@@ -352,7 +355,7 @@ The `normalize_token_teams()` function returns:
 
 ## Two-Layer Security Model
 
-MCP Gateway implements two distinct security layers that work together:
+ContextForge implements two distinct security layers that work together:
 
 ### Layer 1: Token Scoping (Data Filtering)
 
@@ -407,7 +410,7 @@ Request: POST /tools/{id}/execute
 | Admin UI | ✅ | ✅ | Permission-based rendering |
 | Service Layer | ✅ | N/A | Database query filtering |
 | WebSocket | ✅ | ✅ | Forwards auth to /rpc |
-| MCP Transport | ✅ | N/A | Streamable HTTP filtering |
+| MCP Transport | ✅ | N/A | Streamable HTTP filtering + per-server OAuth enforcement |
 
 ---
 
@@ -415,7 +418,7 @@ Request: POST /tools/{id}/execute
 
 ### Resource Architecture
 
-All resources in the MCP Gateway are scoped to teams with three visibility levels:
+All resources in ContextForge are scoped to teams with three visibility levels:
 
 ```mermaid
 flowchart TD
@@ -541,7 +544,7 @@ flowchart TD
 
 ## Role-Based Access Control (RBAC)
 
-The MCP Gateway implements a comprehensive RBAC system with four built-in roles that are automatically created during system bootstrap. These roles provide granular permission management across different scopes.
+ContextForge implements a comprehensive RBAC system with four built-in roles that are automatically created during system bootstrap. These roles provide granular permission management across different scopes.
 
 ### System Roles
 
@@ -722,7 +725,7 @@ sequenceDiagram
 
 ## Password Management
 
-MCP Gateway now supports:
+ContextForge now supports:
 
 - Self-service forgot-password/reset flow:
   - `POST /auth/email/forgot-password`
@@ -1209,11 +1212,12 @@ These behaviors are enforced consistently across all access paths:
 
 1. `normalize_token_teams()` is the ONLY function that interprets JWT team claims
 2. Missing `teams` key always returns `[]` (public-only, secure default)
-3. Admin bypass requires BOTH `teams: null` AND `is_admin: true`
+3. Admin bypass requires BOTH `teams: null` AND `is_admin: true`, and both `token_teams=None` AND `user_email=None` in the service layer
 4. Empty teams list (`[]`) results in public-only access, even for admins
 5. All list endpoints pass `token_teams` to the service layer
-6. Service layer applies visibility filtering based on `token_teams`
-7. Public-only tokens can ONLY access `visibility='public'` resources
+6. Service layer applies visibility filtering based on `token_teams` via `BaseService._apply_access_control()`
+7. Public-only tokens can ONLY access `visibility='public'` resources — owner and team access are both suppressed
+8. Owner-based access (`owner_email`) grants visibility only for `visibility='private'` resources — it does not bypass team scoping for team-visibility resources
 
 ### Related Documentation
 

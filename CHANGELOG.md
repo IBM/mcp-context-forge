@@ -2,7 +2,296 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [1.0.0-RC2] - 2026-02-28 - Hardening: Strict Defaults, Transport Gating & OIDC Verification
+
+### Overview
+
+This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, OAuth secret handling, authentication timing, and authorization (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-02, O-03, O-04, O-05, O-06, O-10, O-11, O-14, O-16, O-17, U-05, C-03, C-09, C-10, C-15, EXTRA-01, C-04, C-07, C-11, C-14, C-28, C-29):
+
+- **🔐 Hardening Items** - SSRF strict defaults with endpoint-level validation, OAuth secret at-rest protection for gateway/server/A2A configs, server OAuth read masking parity, failed-login timing hardening, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP/RPC token-scope enforcement, MCP transport revocation checks, session ownership enforcement, resource visibility scoping, roots authorization parity
+- **🧪 Testing** - Full regression coverage for hardened paths, token scope MCP/RPC coverage, and additional allow/deny regression tests for session/resource controls
+
+> **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. Cancellation, OAuth DCR, token scoping, session ownership, and resource visibility paths enforce proper authorization gates.
+
+### ⚠️ Breaking Changes
+
+#### **🛡️ SSRF Protection Defaults Inverted to Strict** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), S-01)
+
+**Action Required**: Three SSRF defaults have changed from permissive to strict.
+
+| Setting | Old Default | New Default |
+|---------|------------|------------|
+| `SSRF_ALLOW_LOCALHOST` | `true` | **`false`** |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | `true` | **`false`** |
+| `SSRF_DNS_FAIL_CLOSED` | `false` | **`true`** |
+
+* Localhost/loopback addresses (127.0.0.0/8, ::1) are now **blocked by default**
+* RFC 1918 private IPs (10.x, 172.16.x, 192.168.x) are now **blocked by default**
+* Unresolvable hostnames are now **rejected by default** (fail-closed)
+* New setting `SSRF_ALLOWED_NETWORKS` provides explicit CIDR allowlist for private destinations without globally relaxing `SSRF_ALLOW_PRIVATE_NETWORKS`
+
+> **Migration**: Deployments that register gateways or tools pointing to internal services must update configuration:
+>
+> * **Explicit allowlist (recommended)**: Set `SSRF_ALLOWED_NETWORKS=["10.20.0.0/16","192.168.50.0/24"]` to allow specific internal ranges
+> * **Restore previous behavior**: Set `SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`
+>
+> The `.env.example` and `docker-compose.yml` files include local-friendly overrides for development environments.
+
+#### **🔌 WebSocket Relay & Reverse Proxy Disabled by Default** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), EXTRA-01)
+
+**Action Required**: Two transport endpoints are now gated behind opt-in feature flags.
+
+| Setting | Default | Endpoint |
+|---------|---------|----------|
+| `MCPGATEWAY_WS_RELAY_ENABLED` | `false` | `/ws` WebSocket JSON-RPC relay |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | `false` | `/reverse-proxy/*` endpoints |
+
+* Clients connecting to `/ws` receive close code `1008` ("WebSocket relay is disabled") when the flag is off
+* The reverse-proxy router is not included in the application when the flag is off
+
+> **Migration**: If your deployment uses the `/ws` WebSocket relay or `/reverse-proxy/*` endpoints, set the corresponding feature flag to `true` in your environment. These endpoints now also require proper RBAC permissions (see below).
+
+#### **🔐 WebSocket & Reverse Proxy Authentication Hardened** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), EXTRA-01)
+
+* `/ws` WebSocket relay now requires authentication and at least one MCP interaction permission (`tools.read`, `tools.execute`, `resources.read`, `prompts.read`, `servers.use`, or `a2a.read`)
+* `/reverse-proxy/ws` now requires server management permissions (`servers.create`, `servers.update`, or `servers.manage`)
+* Bearer token in query parameters is no longer accepted on WebSocket auth paths; use the `Authorization` header
+* Unauthenticated or unauthorized connections are closed with code `1008`
+
+> **Migration**: Ensure WebSocket clients send a valid bearer token via the `Authorization` header and that the associated user has appropriate RBAC permissions.
+
+#### **🔑 OIDC ID Token Verification Enforced** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), O-01)
+
+* SSO callback now cryptographically verifies `id_token` signatures using the provider's JWKS endpoint
+* Validates expiration, audience, issuer, and nonce claims
+* Supports RS256, ES256, EdDSA, and other standard algorithms
+* Provider JWKS metadata is discovered automatically from `.well-known/openid-configuration` and cached for 5 minutes
+* New optional setting `SSO_GENERIC_JWKS_URI` allows explicit JWKS endpoint configuration
+
+> **Migration**: Ensure your OIDC provider issues valid `id_token` values with correct audience and issuer claims. Providers that do not return an `id_token` in the token response will cause SSO login to fail. Set `SSO_GENERIC_JWKS_URI` if automatic discovery does not work for your provider.
+
+#### **🔒 OAuth DCR Endpoints Require Admin** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), O-05)
+
+* `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` now require admin permissions
+* Non-admin users receive HTTP 403
+
+> **Migration**: Ensure only admin users manage OAuth Dynamic Client Registration clients.
+
+#### **🛑 Token Scoping Default Deny** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), C-15)
+
+* API paths not explicitly mapped in the token scoping permission matrix now **default to deny** (previously allowed)
+* New permission patterns added for `/tokens` CRUD endpoints (`TOKENS_READ`, `TOKENS_CREATE`, `TOKENS_UPDATE`, `TOKENS_REVOKE`)
+* Bearer scheme parsing is now case-insensitive (`bearer` and `Bearer` both accepted)
+
+> **Migration**: If you have custom API extensions or routes, add corresponding permission patterns to the token scoping middleware. Standard ContextForge endpoints are already mapped.
+
+#### **🚫 Cancellation Authorization Required** ([#3101](https://github.com/IBM/mcp-context-forge/pull/3101), C-10)
+
+* `notifications/cancelled` and JSON-RPC `notifications/cancelled` now check that the requester is the run owner, a team member of the owner, or an admin
+* Non-admin users cannot cancel runs that were not found on the current worker (session-affinity protection)
+* The cancellation service now tracks `owner_email` and `owner_team_ids` for authorization
+
+> **Migration**: Cancellation requests from users who are not the run owner, a shared-team member, or an admin will receive HTTP 403. No configuration change needed; authorization is automatic based on the requesting user's token.
+
+#### **🔒 Session, Resource, and Roots Authorization Tightened** (C-04, C-07, C-11, C-28, C-29)
+
+* `POST /message` and `POST /servers/{server_id}/message` now require session owner or admin authorization
+* JSON-RPC `initialize` now rejects capability writes to existing sessions owned by a different user
+* `POST /resources/subscribe` SSE delivery is now filtered to events visible within caller scope
+* JSON-RPC `resources/subscribe` now enforces resource visibility before creating subscriptions
+* `GET /roots`, JSON-RPC `list_roots`, and JSON-RPC `roots/list` now require `admin.system_config`
+
+> **Migration**: Clients must use caller-owned sessions, and automation relying on global roots/resource visibility must run under identities with the required scope and permissions.
+
+#### **🔐 RBAC and Ownership Hardening for RPC, Roots, Gateway Sync, Server Usage, and Import** (C-05, C-18, C-19, C-20, C-35, C-39)
+
+* JSON-RPC tool execution now requires `tools.execute` permission for both `tools/call` and backward-compatible `method=<tool_name>` requests
+* All `/roots*` management endpoints now require `admin.system_config`
+* `POST /oauth/fetch-tools/{gateway_id}` now requires `gateways.update` and enforces scoped gateway ownership checks with normalized token-team semantics (including empty-team admin guard)
+* `POST /gateways/{gateway_id}/tools/refresh` now validates gateway existence and scoped access before refresh
+* `GET /servers/{server_id}/sse` now validates server existence before stream setup and returns `404` when the server is missing
+* Scoped ownership checks now fail closed for missing IDs (`server`, `tool`, `resource`, `prompt`, `gateway`)
+* Import processing now strips untrusted `team_id`, `owner_email`, `visibility`, and `team` payload fields for scoped entities before persistence
+
+> **Migration**: Automation that relied on permissive behavior for RPC tool execution, root endpoints, OAuth fetch-tools, invalid server SSE IDs, or import ownership override fields must be updated to satisfy the new RBAC/scope requirements.
+
+#### **📦 Helm Chart: MinIO Default Disabled + Legacy BETA-2 Upgrade Workaround**
+
+* `charts/mcp-stack` now defaults `minio.enabled=false`
+* MinIO in this chart is used for PostgreSQL major-upgrade backup/restore flow and is not on the regular gateway request path
+* For PostgreSQL major upgrade workflow, enable both `minio.enabled=true` and `postgres.upgrade.enabled=true`
+* Chart template rendering now fails fast if PostgreSQL upgrade mode is enabled while MinIO is disabled
+* Releases originally installed from chart/app `1.0.0-BETA-2` may fail direct upgrade on MinIO Deployment immutable selector (`spec.selector ... field is immutable`)
+
+> **Migration**:
+> 1. If you need to keep MinIO on an existing release, pin `minio.enabled=true` in your values before upgrade (otherwise MinIO resources can be pruned)
+> 2. For PostgreSQL major upgrade workflow, explicitly enable MinIO in your values
+> 3. For normal deployments not using that workflow, leave MinIO disabled
+> 4. For legacy BETA-2 upgrades, perform one-time MinIO Deployment recreation and retry:
+>    `kubectl delete deployment -n <namespace> <release>-minio`
+>    `helm upgrade <release> charts/mcp-stack -n <namespace> --wait --timeout 15m`
+
+#### **🗄️ Helm Chart: PostgreSQL Single-Writer Upgrade Safety Defaults**
+
+* Internal PostgreSQL Deployment now always uses `strategy.type=Recreate` to avoid overlapping old/new DB pods mounting the same PVC during upgrades
+* Internal PostgreSQL now defaults `terminationGracePeriodSeconds=120` and enables a `preStop` clean shutdown hook (`pg_ctl ... stop`)
+* Internal PostgreSQL persistence now defaults `postgres.persistence.useReadWriteOncePod=true` (strict single-pod mount semantics where supported)
+
+> **Migration**:
+> 1. Before Postgres image/tag upgrades, take a restorable backup (snapshot or `pg_dump`)
+> 2. If your storage class does not support `ReadWriteOncePod`, set:
+>    `postgres.persistence.useReadWriteOncePod=false`
+>    `postgres.persistence.accessModes=[ReadWriteOnce]`
+> 3. Long-term roadmap remains StatefulSet for PostgreSQL; current immediate hardening keeps Deployment with enforced `Recreate`
+
+### Added
+
+#### **🛡️ SSRF CIDR Allowlist** (S-01)
+* New `SSRF_ALLOWED_NETWORKS` setting accepts a JSON array of CIDR ranges (e.g., `["10.20.0.0/16"]`) to explicitly allow specific private network destinations when `SSRF_ALLOW_PRIVATE_NETWORKS=false`
+
+#### **🔐 OIDC Metadata Discovery & JWKS Caching** (O-01)
+* Automatic OIDC provider metadata discovery from `.well-known/openid-configuration`
+* JWKS client caching with 5-minute TTL for provider public keys
+* New optional `SSO_GENERIC_JWKS_URI` setting for explicit JWKS endpoint configuration
+
+#### **🔌 Transport Feature Flags**
+* `MCPGATEWAY_WS_RELAY_ENABLED` controls `/ws` WebSocket JSON-RPC relay endpoint
+* `MCPGATEWAY_REVERSE_PROXY_ENABLED` controls `/reverse-proxy/*` transport endpoints
+
+#### **🔑 MCP Transport Token Revocation** (U-05)
+* Streamable HTTP transport now checks JTI-based token revocation and user active status
+* Fail-open behavior when revocation/user store is unavailable to preserve availability
+* Disabled users are rejected; unknown users rejected when `REQUIRE_USER_IN_DB=true`
+
+#### **👤 User Deletion Referential Integrity**
+* User deletion now reassigns audit trail FK references (invitations, roles, revocations) to a replacement admin before deleting the user record
+* Nullable references (team memberships, join requests) are nullified instead of cascading
+
+### Fixed
+
+#### **🔐 Security** (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-05, O-10, O-17, U-05, C-03, C-04, C-07, C-09, C-10, C-11, C-14, C-15, C-28, C-29, EXTRA-01)
+* **SSRF defaults inverted to strict** - localhost, private networks blocked; DNS fail-closed by default (S-01)
+* **OIDC id_token now verified** - cryptographic signature validation in SSO callback (O-01)
+* **OAuth DCR admin gate** - non-admin users denied access to client management endpoints (O-05)
+* **MCP transport revocation checks** - JTI revocation and user status validated in streamable HTTP auth (U-05)
+* **Bearer scheme case-insensitive** - `bearer` and `Bearer` both accepted in token scoping (C-03)
+* **Token scoping default deny** - unmapped paths now denied instead of allowed (C-15)
+* **WebSocket relay authentication** - `/ws` requires auth and MCP interaction permissions (EXTRA-01)
+* **Reverse proxy WebSocket auth** - `/reverse-proxy/ws` requires server management permissions (EXTRA-01)
+* **WebSocket query-token auth removed** - WebSocket auth now accepts bearer tokens only from `Authorization` headers (C-14)
+* **Cancellation authorization** - only run owner, shared-team members, or admins can cancel (C-10)
+* **Session ingress ownership enforcement** - message endpoints now require session owner or admin authorization (C-04)
+* **Initialize ownership enforcement** - JSON-RPC `initialize` rejects cross-user session capability updates (C-11)
+* **Roots admin authorization parity** - `/roots`, `list_roots`, and `roots/list` all enforce `admin.system_config` (C-07)
+* **Resource SSE scope enforcement** - resource event streams are filtered by visibility/team/owner context (C-28)
+* **Resource subscribe visibility enforcement** - JSON-RPC `resources/subscribe` checks visibility before persistence (C-29)
+* **Resource subscriber ID compatibility** - safe email-style subscriber IDs are now accepted (C-29)
+* **RPC tool execute authorization** - JSON-RPC `tools/call` and backward-compatible direct tool method invocation now enforce `tools.execute` before invocation (C-05)
+* **Get-by-ID defense in depth** - server/tool/gateway/resource handlers plus `GET /resources/{resource_id}/info` now apply explicit scoped ownership checks (C-18)
+* **Root endpoint RBAC parity** - all `/roots*` management routes now enforce `admin.system_config` (C-19)
+* **Gateway sync authorization parity** - OAuth fetch-tools and manual refresh now enforce RBAC plus scoped ownership checks with normalized token-team fallback behavior (C-20)
+* **Server SSE existence/scope hardening** - `/servers/{id}/sse` now validates server existence and scope before stream setup (C-35)
+* **Import ownership sanitization** - untrusted `team_id`/`owner_email`/`visibility`/`team` are stripped from scoped import entities (C-39)
+* **OAuth auth-code identity binding** - resource invocation now uses caller identity for auth-code token lookup; service-account token fallback removed (O-02)
+* **SSO account-linking hardening** - existing users are no longer auto-linked across providers; provider mismatch is denied without explicit linking flow (O-03)
+* **GitHub SSO email-claim compatibility** - GitHub logins no longer fail when `/user` omits `email_verified`; explicit false verification claims are still denied (O-03 follow-up)
+* **SSO approval-state hardening** - expired pending approvals no longer fall through to user creation; approval statuses now fail closed (O-04)
+* **SSO scope policy enforcement** - requested scopes are normalized and constrained to provider policy; invalid scopes rejected with HTTP 400 (O-06)
+* **OAuth grant fallback removal** - `authorization_code` no longer falls back to `client_credentials` in non-interactive token retrieval (O-11)
+* **SSO callback session binding** - state is bound to browser session marker and callback requires matching session binding (O-14)
+* **OAuth authorize/status ownership checks** - gateway visibility/team/owner checks now enforced consistently on authorize/status endpoints (O-16)
+* **OAuth fetch-tools access hardening** - `/oauth/fetch-tools/{gateway_id}` now reuses centralized gateway access enforcement and fails closed for non-admin null-scope contexts, with targeted regression coverage (O-15)
+* **OAuth config secrets now protected at rest across service CRUD** - sensitive `oauth_config` fields are encrypted on gateway/server/A2A create+update paths, with backward-compatible handling for already-encrypted values (A-02, O-10, O-17)
+* **Server OAuth read masking parity** - server read/list schema responses now mask sensitive OAuth keys the same way as gateway/A2A responses (A-05)
+* **Failed-login timing hardening** - email auth now applies dummy Argon2 verification on early failures plus a configurable minimum failed-login response floor (A-06)
+* **Admin gateway-test SSRF validation** - `/admin/gateways/test` now validates user-supplied target URLs before outbound requests (S-02)
+* **LLM chat connect SSRF validation** - `/llmchat/connect` now validates user-supplied MCP server URLs before session setup (S-03)
+* **OAuth DCR credential persistence hardening** - DCR-populated gateway credentials are protected before persisting to `oauth_config` (A-02, O-17)
+* **JWT rich-token teams semantics** - `_create_jwt_token` now preserves explicit `teams=None` as JSON `null` while still allowing omitted teams claims, restoring deterministic admin-token scope behavior for fail-closed ownership checks
+* **Token revocation fail-open documented** - security-features and securing docs updated to reflect availability trade-off (U-05)
+* **Health diagnostics auth consistency** - `/health/security` now uses standard bearer JWT validation flow.
+* **RPC/REST permission parity for logging controls** - `logging/setLevel` over `/rpc` now enforces `admin.system_config`, aligned with `POST /logging/setLevel`.
+* **Utility transport permission consistency** - `/sse` and `/message` now enforce canonical `tools.execute`.
+* **Shared auth dependency consistency** - `require_auth` now applies the same token/account validity checks used across authenticated flows.
+* **Shared admin auth dependency consistency** - `require_admin_auth` now applies the same token/account validity checks before admin authorization.
+
+### Hardening
+
+* **S-01**: SSRF defaults tightened — block private/localhost by default with explicit CIDR allowlist
+* **O-01**: OIDC `id_token` signature verification added to SSO callback flow
+* **O-05**: OAuth DCR management endpoints restricted to admin users
+* **U-05**: MCP transport now validates token revocation status and user active state
+* **C-03**: Bearer scheme parsing normalized to case-insensitive matching
+* **EXTRA-01**: WebSocket relay and reverse proxy endpoints gated with proper authorization
+* **C-14**: WebSocket bearer auth now requires `Authorization` headers (query token auth removed)
+* **C-10**: Cancellation endpoints gated with proper authorization
+* **C-04**: Message ingress endpoints now enforce session ownership
+* **C-11**: JSON-RPC initialize now enforces session ownership for capability writes
+* **C-07**: Roots listing endpoints now enforce admin authorization across REST and JSON-RPC
+* **C-28**: Resource event subscriptions now enforce per-subscriber visibility scoping
+* **C-29**: MCP resource subscription creation now enforces visibility checks
+* **C-15**: Token scoping defaults to deny for unmapped API paths
+* **A-02 / O-10 / O-17**: OAuth config sensitive keys are now encrypted at service-layer persistence boundaries for gateway/server/A2A, including DCR credential writes
+* **A-05**: Server read/list responses now apply OAuth secret masking parity with gateway/A2A
+* **A-06**: Email auth failed-login paths now include dummy Argon2 verification and a configurable response-time floor
+* **S-02 / S-03**: Admin gateway test and LLM chat connect now validate outbound target URLs before network calls
+* **C-05**: JSON-RPC tool execution now requires `tools.execute` for both `tools/call` and backward-compatible direct tool method invocation
+* **C-18**: Get-by-ID handlers, including `GET /resources/{resource_id}/info`, now enforce scoped ownership checks in addition to middleware controls
+* **C-19**: All root management endpoints now require `admin.system_config`
+* **C-20**: Gateway sync endpoints now enforce explicit RBAC and scoped ownership checks with normalized token-team semantics
+* **C-35**: Server usage SSE now validates server existence and fails closed for missing IDs in scoped checks
+* **C-39**: Import flow strips untrusted ownership/team/visibility fields for scoped entities
+* **A-04**: Request logging masking now covers normalized key variants (snake/camel/kebab/case changes) while preserving non-sensitive metadata fields
+* **C-06 / C-26**: Token scoping now applies consistently for cookie and header auth paths, and normalizes `APP_ROOT_PATH` prefixes before route permission matching
+* **C-31 / C-40 / C-41**: LLM chat config, provider config secrets, and sensitive tool headers now use at-rest protection with response-time masking and backward-compatible read handling
+* **C-34 / L-13**: Permission fallback paths now rely on explicit constants and canonical permission mappings across decorators, validation, and role checks, with default non-admin roles receiving explicit `teams.read` and token self-management permissions
+* **C-36 / C-37**: Server team reassignment now validates target-team ownership membership, and import defaults prefer scoped visibility for safer tenant defaults
+* **O-08 / O-12 / O-13**: SSO/OAuth flows now require `email_verified: true` claims for login acceptance (including existing users), enforce trusted-domain policy consistently, and use opaque server-side OAuth state mapping
+* **U-02 / U-03 / U-04**: Admin UI now enforces CSRF tokens/origin checks for state-changing flows, sanitizes dynamic DOM insertions, and uses pinned integrity-checked external assets
+* **Token helpers**: Rich-token generation now distinguishes omitted teams from explicit `teams: null` to preserve intended scope semantics
+* Health diagnostics endpoint now follows standard bearer-token validation.
+* JSON-RPC and REST logging controls now use aligned permission checks.
+* Utility SSE/message endpoints now use canonical execution permission naming.
+* Shared auth dependencies now enforce consistent token/account validity checks.
+
+### Additional Hardening (Low Batch)
+
+* **L-01 / L-07**: Trusted-proxy auth now requires explicit dangerous-mode acknowledgement, and docs auth now enforces revocation plus active-user checks for consistency with other auth paths.
+* **L-02**: `AUTH_REQUIRED=false` now defaults to anonymous request context unless `ALLOW_UNAUTHENTICATED_ADMIN=true` is explicitly enabled.
+* **L-03 / L-05**: OAuth callback state handling now uses strict opaque-state resolution with uniform invalid-state responses, reducing callback error-shape drift.
+* **L-08 / L-09 / L-12**: SSO provider controls now enforce issuer allowlists, apply configured team mappings during login provisioning, and restrict local password auth to admins when preserve-admin mode is enabled.
+* **L-10**: Security architecture docs now align with current token and secret encryption implementation details.
+* **L-15 / L-16**: Tool lookup cache payloads now exclude auth/OAuth secret material, and token usage limits (`requests_per_hour` / `requests_per_day`) are now enforced during request scoping.
+* **L-17**: Admin UI debug logging is now gated behind an explicit local debug toggle (`MCPGATEWAY_ADMIN_DEBUG=1`) for quieter production browser consoles.
+* **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`.
+* **MCP bearer fail-closed in permissive mode**: Streamable HTTP MCP auth now rejects malformed/invalid `Authorization: Bearer ...` tokens with `401` instead of silently downgrading to anonymous public-only access.
+
+### Chores
+
+* Updated `.env.example` with strict SSRF defaults, local dev overrides section, and transport feature flags
+* Updated `.env.example` and `docker-compose.yml` to make MCP auth posture explicit (`MCP_REQUIRE_AUTH=true` in compose; inheritance behavior documented in env example comments).
+* Updated `docker-compose.yml` with transport feature flags and local SSRF overrides
+* Updated Helm chart `values.yaml`, `values.schema.json`, and `README.md` with new SSRF and transport settings
+* Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`
+* Added Alembic backfill migration to protect existing plaintext OAuth config secrets in gateway/server/A2A rows
+* Protocol version bumped to `2025-11-25` in configuration schema
+
+### Documentation
+
+* `docs/docs/manage/configuration.md` - SSRF section rewritten for strict defaults, CIDR allowlist, local dev note; transport feature flags documented
+* `docs/docs/manage/securing.md` - Token revocation availability trade-off documented
+* `docs/docs/architecture/security-features.md` - Revocation fail-open behavior noted
+* `docs/docs/manage/proxy.md` - Feature flag requirement noted for `/ws` relay
+* `docs/docs/using/reverse-proxy.md` - `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` requirement documented and WebSocket auth clarified as `Authorization`-header only
+* `docs/docs/manage/rbac.md` - Method-level RBAC examples updated for `/rpc` logging and utility SSE/message permissions
+
 ---
+
+## [Unreleased]
+
+### Removed
+
+* `PLUGIN_CONFIG_FILE` (legacy plugin config path key). Use `PLUGINS_CONFIG_FILE` instead.
 
 ## [1.0.0-RC1] - 2026-02-17 - Security Hardening, Enterprise Controls & Quality
 
@@ -182,7 +471,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Configuration Section** in `.env.example` with documented settings
 * **Elicitation Support (MCP 2025-06-18)** ([#234](https://github.com/IBM/mcp-context-forge/issues/234)) - Elicitation support per MCP 2025-06-18 specification
 * **Admin UI Search for Tools** ([#2076](https://github.com/IBM/mcp-context-forge/issues/2076)) - Search capabilities for tools in admin UI
-* **Unified Search Experience** ([#2109](https://github.com/IBM/mcp-context-forge/issues/2109)) - Unified search experience across MCP Gateway admin UI
+* **Unified Search Experience** ([#2109](https://github.com/IBM/mcp-context-forge/issues/2109)) - Unified search experience across ContextForge admin UI
 * **Dynamic Tools/Resources** ([#2171](https://github.com/IBM/mcp-context-forge/issues/2171)) - Dynamic tools and resources based on user context and server-side signals
 * **Slow Time Server** ([#2783](https://github.com/IBM/mcp-context-forge/issues/2783)) - Configurable-latency MCP server for timeout, resilience, and load testing
 * **Custom Tool Descriptions** ([#2893](https://github.com/IBM/mcp-context-forge/issues/2893)) - Maintain custom and original description for tools
@@ -1277,7 +1566,7 @@ docker compose up -d
 - Closes #1254 - JWT jti mismatch between token and database record
 - Closes #1262 - JWT token follows default variable payload expiry instead of UI
 - Closes #1261 - API Token Expiry Issue: UI Configuration overridden by default env Variable
-- Closes #1111 - Support application/x-www-form-urlencoded Requests in MCP Gateway UI for OAuth2 / Keycloak Integration
+- Closes #1111 - Support application/x-www-form-urlencoded Requests in ContextForge UI for OAuth2 / Keycloak Integration
 - Closes #1094 - Creating an MCP OAUTH2 server fails if using API
 - Closes #1092 - After issue 1078 change, how to add X-Upstream-Authorization header when clicking Authorize in admin UI
 - Closes #1048 - Login issue - Serving over HTTP requires SECURE_COOKIES=false
@@ -1285,7 +1574,7 @@ docker compose up -d
 - Closes #1117 - Login not working with 0.7.0 version
 - Closes #1181 - Secure cookie warnings for HTTP development
 - Closes #1190 - Virtual MCP server requiring OAUTH instead of JWT in 0.7.0
-- Closes #1109 - MCP Gateway UI OAuth2 Integration Fails with Keycloak
+- Closes #1109 - ContextForge UI OAuth2 Integration Fails with Keycloak
 
 **SSO Integration:**
 - Closes #1211 - Microsoft Entra ID Integration Support and Tutorial
@@ -1681,7 +1970,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 
 ### Overview
 
-**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming MCP Gateway from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration. **38 issues resolved**.
+**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming ContextForge from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration. **38 issues resolved**.
 
 **Impact:** Complete architectural transformation enabling secure team collaboration, enterprise SSO integration, and scalable multi-tenant deployments.
 
@@ -1768,7 +2057,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   - All **VARCHAR length issues** resolved for MySQL compatibility
   - **Container support**: MariaDB and MySQL drivers included in all container images
   - **Complete feature parity** with SQLite and PostgreSQL backends
-  - **Production ready**: Supports all MCP Gateway features including federation, caching, and A2A agents
+  - **Production ready**: Supports all ContextForge features including federation, caching, and A2A agents
 
 * **Enhanced JWT Configuration** - Audience, issuer claims, and improved token validation:
   ```bash
@@ -2127,7 +2416,7 @@ This major release focuses on **Security, Scale & Smart Automation** with **118 
 
 ### 🌟 Release Contributors
 
-This release represents a major milestone in MCP Gateway's evolution toward enterprise-grade security, scale, and intelligent automation. With contributions from developers worldwide, 0.6.0 delivers groundbreaking features including a comprehensive plugin framework, A2A agent integration, and advanced observability.
+This release represents a major milestone in ContextForge's evolution toward enterprise-grade security, scale, and intelligent automation. With contributions from developers worldwide, 0.6.0 delivers groundbreaking features including a comprehensive plugin framework, A2A agent integration, and advanced observability.
 
 #### 🏆 Top Contributors in 0.6.0
 - **Mihai Criveti** (@crivetimihai) - Release coordination, A2A architecture, plugin framework, OpenTelemetry integration, and comprehensive testing infrastructure
@@ -2142,7 +2431,7 @@ Welcome to our first-time contributors who joined us in 0.6.0:
 - **Community Contributors** - Various developers contributed to plugin development, testing improvements, and documentation updates
 
 #### 💪 Returning Contributors
-Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+Thank you to our dedicated contributors who continue to strengthen ContextForge:
 
 - **Core Team Members** - Continued contributions to architecture, testing, documentation, and feature development
 - **Community Members** - Ongoing support with bug reports, feature requests, and code improvements
@@ -2247,7 +2536,7 @@ This release focuses on enterprise-grade operability with **45 issues resolved**
   - Resolved Docker container issues (#560)
   - Fixed internal server errors during CRUD operations (#85)
 * **Documentation & API**:
-  - Fixed OpenAPI title from "MCP_Gateway" to "MCP Gateway" (#522)
+  - Fixed OpenAPI title to "ContextForge" (#522)
   - Added mcp-cli documentation (#46)
   - Fixed invalid HTTP request logs (#434)
 * **Code Quality**:
@@ -2307,14 +2596,14 @@ Welcome to our first-time contributors who joined us in 0.5.0:
 - **JimmyLiao** (@jimmyliao) - Fixed STREAMABLEHTTP transport validation
 - **Arnav Bhattacharya** (@arnav264) - Added file header verification script
 - **Guoqiang Ding** (@dgq8211) - Fixed tool parameter type conversion and API docs auth
-- **Pascal Roessner** (@roessner) - Added MCP Gateway Name to tools overview
+- **Pascal Roessner** (@roessner) - Added ContextForge Name to tools overview
 - **Kumar Tiger** (@kumar-tiger) - Fixed duplicate gateway name registration
 - **Shamsul Arefin** (@shams) - Improved JavaScript validation patterns and UUID support
 - **Emmanuel Ferdman** (@emmanuelferdman) - Fixed prompt service test cases
 - **Tomas Pilar** (@thomas7pilar) - Fixed missing ID in gateway response and auth flag issues
 
 #### 💪 Returning Contributors
-Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+Thank you to our dedicated contributors who continue to strengthen ContextForge:
 
 - **Nayana R Gowda** - Fixed redundant conditional expressions and Makefile formatting
 - **Mohan Lakshmaiah** - Improved tool name consistency validation
@@ -2360,7 +2649,7 @@ This release represents a major milestone in code quality, security, and reliabi
   * **Test MCP Server Connectivity Tool** (#181) - Debug and validate gateway connections directly from Admin UI
   * **Persistent Admin UI Filter State** (#177) - Filters and preferences persist across page refreshes
   * **Contextual Hover-Help Tooltips** (#233) - Inline help throughout the UI for better user guidance
-  * **mcp-cli Documentation** (#46) - Comprehensive guide for using MCP Gateway with the official CLI
+  * **mcp-cli Documentation** (#46) - Comprehensive guide for using ContextForge with the official CLI
   * **JSON-RPC Developer Guide** (#19) - Complete curl command examples for API integration
 
 * **Security Enhancements**:
@@ -2467,12 +2756,12 @@ Welcome to our first-time contributors who joined us in 0.4.0:
 - **Jason Frey** (@fryguy9) - Improved GitHub Actions with official IBM Cloud CLI action
 
 #### 💪 Returning Contributors
-Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+Thank you to our dedicated contributors who continue to strengthen ContextForge:
 
 - **Thong Bui** - REST API enhancements including PATCH support and path parameters
 - **Abdul Samad** - Dark mode improvements and UI polish
 
-This release represents a true community effort with contributions from developers around the world. Your dedication to security, code quality, and user experience has made MCP Gateway more robust and enterprise-ready than ever!
+This release represents a true community effort with contributions from developers around the world. Your dedication to security, code quality, and user experience has made ContextForge more robust and enterprise-ready than ever!
 
 ---
 
@@ -2754,7 +3043,7 @@ Welcome aboard-your PRs made 0.2.0 measurably better! 🎉
 
 ### Added
 
-Initial public release of MCP Gateway - a FastAPI-based gateway and federation layer for the Model Context Protocol (MCP). This preview brings a fully-featured core, production-grade deployment assets and an opinionated developer experience.
+Initial public release of ContextForge - a FastAPI-based gateway and federation layer for the Model Context Protocol (MCP). This preview brings a fully-featured core, production-grade deployment assets and an opinionated developer experience.
 
 Setting up GitHub repo, CI/CD with GitHub Actions, templates, `good first issue`, etc.
 

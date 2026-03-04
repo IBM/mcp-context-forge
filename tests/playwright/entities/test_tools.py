@@ -8,9 +8,6 @@ Authors: Mihai Criveti
 Module documentation...
 """
 
-# Standard
-import time
-
 # Third-Party
 import pytest
 
@@ -20,7 +17,7 @@ from ..pages.tools_page import ToolsPage
 
 
 class TestToolsCRUD:
-    """CRUD tests for Tools entity in MCP Gateway Admin UI.
+    """CRUD tests for Tools entity in ContextForge Admin UI.
 
     Examples:
         pytest tests/playwright/entities/test_tools.py

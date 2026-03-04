@@ -36,7 +36,7 @@ def main() -> int:
     Returns:
         int: Process exit code (`0` success, non-zero on validation failure).
     """
-    parser = argparse.ArgumentParser(description="Generate an Argon2id password hash for MCP Gateway users.")
+    parser = argparse.ArgumentParser(description="Generate an Argon2id password hash for ContextForge users.")
     parser.add_argument("--password", help="Password value. If omitted, a secure prompt is used.")
     args = parser.parse_args()
 

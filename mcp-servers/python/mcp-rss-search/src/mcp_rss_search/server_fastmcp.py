@@ -3,7 +3,7 @@
 """Location: ./mcp-servers/python/mcp-rss-search/src/mcp_rss_search/server_fastmcp.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: MCP Context Forge
+Authors: ContextForge
 
 MCP RSS Search Server - FastMCP Implementation
 

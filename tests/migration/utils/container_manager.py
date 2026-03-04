@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Container management utilities for migration testing.
 
 This module provides comprehensive Docker/Podman container orchestration
-for testing database migrations across different MCP Gateway versions.
+for testing database migrations across different ContextForge versions.
 """
 
 # Standard
@@ -45,7 +45,7 @@ class ContainerManager:
     """Manages Docker/Podman containers for migration testing.
 
     Provides high-level interface for:
-    - Pulling container images for all MCP Gateway versions
+    - Pulling container images for all ContextForge versions
     - Starting SQLite containers for isolated testing
     - Starting docker-compose stacks for PostgreSQL testing
     - Executing Alembic commands within containers
@@ -165,7 +165,7 @@ class ContainerManager:
         """Start SQLite container with mounted test database.
 
         Args:
-            version: MCP Gateway version to use
+            version: ContextForge version to use
             db_file: SQLite database filename
             extra_env: Additional environment variables
             data_dir: Existing data directory to reuse (for migration tests)
@@ -372,7 +372,7 @@ class ContainerManager:
         """Start docker-compose stack for PostgreSQL testing.
 
         Args:
-            version: MCP Gateway version to use
+            version: ContextForge version to use
             compose_file: Path to docker-compose file
 
         Returns:

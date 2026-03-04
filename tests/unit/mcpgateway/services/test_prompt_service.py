@@ -175,7 +175,7 @@ def prompt_service():
 class TestPromptServiceInit:
     def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
         """Cover env-override parsing in PromptService.__init__ (PLUGINS_ENABLED)."""
-        monkeypatch.setenv("PLUGINS_ENABLED", " false ")
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
         svc = PromptService()
         assert svc._plugin_manager is None
 
@@ -2411,6 +2411,50 @@ class TestUpdatePromptFieldsAndExceptions:
         assert existing.original_name == "new-name"
         assert existing.custom_name == "new-name"
         assert existing.version == 1
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_ignores_client_owner_email_for_private_conflict_scope(self, prompt_service):
+        """Private conflict scope must use persisted owner, not payload owner_email."""
+        # Third-Party
+        from sqlalchemy.dialects import sqlite
+
+        existing = _build_db_prompt(name="old-name")
+        existing.visibility = "private"
+        existing.team_id = None
+        existing.custom_name = "old-name"
+        existing.gateway = None
+        existing.gateway_id = None
+        existing.owner_email = "owner@test.com"
+        existing.version = 1
+
+        captured_where = {}
+
+        def fake_get_for_update(_db, _model, _prompt_id=None, **kwargs):  # noqa: ANN001, ANN202
+            where_clause = kwargs.get("where")
+            if where_clause is not None:
+                captured_where["sql"] = str(where_clause.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+                return None
+            return existing
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", side_effect=fake_get_for_update),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            db.commit = Mock()
+            db.refresh = Mock()
+            prompt_service._notify_prompt_updated = AsyncMock()
+            prompt_service.convert_prompt_to_read = Mock(return_value={"id": 1})
+
+            upd = PromptUpdate(name="new-name", owner_email="attacker@test.com")
+            await prompt_service.update_prompt(db, 1, upd, user_email="caller@test.com")
+
+        assert "owner@test.com" in captured_where["sql"]
+        assert "attacker@test.com" not in captured_where["sql"]
 
     @pytest.mark.asyncio
     async def test_update_arguments_without_description_skips_description_key(self, prompt_service):

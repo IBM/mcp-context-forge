@@ -4,10 +4,10 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Validation middleware for MCP Gateway input validation and output sanitization.
+Validation middleware for ContextForge input validation and output sanitization.
 
 This middleware provides comprehensive input validation and output sanitization
-for MCP Gateway requests. It validates request parameters, JSON payloads, and
+for ContextForge requests. It validates request parameters, JSON payloads, and
 resource paths to prevent security vulnerabilities like path traversal, XSS,
 and injection attacks.
 

@@ -1,12 +1,12 @@
 # Logging
 
-MCP Gateway provides comprehensive file-based logging with automatic rotation, dual-format output (JSON for files, text for console), and centralized logging service integration. This guide shows how to configure log levels, formats, destinations, and file management.
+ContextForge provides comprehensive file-based logging with automatic rotation, dual-format output (JSON for files, text for console), and centralized logging service integration. This guide shows how to configure log levels, formats, destinations, and file management.
 
 ---
 
 ## 🧾 Log Structure
 
-MCP Gateway uses dual-format logging:
+ContextForge uses dual-format logging:
 
 - **File logs**: Structured JSON format for machine processing and log aggregation
 - **Console logs**: Human-readable text format for development and debugging
@@ -40,7 +40,7 @@ MCP Gateway uses dual-format logging:
 
 ## 🔧 Configuring Logs
 
-MCP Gateway provides flexible logging with **stdout/stderr by default** and **optional file logging**. You can control logging behavior using `.env` settings or environment variables:
+ContextForge provides flexible logging with **stdout/stderr by default** and **optional file logging**. You can control logging behavior using `.env` settings or environment variables:
 
 | Variable                | Description                        | Default           | Example                     |
 | ----------------------- | ---------------------------------- | ----------------- | --------------------------- |
@@ -178,7 +178,7 @@ Query security events via the API: `GET /api/logs/security-events`
 
 ## 📂 Log File Management
 
-**Note**: This section applies only when file logging is enabled with `LOG_TO_FILE=true`. By default, MCP Gateway logs only to stdout/stderr.
+**Note**: This section applies only when file logging is enabled with `LOG_TO_FILE=true`. By default, ContextForge logs only to stdout/stderr.
 
 ### Viewing Log Files
 
@@ -243,7 +243,7 @@ du -sh logs/*
 
 ## 🖥️ Admin UI Log Viewer
 
-MCP Gateway includes a built-in log viewer in the Admin UI that provides real-time monitoring, filtering, and export capabilities without requiring direct file access.
+ContextForge includes a built-in log viewer in the Admin UI that provides real-time monitoring, filtering, and export capabilities without requiring direct file access.
 
 ### Enabling the Log Viewer
 
@@ -368,7 +368,7 @@ podman logs -f mcpgateway
 
 ## 📤 Shipping Logs to External Services
 
-MCP Gateway can write to stdout or a file. To forward logs to services like:
+ContextForge can write to stdout or a file. To forward logs to services like:
 
 * **ELK (Elastic Stack)**
 * **LogDNA / IBM Log Analysis**
@@ -385,7 +385,7 @@ You can:
 
 ## 🗄️ Database Log Persistence
 
-MCP Gateway can optionally persist structured logs to the database for advanced search, request tracing, and performance metrics. **This feature is disabled by default for performance reasons.**
+ContextForge can optionally persist structured logs to the database for advanced search, request tracing, and performance metrics. **This feature is disabled by default for performance reasons.**
 
 ### Enabling Database Logging
 

@@ -1,6 +1,6 @@
 # PII Filter (Rust)
 
-High-performance PII detection and masking library for MCP Gateway.
+High-performance PII detection and masking library for ContextForge.
 
 ## Features
 

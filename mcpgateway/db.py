@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Database Models.
+ContextForge Database Models.
 This module defines SQLAlchemy models for storing MCP entities including:
 - Tools with input schema validation
 - Resources with subscription tracking
@@ -41,6 +41,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.types import TypeDecorator
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -268,6 +269,123 @@ def utc_now() -> datetime:
         True
     """
     return datetime.now(timezone.utc)
+
+
+class TokenEncryptionWriteError(ValueError):
+    """Raised when OAuth token encryption fails during DB write binding."""
+
+
+class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
+    """Text type that applies best-effort encryption/decryption at ORM boundary.
+
+    This preserves compatibility with service-layer encryption:
+    - Pre-encrypted values pass through unchanged.
+    - Plaintext values are encrypted when possible before persistence.
+    - On read, encrypted values are decrypted for runtime usage.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    @property
+    def python_type(self):
+        """Return the Python type represented by this SQLAlchemy type.
+
+        Returns:
+            type: Python ``str`` type.
+        """
+        return str
+
+    @staticmethod
+    def _get_encryption():
+        """Resolve encryption service for column-level token protection.
+
+        Returns:
+            Optional[EncryptionService]: Encryption service instance when configured,
+                otherwise ``None``.
+        """
+        secret = getattr(settings, "auth_encryption_secret", None)
+        if not secret:
+            return None
+        try:
+            # First-Party
+            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+            return get_encryption_service(secret)
+        except Exception as exc:
+            logger.debug("Unable to initialize encryption service for EncryptedText: %s", exc)
+            return None
+
+    def process_literal_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Render literal SQL parameter value via encrypted bind processing.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Bound parameter value after encryption handling.
+        """
+        processed = self.process_bind_param(value, _dialect)
+        return processed
+
+    def process_bind_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Encrypt plaintext values before persistence when encryption is available.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Encrypted value for persistence or unchanged value when no
+                encryption is applied.
+
+        Raises:
+            TokenEncryptionWriteError: If encryption is configured and token
+                encryption fails.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if encryption.is_encrypted(value):
+                return value
+            return encryption.encrypt_secret(value)
+        except Exception as exc:
+            logger.warning("EncryptedText bind encryption failed; rejecting token write")
+            logger.debug("EncryptedText bind encryption exception: %s", exc)
+            raise TokenEncryptionWriteError("OAuth token encryption failed during write") from exc
+
+    def process_result_value(self, value, _dialect):  # pylint: disable=unused-argument
+        """Decrypt stored encrypted values when reading rows.
+
+        Args:
+            value (Any): Raw value loaded from database.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Decrypted value when encrypted, otherwise unchanged.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if not encryption.is_encrypted(value):
+                return value
+            decrypted = encryption.decrypt_secret_or_plaintext(value)
+            return decrypted if decrypted is not None else value
+        except Exception as exc:
+            logger.warning("EncryptedText result decryption failed, returning stored value")
+            logger.debug("EncryptedText result decryption exception: %s", exc)
+            return value
 
 
 # Configure SQLite for better concurrency if using SQLite
@@ -948,6 +1066,14 @@ class Permissions:
     PROMPTS_DELETE = "prompts.delete"
     PROMPTS_EXECUTE = "prompts.execute"
 
+    # MCP method permission prefixes — used by token_catalog_service (generation-time)
+    # and token_scoping middleware (runtime) to auto-grant servers.use transport access.
+    MCP_METHOD_PREFIXES = ("tools.", "resources.", "prompts.")
+
+    # LLM proxy permissions
+    LLM_READ = "llm.read"
+    LLM_INVOKE = "llm.invoke"
+
     # Server permissions
     SERVERS_CREATE = "servers.create"
     SERVERS_READ = "servers.read"
@@ -971,6 +1097,19 @@ class Permissions:
     ADMIN_EVENTS = "admin.events"
     ADMIN_GRPC = "admin.grpc"
     ADMIN_PLUGINS = "admin.plugins"
+    ADMIN_METRICS = "admin.metrics"
+    ADMIN_EXPORT = "admin.export"
+    ADMIN_IMPORT = "admin.import"
+    ADMIN_SSO_PROVIDERS_CREATE = "admin.sso_providers:create"
+    ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
+    ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
+    ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
+
+    # Observability and audit read permissions
+    LOGS_READ = "logs:read"
+    METRICS_READ = "metrics:read"
+    AUDIT_READ = "audit:read"
+    SECURITY_READ = "security:read"
 
     # A2A Agent permissions
     A2A_CREATE = "a2a.create"
@@ -999,7 +1138,7 @@ class Permissions:
         for attr_name in dir(cls):
             if not attr_name.startswith("_") and attr_name.isupper() and attr_name != "ALL_PERMISSIONS":
                 attr_value = getattr(cls, attr_name)
-                if isinstance(attr_value, str) and "." in attr_value:
+                if isinstance(attr_value, str):
                     permissions.append(attr_value)
         return sorted(permissions)
 
@@ -1012,7 +1151,12 @@ class Permissions:
         """
         resource_permissions = {}
         for permission in cls.get_all_permissions():
-            resource_type = permission.split(".")[0]
+            if "." in permission:
+                resource_type = permission.split(".", 1)[0]
+            elif ":" in permission:
+                resource_type = permission.split(":", 1)[0]
+            else:
+                resource_type = permission
             if resource_type not in resource_permissions:
                 resource_permissions[resource_type] = []
             resource_permissions[resource_type].append(permission)
@@ -4406,7 +4550,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4555,7 +4699,7 @@ class A2AAgent(Base):
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4824,9 +4968,9 @@ class OAuthToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
-    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # ContextForge user
+    access_token: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    refresh_token: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
@@ -4850,6 +4994,7 @@ class OAuthState(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
+    app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -4967,9 +5112,13 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name combination
+    # Unique constraint for user+name+team_id combination (per-team scope).
+    # The composite UniqueConstraint handles non-NULL team_id rows.  SQL NULL != NULL
+    # semantics mean it cannot protect global-scope tokens (team_id IS NULL), so we add
+    # a partial unique index for that case — matching the pattern used by resources/prompts.
     __table_args__ = (
-        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
+        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
+        Index("uq_email_api_tokens_user_name_global", "user_email", "name", unique=True, postgresql_where=text("team_id IS NULL"), sqlite_where=text("team_id IS NULL")),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
@@ -5379,6 +5528,8 @@ def validate_prompt_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
+    Raises:
+        ValueError: If the prompt argument schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper

@@ -682,6 +682,49 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
         return None
 
 
+def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Optional[EmailUser]:
+    """Resolve plugin-authenticated user against database-backed identity state.
+
+    Plugin hooks may authenticate a request and return identity claims. This
+    helper enforces that admin status is always derived from the database record.
+
+    Behavior:
+    - Existing DB user: return DB user (authoritative for is_admin/is_active).
+    - Missing DB user and REQUIRE_USER_IN_DB=true: reject (None).
+    - Missing DB user and REQUIRE_USER_IN_DB=false: allow a non-admin virtual
+      user built from non-privileged plugin claims.
+
+    Args:
+        user_dict: Identity claims returned by plugin auth hook.
+
+    Returns:
+        EmailUser when identity is accepted, otherwise None.
+    """
+    email = str(user_dict.get("email") or "").strip()
+    if not email:
+        return None
+
+    db_user = _get_user_by_email_sync(email)
+    if db_user:
+        return db_user
+
+    if settings.require_user_in_db:
+        return None
+
+    return EmailUser(
+        email=email,
+        password_hash=user_dict.get("password_hash", ""),
+        full_name=user_dict.get("full_name"),
+        is_admin=False,
+        is_active=user_dict.get("is_active", True),
+        auth_provider=user_dict.get("auth_provider", "local"),
+        password_change_required=user_dict.get("password_change_required", False),
+        email_verified_at=user_dict.get("email_verified_at"),
+        created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
+        updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
+    )
+
+
 def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dict[str, Any]:
     """Batched auth context lookup in a single DB session.
 
@@ -932,20 +975,24 @@ async def get_current_user(
             # If plugin successfully authenticated user, return it
             if auth_result.modified_payload and isinstance(auth_result.modified_payload, dict):
                 logger.info("User authenticated via plugin hook")
-                # Create EmailUser from dict returned by plugin
+                # Resolve plugin claims against DB state so admin flags are authoritative.
                 user_dict = auth_result.modified_payload
-                user = EmailUser(
-                    email=user_dict.get("email"),
-                    password_hash=user_dict.get("password_hash", ""),
-                    full_name=user_dict.get("full_name"),
-                    is_admin=user_dict.get("is_admin", False),
-                    is_active=user_dict.get("is_active", True),
-                    auth_provider=user_dict.get("auth_provider", "local"),
-                    password_change_required=user_dict.get("password_change_required", False),
-                    email_verified_at=user_dict.get("email_verified_at"),
-                    created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
-                    updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
-                )
+                user = await asyncio.to_thread(_resolve_plugin_authenticated_user_sync, user_dict)
+
+                if user is None:
+                    logger.warning("Plugin auth rejected: user identity could not be resolved against DB policy")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not found in database",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                if not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Account disabled",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
 
                 # Store auth_method in request.state so it can be accessed by RBAC middleware
                 if request and auth_result.metadata:
@@ -990,7 +1037,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    logger.debug("Attempting authentication with token: %s...", credentials.credentials[:20])
+    logger.debug("Attempting authentication with bearer credentials")
     email = None
 
     try:
@@ -1286,7 +1333,6 @@ async def get_current_user(
         logger.debug("JWT validation failed with error: %s, trying database API token", jwt_error)
         try:
             token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-            logger.debug("Generated token hash: %s", token_hash)
 
             # Lookup API token using fresh session in thread pool
             api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)

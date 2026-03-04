@@ -1,6 +1,6 @@
 # Export/Import Quick Reference
 
-Quick reference for MCP Gateway configuration export and import commands.
+Quick reference for ContextForge configuration export and import commands.
 
 ---
 

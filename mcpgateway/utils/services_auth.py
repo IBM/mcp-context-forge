@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-mcpgateway.utils.services_auth - Authentication utilities for MCP Gateway
+mcpgateway.utils.services_auth - Authentication utilities for ContextForge
 Doctest examples
 ----------------
 >>> import os
@@ -151,12 +151,28 @@ def clear_crypto_cache() -> None:
     _crypto_cache.clear()
 
 
-def encode_auth(auth_value: dict) -> Optional[str]:
+def _aesgcm_for_secret(secret: str) -> AESGCM:
+    """Create an AESGCM instance for an explicit secret (not cached globally).
+
+    Args:
+        secret: The encryption passphrase.
+
+    Returns:
+        AESGCM: A cipher instance keyed to *secret*.
+    """
+    key = hashlib.sha256(secret.encode()).digest()
+    return AESGCM(key)
+
+
+def encode_auth(auth_value: dict, *, secret: Optional[str] = None) -> Optional[str]:
     """
     Encrypt and encode an authentication dictionary into a compact base64-url string.
 
     Args:
         auth_value (dict): The authentication dictionary to encrypt and encode.
+        secret (str, optional): Explicit encryption secret. When provided the
+            global ``settings.auth_encryption_secret`` is **not** read, which
+            avoids mutating shared state during concurrent re-keying.
 
     Returns:
         str: A base64-url-safe encrypted string representing the dictionary, or None if input is None.
@@ -175,7 +191,7 @@ def encode_auth(auth_value: dict) -> Optional[str]:
     if not auth_value:
         return None
     plaintext = orjson.dumps(auth_value)
-    aesgcm = _get_aesgcm()
+    aesgcm = _aesgcm_for_secret(secret) if secret else _get_aesgcm()
     nonce = os.urandom(12)
     ciphertext = aesgcm.encrypt(nonce, plaintext, None)
     combined = nonce + ciphertext
@@ -183,12 +199,14 @@ def encode_auth(auth_value: dict) -> Optional[str]:
     return encoded.decode()
 
 
-def decode_auth(encoded_value: str) -> dict:
+def decode_auth(encoded_value: str, *, secret: Optional[str] = None) -> dict:
     """
     Decode and decrypt a base64-url-safe encrypted string back into the authentication dictionary.
 
     Args:
         encoded_value (str): The encrypted base64-url string to decode and decrypt.
+        secret (str, optional): Explicit encryption secret. When provided the
+            global ``settings.auth_encryption_secret`` is **not** read.
 
     Returns:
         dict: The decrypted authentication dictionary, or empty dict if input is None.
@@ -207,7 +225,7 @@ def decode_auth(encoded_value: str) -> dict:
     """
     if not encoded_value:
         return {}
-    aesgcm = _get_aesgcm()
+    aesgcm = _aesgcm_for_secret(secret) if secret else _get_aesgcm()
     # Fix base64 padding
     padded = encoded_value + "=" * (-len(encoded_value) % 4)
     combined = base64.urlsafe_b64decode(padded)

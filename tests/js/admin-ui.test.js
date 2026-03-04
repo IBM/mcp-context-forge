@@ -2,7 +2,15 @@
  * Unit tests for admin.js notification, password, and selection functions.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import {
+    describe,
+    test,
+    expect,
+    beforeAll,
+    beforeEach,
+    afterAll,
+    vi,
+} from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -114,8 +122,12 @@ describe("validatePasswordRequirements", () => {
         const policyEl = doc.createElement("div");
         policyEl.id = "edit-password-policy-data";
         policyEl.dataset.minLength = String(policy.minLength ?? 8);
-        policyEl.dataset.requireUppercase = String(policy.requireUppercase ?? true);
-        policyEl.dataset.requireLowercase = String(policy.requireLowercase ?? true);
+        policyEl.dataset.requireUppercase = String(
+            policy.requireUppercase ?? true,
+        );
+        policyEl.dataset.requireLowercase = String(
+            policy.requireLowercase ?? true,
+        );
         policyEl.dataset.requireNumbers = String(policy.requireNumbers ?? true);
         policyEl.dataset.requireSpecial = String(policy.requireSpecial ?? true);
         doc.body.appendChild(policyEl);
@@ -127,7 +139,13 @@ describe("validatePasswordRequirements", () => {
         doc.body.appendChild(input);
 
         // Requirement icon elements
-        ["edit-req-length", "edit-req-uppercase", "edit-req-lowercase", "edit-req-numbers", "edit-req-special"].forEach((id) => {
+        [
+            "edit-req-length",
+            "edit-req-uppercase",
+            "edit-req-lowercase",
+            "edit-req-numbers",
+            "edit-req-special",
+        ].forEach((id) => {
             const el = doc.createElement("span");
             el.id = id;
             doc.body.appendChild(el);
@@ -147,7 +165,13 @@ describe("validatePasswordRequirements", () => {
     test("disables submit when password does not meet requirements", () => {
         const { btn } = setupPasswordDOM({
             password: "weak",
-            policy: { minLength: 8, requireUppercase: true, requireLowercase: true, requireNumbers: true, requireSpecial: true },
+            policy: {
+                minLength: 8,
+                requireUppercase: true,
+                requireLowercase: true,
+                requireNumbers: true,
+                requireSpecial: true,
+            },
         });
         f()();
         expect(btn.disabled).toBe(true);
@@ -156,7 +180,13 @@ describe("validatePasswordRequirements", () => {
     test("enables submit when password meets all requirements", () => {
         const { btn } = setupPasswordDOM({
             password: "StrongP@ss1",
-            policy: { minLength: 8, requireUppercase: true, requireLowercase: true, requireNumbers: true, requireSpecial: true },
+            policy: {
+                minLength: 8,
+                requireUppercase: true,
+                requireLowercase: true,
+                requireNumbers: true,
+                requireSpecial: true,
+            },
         });
         f()();
         expect(btn.disabled).toBe(false);
@@ -165,7 +195,13 @@ describe("validatePasswordRequirements", () => {
     test("enables submit when password is empty (optional password)", () => {
         const { btn } = setupPasswordDOM({
             password: "",
-            policy: { minLength: 8, requireUppercase: true, requireLowercase: true, requireNumbers: true, requireSpecial: true },
+            policy: {
+                minLength: 8,
+                requireUppercase: true,
+                requireLowercase: true,
+                requireNumbers: true,
+                requireSpecial: true,
+            },
         });
         f()();
         expect(btn.disabled).toBe(false);
@@ -185,18 +221,32 @@ describe("validatePasswordRequirements", () => {
     test("validates length requirement", () => {
         setupPasswordDOM({
             password: "Ab1!",
-            policy: { minLength: 8, requireUppercase: false, requireLowercase: false, requireNumbers: false, requireSpecial: false },
+            policy: {
+                minLength: 8,
+                requireUppercase: false,
+                requireLowercase: false,
+                requireNumbers: false,
+                requireSpecial: false,
+            },
         });
         f()();
         // Password is only 4 chars, minLength is 8 -> should disable
-        const btn = doc.querySelector('#user-edit-modal-content button[type="submit"]');
+        const btn = doc.querySelector(
+            '#user-edit-modal-content button[type="submit"]',
+        );
         expect(btn.disabled).toBe(true);
     });
 
     test("passes when only lowercase required and met", () => {
         const { btn } = setupPasswordDOM({
             password: "abcdefgh",
-            policy: { minLength: 8, requireUppercase: false, requireLowercase: true, requireNumbers: false, requireSpecial: false },
+            policy: {
+                minLength: 8,
+                requireUppercase: false,
+                requireLowercase: true,
+                requireNumbers: false,
+                requireSpecial: false,
+            },
         });
         f()();
         expect(btn.disabled).toBe(false);
@@ -315,6 +365,150 @@ describe("updateSelectionCount", () => {
 
     test("does not throw when count element missing", () => {
         expect(() => f()()).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyVisibilityRestrictions (edit modal regression)
+// ---------------------------------------------------------------------------
+describe("applyVisibilityRestrictions", () => {
+    const f = () => win.applyVisibilityRestrictions;
+
+    test("keeps checked public radio enabled in team-scoped edit forms so visibility is submitted", () => {
+        win.ALLOW_PUBLIC_VISIBILITY = false;
+        win.history.pushState({}, "", "http://localhost/?team_id=team-1");
+
+        const form = doc.createElement("form");
+
+        const wrapper = doc.createElement("div");
+        wrapper.className = "flex items-center";
+
+        const publicRadio = doc.createElement("input");
+        publicRadio.type = "radio";
+        publicRadio.id = "edit-tool-visibility-public";
+        publicRadio.name = "visibility";
+        publicRadio.value = "public";
+        publicRadio.checked = true;
+
+        wrapper.appendChild(publicRadio);
+        form.appendChild(wrapper);
+        doc.body.appendChild(form);
+
+        f()(["edit-tool-visibility"]);
+
+        expect(publicRadio.disabled).toBe(false);
+        const formData = new win.FormData(form);
+        expect(formData.get("visibility")).toBe("public");
+    });
+
+    test("disables unchecked public radio in team-scoped edit forms when public visibility is blocked", () => {
+        win.ALLOW_PUBLIC_VISIBILITY = false;
+        win.history.pushState({}, "", "http://localhost/?team_id=team-1");
+
+        const wrapper = doc.createElement("div");
+        wrapper.className = "flex items-center";
+
+        const publicRadio = doc.createElement("input");
+        publicRadio.type = "radio";
+        publicRadio.id = "edit-tool-visibility-public";
+        publicRadio.name = "visibility";
+        publicRadio.value = "public";
+        publicRadio.checked = false;
+
+        wrapper.appendChild(publicRadio);
+        doc.body.appendChild(wrapper);
+
+        f()(["edit-tool-visibility"]);
+
+        expect(publicRadio.disabled).toBe(true);
+    });
+
+    test("adds opacity, cursor-not-allowed, and line-through styling when disabling public radio", () => {
+        win.ALLOW_PUBLIC_VISIBILITY = false;
+        win.history.pushState({}, "", "http://localhost/?team_id=team-1");
+
+        const wrapper = doc.createElement("div");
+        wrapper.className = "flex items-center";
+
+        const publicRadio = doc.createElement("input");
+        publicRadio.type = "radio";
+        publicRadio.id = "edit-resource-visibility-public";
+        publicRadio.name = "visibility";
+        publicRadio.value = "public";
+        publicRadio.checked = false;
+
+        const label = doc.createElement("label");
+        label.textContent = "Public";
+        wrapper.appendChild(publicRadio);
+        wrapper.appendChild(label);
+        doc.body.appendChild(wrapper);
+
+        f()(["edit-resource-visibility"]);
+
+        expect(wrapper.classList.contains("opacity-40")).toBe(true);
+        expect(wrapper.classList.contains("cursor-not-allowed")).toBe(true);
+        expect(wrapper.title).toBe(
+            "Public visibility is disabled by platform configuration",
+        );
+        expect(label.classList.contains("line-through")).toBe(true);
+    });
+
+    test("removes styling when public radio is not blocked", () => {
+        win.ALLOW_PUBLIC_VISIBILITY = false;
+        win.history.pushState({}, "", "http://localhost/?team_id=team-1");
+
+        const wrapper = doc.createElement("div");
+        wrapper.className = "flex items-center";
+
+        const publicRadio = doc.createElement("input");
+        publicRadio.type = "radio";
+        publicRadio.id = "edit-prompt-visibility-public";
+        publicRadio.name = "visibility";
+        publicRadio.value = "public";
+        publicRadio.checked = false;
+
+        const label = doc.createElement("label");
+        label.textContent = "Public";
+        label.classList.add("line-through");
+        wrapper.classList.add("opacity-40", "cursor-not-allowed");
+        wrapper.title =
+            "Public visibility is disabled by platform configuration";
+        wrapper.appendChild(publicRadio);
+        wrapper.appendChild(label);
+        doc.body.appendChild(wrapper);
+
+        // Switch to global scope (no team_id) so restrictions don't apply
+        win.history.pushState({}, "", "http://localhost/");
+
+        f()(["edit-prompt-visibility"]);
+
+        expect(publicRadio.disabled).toBe(false);
+        expect(wrapper.classList.contains("opacity-40")).toBe(false);
+        expect(wrapper.classList.contains("cursor-not-allowed")).toBe(false);
+        expect(wrapper.title).toBe("");
+        expect(label.classList.contains("line-through")).toBe(false);
+    });
+
+    test("does not disable public radio when ALLOW_PUBLIC_VISIBILITY is true", () => {
+        win.ALLOW_PUBLIC_VISIBILITY = true;
+        win.history.pushState({}, "", "http://localhost/?team_id=team-1");
+
+        const wrapper = doc.createElement("div");
+        wrapper.className = "flex items-center";
+
+        const publicRadio = doc.createElement("input");
+        publicRadio.type = "radio";
+        publicRadio.id = "edit-gateway-visibility-public";
+        publicRadio.name = "visibility";
+        publicRadio.value = "public";
+        publicRadio.checked = false;
+
+        wrapper.appendChild(publicRadio);
+        doc.body.appendChild(wrapper);
+
+        f()(["edit-gateway-visibility"]);
+
+        expect(publicRadio.disabled).toBe(false);
     });
 });
 
@@ -442,24 +636,59 @@ describe("dedupeSelectorItems", () => {
 describe("copyToClipboard", () => {
     const f = () => win.copyToClipboard;
 
-    test("selects element and calls execCommand('copy')", () => {
+    test("uses Clipboard API when available", async () => {
         const input = doc.createElement("input");
         input.id = "token-value";
         input.value = "my-secret-token";
         doc.body.appendChild(input);
 
-        // Mock execCommand
-        let copyCalled = false;
-        doc.execCommand = (cmd) => {
-            if (cmd === "copy") copyCalled = true;
-            return true;
-        };
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: { writeText },
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => true);
 
-        f()("token-value");
-        expect(copyCalled).toBe(true);
+        await f()("token-value");
+        expect(writeText).toHaveBeenCalledWith("my-secret-token");
+        expect(doc.execCommand).not.toHaveBeenCalled();
     });
 
-    test("does not throw when element does not exist", () => {
-        expect(() => f()("nonexistent")).not.toThrow();
+    test("falls back to execCommand('copy') when Clipboard API is unavailable", async () => {
+        const input = doc.createElement("input");
+        input.id = "token-value";
+        input.value = "my-secret-token";
+        doc.body.appendChild(input);
+
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: undefined,
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => true);
+
+        await f()("token-value");
+        expect(doc.execCommand).toHaveBeenCalledWith("copy");
+    });
+
+    test("falls back to execCommand when Clipboard API write fails", async () => {
+        const input = doc.createElement("input");
+        input.id = "token-value";
+        input.value = "my-secret-token";
+        doc.body.appendChild(input);
+
+        const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: { writeText },
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => true);
+
+        await f()("token-value");
+        expect(writeText).toHaveBeenCalledWith("my-secret-token");
+        expect(doc.execCommand).toHaveBeenCalledWith("copy");
+    });
+
+    test("does not throw when element does not exist", async () => {
+        await expect(f()("nonexistent")).resolves.toBeUndefined();
     });
 });

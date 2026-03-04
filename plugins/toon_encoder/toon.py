@@ -142,7 +142,7 @@ def _encode_float(obj: float) -> str:
         TOON float representation.
     """
     # Handle special float values - per TOON spec, these must be null
-    if obj != obj:  # NaN
+    if obj != obj:  # noqa: PLR0124 - NaN check  # pylint: disable=comparison-with-itself
         return "null"
     if obj == float("inf") or obj == float("-inf"):
         return "null"

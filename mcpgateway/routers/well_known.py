@@ -105,7 +105,7 @@ def validate_security_txt(content: str) -> Optional[str]:
 
     # Add header comment if not present
     if not lines[0].startswith("#"):
-        validated.append("# Security contact information for MCP Gateway")
+        validated.append("# Security contact information for ContextForge")
         validated.append(f"# Generated: {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}Z")
         validated.append("")
 

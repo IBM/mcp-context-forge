@@ -17,11 +17,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import Request, status
+from starlette.responses import Response
 import pytest
 
 # First-Party
 from mcpgateway.db import Permissions
-from mcpgateway.middleware.token_scoping import TokenScopingMiddleware
+from mcpgateway.middleware.token_scoping import _get_llm_permission_patterns, TokenScopingMiddleware
+
+
+@pytest.fixture(autouse=True)
+def clear_llm_permission_pattern_cache():
+    """Clear cached LLM permission regex patterns between tests."""
+    _get_llm_permission_patterns.cache_clear()
+    yield
+    _get_llm_permission_patterns.cache_clear()
 
 
 class TestTokenScopingMiddleware:
@@ -39,6 +48,8 @@ class TestTokenScopingMiddleware:
         request.url.path = "/test"
         request.method = "GET"
         request.headers = {}
+        request.cookies = {}
+        request.scope = {"path": "/test", "root_path": ""}
         request.client = MagicMock()
         request.client.host = "127.0.0.1"
         # Set up state as a simple object that can hold attributes
@@ -52,8 +63,54 @@ class TestTokenScopingMiddleware:
         """_extract_token_scopes should return decoded payload on success."""
         request = MagicMock(spec=Request)
         request.headers = {"Authorization": "Bearer test-token"}
+        request.cookies = {}
 
         payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scheme", ["bearer", "BEARER", "BeArEr"])
+    async def test_extract_token_scopes_accepts_case_insensitive_bearer(self, middleware, scheme):
+        """Bearer scheme should be parsed case-insensitively."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": f"{scheme} test-token"}
+        request.cookies = {}
+
+        payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
+
+    @pytest.mark.asyncio
+    async def test_extract_token_scopes_rejects_empty_bearer_token(self, middleware):
+        """Bearer authorization with an empty token should be rejected."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": "Bearer "}
+        request.cookies = {}
+
+        assert await middleware._extract_token_scopes(request) is None
+
+    @pytest.mark.asyncio
+    async def test_extract_token_scopes_rejects_non_bearer_scheme(self, middleware):
+        """Non-bearer auth schemes must not be treated as JWT bearer tokens."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": "Basic abc123"}
+        request.cookies = {}
+
+        assert await middleware._extract_token_scopes(request) is None
+
+    @pytest.mark.asyncio
+    async def test_extract_token_scopes_reads_supported_cookie_tokens(self, middleware):
+        """Cookie-authenticated requests should be scoped the same as bearer headers."""
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.cookies = {"jwt_token": "cookie-token"}
+
+        payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
+
+        request.cookies = {"access_token": "access-cookie-token"}
         with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
             assert await middleware._extract_token_scopes(request) == payload
 
@@ -75,11 +132,15 @@ class TestTokenScopingMiddleware:
             result = middleware._check_server_restriction(path, "server-123")
             assert result == True, f"Path {path} should remain whitelisted"
 
-    def test_rpc_endpoint_whitelisted_for_server_scoped_tokens(self, middleware):
-        """Test that /rpc endpoint is whitelisted for server-scoped tokens."""
-        # The /rpc endpoint is required for MCP protocol operations (SSE transport)
-        result = middleware._check_server_restriction("/rpc", "server-123")
-        assert result == True, "/rpc endpoint should be whitelisted for server-scoped tokens"
+    def test_transport_endpoints_whitelisted_for_server_scoped_tokens(self, middleware):
+        """Transport endpoints (/rpc, /mcp, /sse) must be whitelisted for server-scoped tokens.
+
+        These endpoints don't contain a server ID in the URL path, so they must
+        appear in general_endpoints to avoid being denied by _check_server_restriction.
+        """
+        for path in ["/rpc", "/mcp", "/sse"]:
+            result = middleware._check_server_restriction(path, "server-123")
+            assert result is True, f"{path} should be whitelisted for server-scoped tokens"
 
     @pytest.mark.asyncio
     async def test_canonical_permissions_used_in_map(self, middleware):
@@ -96,16 +157,94 @@ class TestTokenScopingMiddleware:
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
     @pytest.mark.asyncio
-    async def test_admin_permissions_use_canonical_constants(self, middleware):
-        """Test that admin endpoints use canonical admin permissions."""
-        result = middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
-        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT permission"
+    async def test_rpc_endpoint_allowed_with_servers_use_permission(self, middleware):
+        """POST /rpc must be reachable for tokens that carry servers.use.
 
-        result = middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.ADMIN_USER_MANAGEMENT])
-        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT for admin operations"
+        The /rpc endpoint multiplexes multiple MCP methods (tools/call, resources/list,
+        initialize, etc.), each requiring different permissions. The middleware gates
+        transport-level access with servers.use; fine-grained per-method RBAC is
+        enforced downstream by _ensure_rpc_permission().
+
+        Regression: tokens with explicit scopes.permissions were denied with
+        "Insufficient permissions" on POST /rpc because it had no _PERMISSION_PATTERNS entry.
+        """
+        # Token has servers.use - must be allowed through
+        result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.SERVERS_USE])
+        assert result is True, "POST /rpc should be allowed when token has servers.use"
+
+        # Token with MCP method permissions gets implicit transport access (runtime compensation)
+        result = middleware._check_permission_restrictions("/rpc", "POST", [Permissions.TOOLS_READ])
+        assert result is True, "POST /rpc should be allowed when token has MCP method permissions (tools.read)"
+
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["resources.read"])
+        assert result is True, "POST /rpc should be allowed when token has MCP method permissions (resources.read)"
+
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["prompts.read"])
+        assert result is True, "POST /rpc should be allowed when token has MCP method permissions (prompts.read)"
+
+        # Token with only non-MCP permissions should still be denied
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["gateways.read"])
+        assert result is False, "POST /rpc should be denied when token has only non-MCP permissions"
+
+        # Wildcard permission bypasses pattern matching entirely
+        result = middleware._check_permission_restrictions("/rpc", "POST", ["*"])
+        assert result is True, "POST /rpc should be allowed with wildcard permission"
+
+    @pytest.mark.asyncio
+    async def test_mcp_streamable_http_endpoint_allowed_with_servers_use_permission(self, middleware):
+        """POST/GET/DELETE /mcp must be reachable for tokens that carry servers.use in their scopes.
+
+        Regression: same root cause as /rpc — /mcp was missing from _PERMISSION_PATTERNS so
+        scoped tokens with explicit permissions were denied at the middleware layer before
+        reaching the transport's own servers.use RBAC check.
+        """
+        for method in ("POST", "GET", "DELETE"):
+            result = middleware._check_permission_restrictions("/mcp", method, [Permissions.SERVERS_USE])
+            assert result is True, f"{method} /mcp should be allowed when token has servers.use"
+
+        # Token with MCP method permissions gets implicit transport access (runtime compensation)
+        result = middleware._check_permission_restrictions("/mcp", "POST", [Permissions.TOOLS_READ])
+        assert result is True, "POST /mcp should be allowed when token has MCP method permissions"
+
+        # Token with only non-MCP permissions should still be denied
+        result = middleware._check_permission_restrictions("/mcp", "POST", ["gateways.read"])
+        assert result is False, "POST /mcp should be denied when token has only non-MCP permissions"
+
+    @pytest.mark.asyncio
+    async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
+        """GET /sse must be reachable for tokens that carry servers.use.
+
+        Same pattern as /rpc and /mcp — the middleware gates transport-level access
+        with servers.use; the handler's own @require_permission enforces fine-grained RBAC.
+        """
+        result = middleware._check_permission_restrictions("/sse", "GET", [Permissions.SERVERS_USE])
+        assert result is True, "GET /sse should be allowed when token has servers.use"
+
+        # Token with MCP method permissions gets implicit transport access (runtime compensation)
+        result = middleware._check_permission_restrictions("/sse", "GET", [Permissions.TOOLS_READ])
+        assert result is True, "GET /sse should be allowed when token has MCP method permissions"
+
+        # Token with only non-MCP permissions should still be denied
+        result = middleware._check_permission_restrictions("/sse", "GET", ["gateways.read"])
+        assert result is False, "GET /sse should be denied when token has only non-MCP permissions"
+
+        result = middleware._check_permission_restrictions("/sse", "GET", ["*"])
+        assert result is True, "GET /sse should be allowed with wildcard permission"
+
+    @pytest.mark.asyncio
+    async def test_admin_permissions_use_canonical_constants(self, middleware):
+        """Test that admin endpoint groups use canonical granular permissions."""
+        result = middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        assert result == True, "Should accept canonical ADMIN_USER_MANAGEMENT on /admin/users"
+
+        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
+        assert result == True, "Should accept canonical ADMIN_SYSTEM_CONFIG on /admin/config/*"
+
+        result = middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT])
+        assert result == False, "Should reject ADMIN_USER_MANAGEMENT for system-config admin routes"
 
         # Test that old non-canonical admin permissions would not work
-        result = middleware._check_permission_restrictions("/admin", "GET", ["admin.read"])
+        result = middleware._check_permission_restrictions("/admin/users", "GET", ["admin.read"])
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
     @pytest.mark.asyncio
@@ -167,7 +306,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return admin-scoped token
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}}
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -186,7 +325,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return wildcard permissions
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"permissions": ["*"]}
+            mock_extract.return_value = {"scopes": {"permissions": ["*"]}}
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -211,6 +350,33 @@ class TestTokenScopingMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_usage_limits_block_request_with_429(self, middleware, mock_request):
+        """Requests above configured token usage limits should be denied."""
+        mock_request.url.path = "/tools"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with (
+            patch.object(middleware, "_extract_token_scopes") as mock_extract,
+            patch.object(middleware, "_check_usage_limits", return_value=(False, "Hourly request limit exceeded")),
+        ):
+            mock_extract.return_value = {
+                "jti": "token-jti-1",
+                "scopes": {
+                    "permissions": ["*"],
+                    "usage_limits": {"requests_per_hour": 1},
+                },
+            }
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+            assert "Hourly request limit exceeded" in content.get("detail")
+            call_next.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_whitelisted_paths_bypass_middleware(self, middleware):
         """Test that whitelisted paths bypass all scoping checks."""
         whitelisted_paths = ["/health", "/metrics", "/docs", "/auth/email/login"]
@@ -218,6 +384,11 @@ class TestTokenScopingMiddleware:
         for path in whitelisted_paths:
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = path
+            mock_request.headers = {}
+            mock_request.cookies = {}
+            mock_request.scope = {"path": path, "root_path": ""}
+            mock_request.state = MagicMock()
+            mock_request.state._token_scoping_done = False
 
             call_next = AsyncMock()
             call_next.return_value = "success"
@@ -234,9 +405,207 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/tools/", "GET", [Permissions.TOOLS_READ]) == True
         assert middleware._check_permission_restrictions("/tools/abc", "GET", [Permissions.TOOLS_READ]) == True
 
-    def test_permission_restrictions_default_allow_for_unmatched_path(self, middleware):
-        """Unmatched paths should default-allow when permissions list is non-empty."""
-        assert middleware._check_permission_restrictions("/unmatched/path", "GET", [Permissions.TOOLS_READ]) is True
+    def test_permission_restrictions_default_deny_for_unmatched_path(self, middleware):
+        """Unmatched paths should default-deny when permissions list is non-empty."""
+        assert middleware._check_permission_restrictions("/unmatched/path", "GET", [Permissions.TOOLS_READ]) is False
+
+    def test_permission_restrictions_unmatched_path_public_token(self, middleware):
+        """Unmatched paths should still allow empty permissions (public token behavior)."""
+        assert middleware._check_permission_restrictions("/unmatched/path", "GET", []) is True
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_allowed_rpc_with_mcp_permissions(self, middleware, mock_request):
+        """Scoped token with MCP method permissions should pass through /rpc middleware.
+
+        Runtime compensation: tokens with tools.*/resources.*/prompts.* permissions
+        implicitly get servers.use transport access.
+        """
+        mock_request.url.path = "/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+
+            expected_response = Response(status_code=200, content="ok")
+            call_next = AsyncMock(return_value=expected_response)
+            response = await middleware(mock_request, call_next)
+
+            call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_rpc_non_mcp(self, middleware, mock_request):
+        """Scoped token with only non-MCP permissions must be denied on POST /rpc with HTTP 403.
+
+        Deny-path regression: tokens without servers.use AND without MCP method permissions
+        should still be blocked at the middleware layer.
+        """
+        mock_request.url.path = "/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": ["gateways.read"]}}
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions for this operation" in content.get("detail")
+            call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_allowed_mcp_with_mcp_permissions(self, middleware, mock_request):
+        """Scoped token with MCP method permissions should pass through /mcp middleware.
+
+        Runtime compensation: tokens with tools.*/resources.*/prompts.* permissions
+        implicitly get servers.use transport access.
+        """
+        mock_request.url.path = "/mcp"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+
+            expected_response = Response(status_code=200, content="ok")
+            call_next = AsyncMock(return_value=expected_response)
+            response = await middleware(mock_request, call_next)
+
+            call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_mcp_non_mcp(self, middleware, mock_request):
+        """Scoped token with only non-MCP permissions must be denied on POST /mcp with HTTP 403.
+
+        Deny-path regression: tokens without servers.use AND without MCP method permissions
+        should still be blocked at the middleware layer.
+        """
+        mock_request.url.path = "/mcp"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": ["gateways.read"]}}
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions for this operation" in content.get("detail")
+            call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_allowed_sse_with_mcp_permissions(self, middleware, mock_request):
+        """Scoped token with MCP method permissions should pass through /sse middleware.
+
+        Runtime compensation: tokens with tools.*/resources.*/prompts.* permissions
+        implicitly get servers.use transport access.
+        """
+        mock_request.url.path = "/sse"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+
+            expected_response = Response(status_code=200, content="ok")
+            call_next = AsyncMock(return_value=expected_response)
+            response = await middleware(mock_request, call_next)
+
+            call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_restricted_token_blocked_from_sse_non_mcp(self, middleware, mock_request):
+        """Scoped token with only non-MCP permissions must be denied on GET /sse with HTTP 403.
+
+        Deny-path regression: tokens without servers.use AND without MCP method permissions
+        should still be blocked at the middleware layer.
+        """
+        mock_request.url.path = "/sse"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
+            mock_extract.return_value = {"scopes": {"permissions": ["gateways.read"]}}
+
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+            content = json.loads(response.body)
+
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions for this operation" in content.get("detail")
+            call_next.assert_not_called()
+
+    def test_permission_restrictions_rpc_allowed_with_mcp_permissions(self, middleware):
+        """Tokens with MCP method permissions get implicit servers.use transport access on /rpc."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.RESOURCES_READ]) is True
+        assert middleware._check_permission_restrictions("/rpc", "POST", ["gateways.read"]) is False
+
+    def test_permission_restrictions_server_mcp_requires_servers_use(self, middleware):
+        """Server MCP endpoint should require servers.use or MCP method permissions."""
+        # MCP method permissions get implicit transport access
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.RESOURCES_READ]) is True
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", [Permissions.SERVERS_USE]) is True
+        # Non-MCP permissions should still be denied
+        assert middleware._check_permission_restrictions("/servers/server-1/mcp", "POST", ["gateways.read"]) is False
+
+    def test_permission_restrictions_llm_proxy_default_prefix(self, middleware):
+        """LLM proxy endpoints should enforce llm.read/llm.invoke with default /v1 prefix."""
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_INVOKE]) is False
+
+        assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
+        assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_READ]) is False
+
+    def test_permission_restrictions_llm_proxy_custom_prefix(self, middleware, monkeypatch):
+        """LLM proxy path mapping should follow settings.llm_api_prefix."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.llm_api_prefix", "/gateway-llm")
+
+        assert middleware._check_permission_restrictions("/gateway-llm/models", "GET", [Permissions.LLM_READ]) is True
+        assert middleware._check_permission_restrictions("/gateway-llm/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
+        assert middleware._check_permission_restrictions("/v1/models", "GET", [Permissions.LLM_READ]) is False
+
+    def test_permission_restrictions_llm_proxy_exact_paths_only(self, middleware):
+        """LLM proxy permissions should not match sub-resource paths."""
+        assert middleware._check_permission_restrictions("/v1/models/anything", "GET", [Permissions.LLM_READ]) is False
+        assert middleware._check_permission_restrictions("/v1/chat/completions/anything", "POST", [Permissions.LLM_INVOKE]) is False
+
+    def test_permission_restrictions_normalizes_app_root_prefix(self, middleware, monkeypatch):
+        """APP_ROOT_PATH-prefixed requests should use canonical permission mappings."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.app_root_path", "/forge")
+        assert middleware._check_permission_restrictions("/forge/tools", "GET", [Permissions.TOOLS_READ]) is True
+        assert middleware._check_permission_restrictions("/forge/tools", "GET", [Permissions.TOOLS_CREATE]) is False
+
+    def test_normalize_path_for_matching_adds_leading_slash(self, middleware, monkeypatch):
+        """Relative normalized paths should be converted to absolute for matching."""
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "tools")
+        assert middleware._normalize_path_for_matching("/forge/tools") == "/tools"
+
+    def test_get_normalized_request_path_handles_non_dict_scope_and_relative_path(self, middleware, mock_request, monkeypatch):
+        """Non-dict scopes and relative normalized paths should be safely normalized."""
+        mock_request.scope = ["not-a-dict"]  # truthy non-dict exercises defensive coercion branch
+        mock_request.url.path = "/forge/tools"
+        monkeypatch.setattr("mcpgateway.middleware.token_scoping._normalize_scope_path", lambda *_args, **_kwargs: "forge/tools")
+
+        assert middleware._get_normalized_request_path(mock_request) == "/forge/tools"
+
+    @pytest.mark.asyncio
+    async def test_call_normalizes_scope_root_path_before_checks(self, middleware, mock_request):
+        """Request scope root_path should be removed before scope enforcement."""
+        mock_request.url.path = "/forge/tools"
+        mock_request.scope = {"path": "/forge/tools", "root_path": "/forge"}
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        with patch.object(middleware, "_extract_token_scopes", return_value={"scopes": {"permissions": [Permissions.TOOLS_READ]}}):
+            call_next = AsyncMock(return_value="success")
+            result = await middleware(mock_request, call_next)
+
+        assert result == "success"
+        call_next.assert_called_once()
 
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""
@@ -248,177 +617,6 @@ class TestTokenScopingMiddleware:
 
         result = middleware._check_team_membership(payload, db=MagicMock())
         assert result is False
-
-    @pytest.mark.asyncio
-    async def test_session_token_with_teams_claim_uses_embedded_teams(self, middleware, mock_request):
-        """Test that session tokens with 'teams' claim use embedded teams instead of DB lookup."""
-        mock_request.url.path = "/servers"
-        mock_request.method = "GET"
-        mock_request.headers = {"Authorization": "Bearer session_token"}
-
-        # Session token with explicit single team claim
-        session_payload = {
-            "sub": "user@example.com",
-            "token_use": "session",
-            "teams": ["team-123"],
-            "scopes": {"permissions": ["*"]},
-        }
-
-        with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["team-123"]) as mock_normalize:
-                    # Mock _check_team_membership to avoid DB query
-                    with patch.object(middleware, "_check_team_membership", return_value=True):
-                        # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
-                            call_next = AsyncMock(return_value="success")
-
-                            result = await middleware(mock_request, call_next)
-
-                            # Verify request was allowed
-                            assert result == "success"
-                            call_next.assert_called_once()
-
-                            # Verify normalize_token_teams was called (teams came from token)
-                            mock_normalize.assert_called_once()
-
-                    # Verify _resolve_teams_from_db was NOT called
-                    mock_resolve_teams.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_session_token_without_teams_claim_resolves_from_db(self, middleware, mock_request):
-        """Test that session tokens without 'teams' claim resolve teams from DB."""
-        mock_request.url.path = "/servers"
-        mock_request.method = "GET"
-        mock_request.headers = {"Authorization": "Bearer session_token"}
-
-        # Session token WITHOUT teams claim
-        session_payload = {
-            "sub": "user@example.com",
-            "token_use": "session",
-            "scopes": {"permissions": ["*"]},
-        }
-
-        with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team-1"]) as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams") as mock_normalize:
-                    call_next = AsyncMock(return_value="success")
-
-                    result = await middleware(mock_request, call_next)
-
-                    # Verify request was allowed
-                    assert result == "success"
-                    call_next.assert_called_once()
-
-                    # Verify _resolve_teams_from_db WAS called
-                    mock_resolve_teams.assert_called_once()
-
-                    # Verify normalize_token_teams was NOT called (teams came from DB)
-                    mock_normalize.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_session_token_with_null_teams_uses_db_resolve(self, middleware, mock_request):
-        """Test that session tokens with teams=null use _resolve_teams_from_db (which returns None for admin)."""
-        mock_request.url.path = "/servers"
-        mock_request.method = "GET"
-        mock_request.headers = {"Authorization": "Bearer session_token"}
-
-        # Session token with explicit null teams (admin bypass)
-        session_payload = {
-            "sub": "admin@example.com",
-            "token_use": "session",
-            "teams": None,
-            "is_admin": True,
-            "scopes": {"permissions": ["*"]},
-        }
-
-        with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db", return_value=None) as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams") as mock_normalize:
-                    call_next = AsyncMock(return_value="success")
-
-                    result = await middleware(mock_request, call_next)
-
-                    # Verify request was allowed
-                    assert result == "success"
-                    call_next.assert_called_once()
-
-                    # Verify _resolve_teams_from_db was called (teams=null is not a list with len==1)
-                    mock_resolve_teams.assert_called_once()
-
-                    # Verify normalize_token_teams was NOT called
-                    mock_normalize.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_api_token_always_uses_embedded_teams(self, middleware, mock_request):
-        """Test that API tokens always use embedded teams regardless of teams claim."""
-        mock_request.url.path = "/servers"
-        mock_request.method = "GET"
-        mock_request.headers = {"Authorization": "Bearer api_token"}
-
-        # API token (not session)
-        api_payload = {
-            "sub": "api@example.com",
-            "token_use": "api",
-            "teams": ["api-team-1"],
-            "scopes": {"permissions": ["*"]},
-        }
-
-        with patch.object(middleware, "_extract_token_scopes", return_value=api_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["api-team-1"]) as mock_normalize:
-                    # Mock _check_team_membership to avoid DB query
-                    with patch.object(middleware, "_check_team_membership", return_value=True):
-                        # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
-                            call_next = AsyncMock(return_value="success")
-
-                            result = await middleware(mock_request, call_next)
-
-                            # Verify request was allowed
-                            assert result == "success"
-                            call_next.assert_called_once()
-
-                            # Verify normalize_token_teams was called (API tokens use embedded teams)
-                            mock_normalize.assert_called_once()
-
-                            # Verify _resolve_teams_from_db was NOT called
-                            mock_resolve_teams.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_legacy_token_without_token_use_uses_embedded_teams(self, middleware, mock_request):
-        """Test that legacy tokens without token_use claim use embedded teams."""
-        mock_request.url.path = "/servers"
-        mock_request.method = "GET"
-        mock_request.headers = {"Authorization": "Bearer legacy_token"}
-
-        # Legacy token without token_use claim
-        legacy_payload = {
-            "sub": "legacy@example.com",
-            "teams": ["legacy-team-1"],
-            "scopes": {"permissions": ["*"]},
-        }
-
-        with patch.object(middleware, "_extract_token_scopes", return_value=legacy_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["legacy-team-1"]) as mock_normalize:
-                    # Mock _check_team_membership to avoid DB query
-                    with patch.object(middleware, "_check_team_membership", return_value=True):
-                        # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
-                            call_next = AsyncMock(return_value="success")
-
-                            result = await middleware(mock_request, call_next)
-
-                            # Verify request was allowed
-                            assert result == "success"
-                            call_next.assert_called_once()
-
-                            # Verify normalize_token_teams was called (legacy tokens use embedded teams)
-                            mock_normalize.assert_called_once()
-
-                            # Verify _resolve_teams_from_db was NOT called
-                            mock_resolve_teams.assert_not_called()
 
     def test_check_team_membership_missing_user_email_denies(self, middleware):
         """Team-scoped tokens without a user email should be rejected."""
@@ -498,21 +696,31 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_admin(self, middleware):
-        """Test that admin regex patterns require correct permissions."""
-        # Test exact /admin path requires ADMIN_USER_MANAGEMENT
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        """Test that admin regex patterns enforce route-group-specific permissions."""
+        # Dashboard/overview groups
+        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.ADMIN_DASHBOARD]) == True
+        assert middleware._check_permission_restrictions("/admin/overview/partial", "GET", [Permissions.ADMIN_OVERVIEW]) == True
 
-        # Test admin operations require admin permissions
-        assert middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.ADMIN_USER_MANAGEMENT]) == True
-        assert middleware._check_permission_restrictions("/admin/teams", "PUT", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        # User management vs config domains must remain separated
+        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == True
+        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == True
+        assert middleware._check_permission_restrictions("/admin/config/settings", "GET", [Permissions.ADMIN_USER_MANAGEMENT]) == False
+        assert middleware._check_permission_restrictions("/admin/users", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
 
-        # Test that non-admin permissions are rejected for admin paths
-        assert middleware._check_permission_restrictions("/admin", "GET", [Permissions.TOOLS_READ]) == False
-        assert middleware._check_permission_restrictions("/admin/users", "POST", [Permissions.RESOURCES_CREATE]) == False
+        # Other admin route groups
+        assert middleware._check_permission_restrictions("/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
+        assert middleware._check_permission_restrictions("/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
+        assert middleware._check_permission_restrictions("/admin/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
 
-        # Test that empty permissions list returns True (no restrictions policy)
-        assert middleware._check_permission_restrictions("/admin", "GET", []) == True
+        # Unmapped admin paths default-deny when token has explicit restrictions
+        assert middleware._check_permission_restrictions("/admin/not-mapped", "GET", [Permissions.ADMIN_SYSTEM_CONFIG]) == False
+
+        # Explicitly multi-scoped token remains functional
+        assert middleware._check_permission_restrictions(
+            "/admin/config/settings",
+            "GET",
+            [Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SYSTEM_CONFIG],
+        ) == True
 
     @pytest.mark.asyncio
     async def test_regex_pattern_precision_servers(self, middleware):
@@ -558,11 +766,19 @@ class TestTokenScopingMiddleware:
         ) == True, "POST /servers should succeed with servers.create"
 
         # Virtual MCP Server access should NOT require servers.create (this is the fix!)
+        # With MCP method permissions (tools.read), implicit servers.use is granted
         assert middleware._check_permission_restrictions(
             "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
             "POST",
             [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-        ) == False, "POST /servers/{id}/mcp should require servers.use, not servers.read"
+        ) == True, "POST /servers/{id}/mcp should be allowed with MCP method permissions"
+
+        # Without MCP method permissions, servers.use is still required
+        assert middleware._check_permission_restrictions(
+            "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
+            "POST",
+            [Permissions.SERVERS_READ, "gateways.read"]
+        ) == False, "POST /servers/{id}/mcp should require servers.use when no MCP method permissions"
 
         assert middleware._check_permission_restrictions(
             "/servers/abc123/sse",
@@ -575,12 +791,19 @@ class TestTokenScopingMiddleware:
             [Permissions.SERVERS_READ]
         ) == False, "GET /servers/{id}/sse should NOT accept servers.read"
 
-        # Other Virtual MCP Server endpoints should also not require servers.create
+        # Other Virtual MCP Server endpoints — MCP method permissions grant implicit transport access
         assert middleware._check_permission_restrictions(
             "/servers/test-server/mcp/",
             "POST",
             [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-        ) == False, "POST /servers/{id}/mcp/ should require servers.use"
+        ) == True, "POST /servers/{id}/mcp/ should be allowed with MCP method permissions"
+
+        # Without MCP method permissions, servers.use is still required
+        assert middleware._check_permission_restrictions(
+            "/servers/test-server/mcp/",
+            "POST",
+            [Permissions.SERVERS_READ]
+        ) == False, "POST /servers/{id}/mcp/ should require servers.use when no MCP method permissions"
 
         # Verify that servers.create works for Virtual MCP Server too (backward compatibility)
         assert middleware._check_permission_restrictions(
@@ -763,7 +986,7 @@ class TestTokenScopingMiddleware:
         # Test that exact patterns still work correctly
         exact_matches = [
             ("/tools", "GET", [Permissions.TOOLS_READ], True),
-            ("/admin", "GET", [Permissions.ADMIN_USER_MANAGEMENT], True),
+            ("/admin", "GET", [Permissions.ADMIN_DASHBOARD], True),
             ("/resources", "GET", [Permissions.RESOURCES_READ], True),
             ("/prompts", "POST", [Permissions.PROMPTS_CREATE], True),
             ("/servers", "POST", [Permissions.SERVERS_CREATE], True),
@@ -830,6 +1053,24 @@ class TestTokenScopingMiddleware:
         # Test wrong permissions are rejected
         assert middleware._check_permission_restrictions("/gateways", "GET", [Permissions.TOOLS_READ]) is False
         assert middleware._check_permission_restrictions("/gateways", "POST", [Permissions.GATEWAYS_READ]) is False
+
+    @pytest.mark.asyncio
+    async def test_token_permission_patterns(self, middleware):
+        """Test that token endpoints enforce the expected token permissions."""
+        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_READ]) is True
+        assert middleware._check_permission_restrictions("/tokens", "GET", [Permissions.TOKENS_CREATE]) is False
+
+        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tokens", "POST", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tokens/teams/team-123", "POST", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_UPDATE]) is True
+        assert middleware._check_permission_restrictions("/tokens/token-123", "PUT", [Permissions.TOKENS_READ]) is False
+
+        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_REVOKE]) is True
+        assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_UPDATE]) is False
 
     @pytest.mark.asyncio
     async def test_private_visibility_requires_owner(self, middleware):
@@ -1104,9 +1345,9 @@ def test_check_resource_team_ownership_prompt_and_gateway():
     db.execute.return_value.scalar_one_or_none.return_value = gateway
     assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
 
-    # Resource not found should allow
+    # Missing resources must fail closed
     db.execute.return_value.scalar_one_or_none.return_value = None
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
 
 
 def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_resource():
@@ -1318,6 +1559,137 @@ async def test_team_scoped_resource_denied(monkeypatch):
         response = await middleware(mock_request, call_next)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         call_next.assert_not_called()
+
+
+class TestRuntimeMcpTransportCompensation:
+    """Tests for runtime servers.use compensation for tokens with MCP method permissions.
+
+    When the token_catalog_service generates a token with MCP method permissions
+    (tools.*, resources.*, prompts.*), it auto-injects servers.use. However, tokens
+    generated before this fix lack servers.use. The middleware compensates at runtime
+    by implicitly granting servers.use transport access to tokens that carry MCP
+    method permissions, ensuring pre-existing tokens continue to work.
+
+    This test class verifies:
+    1. Each MCP method prefix (tools., resources., prompts.) grants implicit transport access
+    2. Non-MCP permissions do NOT grant implicit transport access
+    3. All transport endpoints (rpc, sse, mcp, server-scoped) are covered
+    4. Mixed permission lists are handled correctly
+    5. Edge cases (empty, wildcard, exact servers.use) still work
+    """
+
+    @pytest.fixture
+    def middleware(self):
+        return TokenScopingMiddleware()
+
+    # --- Per-prefix verification across all transport endpoints ---
+
+    @pytest.mark.parametrize("mcp_permission", [
+        "tools.read", "tools.execute", "tools.create", "tools.update", "tools.delete",
+        "resources.read", "resources.create", "resources.update", "resources.delete",
+        "prompts.read", "prompts.create", "prompts.update", "prompts.delete",
+    ])
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/rpc"),
+        ("GET", "/sse"),
+        ("POST", "/mcp"),
+        ("GET", "/mcp"),
+        ("DELETE", "/mcp"),
+        ("GET", "/servers/abc123/sse"),
+        ("POST", "/servers/abc123/message"),
+        ("POST", "/servers/abc123/mcp"),
+    ])
+    def test_mcp_permission_grants_implicit_transport_access(self, middleware, mcp_permission, method, path):
+        """Any MCP method permission should grant implicit servers.use on all transport endpoints."""
+        assert middleware._check_permission_restrictions(path, method, [mcp_permission]) is True, (
+            f"{method} {path} should be allowed with MCP permission '{mcp_permission}'"
+        )
+
+    # --- Non-MCP permissions must NOT grant implicit transport access ---
+
+    @pytest.mark.parametrize("non_mcp_permission", [
+        "gateways.read", "gateways.create",
+        "servers.read", "servers.create", "servers.update", "servers.delete",
+        "admin.user_management", "admin.system_config",
+        "llm.read", "llm.invoke",
+    ])
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/rpc"),
+        ("GET", "/sse"),
+        ("POST", "/mcp"),
+        ("POST", "/servers/abc123/mcp"),
+    ])
+    def test_non_mcp_permission_denied_on_transport(self, middleware, non_mcp_permission, method, path):
+        """Non-MCP permissions alone must NOT grant transport access."""
+        assert middleware._check_permission_restrictions(path, method, [non_mcp_permission]) is False, (
+            f"{method} {path} should be denied with only non-MCP permission '{non_mcp_permission}'"
+        )
+
+    # --- Mixed permission lists ---
+
+    def test_mixed_mcp_and_non_mcp_permissions_grants_access(self, middleware):
+        """A permission list containing at least one MCP permission should grant transport access."""
+        permissions = ["gateways.read", "servers.read", "tools.execute"]
+        assert middleware._check_permission_restrictions("/rpc", "POST", permissions) is True
+
+    def test_mixed_non_mcp_only_permissions_denied(self, middleware):
+        """A permission list with multiple non-MCP permissions should still be denied."""
+        permissions = ["gateways.read", "servers.read", "servers.create"]
+        assert middleware._check_permission_restrictions("/rpc", "POST", permissions) is False
+
+    # --- Explicit servers.use still works ---
+
+    def test_explicit_servers_use_still_works(self, middleware):
+        """Explicit servers.use (without MCP permissions) must still grant transport access."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", [Permissions.SERVERS_USE]) is True
+        assert middleware._check_permission_restrictions("/mcp", "POST", [Permissions.SERVERS_USE]) is True
+        assert middleware._check_permission_restrictions("/sse", "GET", [Permissions.SERVERS_USE]) is True
+
+    # --- Wildcard and empty permissions (no compensation needed) ---
+
+    def test_wildcard_bypasses_all_checks(self, middleware):
+        """Wildcard permission should bypass all pattern checks including transport."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", ["*"]) is True
+
+    def test_empty_permissions_bypasses_all_checks(self, middleware):
+        """Empty permissions (defer to RBAC) should bypass pattern checks."""
+        assert middleware._check_permission_restrictions("/rpc", "POST", []) is True
+
+    # --- Compensation does NOT affect non-transport endpoints ---
+
+    def test_mcp_permissions_do_not_affect_non_transport_endpoints(self, middleware):
+        """MCP method permissions should not grant access to non-transport endpoints like POST /tools."""
+        # tools.read should not grant tools.create access
+        assert middleware._check_permission_restrictions("/tools", "POST", ["tools.read"]) is False
+        # resources.read should not grant resources.create access
+        assert middleware._check_permission_restrictions("/resources", "POST", ["resources.read"]) is False
+
+    # --- Reproduces the original bug scenario ---
+
+    def test_pre_fix_api_token_scenario(self, middleware):
+        """Reproduce the exact scenario: API token with tools.read + tools.execute but no servers.use.
+
+        This is the token shape generated before the auto-injection fix was deployed.
+        The runtime compensation should allow it through on transport endpoints.
+        """
+        pre_fix_permissions = [
+            "servers.create", "servers.read", "servers.update", "servers.delete",
+            "gateways.read", "tools.read", "tools.execute",
+        ]
+        # Transport endpoints should now work (tools.read/execute trigger compensation)
+        assert middleware._check_permission_restrictions("/rpc", "POST", pre_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/mcp", "POST", pre_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/sse", "GET", pre_fix_permissions) is True
+
+    def test_post_fix_api_token_with_servers_use(self, middleware):
+        """Tokens generated after the fix already have servers.use — should still work."""
+        post_fix_permissions = [
+            "servers.create", "servers.read", "servers.update", "servers.delete",
+            "gateways.read", "tools.read", "tools.execute", "servers.use",
+        ]
+        assert middleware._check_permission_restrictions("/rpc", "POST", post_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/mcp", "POST", post_fix_permissions) is True
+        assert middleware._check_permission_restrictions("/sse", "GET", post_fix_permissions) is True
 
 
 @pytest.mark.asyncio

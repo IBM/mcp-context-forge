@@ -42,7 +42,22 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, PasswordResetToken, utc_now
+from mcpgateway.db import (
+    EmailAuthEvent,
+    EmailTeam,
+    EmailTeamInvitation,
+    EmailTeamJoinRequest,
+    EmailTeamMember,
+    EmailTeamMemberHistory,
+    EmailUser,
+    PasswordResetToken,
+    PendingUserApproval,
+    Role,
+    SSOAuthSession,
+    TokenRevocation,
+    UserRole,
+    utc_now,
+)
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.email_notification_service import AuthEmailNotificationService
@@ -58,6 +73,7 @@ logger = logging_service.get_logger(__name__)
 _background_tasks: set[asyncio.Task] = set()
 
 _GET_ALL_USERS_LIMIT = 10000
+_DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
 
 
 @dataclass(frozen=True)
@@ -331,6 +347,37 @@ class EmailAuthService:
         """
         min_ms = max(0, int(getattr(settings, "password_reset_min_response_ms", 250)))
         return min_ms / 1000.0
+
+    @staticmethod
+    def _minimum_login_failure_seconds() -> float:
+        """Get minimum failed-login response duration.
+
+        Returns:
+            float: Minimum failure response duration in seconds.
+        """
+        min_ms = max(0, int(getattr(settings, "failed_login_min_response_ms", 250)))
+        return min_ms / 1000.0
+
+    async def _apply_failed_login_floor(self, start_time: float) -> None:
+        """Apply minimum failed-login response duration.
+
+        Args:
+            start_time: Monotonic timestamp when login processing started.
+        """
+        remaining = self._minimum_login_failure_seconds() - (time.monotonic() - start_time)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    async def _verify_dummy_password_for_timing(self, password: str) -> None:
+        """Run dummy Argon2 verification to reduce observable timing differences.
+
+        Args:
+            password: User-supplied password candidate.
+        """
+        try:
+            await self.password_service.verify_password_async(password, _DUMMY_ARGON2_HASH)
+        except Exception as exc:  # nosec B110
+            logger.debug("Dummy password verification failed: %s", exc)
 
     @staticmethod
     def _build_forgot_password_url() -> str:
@@ -628,6 +675,7 @@ class EmailAuthService:
             # await service.authenticate_user("user@example.com", "wrong_password")  # Returns: None
         """
         email = email.lower().strip()
+        start_time = time.monotonic()
 
         # Get user from database
         user = await self.get_user_by_email(email)
@@ -640,63 +688,66 @@ class EmailAuthService:
             if not user:
                 failure_reason = "User not found"
                 logger.info(f"Authentication failed for {email}: user not found")
+                await self._verify_dummy_password_for_timing(password)
+                await self._apply_failed_login_floor(start_time)
                 return None
 
             if not user.is_active:
                 failure_reason = "Account is disabled"
                 logger.info(f"Authentication failed for {email}: account disabled")
+                await self._verify_dummy_password_for_timing(password)
+                await self._apply_failed_login_floor(start_time)
                 return None
 
             is_protected_admin = user.is_admin and settings.protect_all_admins
 
+            # Enforce lockout for all accounts.  Protected admins are allowed
+            # to continue attempting login (feature-flagged via protect_all_admins)
+            # but their failed attempts are still tracked for audit purposes.
             if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
+                await self._verify_dummy_password_for_timing(password)
+                await self._apply_failed_login_floor(start_time)
                 return None
-
-            # Clear lockout for protected admins so they can always attempt login
-            if is_protected_admin and user.is_account_locked():
-                logger.info(f"Clearing lockout for protected admin {email}")
-                user.reset_failed_attempts()
-                self.db.commit()
 
             # Verify password
             if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
-                # Increment failed attempts (skip for protected admins)
-                if not is_protected_admin:
-                    max_attempts = getattr(settings, "max_failed_login_attempts", 5)
-                    lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
+                # Always increment failed attempts — including for protected admins
+                max_attempts = getattr(settings, "max_failed_login_attempts", 5)
+                lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
 
-                    is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
+                is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
 
-                    if is_locked:
-                        logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
-                        failure_reason = "Account locked due to too many failed attempts"
-                        lockout_notifications_enabled = getattr(settings, "account_lockout_notification_enabled", True)
-                        if isinstance(lockout_notifications_enabled, bool) and lockout_notifications_enabled:
-                            locked_until_iso = user.locked_until.isoformat() if user.locked_until else "unknown"
-                            try:
-                                await self.email_notification_service.send_account_lockout_email(
-                                    to_email=user.email,
-                                    full_name=user.full_name,
-                                    locked_until_iso=locked_until_iso,
-                                    reset_url=self._build_forgot_password_url(),
-                                )
-                            except Exception as email_exc:
-                                logger.warning("Failed to send lockout notification for %s: %s", email, email_exc)
-                        self._log_auth_event(
-                            event_type="ACCOUNT_LOCKED",
-                            success=True,
-                            user_email=email,
-                            ip_address=ip_address,
-                            user_agent=user_agent,
-                            details={"locked_until": user.locked_until.isoformat() if user.locked_until else None},
-                        )
+                if is_locked:
+                    logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
+                    failure_reason = "Account locked due to too many failed attempts"
+                    lockout_notifications_enabled = getattr(settings, "account_lockout_notification_enabled", True)
+                    if isinstance(lockout_notifications_enabled, bool) and lockout_notifications_enabled:
+                        locked_until_iso = user.locked_until.isoformat() if user.locked_until else "unknown"
+                        try:
+                            await self.email_notification_service.send_account_lockout_email(
+                                to_email=user.email,
+                                full_name=user.full_name,
+                                locked_until_iso=locked_until_iso,
+                                reset_url=self._build_forgot_password_url(),
+                            )
+                        except Exception as email_exc:
+                            logger.warning("Failed to send lockout notification for %s: %s", email, email_exc)
+                    self._log_auth_event(
+                        event_type="ACCOUNT_LOCKED",
+                        success=True,
+                        user_email=email,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        details={"locked_until": user.locked_until.isoformat() if user.locked_until else None},
+                    )
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
+                await self._apply_failed_login_floor(start_time)
                 return None
 
             # Authentication successful
@@ -1709,6 +1760,27 @@ class EmailAuthService:
                 await self.role_service.delete_all_user_roles(email)
             except Exception as e:
                 logger.warning(f"Failed to delete role assignments for {email}: {e}")
+
+            # Reassign non-null audit FKs to another user so deleting this user does not
+            # break referential integrity for historical records.
+            replacement_row = self.db.query(EmailUser.email).filter(EmailUser.email != email).order_by(EmailUser.is_admin.desc(), EmailUser.created_at.asc()).first()
+            replacement_email = replacement_row[0] if replacement_row else None
+
+            if replacement_email:
+                self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.invited_by == email).update({EmailTeamInvitation.invited_by: replacement_email}, synchronize_session=False)
+                self.db.query(Role).filter(Role.created_by == email).update({Role.created_by: replacement_email}, synchronize_session=False)
+                self.db.query(UserRole).filter(UserRole.granted_by == email).update({UserRole.granted_by: replacement_email}, synchronize_session=False)
+                self.db.query(TokenRevocation).filter(TokenRevocation.revoked_by == email).update({TokenRevocation.revoked_by: replacement_email}, synchronize_session=False)
+
+            # Nullify nullable actor references.
+            self.db.query(EmailTeamMember).filter(EmailTeamMember.invited_by == email).update({EmailTeamMember.invited_by: None}, synchronize_session=False)
+            self.db.query(EmailTeamMemberHistory).filter(EmailTeamMemberHistory.action_by == email).update({EmailTeamMemberHistory.action_by: None}, synchronize_session=False)
+            self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.reviewed_by == email).update({EmailTeamJoinRequest.reviewed_by: None}, synchronize_session=False)
+            self.db.query(PendingUserApproval).filter(PendingUserApproval.approved_by == email).update({PendingUserApproval.approved_by: None}, synchronize_session=False)
+            self.db.query(SSOAuthSession).filter(SSOAuthSession.user_email == email).update({SSOAuthSession.user_email: None}, synchronize_session=False)
+
+            # Remove rows where this user is the primary subject.
+            self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.user_email == email).delete(synchronize_session=False)
 
             # Delete related auth events
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)

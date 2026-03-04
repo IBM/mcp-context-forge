@@ -1,4 +1,4 @@
-# High-Performance Nginx Caching Proxy for MCP Gateway
+# High-Performance Nginx Caching Proxy for ContextForge
 # Based on Red Hat UBI 10.1 Minimal for consistency with gateway container
 
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1764604111

@@ -12,17 +12,21 @@ Handles provider management, OAuth flows, and user authentication.
 from __future__ import annotations
 
 # Standard
+import asyncio
 import base64
 from dataclasses import dataclass
 from datetime import timedelta
 import hashlib
+import hmac
 import logging
 import secrets
 import string
+from time import monotonic
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
 # Third-Party
+import jwt
 import orjson
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
@@ -61,6 +65,12 @@ class SSOService:
         >>> callable(service.list_enabled_providers)
         True
     """
+
+    _OIDC_METADATA_CACHE_TTL_SECONDS = 300
+    _oidc_config_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+    _jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
+    _STATE_BINDING_SEPARATOR = "."
+    _STATE_BINDING_HEX_LEN = 64
 
     def __init__(self, db: Session):
         """Initialize SSO service with database session.
@@ -143,6 +153,264 @@ class SSOService:
             logger.warning(f"Failed to decode JWT claims: {e}")
             return None
 
+    async def _get_oidc_provider_metadata(self, issuer: str) -> Optional[Dict[str, Any]]:
+        """Discover and cache OIDC provider metadata.
+
+        Args:
+            issuer: OIDC issuer URL.
+
+        Returns:
+            Provider metadata dict from discovery endpoint, or None on failure.
+        """
+        normalized_issuer = issuer.rstrip("/")
+        cached = self._oidc_config_cache.get(normalized_issuer)
+        if cached is not None:
+            cached_at, cached_metadata = cached
+            if monotonic() - cached_at < self._OIDC_METADATA_CACHE_TTL_SECONDS:
+                return cached_metadata
+            self._oidc_config_cache.pop(normalized_issuer, None)
+
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        discovery_url = f"{normalized_issuer}/.well-known/openid-configuration"
+        try:
+            client = await get_http_client()
+            response = await client.get(discovery_url, timeout=settings.oauth_request_timeout)
+            if response.status_code != 200:
+                logger.warning("OIDC discovery failed for issuer %s with HTTP %s", normalized_issuer, response.status_code)
+                return None
+
+            metadata = response.json()
+            if not isinstance(metadata, dict):
+                logger.warning("OIDC discovery response for issuer %s is not a JSON object", normalized_issuer)
+                return None
+            self._oidc_config_cache[normalized_issuer] = (monotonic(), metadata)
+            return metadata
+        except Exception as exc:
+            logger.warning("OIDC discovery request failed for issuer %s: %s", normalized_issuer, exc)
+            return None
+
+    async def _resolve_oidc_issuer_and_jwks(self, provider: SSOProvider) -> Tuple[Optional[str], Optional[str]]:
+        """Resolve issuer and JWKS URI for an OIDC provider.
+
+        Args:
+            provider: SSO provider configuration.
+
+        Returns:
+            Tuple of (issuer, jwks_uri), each optional when unavailable.
+        """
+        issuer = provider.issuer.strip() if isinstance(provider.issuer, str) and provider.issuer.strip() else None
+        jwks_uri = provider.jwks_uri.strip() if isinstance(provider.jwks_uri, str) and provider.jwks_uri.strip() else None
+
+        if issuer and not jwks_uri:
+            metadata = await self._get_oidc_provider_metadata(issuer)
+            if metadata:
+                discovered_jwks = metadata.get("jwks_uri")
+                discovered_issuer = metadata.get("issuer")
+                if isinstance(discovered_jwks, str) and discovered_jwks.strip():
+                    jwks_uri = discovered_jwks.strip()
+                if isinstance(discovered_issuer, str) and discovered_issuer.strip():
+                    issuer = discovered_issuer.strip()
+
+        return issuer, jwks_uri
+
+    def _get_jwks_client(self, jwks_uri: str) -> jwt.PyJWKClient:
+        """Get or create a cached PyJWKClient instance.
+
+        Args:
+            jwks_uri: JWKS endpoint URL.
+
+        Returns:
+            Cached or newly created `PyJWKClient`.
+        """
+        if jwks_uri not in self._jwks_client_cache:
+            self._jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
+        return self._jwks_client_cache[jwks_uri]
+
+    async def _verify_oidc_id_token(self, provider: SSOProvider, id_token: str, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Verify OIDC ID token signature and claims.
+
+        Args:
+            provider: SSO provider configuration.
+            id_token: Raw OIDC ID token string.
+            expected_nonce: Expected nonce from auth session, when available.
+
+        Returns:
+            Verified token claims when validation succeeds, otherwise None.
+        """
+        if provider.provider_type != "oidc":
+            return None
+
+        issuer, jwks_uri = await self._resolve_oidc_issuer_and_jwks(provider)
+        if not jwks_uri:
+            logger.warning("Skipping id_token claim usage for provider %s: missing jwks_uri", provider.id)
+            return None
+
+        try:
+            jwks_client = self._get_jwks_client(jwks_uri)
+            signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, id_token)
+
+            decode_kwargs: Dict[str, Any] = {
+                "key": signing_key.key,
+                "algorithms": ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "EdDSA"],
+                "audience": provider.client_id,
+                "options": {
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                    "verify_aud": True,
+                    "verify_iss": bool(issuer),
+                },
+            }
+            if issuer:
+                decode_kwargs["issuer"] = issuer
+
+            claims = await asyncio.to_thread(jwt.decode, id_token, **decode_kwargs)
+            if expected_nonce is not None and claims.get("nonce") != expected_nonce:
+                logger.warning("OIDC id_token nonce validation failed for provider %s", provider.id)
+                return None
+            return claims
+        except jwt.PyJWTError as exc:
+            logger.warning("OIDC id_token verification failed for provider %s: %s", provider.id, exc)
+            return None
+        except Exception as exc:
+            logger.warning("Unexpected OIDC id_token verification error for provider %s: %s", provider.id, exc)
+            return None
+
+    def _resolve_entra_graph_fallback_settings(self, provider_metadata: Optional[Dict[str, Any]]) -> Tuple[bool, int, int]:
+        """Resolve Entra Graph fallback settings with provider metadata override.
+
+        Args:
+            provider_metadata: Optional provider metadata from DB/config.
+
+        Returns:
+            Tuple of (enabled, timeout_seconds, max_groups).
+        """
+        metadata = provider_metadata or {}
+        enabled = settings.sso_entra_graph_api_enabled
+        timeout = settings.sso_entra_graph_api_timeout
+        max_groups = settings.sso_entra_graph_api_max_groups
+
+        if "graph_api_enabled" in metadata:
+            metadata_enabled = metadata.get("graph_api_enabled")
+            if isinstance(metadata_enabled, bool):
+                enabled = metadata_enabled
+            elif isinstance(metadata_enabled, str):
+                normalized_enabled = metadata_enabled.strip().lower()
+                if normalized_enabled in {"1", "true", "yes", "on"}:
+                    enabled = True
+                elif normalized_enabled in {"0", "false", "no", "off"}:
+                    enabled = False
+                else:
+                    logger.warning("Invalid provider_metadata.graph_api_enabled=%s; using configured default %s", metadata_enabled, enabled)
+            elif isinstance(metadata_enabled, int):
+                enabled = metadata_enabled != 0
+            else:
+                logger.warning("Invalid provider_metadata.graph_api_enabled=%s (type %s); using configured default %s", metadata_enabled, type(metadata_enabled).__name__, enabled)
+
+        metadata_timeout = metadata.get("graph_api_timeout")
+        if metadata_timeout is not None:
+            try:
+                timeout_candidate = int(metadata_timeout)
+                if 1 <= timeout_candidate <= 120:
+                    timeout = timeout_candidate
+                else:
+                    logger.warning("Invalid provider_metadata.graph_api_timeout=%s; using configured default %s", metadata_timeout, timeout)
+            except (TypeError, ValueError):
+                logger.warning("Invalid provider_metadata.graph_api_timeout=%s; using configured default %s", metadata_timeout, timeout)
+
+        metadata_max_groups = metadata.get("graph_api_max_groups")
+        if metadata_max_groups is not None:
+            try:
+                max_groups_candidate = int(metadata_max_groups)
+                if max_groups_candidate >= 0:
+                    max_groups = max_groups_candidate
+                else:
+                    logger.warning("Invalid provider_metadata.graph_api_max_groups=%s; using configured default %s", metadata_max_groups, max_groups)
+            except (TypeError, ValueError):
+                logger.warning("Invalid provider_metadata.graph_api_max_groups=%s; using configured default %s", metadata_max_groups, max_groups)
+
+        return enabled, timeout, max_groups
+
+    async def _fetch_entra_groups_from_graph_api(self, access_token: str, user_email: str, provider_metadata: Optional[Dict[str, Any]] = None) -> Optional[List[str]]:
+        """Fetch Entra group object IDs from Microsoft Graph for overage tokens.
+
+        Args:
+            access_token: Delegated OAuth access token from Entra.
+            user_email: User identifier for structured logs.
+            provider_metadata: Optional provider metadata for runtime overrides.
+
+        Returns:
+            List of group IDs on success, empty list when Graph returns no IDs,
+            or None if retrieval failed/disabled.
+        """
+        graph_api_enabled, graph_api_timeout, graph_api_max_groups = self._resolve_entra_graph_fallback_settings(provider_metadata)
+        if not graph_api_enabled:
+            logger.info("Microsoft Graph fallback for Entra group overage is disabled")
+            return None
+
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        client = await get_http_client()
+        try:
+            response = await client.post(
+                "https://graph.microsoft.com/v1.0/me/getMemberObjects",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={"securityEnabledOnly": True},
+                timeout=graph_api_timeout,
+            )
+        except Exception as e:
+            logger.error("Failed to retrieve groups from Graph API for %s: %s", user_email, e)
+            return None
+
+        if response.status_code != 200:
+            if response.status_code in {401, 403}:
+                logger.error(
+                    "Failed to retrieve groups from Graph API for %s: HTTP %s. Check Entra delegated permissions and consent (minimum User.Read).",
+                    user_email,
+                    response.status_code,
+                )
+            else:
+                logger.error("Failed to retrieve groups from Graph API for %s: HTTP %s", user_email, response.status_code)
+            return None
+
+        try:
+            groups_payload = response.json()
+        except ValueError as e:
+            logger.error("Failed to parse Graph API response for %s: %s", user_email, e)
+            return None
+
+        group_values = groups_payload.get("value", [])
+        if not isinstance(group_values, list):
+            logger.warning("Unexpected Graph API groups payload for %s: expected list in 'value'", user_email)
+            return []
+
+        deduped_groups: List[str] = []
+        seen_groups: set[str] = set()
+        for group_id in group_values:
+            if not isinstance(group_id, str):
+                continue
+            normalized_group_id = group_id.strip()
+            if not normalized_group_id or normalized_group_id in seen_groups:
+                continue
+            seen_groups.add(normalized_group_id)
+            deduped_groups.append(normalized_group_id)
+
+        if graph_api_max_groups > 0:
+            if len(deduped_groups) > graph_api_max_groups:
+                logger.warning(
+                    "Graph API returned %d groups for %s; applying configured cap (%d)",
+                    len(deduped_groups),
+                    user_email,
+                    graph_api_max_groups,
+                )
+                deduped_groups = deduped_groups[:graph_api_max_groups]
+
+        logger.info("Retrieved %d groups from Graph API for %s", len(deduped_groups), user_email)
+        return deduped_groups
+
     def list_enabled_providers(self) -> List[SSOProvider]:
         """Get list of enabled SSO providers.
 
@@ -201,6 +469,119 @@ class SSOService:
         result = self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _normalize_issuer_url(issuer: str) -> str:
+        """Normalize issuer URL for allowlist comparisons.
+
+        Args:
+            issuer: Raw issuer URL from provider config or metadata.
+
+        Returns:
+            Lowercased issuer URL without trailing slash.
+        """
+        return issuer.strip().rstrip("/").lower()
+
+    def _enforce_allowed_issuer(self, issuer: Optional[str]) -> None:
+        """Enforce configured issuer allowlist when present.
+
+        Args:
+            issuer: Candidate issuer URL from provider configuration.
+
+        Raises:
+            ValueError: If issuer is set but not in configured allowlist.
+        """
+        allowed_issuers = getattr(settings, "sso_issuers", None)
+        if not allowed_issuers:
+            return
+
+        if not isinstance(issuer, str) or not issuer.strip():
+            logger.warning("SSO provider has blank/empty issuer while SSO_ISSUERS allowlist is configured; issuer enforcement skipped.")
+            return
+
+        normalized_candidate = self._normalize_issuer_url(issuer)
+        normalized_allowlist = {self._normalize_issuer_url(str(allowed_issuer)) for allowed_issuer in allowed_issuers if isinstance(allowed_issuer, str) and allowed_issuer.strip()}
+        if normalized_allowlist and normalized_candidate not in normalized_allowlist:
+            raise ValueError("Issuer is not allowed by SSO_ISSUERS configuration")
+
+    @staticmethod
+    def _resolve_team_mapping_target(mapping_value: Any) -> Tuple[Optional[str], str]:
+        """Resolve team mapping value into team id and role.
+
+        Args:
+            mapping_value: Team mapping target value from provider config.
+
+        Returns:
+            Tuple of ``(team_id, role)`` where ``team_id`` may be ``None`` and
+            role defaults to ``member`` when not explicitly valid.
+        """
+        if isinstance(mapping_value, str) and mapping_value.strip():
+            return mapping_value.strip(), "member"
+
+        if isinstance(mapping_value, dict):
+            team_id_value = mapping_value.get("team_id") or mapping_value.get("id")
+            team_id = str(team_id_value).strip() if team_id_value is not None else ""
+            role_value = str(mapping_value.get("role", "member")).strip().lower()
+            role = role_value if role_value in {"owner", "member"} else "member"
+            return (team_id if team_id else None), role
+
+        return None, "member"
+
+    async def _apply_team_mapping(self, user_email: str, user_info: Dict[str, Any], provider: Optional[SSOProvider]) -> None:
+        """Apply provider team mappings based on SSO group claims.
+
+        Args:
+            user_email: Authenticated user email to map into teams.
+            user_info: Identity claims payload containing optional group claims.
+            provider: SSO provider configuration with ``team_mapping`` entries.
+
+        Returns:
+            None.
+        """
+        if not provider:
+            return
+
+        mapping = getattr(provider, "team_mapping", None)
+        if not isinstance(mapping, dict) or not mapping:
+            return
+
+        groups_raw = user_info.get("groups", [])
+        if isinstance(groups_raw, str):
+            groups = [groups_raw]
+        elif isinstance(groups_raw, list):
+            groups = [str(group).strip() for group in groups_raw if str(group).strip()]
+        else:
+            groups = []
+
+        if not groups:
+            return
+
+        normalized_groups = {group.lower() for group in groups}
+
+        # First-Party
+        from mcpgateway.services.team_management_service import MemberAlreadyExistsError, TeamManagementError, TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        team_service = TeamManagementService(self.db)
+        for source_group, target in mapping.items():
+            if not isinstance(source_group, str):
+                continue
+            source_group_normalized = source_group.strip().lower()
+            if not source_group_normalized or source_group_normalized not in normalized_groups:
+                continue
+
+            team_id, role = self._resolve_team_mapping_target(target)
+            if not team_id:
+                logger.warning("Skipping invalid SSO team_mapping entry for provider %s and group '%s'", provider.id, source_group)
+                continue
+
+            try:
+                await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=role, invited_by=user_email)
+            except MemberAlreadyExistsError:
+                logger.debug("SSO team_mapping: user %s already member of team %s", user_email, team_id)
+            except TeamManagementError as exc:
+                logger.warning("SSO team_mapping failed for user %s, group '%s', team '%s': %s", user_email, source_group, team_id, exc)
+            except Exception as exc:
+                logger.warning("Unexpected SSO team_mapping error for user %s and team '%s': %s", user_email, team_id, exc)
+
     async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.
 
@@ -227,6 +608,8 @@ class SSOService:
             >>> provider.client_secret_encrypted.startswith('ENC(')
             True
         """
+        self._enforce_allowed_issuer(provider_data.get("issuer"))
+
         # Encrypt client secret
         client_secret = provider_data.pop("client_secret")
         provider_data["client_secret_encrypted"] = await self._encrypt_secret(client_secret)
@@ -274,6 +657,9 @@ class SSOService:
         provider = self.get_provider(provider_id)
         if not provider:
             return None
+
+        if "issuer" in provider_data:
+            self._enforce_allowed_issuer(provider_data.get("issuer"))
 
         # Handle client secret encryption if provided
         if "client_secret" in provider_data:
@@ -345,13 +731,172 @@ class SSOService:
 
         return code_verifier, code_challenge
 
-    def get_authorization_url(self, provider_id: str, redirect_uri: str, scopes: Optional[List[str]] = None) -> Optional[str]:
+    @staticmethod
+    def _normalize_scope_values(values: Optional[List[str] | str]) -> List[str]:
+        """Normalize scope values to a deduplicated, ordered list.
+
+        Args:
+            values: Scope input as list or space-delimited string.
+
+        Returns:
+            Ordered, unique scope values.
+        """
+        if values is None:
+            return []
+
+        raw_values: List[str]
+        if isinstance(values, str):
+            raw_values = values.split()
+        else:
+            raw_values = [str(v) for v in values if isinstance(v, str) and v.strip()]
+
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for value in raw_values:
+            scope = value.strip()
+            if not scope or scope in seen:
+                continue
+            normalized.append(scope)
+            seen.add(scope)
+        return normalized
+
+    def _resolve_login_scopes(self, provider: SSOProvider, requested_scopes: Optional[List[str]]) -> List[str]:
+        """Resolve requested SSO scopes against provider allowlists.
+
+        Args:
+            provider: SSO provider configuration.
+            requested_scopes: Optional scopes requested by the client.
+
+        Returns:
+            Final scope list to send to the provider.
+
+        Raises:
+            ValueError: If provider scope configuration is invalid or request includes disallowed scopes.
+        """
+        configured_scopes = self._normalize_scope_values(getattr(provider, "scope", None))
+        if not configured_scopes:
+            raise ValueError("Provider has no configured scopes")
+
+        allowed_scopes = configured_scopes
+        provider_metadata = getattr(provider, "provider_metadata", {}) or {}
+        metadata_allowed_raw = provider_metadata.get("allowed_scopes")
+        metadata_allowed = self._normalize_scope_values(metadata_allowed_raw) if metadata_allowed_raw else []
+        if metadata_allowed:
+            metadata_allowed_set = set(metadata_allowed)
+            allowed_scopes = [scope for scope in configured_scopes if scope in metadata_allowed_set]
+
+        if not allowed_scopes:
+            raise ValueError("No allowed scopes configured for provider")
+
+        if not requested_scopes:
+            return allowed_scopes
+
+        normalized_requested = self._normalize_scope_values(requested_scopes)
+        if not normalized_requested:
+            return allowed_scopes
+
+        allowed_set = set(allowed_scopes)
+        invalid_scopes = [scope for scope in normalized_requested if scope not in allowed_set]
+        if invalid_scopes:
+            invalid_csv = ", ".join(invalid_scopes)
+            raise ValueError(f"Invalid scopes requested: {invalid_csv}")
+
+        return normalized_requested
+
+    def _get_state_binding_secret(self) -> bytes:
+        """Resolve secret bytes used for state/session binding HMAC.
+
+        Returns:
+            Secret bytes used for HMAC signatures.
+        """
+        secret_source = settings.auth_encryption_secret
+        if hasattr(secret_source, "get_secret_value"):
+            return secret_source.get_secret_value().encode("utf-8")
+        return str(secret_source).encode("utf-8")
+
+    def _generate_session_bound_state(self, provider_id: str, session_binding: str) -> str:
+        """Generate state value bound to browser session context.
+
+        Args:
+            provider_id: SSO provider identifier.
+            session_binding: Browser-session marker.
+
+        Returns:
+            Signed state token including nonce and HMAC signature.
+        """
+        state_nonce = secrets.token_urlsafe(24)
+        message = f"{provider_id}:{session_binding}:{state_nonce}".encode("utf-8")
+        signature = hmac.new(self._get_state_binding_secret(), message, hashlib.sha256).hexdigest()
+        return f"{state_nonce}{self._STATE_BINDING_SEPARATOR}{signature}"
+
+    def _is_session_bound_state(self, state: str) -> bool:
+        """Return whether state appears to carry a session-binding signature.
+
+        Args:
+            state: State value from OAuth flow.
+
+        Returns:
+            ``True`` when state has expected nonce/signature format.
+        """
+        if self._STATE_BINDING_SEPARATOR not in state:
+            return False
+        nonce, signature = state.rsplit(self._STATE_BINDING_SEPARATOR, 1)
+        return bool(nonce) and len(signature) == self._STATE_BINDING_HEX_LEN
+
+    def _verify_session_bound_state(self, provider_id: str, state: str, session_binding: str) -> bool:
+        """Verify state HMAC binding against the current browser session marker.
+
+        Args:
+            provider_id: SSO provider identifier.
+            state: State value to validate.
+            session_binding: Current browser-session marker.
+
+        Returns:
+            ``True`` when state signature matches the expected session binding.
+        """
+        if not session_binding or not self._is_session_bound_state(state):
+            return False
+        nonce, signature = state.rsplit(self._STATE_BINDING_SEPARATOR, 1)
+        message = f"{provider_id}:{session_binding}:{nonce}".encode("utf-8")
+        expected_signature = hmac.new(self._get_state_binding_secret(), message, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature, expected_signature)
+
+    @staticmethod
+    def _is_email_verified_claim(user_info: Dict[str, Any]) -> bool:
+        """Evaluate email verification claim when provided by the IdP.
+
+        Args:
+            user_info: Normalized user-info payload from provider.
+
+        Returns:
+            ``True`` only when email verification claim is explicitly verified.
+        """
+        if "email_verified" not in user_info:
+            return False
+
+        claim_value = user_info.get("email_verified")
+        if isinstance(claim_value, bool):
+            return claim_value
+        if isinstance(claim_value, int):
+            return claim_value == 1
+        if isinstance(claim_value, str):
+            return claim_value.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
+    def get_authorization_url(
+        self,
+        provider_id: str,
+        redirect_uri: str,
+        scopes: Optional[List[str]] = None,
+        session_binding: Optional[str] = None,
+    ) -> Optional[str]:
         """Generate OAuth authorization URL for provider.
 
         Args:
             provider_id: Provider identifier
             redirect_uri: Callback URI after authorization
             scopes: Optional custom scopes (uses provider default if None)
+            session_binding: Optional browser-session marker for state binding.
 
         Returns:
             Authorization URL or None if provider not found
@@ -364,7 +909,7 @@ class SSOService:
             >>> service.get_provider = lambda _pid: provider
             >>> service.db.add = lambda x: None
             >>> service.db.commit = lambda: None
-            >>> url = service.get_authorization_url('github', 'https://app/callback', ['email'])
+            >>> url = service.get_authorization_url('github', 'https://app/callback', ['user:email'])
             >>> isinstance(url, str) and 'client_id=cid' in url and 'state=' in url
             True
 
@@ -380,8 +925,10 @@ class SSOService:
         # Generate PKCE parameters
         code_verifier, code_challenge = self.generate_pkce_challenge()
 
-        # Generate CSRF state
-        state = secrets.token_urlsafe(32)
+        resolved_scopes = self._resolve_login_scopes(provider, scopes)
+
+        # Generate CSRF state (session-bound when browser context is available).
+        state = self._generate_session_bound_state(provider_id, session_binding) if session_binding else secrets.token_urlsafe(32)
 
         # Generate OIDC nonce if applicable
         nonce = secrets.token_urlsafe(16) if provider.provider_type == "oidc" else None
@@ -397,7 +944,7 @@ class SSOService:
             "response_type": "code",
             "redirect_uri": redirect_uri,
             "state": state,
-            "scope": " ".join(scopes) if scopes else provider.scope,
+            "scope": " ".join(resolved_scopes),
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
         }
@@ -407,13 +954,14 @@ class SSOService:
 
         return f"{provider.authorization_url}?{urllib.parse.urlencode(params)}"
 
-    async def handle_oauth_callback(self, provider_id: str, code: str, state: str) -> Optional[Dict[str, Any]]:
+    async def handle_oauth_callback(self, provider_id: str, code: str, state: str, session_binding: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Handle OAuth callback and exchange code for tokens.
 
         Args:
             provider_id: Provider identifier
             code: Authorization code from callback
             state: CSRF state parameter
+            session_binding: Optional browser-session marker used to verify bound state.
 
         Returns:
             User info dict or None if authentication failed
@@ -426,12 +974,12 @@ class SSOService:
             >>> svc = SSOService(MagicMock())
             >>> # Mock DB auth session lookup
             >>> provider = SimpleNamespace(id='github', is_enabled=True, provider_type='oauth2')
-            >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False)
+            >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False, nonce=None)
             >>> svc.db.execute.return_value.scalar_one_or_none.return_value = auth_session
             >>> # Patch token exchange and user info retrieval
             >>> async def _ex(p, sess, c):
             ...     return {'access_token': 'tok', 'id_token': 'id_tok'}
-            >>> async def _ui(p, access, token_data=None):
+            >>> async def _ui(p, access, token_data=None, expected_nonce=None):
             ...     return {'email': 'user@example.com'}
             >>> svc._exchange_code_for_tokens = _ex
             >>> svc._get_user_info = _ui
@@ -460,19 +1008,26 @@ class SSOService:
             >>> asyncio.run(svc4.handle_oauth_callback('github', 'c', 'st')) is None
             True
         """
-        callback_result = await self.handle_oauth_callback_with_tokens(provider_id, code, state)
+        callback_result = await self.handle_oauth_callback_with_tokens(provider_id, code, state, session_binding=session_binding)
         if not callback_result:
             return None
         user_info, _token_data = callback_result
         return user_info
 
-    async def handle_oauth_callback_with_tokens(self, provider_id: str, code: str, state: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    async def handle_oauth_callback_with_tokens(
+        self,
+        provider_id: str,
+        code: str,
+        state: str,
+        session_binding: Optional[str] = None,
+    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
         """Handle OAuth callback and return both user info and raw token response.
 
         Args:
             provider_id: Provider identifier
             code: Authorization code from callback
             state: CSRF state parameter
+            session_binding: Optional browser-session marker used to verify bound state.
 
         Returns:
             Tuple of (user_info, token_data) or None if authentication fails
@@ -491,6 +1046,14 @@ class SSOService:
             self.db.commit()
             return None
 
+        if self._is_session_bound_state(state):
+            if not session_binding or not self._verify_session_bound_state(provider_id, state, session_binding):
+                logger.warning(
+                    "OAuth callback: state/session mismatch for provider %s. Possible CSRF or cross-session replay.",
+                    provider_id,
+                )
+                return None
+
         provider = auth_session.provider
         if not provider:
             logger.error(f"OAuth callback: provider '{provider_id}' not found for auth session.")
@@ -508,9 +1071,26 @@ class SSOService:
                 logger.error(f"Failed to exchange code for tokens for provider {provider_id}")
                 return None
             logger.info(f"Token exchange successful for provider {provider_id}")
+            callback_nonce = getattr(auth_session, "nonce", None)
+
+            # For OIDC providers, verify id_token before any claim extraction.
+            if provider.provider_type == "oidc":
+                if callback_nonce is None:
+                    logger.error("OAuth callback: missing nonce for OIDC provider %s.", provider_id)
+                    return None
+                id_token = token_data.get("id_token")
+                if not isinstance(id_token, str):
+                    logger.error("OAuth callback: missing id_token for OIDC provider %s.", provider_id)
+                    return None
+                verified_claims = await self._verify_oidc_id_token(provider, id_token, expected_nonce=callback_nonce)
+                if verified_claims is None:
+                    logger.error(f"id_token verification failed for provider {provider_id}")
+                    return None
+                token_data = dict(token_data)
+                token_data["_verified_id_token_claims"] = verified_claims
 
             # Get user info from provider (pass full token_data for id_token parsing)
-            user_info = await self._get_user_info(provider, token_data["access_token"], token_data)
+            user_info = await self._get_user_info(provider, token_data["access_token"], token_data, expected_nonce=callback_nonce)
             if not user_info:
                 logger.error(f"Failed to get user info for provider {provider_id}")
                 return None
@@ -561,13 +1141,14 @@ class SSOService:
 
         return None
 
-    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get user information from provider using access token.
 
         Args:
             provider: SSO provider configuration
             access_token: OAuth access token
             token_data: Optional full token response containing id_token for OIDC providers
+            expected_nonce: Nonce bound to the current auth session for OIDC id_token verification
 
         Returns:
             User info dict or None if failed
@@ -576,9 +1157,18 @@ class SSOService:
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
+        verified_id_token_claims: Optional[Dict[str, Any]] = None
+        if token_data and isinstance(token_data.get("_verified_id_token_claims"), dict):
+            verified_id_token_claims = token_data.get("_verified_id_token_claims")
+        elif provider.provider_type == "oidc" and token_data and isinstance(token_data.get("id_token"), str):
+            if expected_nonce is None:
+                logger.warning("Skipping OIDC id_token fallback verification for provider %s because expected nonce is unavailable.", provider.id)
+            else:
+                verified_id_token_claims = await self._verify_oidc_id_token(provider, token_data["id_token"], expected_nonce=expected_nonce)
+
         keycloak_id_token_claims: Optional[Dict[str, Any]] = None
-        if provider.id == "keycloak" and token_data and "id_token" in token_data:
-            keycloak_id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+        if provider.id == "keycloak" and verified_id_token_claims:
+            keycloak_id_token_claims = verified_id_token_claims
 
         response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
 
@@ -602,23 +1192,34 @@ class SSOService:
             # For Entra ID, extract groups/roles from id_token since userinfo doesn't include them
             # Microsoft's /oidc/userinfo endpoint only returns basic claims (sub, name, email, picture)
             # Groups and roles are included in the id_token when configured in Azure Portal
-            if provider.id == "entra" and token_data and "id_token" in token_data:
-                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+            if provider.id == "entra" and verified_id_token_claims:
+                id_token_claims = verified_id_token_claims
                 if id_token_claims:
-                    # Detect group overage - when user has too many groups (>200), EntraID returns
-                    # _claim_names/_claim_sources instead of the actual groups array.
+                    entra_groups_from_graph: Optional[List[str]] = None
+                    # Detect group overage - when user has too many groups (>200), EntraID can return
+                    # overage markers (e.g. _claim_names/_claim_sources, hasgroups, groups:srcN)
+                    # instead of an inline groups array.
                     # See: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
                     claim_names = id_token_claims.get("_claim_names", {})
-                    if isinstance(claim_names, dict) and "groups" in claim_names:
+                    has_groups_src_key = any(isinstance(key, str) and key.startswith("groups:src") for key in id_token_claims)
+                    groups_claim_value = id_token_claims.get("groups")
+                    has_group_overage = (
+                        (isinstance(claim_names, dict) and "groups" in claim_names) or bool(id_token_claims.get("hasgroups")) or has_groups_src_key or isinstance(groups_claim_value, str)
+                    )
+                    if has_group_overage:
                         user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
                         logger.warning(
-                            f"Group overage detected for user {user_email} - token contains too many groups (>200). "
-                            f"Role mapping may be incomplete. Consider using App Roles or Azure group filtering. "
-                            f"See docs/docs/manage/sso-entra-role-mapping.md#token-size-considerations"
+                            "Group overage detected for user %s - token contains too many groups (>200). Attempting Microsoft Graph fallback to resolve complete group membership.",
+                            user_email,
                         )
+                        entra_groups_from_graph = await self._fetch_entra_groups_from_graph_api(access_token, user_email, provider.provider_metadata)
+                        if entra_groups_from_graph is None:
+                            logger.warning("Proceeding without Graph-resolved Entra groups for user %s", user_email)
 
                     # Extract groups from id_token (Security Groups as Object IDs)
-                    if "groups" in id_token_claims:
+                    if entra_groups_from_graph is not None:
+                        user_data["groups"] = entra_groups_from_graph
+                    elif "groups" in id_token_claims:
                         user_data["groups"] = id_token_claims["groups"]
                         logger.debug(f"Extracted {len(id_token_claims['groups'])} groups from Entra ID token")
 
@@ -674,7 +1275,7 @@ class SSOService:
         """
         # Handle GitHub provider
         if provider.id == "github":
-            return {
+            normalized = {
                 "email": user_data.get("email"),
                 "full_name": user_data.get("name") or user_data.get("login"),
                 "avatar_url": user_data.get("avatar_url"),
@@ -683,11 +1284,21 @@ class SSOService:
                 "provider": "github",
                 "organizations": user_data.get("organizations", []),
             }
+            # GitHub /user responses do not include an email_verified claim. Preserve
+            # backward-compatible login behavior by only enforcing verification when
+            # a concrete claim value is present.
+            github_email_verified = user_data.get("email_verified")
+            if github_email_verified is None:
+                github_email_verified = user_data.get("verified")
+            if github_email_verified is not None:
+                normalized["email_verified"] = github_email_verified
+            return normalized
 
         # Handle Google provider
         if provider.id == "google":
             return {
                 "email": user_data.get("email"),
+                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
@@ -699,6 +1310,7 @@ class SSOService:
         if provider.id == "ibm_verify":
             return {
                 "email": user_data.get("email"),
+                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
@@ -710,6 +1322,7 @@ class SSOService:
         if provider.id == "okta":
             return {
                 "email": user_data.get("email"),
+                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
@@ -748,6 +1361,7 @@ class SSOService:
 
             return {
                 "email": user_data.get(email_claim),
+                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
@@ -789,6 +1403,7 @@ class SSOService:
 
             return {
                 "email": email,
+                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name") or email,  # Fallback to email if name missing
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub") or user_data.get("oid"),
@@ -800,6 +1415,7 @@ class SSOService:
         # Generic OIDC format for all other providers
         return {
             "email": user_data.get("email"),
+            "email_verified": user_data.get("email_verified"),
             "full_name": user_data.get("name"),
             "avatar_url": user_data.get("picture"),
             "provider_id": user_data.get("sub"),
@@ -826,11 +1442,35 @@ class SSOService:
             logger.warning("SSO authenticate_or_create_user: email is empty after normalization from provider '%s'.", user_info.get("provider", "unknown"))
             return None
 
+        if not self._is_email_verified_claim(user_info):
+            logger.warning(
+                "SSO authenticate_or_create_user: unverified email claim for provider '%s' and email '%s'.",
+                user_info.get("provider", "unknown"),
+                email,
+            )
+            return None
+
+        incoming_provider = str(user_info.get("provider", "sso")).strip().lower() or "sso"
+        provider = self.get_provider(incoming_provider)
+
+        # Enforce trusted-domain policy consistently for both existing and new users.
+        trusted_domains = getattr(provider, "trusted_domains", None) if provider else None
+        if trusted_domains:
+            domain = email.split("@")[1].lower() if "@" in email else ""
+            normalized_trusted_domains = [d.lower() for d in trusted_domains if isinstance(d, str)]
+            if domain not in normalized_trusted_domains:
+                logger.warning(
+                    "SSO authenticate_or_create_user: email domain '%s' is not allowed for provider '%s'.",
+                    domain,
+                    incoming_provider,
+                )
+                return None
+
         # Use stable local values for JWT payload generation to avoid lazy-loading
         # expired ORM attributes after commit/flush boundaries.
         resolved_email = email
         resolved_full_name = user_info.get("full_name", email)
-        resolved_auth_provider = user_info.get("provider", "sso")
+        resolved_auth_provider = incoming_provider
         resolved_is_admin = False
 
         # Check if user exists
@@ -838,11 +1478,19 @@ class SSOService:
 
         if user:
             current_full_name = user.full_name or resolved_full_name
-            current_auth_provider = user.auth_provider or resolved_auth_provider
+            current_auth_provider = str(user.auth_provider or resolved_auth_provider).strip().lower()
             current_is_admin = bool(user.is_admin)
             current_admin_origin = user.admin_origin
 
-            provider = self.get_provider(user_info.get("provider"))
+            if user.auth_provider and current_auth_provider != incoming_provider:
+                logger.warning(
+                    "SSO authenticate_or_create_user: account-linking required for email '%s' (existing provider='%s', incoming='%s').",
+                    email,
+                    current_auth_provider,
+                    incoming_provider,
+                )
+                return None
+
             provider_id: Optional[str] = None
             provider_metadata: Dict[str, Any] = {}
             provider_ctx: Optional[Any] = None
@@ -856,14 +1504,13 @@ class SSOService:
                 user.full_name = user_info["full_name"]
                 current_full_name = user_info["full_name"]
 
-            # Update auth provider if changed
-            incoming_provider = user_info.get("provider", "sso")
-            if current_auth_provider == "local" or current_auth_provider != incoming_provider:
+            # Initialize auth_provider for legacy accounts without provider metadata.
+            if not user.auth_provider:
                 user.auth_provider = incoming_provider
                 current_auth_provider = incoming_provider
 
-            # Mark email as verified for SSO users
-            user.email_verified = True
+            # Persist verification status from provider claims.
+            user.email_verified = self._is_email_verified_claim(user_info)
             user.last_login = utc_now()
 
             # Synchronize is_admin status based on current group membership
@@ -903,6 +1550,7 @@ class SSOService:
             if provider_ctx and should_sync:
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 await self._sync_user_roles(email, role_assignments, provider_ctx)
+            await self._apply_team_mapping(email, user_info, provider)
 
             user_email = getattr(user, "email", None)
             if isinstance(user_email, str) and user_email.strip():
@@ -912,19 +1560,12 @@ class SSOService:
             resolved_is_admin = current_is_admin
         else:
             # Auto-create user if enabled
-            provider = self.get_provider(user_info.get("provider"))
             if not provider or not provider.auto_create_users:
                 return None
 
             provider_id = provider.id
             provider_metadata = provider.provider_metadata or {}
             provider_ctx = SSOProviderContext(id=provider_id, provider_metadata=provider_metadata)
-
-            # Check trusted domains if configured
-            if provider.trusted_domains:
-                domain = email.split("@")[1].lower()
-                if domain not in [d.lower() for d in provider.trusted_domains]:
-                    return None
 
             # Check if admin approval is required
             if settings.sso_require_admin_approval:
@@ -933,20 +1574,55 @@ class SSOService:
                 pending = self.db.execute(select(PendingUserApproval).where(PendingUserApproval.email == email)).scalar_one_or_none()
 
                 if pending:
-                    if pending.status == "pending" and not pending.is_expired():
+                    if pending.status == "pending":
+                        if pending.is_expired():
+                            pending.status = "expired"
+                            self.db.commit()
+
+                            pending.status = "pending"
+                            pending.requested_at = utc_now()
+                            pending.expires_at = utc_now() + timedelta(days=30)
+                            pending.auth_provider = incoming_provider
+                            pending.sso_metadata = user_info
+                            pending.approved_by = None
+                            pending.approved_at = None
+                            pending.rejection_reason = None
+                            pending.admin_notes = None
+                            self.db.commit()
+                            logger.info(f"Refreshed expired pending approval request for SSO user: {email}")
+                            return None
                         return None  # Still waiting for approval
                     if pending.status == "rejected":
                         return None  # User was rejected
                     if pending.status == "approved":
-                        # User was approved, create account now
-                        pass  # Continue with user creation below
+                        if pending.is_expired():
+                            pending.status = "expired"
+                            self.db.commit()
+                            return None
+                    elif pending.status == "expired":
+                        pending.status = "pending"
+                        pending.requested_at = utc_now()
+                        pending.expires_at = utc_now() + timedelta(days=30)
+                        pending.auth_provider = incoming_provider
+                        pending.sso_metadata = user_info
+                        pending.approved_by = None
+                        pending.approved_at = None
+                        pending.rejection_reason = None
+                        pending.admin_notes = None
+                        self.db.commit()
+                        logger.info(f"Renewed expired pending approval request for SSO user: {email}")
+                        return None
+                    elif pending.status in {"completed"}:
+                        return None
+                    elif pending.status != "approved":
+                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {email}. Denying by default.")
+                        return None
                 else:
                     # Create pending approval request
-
                     pending = PendingUserApproval(
                         email=email,
                         full_name=user_info.get("full_name", email),
-                        auth_provider=user_info.get("provider", "sso"),
+                        auth_provider=incoming_provider,
                         sso_metadata=user_info,
                         expires_at=utc_now() + timedelta(days=30),  # 30-day approval window
                     )
@@ -968,7 +1644,7 @@ class SSOService:
                 password=random_password,  # Random password for SSO users (not used)
                 full_name=user_info.get("full_name", email),
                 is_admin=is_admin,
-                auth_provider=user_info.get("provider", "sso"),
+                auth_provider=incoming_provider,
             )
             if not user:
                 return None
@@ -977,7 +1653,7 @@ class SSOService:
             if isinstance(user_email, str) and user_email.strip():
                 resolved_email = user_email.strip().lower()
             resolved_full_name = user_info.get("full_name", email)
-            resolved_auth_provider = user_info.get("provider", "sso")
+            resolved_auth_provider = incoming_provider
             resolved_is_admin = is_admin
 
             # Assign RBAC roles based on SSO groups (or default role if no groups)
@@ -991,6 +1667,7 @@ class SSOService:
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 if role_assignments:
                     await self._sync_user_roles(email, role_assignments, provider_ctx)
+            await self._apply_team_mapping(email, user_info, provider)
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:
@@ -1060,7 +1737,7 @@ class SSOService:
         return False
 
     async def _map_groups_to_roles(self, user_email: str, user_groups: List[str], provider: SSOProviderContext) -> List[Dict[str, Any]]:
-        """Map SSO groups to Context Forge RBAC roles.
+        """Map SSO groups to ContextForge RBAC roles.
 
         Args:
             user_email: User's email address

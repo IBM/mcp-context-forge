@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Security-focused fuzz testing for MCP Gateway.
+Security-focused fuzz testing for ContextForge.
 """
 
 # Third-Party
