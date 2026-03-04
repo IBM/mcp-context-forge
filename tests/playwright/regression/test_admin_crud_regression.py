@@ -259,6 +259,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
 
         # Step 2: Find delete button within catalog panel
+        server_rows = admin_page.locator('[data-testid="server-list"] [data-testid="server-item"]')
         delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
 
         try:
@@ -266,18 +267,15 @@ class TestVirtualServerCRUD:
         except PlaywrightTimeoutError:
             pytest.skip("No servers available to delete")
 
-        # Get server name before deletion
-        server_row = delete_button.locator('xpath=ancestor::tr')
-        server_name = server_row.locator('td').first.text_content()
+        initial_count = server_rows.count()
 
         # Step 3 & 4: Accept native confirm() dialogs and click delete
         admin_page.on("dialog", lambda d: d.accept())
         delete_button.click()
 
-        # Step 5: Verify server removed
-        admin_page.wait_for_timeout(2_000)
-        deleted_row = admin_page.locator(f'#catalog-panel tr:has-text("{server_name}")')
-        expect(deleted_row).not_to_be_visible(timeout=5_000)
+        # Step 5: Verify server removed (count decreases after page reload)
+        admin_page.wait_for_load_state("load", timeout=15_000)
+        expect(server_rows).to_have_count(initial_count - 1, timeout=10_000)
 
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
