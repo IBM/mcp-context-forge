@@ -353,7 +353,6 @@ class TestEmailVerificationForInvites:
         mock_invitee = MagicMock(spec=EmailUser)
         mock_invitee.email = "invitee@example.com"
         mock_invitee.email_verified_at = None  # Not verified
-        mock_invitee.auth_provider = "local"  # Self-registered user
 
         mock_inviter_membership = MagicMock(spec=EmailTeamMember)
         mock_inviter_membership.role = "owner"
@@ -489,7 +488,6 @@ class TestAcceptTimeEmailVerification:
         mock_user = MagicMock(spec=EmailUser)
         mock_user.email = "user@example.com"
         mock_user.email_verified_at = None  # Not verified
-        mock_user.auth_provider = "local"  # Self-registered user
         db.query.return_value.filter.return_value.first.return_value = mock_user
 
         with patch("mcpgateway.services.team_invitation_service.settings") as mock_settings:

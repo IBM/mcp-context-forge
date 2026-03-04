@@ -1339,7 +1339,7 @@
     },
     "require_email_verification_for_invites": {
       "default": true,
-      "description": "Require email verification for team invitations (only applies to self-registered users; admin-created users are implicitly verified)",
+      "description": "Require email verification for team invitations",
       "title": "Require Email Verification For Invites",
       "type": "boolean"
     },
@@ -2883,14 +2883,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "text/plain",
         "text/markdown",
         "image/png",
-        "text/html",
-        "image/jpeg",
-        "image/gif",
         "application/json",
-        "application/xml"
+        "image/jpeg",
+        "text/plain",
+        "image/gif",
+        "application/xml",
+        "text/html"
       ],
       "items": {
         "type": "string"

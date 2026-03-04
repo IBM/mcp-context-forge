@@ -570,7 +570,7 @@ class Settings(BaseSettings):
     max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
-    require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations (only applies to self-registered users; admin-created users are implicitly verified)")
+    require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 
     # Team Governance
     allow_team_creation: bool = Field(default=True, description="Allow users to create organizational teams. Admins can always create teams.")
