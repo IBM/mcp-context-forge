@@ -2326,6 +2326,85 @@ class TestCWE287DenyPathRegressions:
         assert result["expires_at"] is None
 
 
+class TestLegacyStateGatewayMismatch:
+    """Deny-path: legacy state with mismatched gateway_id must raise OAuthError.
+
+    Regression tests for the defense-in-depth check in
+    complete_authorization_code_flow that rejects a legacy state payload
+    whose gateway_id does not match the authoritative (URL-derived) one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_base64_legacy_state_gateway_mismatch_raises(self):
+        """Legacy base64 state with different gateway_id must raise OAuthError."""
+        import base64
+
+        import orjson
+
+        manager = OAuthManager(token_storage=AsyncMock())
+
+        forged = {"gateway_id": "other-gateway"}
+        payload_bytes = orjson.dumps(forged)
+        fake_sig = b"\x00" * 32
+        state = base64.urlsafe_b64encode(payload_bytes + fake_sig).decode()
+
+        with patch.object(
+            manager,
+            "_validate_and_retrieve_state",
+            return_value={"code_verifier": "v"},  # no app_user_email
+        ):
+            with pytest.raises(OAuthError, match="State parameter gateway mismatch"):
+                await manager.complete_authorization_code_flow(
+                    "gw1", "code", state, {"client_id": "cid"},
+                )
+
+    @pytest.mark.asyncio
+    async def test_underscore_legacy_state_gateway_mismatch_raises(self):
+        """Legacy gateway_id_random state with different gateway_id must raise OAuthError."""
+        manager = OAuthManager(token_storage=AsyncMock())
+
+        # "other-gateway_randomsuffix" → legacy parser extracts gateway_id="other-gateway"
+        state = "other-gateway_randomsuffix"
+
+        with patch.object(
+            manager,
+            "_validate_and_retrieve_state",
+            return_value={"code_verifier": "v"},  # no app_user_email
+        ):
+            with pytest.raises(OAuthError, match="State parameter gateway mismatch"):
+                await manager.complete_authorization_code_flow(
+                    "gw1", "code", state, {"client_id": "cid"},
+                )
+
+    @pytest.mark.asyncio
+    async def test_matching_gateway_id_does_not_raise_mismatch(self):
+        """Legacy state with matching gateway_id must not trigger mismatch error.
+
+        It should fall through to the missing-email guard instead.
+        """
+        import base64
+
+        import orjson
+
+        manager = OAuthManager(token_storage=AsyncMock())
+
+        matching = {"gateway_id": "gw1"}
+        payload_bytes = orjson.dumps(matching)
+        fake_sig = b"\x00" * 32
+        state = base64.urlsafe_b64encode(payload_bytes + fake_sig).decode()
+
+        with patch.object(
+            manager,
+            "_validate_and_retrieve_state",
+            return_value={"code_verifier": "v"},  # no app_user_email
+        ):
+            # Should NOT raise "gateway mismatch"; should raise "User context required" instead
+            with pytest.raises(OAuthError, match="User context required"):
+                await manager.complete_authorization_code_flow(
+                    "gw1", "code", state, {"client_id": "cid"},
+                )
+
+
 class TestLegacyStatePayloadStripsIdentity:
     """Deny-path: unsigned legacy state payloads must NOT carry identity claims.
 
