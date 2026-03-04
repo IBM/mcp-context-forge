@@ -22,7 +22,7 @@ import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 
 # First-Party
 from mcpgateway.config import settings
@@ -385,6 +385,7 @@ class ServerService(BaseService):
         else:
             server_dict["metrics"] = None
         # Add associated IDs from relationships
+        # Note: Deactivated entities are already filtered at query level via with_loader_criteria()
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
@@ -1014,9 +1015,13 @@ class ServerService(BaseService):
             select(DbServer)
             .options(
                 selectinload(DbServer.tools),
+                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
+                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
+                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
+                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .where(DbServer.id == server_id)

@@ -3497,3 +3497,78 @@ class TestConvertServerToReadAssociatedToolIds:
         result = server_service.convert_server_to_read(server, include_metrics=False)
 
         assert result.associated_tool_ids == ["42"]
+
+    @pytest.mark.asyncio
+    async def test_get_server_filters_deactivated_entities(self, server_service, test_db):
+        """Test that get_server filters out deactivated tools, prompts, and resources."""
+        # Standard
+        from types import SimpleNamespace
+
+        # Create mock tools - one enabled, one disabled
+        enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
+
+        # Create mock resources - one enabled, one disabled
+        enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
+
+        # Create mock prompts - one enabled, one disabled
+        enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
+
+        # Create mock server with both enabled and disabled entities
+        mock_server = SimpleNamespace(
+            id="server-1",
+            name="test_server",
+            description="Test server",
+            icon=None,
+            created_at="2023-01-01T00:00:00",
+            updated_at="2023-01-01T00:00:00",
+            enabled=True,
+            team_id=None,
+            owner_email="user@example.com",
+            visibility="public",
+            created_by="user@example.com",
+            modified_by="user@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+            version=1,
+            oauth_enabled=False,
+            oauth_config=None,
+            tags=[],
+            # Only enabled entities should be loaded due to the filter
+            tools=[enabled_tool],
+            resources=[enabled_resource],
+            prompts=[enabled_prompt],
+            a2a_agents=[],
+            metrics=[],
+            email_team=None,
+            team=None,
+        )
+
+        # Mock the database execute to return our server
+        mock_result = Mock()
+        mock_result.scalar_one_or_none = Mock(return_value=mock_server)
+        test_db.execute = Mock(return_value=mock_result)
+
+        # Call get_server
+        result = await server_service.get_server(test_db, "server-1")
+
+        # Verify that only enabled entities are in the result
+        assert len(result.associated_tools) == 1
+        assert "enabled_tool" in result.associated_tools
+        assert "disabled_tool" not in result.associated_tools
+
+        assert len(result.associated_resources) == 1
+        assert "res-1" in result.associated_resources
+        assert "res-2" not in result.associated_resources
+
+        assert len(result.associated_prompts) == 1
+        assert "prompt-1" in result.associated_prompts
+        assert "prompt-2" not in result.associated_prompts
