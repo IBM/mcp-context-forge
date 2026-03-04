@@ -9024,13 +9024,13 @@ async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped
 @pytest.mark.asyncio
 async def test_admin_servers_partial_html_filters_deactivated_entities(monkeypatch, mock_request, mock_db):
     """Test that admin_servers_partial_html filters out deactivated tools, resources, prompts, and agents.
-    
+
     This test verifies the fix for the issue where deactivated entities were showing in the
     admin UI catalog counts. The query should use with_loader_criteria() to filter at the
     database level, ensuring only enabled entities are loaded.
     """
     pagination = make_pagination_meta()
-    
+
     # Create a mock server with both active and deactivated entities
     mock_server = SimpleNamespace(
         id="srv-1",
@@ -9053,13 +9053,13 @@ async def test_admin_servers_partial_html_filters_deactivated_entities(monkeypat
             SimpleNamespace(id="agent-2", name="Deactivated Agent", enabled=False),
         ],
     )
-    
+
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
         AsyncMock(return_value={"data": [mock_server], "pagination": pagination, "links": None}),
     )
     setup_team_service(monkeypatch, ["team-1"])
-    
+
     # Mock server_service.convert_server_to_read to return server with associated entities
     server_service = MagicMock()
     server_service.convert_server_to_read.return_value = {
@@ -9071,7 +9071,7 @@ async def test_admin_servers_partial_html_filters_deactivated_entities(monkeypat
         "associatedAgents": [{"id": "agent-1", "name": "Active Agent"}],  # Only active agent
     }
     monkeypatch.setattr("mcpgateway.admin.server_service", server_service)
-    
+
     mock_request.headers = {}
     response = await admin_servers_partial_html(
         mock_request,
@@ -9083,10 +9083,10 @@ async def test_admin_servers_partial_html_filters_deactivated_entities(monkeypat
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
-    
+
     assert isinstance(response, HTMLResponse)
     assert server_service.convert_server_to_read.called
-    
+
     # Verify that the server was converted (which means the query filtering worked)
     # The actual filtering happens at the SQLAlchemy query level with with_loader_criteria()
     # so the mock_server.tools/resources/prompts/a2a_agents would only contain enabled entities
