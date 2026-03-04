@@ -7006,29 +7006,29 @@ async function editServer(serverId) {
         );
 
         if (oauthEnabledCheckbox) {
-            oauthEnabledCheckbox.checked = server.oauth_enabled || false;
+            oauthEnabledCheckbox.checked = server.oauthEnabled || false;
         }
 
-        // Show/hide OAuth config section based on oauth_enabled state
+        // Show/hide OAuth config section based on oauthEnabled state
         if (oauthConfigSection) {
-            if (server.oauth_enabled) {
+            if (server.oauthEnabled) {
                 oauthConfigSection.classList.remove("hidden");
             } else {
                 oauthConfigSection.classList.add("hidden");
             }
         }
 
-        // Populate OAuth config fields if oauth_config exists
-        if (server.oauth_config) {
+        // Populate OAuth config fields if oauthConfig exists
+        if (server.oauthConfig) {
             // Extract authorization server (may be in authorization_servers array or authorization_server string)
             let authServer = "";
             if (
-                server.oauth_config.authorization_servers &&
-                server.oauth_config.authorization_servers.length > 0
+                server.oauthConfig.authorization_servers &&
+                server.oauthConfig.authorization_servers.length > 0
             ) {
-                authServer = server.oauth_config.authorization_servers[0];
-            } else if (server.oauth_config.authorization_server) {
-                authServer = server.oauth_config.authorization_server;
+                authServer = server.oauthConfig.authorization_servers[0];
+            } else if (server.oauthConfig.authorization_server) {
+                authServer = server.oauthConfig.authorization_server;
             }
             if (oauthAuthServerField) {
                 oauthAuthServerField.value = authServer;
@@ -7036,8 +7036,8 @@ async function editServer(serverId) {
 
             // Extract scopes (may be scopes_supported array or scopes array)
             const scopes =
-                server.oauth_config.scopes_supported ||
-                server.oauth_config.scopes ||
+                server.oauthConfig.scopes_supported ||
+                server.oauthConfig.scopes ||
                 [];
             if (oauthScopesField) {
                 oauthScopesField.value = Array.isArray(scopes)
@@ -7048,7 +7048,7 @@ async function editServer(serverId) {
             // Extract token endpoint
             if (oauthTokenEndpointField) {
                 oauthTokenEndpointField.value =
-                    server.oauth_config.token_endpoint || "";
+                    server.oauthConfig.token_endpoint || "";
             }
         } else {
             // Clear OAuth config fields when no config exists
