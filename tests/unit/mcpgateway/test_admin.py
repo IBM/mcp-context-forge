@@ -17986,6 +17986,62 @@ class TestAdminCsrfProtection:
         await admin_mod.enforce_admin_csrf(request)
 
     @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_skips_schemeless_allowed_origin(self, monkeypatch):
+        """Allowed-origins entry without scheme/netloc (e.g. bare path) is silently skipped."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # "just-a-path" is parsed by urlparse as a path component with no scheme/netloc,
+        # so the guard on line 1139-1140 must skip it and the request must be rejected.
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"just-a-path"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://evil.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_survives_malformed_allowed_origin(self, monkeypatch):
+        """A malformed allowed_origins entry that triggers an exception must not crash."""
+        # First-Party
+        from unittest.mock import patch
+
+        from mcpgateway import admin as admin_mod
+
+        # Only the malformed entry — forces the except branch to run, then the
+        # function falls through to return False and CSRF validation fails.
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"will-explode://bad"})
+
+        real_normalize = admin_mod._normalize_origin_parts
+
+        def _boom_on_bad(scheme, netloc):
+            if netloc == "bad":
+                raise ValueError("intentional test boom")
+            return real_normalize(scheme, netloc)
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://attacker.com",
+                "host": "internal:4444",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        with patch.object(admin_mod, "_normalize_origin_parts", side_effect=_boom_on_bad):
+            with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+                await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
     async def test_enforce_admin_csrf_empty_allowed_origins(self, monkeypatch):
         """Empty allowed_origins set must not bypass CSRF origin check."""
         # First-Party
