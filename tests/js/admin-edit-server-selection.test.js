@@ -1261,7 +1261,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("associatedTools");
             makeViewPublicCheckbox("add-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1277,7 +1277,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideToolSearch("myTool");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1307,7 +1308,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("associatedPrompts");
             makeViewPublicCheckbox("add-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1323,7 +1324,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSidePromptSearch("myPrompt");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1353,7 +1355,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("associatedResources");
             makeViewPublicCheckbox("add-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1369,7 +1371,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideResourceSearch("myRes");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1399,7 +1402,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("edit-server-tools");
             makeViewPublicCheckbox("edit-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1415,7 +1418,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideEditToolSearch("myTool");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1445,7 +1449,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("edit-server-prompts");
             makeViewPublicCheckbox("edit-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1461,7 +1465,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideEditPromptsSearch("myPrompt");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1491,7 +1496,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("edit-server-resources");
             makeViewPublicCheckbox("edit-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1507,7 +1512,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideEditResourcesSearch("myRes");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 });
