@@ -195,10 +195,11 @@ class TeamInvitationService:
                 logger.warning(f"Inviter {invited_by} not found")
                 return None
 
-            # Check email verification requirement for invitee
+            # Check email verification requirement for invitee (only for self-registered users;
+            # admin-created users are implicitly verified since an admin vouched for them)
             if getattr(settings, "require_email_verification_for_invites", True):
                 invitee = self.db.query(EmailUser).filter(EmailUser.email == email).first()
-                if invitee and not invitee.email_verified_at:
+                if invitee and invitee.auth_provider == "local" and not invitee.email_verified_at:
                     raise ValueError("Invitee email address has not been verified")
 
             # Check if inviter is a member of the team with appropriate permissions
@@ -324,9 +325,10 @@ class TeamInvitationService:
                     logger.warning(f"User {accepting_user_email} not found")
                     raise ValueError("User account not found")
 
-                # Check email verification at accept-time
+                # Check email verification at accept-time (only for self-registered users;
+                # admin-created users are implicitly verified since an admin vouched for them)
                 if getattr(settings, "require_email_verification_for_invites", True):
-                    if not user.email_verified_at:
+                    if user.auth_provider == "local" and not user.email_verified_at:
                         raise ValueError("Email address has not been verified")
 
             # Check if team still exists

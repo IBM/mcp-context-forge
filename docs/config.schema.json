@@ -1339,7 +1339,7 @@
     },
     "require_email_verification_for_invites": {
       "default": true,
-      "description": "Require email verification for team invitations",
+      "description": "Require email verification for team invitations (only applies to self-registered users; admin-created users are implicitly verified)",
       "title": "Require Email Verification For Invites",
       "type": "boolean"
     },
@@ -1770,8 +1770,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost",
-        "http://localhost:4444"
+        "http://localhost:4444",
+        "http://localhost"
       ],
       "items": {
         "type": "string"
@@ -2883,14 +2883,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "image/jpeg",
-        "application/xml",
-        "text/markdown",
         "text/plain",
-        "text/html",
+        "text/markdown",
         "image/png",
+        "text/html",
+        "image/jpeg",
         "image/gif",
-        "application/json"
+        "application/json",
+        "application/xml"
       ],
       "items": {
         "type": "string"
