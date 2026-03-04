@@ -254,7 +254,9 @@ class TeamManagementService:
         self.db.add(history)
         self.db.commit()
 
-    async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None, skip_limits: bool = False) -> EmailTeam:
+    async def create_team(
+        self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None, skip_limits: bool = False
+    ) -> EmailTeam:
         """Create a new team.
 
         Args:
@@ -263,6 +265,7 @@ class TeamManagementService:
             created_by: Email of the user creating the team
             visibility: Team visibility (private, team, public)
             max_members: Maximum number of team members allowed
+            skip_limits: Skip max_teams_per_user check (for admin bypass)
 
         Returns:
             EmailTeam: The created team
