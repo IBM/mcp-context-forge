@@ -7767,6 +7767,7 @@ async def admin_tools_partial_html(
         include_inactive (bool): Whether to include inactive tools in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public tools in the results.
         render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -8202,6 +8203,7 @@ async def admin_search_tools(
         limit (int): Maximum number of results to return.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public tools in the results.
         db (Session): Database session.
         user: Current user with permissions.
 
@@ -8345,6 +8347,7 @@ async def admin_prompts_partial_html(
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public prompts in the results.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -8580,6 +8583,7 @@ async def admin_gateways_partial_html(
         include_inactive (bool): If True, include inactive gateways in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public gateways in the results.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -8761,6 +8765,7 @@ async def admin_get_all_gateways_ids(
     Args:
         include_inactive (bool): When True include prompts that are inactive.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public gateways in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -8832,6 +8837,7 @@ async def admin_search_gateways(
         include_inactive (bool): When True include gateways that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public gateways in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -9123,6 +9129,7 @@ async def admin_resources_partial_html(
             items used by infinite scroll selectors.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public resources in the results.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -9514,6 +9521,7 @@ async def admin_search_resources(
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public resources in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -9638,6 +9646,7 @@ async def admin_search_prompts(
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public prompts in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
