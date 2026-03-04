@@ -757,6 +757,16 @@
               "description": "CSV/JSON list of header items to hide (logout, team_selector, user_identity, theme_toggle)",
               "default": ""
             },
+            "MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN": {
+              "type": "string",
+              "description": "CSV/JSON list of UI sections to hide for admin users. When empty, admins see all sections. Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS.",
+              "default": ""
+            },
+            "MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN": {
+              "type": "string",
+              "description": "CSV/JSON list of header items to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_HEADER_ITEMS.",
+              "default": ""
+            },
             "MCPGATEWAY_ADMIN_API_ENABLED": {
               "type": "string",
               "enum": ["true", "false"],

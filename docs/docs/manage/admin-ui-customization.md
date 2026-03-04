@@ -105,6 +105,42 @@ MCPGATEWAY_UI_EMBEDDED=true
 
 This is equivalent to setting `MCPGATEWAY_UI_HIDE_HEADER_ITEMS=logout,team_selector` but communicates intent more clearly. If both are set, the values are merged.
 
+## Role-Based Visibility
+
+By default, the hide settings above apply to **non-admin users only**. Admin users have separate configuration:
+
+### `MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN`
+
+Comma-separated or JSON list of sections to hide for admin users. Accepts the same values and aliases as `MCPGATEWAY_UI_HIDE_SECTIONS`.
+
+When unset (empty), admins see all sections — even if `MCPGATEWAY_UI_HIDE_SECTIONS` hides sections for non-admins.
+
+```bash
+# Admins see everything except maintenance
+MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN=maintenance
+```
+
+### `MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN`
+
+Comma-separated or JSON list of header items to hide for admin users.
+
+```bash
+MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN=theme_toggle
+```
+
+### Embedded Mode and Admins
+
+When `MCPGATEWAY_UI_EMBEDDED=true`, the automatic hiding of `logout` and `team_selector` **only applies to non-admin users**. Admins retain full header controls unless explicitly configured via `MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN`.
+
+### Example: Embedded deployment with admin access
+
+```bash
+MCPGATEWAY_UI_EMBEDDED=true
+MCPGATEWAY_UI_HIDE_SECTIONS=users,teams,tokens,settings
+# Admins see everything (default empty = no hiding)
+# MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN=
+```
+
 ## Per-Request Hiding with `?ui_hide=`
 
 For embedded contexts where different pages need different views, use the `?ui_hide=` query parameter:
