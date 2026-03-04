@@ -1025,3 +1025,151 @@ class TestTeamSearchRetryButton:
             assert result["loadedCleared"], "Retry should clear the loaded dataset flag"
         finally:
             page.unroute("**/admin/teams/partial*")
+
+
+# ---------------------------------------------------------------------------
+# CI guard: no remaining inline onclick/onchange in innerHTML strings
+# ---------------------------------------------------------------------------
+
+
+class TestNoInlineOnclickInInnerHtmlStrings:
+    """Static analysis guard: no inline on* handlers in innerHTML-assigned strings.
+
+    These tests run without a live server — they parse source files directly.
+    They act as a CI ratchet: if a developer accidentally re-introduces an
+    inline onclick inside an innerHTML string, the test fails immediately.
+
+    Scope:
+      - ``mcpgateway/static/admin.js``: all template-literal / string
+        arguments to ``.innerHTML =`` assignments.
+      - ``mcpgateway/templates/``: all Jinja2 HTML template files.
+    """
+
+    # Patterns that are acceptable (not inline handlers):
+    #   data-action="..."  — the new pattern
+    #   aria-*             — ARIA attributes
+    #   class, id, type    — safe HTML attributes
+    # Patterns that are NOT acceptable inside innerHTML strings:
+    #   onclick="..."  onchange="..."  onsubmit="..."  etc.
+
+    _INLINE_HANDLER_RE = r'\bon\w+\s*='
+
+    def _find_innerhtml_string_violations(self, js_path: str) -> list:
+        """Return list of (line_no, line_text) where an innerHTML string contains on* attr."""
+        # Standard
+        import re
+
+        violations = []
+        try:
+            with open(js_path, encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except FileNotFoundError:
+            return violations
+
+        # State machine: track whether we are inside a template literal or
+        # string that is being assigned to .innerHTML.
+        # Strategy: scan for `.innerHTML = ` then collect lines until the
+        # closing backtick/quote, checking each for on* attributes.
+        in_template = False
+        backtick_depth = 0
+
+        for lineno, line in enumerate(lines, start=1):
+            stripped = line.strip()
+
+            # Detect start of innerHTML assignment
+            if not in_template and re.search(r'\.innerHTML\s*=\s*[`"\']', stripped):
+                in_template = True
+                backtick_depth = stripped.count('`') % 2  # odd = open template literal
+
+            if in_template:
+                # Check for inline handlers (excluding data-action and aria-*)
+                if re.search(self._INLINE_HANDLER_RE, stripped):
+                    # Exclude lines that are only comments
+                    if not stripped.startswith('//') and not stripped.startswith('*'):
+                        violations.append((lineno, line.rstrip()))
+
+                # Detect end of template literal
+                if '`' in stripped:
+                    backtick_depth = (backtick_depth + stripped.count('`')) % 2
+                    if backtick_depth == 0:
+                        in_template = False
+                elif stripped.endswith(';') and not stripped.startswith('//'):
+                    # Single-line string assignment ended
+                    in_template = False
+
+        return violations
+
+    def test_admin_js_innerhtml_strings_have_no_inline_onclick(self) -> None:
+        """admin.js must not contain inline on* handlers inside innerHTML strings.
+
+        This is the core regression guard for PR #3373.  All on* attributes
+        inside innerHTML-assigned strings must have been converted to
+        data-action + addEventListener.
+        """
+        # Standard
+        import os
+
+        js_path = os.path.join(
+            os.path.dirname(__file__),
+            "..", "..", "mcpgateway", "static", "admin.js",
+        )
+        js_path = os.path.normpath(js_path)
+
+        violations = self._find_innerhtml_string_violations(js_path)
+
+        assert not violations, (
+            f"Found {len(violations)} inline on* handler(s) inside innerHTML strings in admin.js.\n"
+            "Convert them to data-action + addEventListener (see PR #3373).\n"
+            "Violations:\n"
+            + "\n".join(f"  line {ln}: {txt}" for ln, txt in violations[:20])
+        )
+
+    def test_templates_have_no_inline_onclick_in_dynamic_content(self) -> None:
+        """Jinja2 templates must not use inline on* handlers in dynamically rendered content.
+
+        Templates rendered server-side and injected via innerHTML on the client
+        will have their on* attributes stripped by the innerHTML guard.
+        This test checks all HTML templates for inline handlers that would be
+        silently stripped.
+
+        Note: Static (non-innerHTML) template content is allowed to use on*
+        handlers since the guard only affects innerHTML assignments.  This test
+        therefore only flags templates that are known to be loaded via fetch()
+        + innerHTML (the ``teams_selector_items.html`` partial and similar).
+        """
+        # Standard
+        import os
+        import re
+
+        templates_dir = os.path.join(
+            os.path.dirname(__file__),
+            "..", "..", "mcpgateway", "templates",
+        )
+        templates_dir = os.path.normpath(templates_dir)
+
+        # Templates known to be injected via innerHTML (fetch + innerHTML pattern)
+        # These must NOT contain inline on* handlers.
+        innerHTML_templates = [
+            "teams_selector_items.html",
+        ]
+
+        violations = []
+        for template_name in innerHTML_templates:
+            template_path = os.path.join(templates_dir, template_name)
+            if not os.path.exists(template_path):
+                continue
+            with open(template_path, encoding="utf-8") as fh:
+                for lineno, line in enumerate(fh, start=1):
+                    stripped = line.strip()
+                    if re.search(self._INLINE_HANDLER_RE, stripped):
+                        # Exclude Jinja2 comments and HTML comments
+                        if not stripped.startswith('{#') and not stripped.startswith('<!--'):
+                            violations.append((template_name, lineno, line.rstrip()))
+
+        assert not violations, (
+            f"Found {len(violations)} inline on* handler(s) in innerHTML-injected templates.\n"
+            "These will be silently stripped by the innerHTML guard (PR #3129).\n"
+            "Convert them to data-action + addEventListener (see PR #3373).\n"
+            "Violations:\n"
+            + "\n".join(f"  {name}:{ln}: {txt}" for name, ln, txt in violations[:20])
+        )

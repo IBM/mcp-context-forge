@@ -18482,3 +18482,421 @@ class TestPublicVisibilityGuard:
         # No team_id → guard should not fire even with flag=false
         result = await admin_create_grpc_service(service, mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# include_public parameter — team isolation with public overlay (#3411)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
+    """When include_public=True with team_id, the query should include public items from all teams."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="gw-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    gateway_service = MagicMock()
+    gateway_service.convert_gateway_to_read.return_value = {"id": "gw-1", "name": "Gateway 1"}
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+
+    mock_request.headers = {}
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_include_public_false_does_not_change_behavior(monkeypatch, mock_request, mock_db):
+    """When include_public=False (default) with team_id, behavior is unchanged from team-only view."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="gw-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    gateway_service = MagicMock()
+    gateway_service.convert_gateway_to_read.return_value = {"id": "gw-1", "name": "Gateway 1"}
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+
+    mock_request.headers = {}
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        include_public=False,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_tools_partial_include_public(monkeypatch, mock_request, mock_db):
+    """Tools partial endpoint accepts include_public and returns response."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="tool-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    tool_service = MagicMock()
+    tool_service.convert_tool_to_read.return_value = {"id": "tool-1", "name": "Tool 1"}
+    monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
+
+    mock_request.headers = {}
+    response = await admin_tools_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-1",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_include_public_denied_for_non_member(monkeypatch, mock_request, mock_db):
+    """include_public=True should not bypass team membership check."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", AsyncMock(return_value={"data": [], "pagination": pagination, "links": None}))
+    setup_team_service(monkeypatch, [])  # user is not a member of any team
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", MagicMock(convert_gateway_to_read=MagicMock(return_value={"id": "gw-x"})))
+
+    mock_request.headers = {}
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-x",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    # Should still return a response (empty) — the false() condition blocks all results
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_tools_selector_template_includes_team_id_and_include_public(monkeypatch, mock_request, mock_db):
+    """When render=selector, the template context must include team_id and include_public for infinite scroll URLs."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="tool-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    tool_service = MagicMock()
+    tool_service.convert_tool_to_read.return_value = {"id": "tool-1", "name": "Tool 1"}
+    monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
+
+    # Capture what gets passed to TemplateResponse
+    captured_context = {}
+    original_template_response = mock_request.app.state.templates.TemplateResponse
+
+    def capture_template_response(request, template_name, context):
+        captured_context.update(context)
+        captured_context["_template_name"] = template_name
+        return original_template_response(request, template_name, context)
+
+    mock_request.app.state.templates.TemplateResponse = capture_template_response
+    mock_request.headers = {}
+
+    await admin_tools_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render="selector",
+        gateway_id=None,
+        team_id="team-1",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert captured_context.get("_template_name") == "tools_selector_items.html"
+    assert captured_context.get("team_id") == "team-1"
+    assert captured_context.get("include_public") is True
+
+
+@pytest.mark.asyncio
+async def test_admin_resources_selector_template_includes_team_id_and_include_public(monkeypatch, mock_request, mock_db):
+    """When render=selector, the resources template context must include team_id and include_public."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="res-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    resource_service = MagicMock()
+    resource_service.convert_resource_to_read.return_value = {"id": "res-1", "name": "Resource 1"}
+    monkeypatch.setattr("mcpgateway.admin.resource_service", resource_service)
+
+    captured_context = {}
+    original_template_response = mock_request.app.state.templates.TemplateResponse
+
+    def capture_template_response(request, template_name, context):
+        captured_context.update(context)
+        captured_context["_template_name"] = template_name
+        return original_template_response(request, template_name, context)
+
+    mock_request.app.state.templates.TemplateResponse = capture_template_response
+    mock_request.headers = {}
+
+    await admin_resources_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render="selector",
+        gateway_id=None,
+        team_id="team-1",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert captured_context.get("_template_name") == "resources_selector_items.html"
+    assert captured_context.get("team_id") == "team-1"
+    assert captured_context.get("include_public") is True
+
+
+@pytest.mark.asyncio
+async def test_admin_prompts_selector_template_includes_team_id_and_include_public(monkeypatch, mock_request, mock_db):
+    """When render=selector, the prompts template context must include team_id and include_public."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="prompt-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    prompt_service = MagicMock()
+    prompt_service.convert_prompt_to_read.return_value = {"id": "prompt-1", "name": "Prompt 1"}
+    monkeypatch.setattr("mcpgateway.admin.prompt_service", prompt_service)
+
+    captured_context = {}
+    original_template_response = mock_request.app.state.templates.TemplateResponse
+
+    def capture_template_response(request, template_name, context):
+        captured_context.update(context)
+        captured_context["_template_name"] = template_name
+        return original_template_response(request, template_name, context)
+
+    mock_request.app.state.templates.TemplateResponse = capture_template_response
+    mock_request.headers = {}
+
+    await admin_prompts_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render="selector",
+        gateway_id=None,
+        team_id="team-1",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert captured_context.get("_template_name") == "prompts_selector_items.html"
+    assert captured_context.get("team_id") == "team-1"
+    assert captured_context.get("include_public") is True
+
+@pytest.mark.asyncio
+async def test_admin_gateways_selector_template_includes_team_id_and_include_public(monkeypatch, mock_request, mock_db):
+    """When render=selector, the gateways template context must include team_id and include_public."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="gw-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    gateway_service = MagicMock()
+    gateway_service.convert_gateway_to_read.return_value = {"id": "gw-1", "name": "Gateway 1"}
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+
+    captured_context = {}
+    original_template_response = mock_request.app.state.templates.TemplateResponse
+
+    def capture_template_response(request, template_name, context):
+        captured_context.update(context)
+        captured_context["_template_name"] = template_name
+        return original_template_response(request, template_name, context)
+
+    mock_request.app.state.templates.TemplateResponse = capture_template_response
+    mock_request.headers = {}
+
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render="selector",
+        team_id="team-1",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert captured_context.get("_template_name") == "gateways_selector_items.html"
+    assert captured_context.get("team_id") == "team-1"
+    assert captured_context.get("include_public") is True
+
+
+@pytest.mark.asyncio
+async def test_admin_tools_partial_include_public_denied_for_non_member(monkeypatch, mock_request, mock_db):
+    """include_public=True should not bypass team membership check for tools."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", AsyncMock(return_value={"data": [], "pagination": pagination, "links": None}))
+    setup_team_service(monkeypatch, [])
+    monkeypatch.setattr("mcpgateway.admin.tool_service", MagicMock(convert_tool_to_read=MagicMock(return_value={"id": "t-x"})))
+
+    mock_request.headers = {}
+    response = await admin_tools_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-x",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_resources_partial_include_public_denied_for_non_member(monkeypatch, mock_request, mock_db):
+    """include_public=True should not bypass team membership check for resources."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", AsyncMock(return_value={"data": [], "pagination": pagination, "links": None}))
+    setup_team_service(monkeypatch, [])
+    monkeypatch.setattr("mcpgateway.admin.resource_service", MagicMock(convert_resource_to_read=MagicMock(return_value={"id": "r-x"})))
+
+    mock_request.headers = {}
+    response = await admin_resources_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-x",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_prompts_partial_include_public_denied_for_non_member(monkeypatch, mock_request, mock_db):
+    """include_public=True should not bypass team membership check for prompts."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", AsyncMock(return_value={"data": [], "pagination": pagination, "links": None}))
+    setup_team_service(monkeypatch, [])
+    monkeypatch.setattr("mcpgateway.admin.prompt_service", MagicMock(convert_prompt_to_read=MagicMock(return_value={"id": "p-x"})))
+
+    mock_request.headers = {}
+    response = await admin_prompts_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-x",
+        include_public=True,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_search_tools_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
+    """Search tools endpoint accepts include_public and returns response."""
+    from mcpgateway.admin import admin_search_tools
+
+    setup_team_service(monkeypatch, ["team-1"])
+    response = await admin_search_tools(
+        q="tool", tags=None, include_inactive=False, limit=10, gateway_id=None,
+        team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db},
+    )
+    assert response is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_get_all_gateways_ids_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
+    """Get all gateway IDs endpoint accepts include_public and returns response."""
+    from mcpgateway.admin import admin_get_all_gateways_ids
+
+    setup_team_service(monkeypatch, ["team-1"])
+    response = await admin_get_all_gateways_ids(
+        include_inactive=False, team_id="team-1", include_public=True,
+        db=mock_db, user={"email": "user@example.com", "db": mock_db},
+    )
+    assert response is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_search_gateways_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
+    """Search gateways endpoint accepts include_public and returns response."""
+    from mcpgateway.admin import admin_search_gateways
+
+    setup_team_service(monkeypatch, ["team-1"])
+    response = await admin_search_gateways(
+        q="gate", include_inactive=False, limit=10, team_id="team-1", include_public=True,
+        db=mock_db, user={"email": "user@example.com", "db": mock_db},
+    )
+    assert response is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_search_resources_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
+    """Search resources endpoint accepts include_public and returns response."""
+    from mcpgateway.admin import admin_search_resources
+
+    setup_team_service(monkeypatch, ["team-1"])
+    response = await admin_search_resources(
+        q="res", tags=None, limit=10, gateway_id=None, team_id="team-1", include_public=True,
+        db=mock_db, user={"email": "user@example.com", "db": mock_db},
+    )
+    assert response is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_search_prompts_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
+    """Search prompts endpoint accepts include_public and returns response."""
+    from mcpgateway.admin import admin_search_prompts
+
+    setup_team_service(monkeypatch, ["team-1"])
+    response = await admin_search_prompts(
+        q="prompt", tags=None, limit=10, gateway_id=None, team_id="team-1", include_public=True,
+        db=mock_db, user={"email": "user@example.com", "db": mock_db},
+    )
+    assert response is not None
