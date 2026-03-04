@@ -5172,7 +5172,8 @@ async def admin_create_team(
         # Extract user email from user dict
         user_email = get_user_email(user)
 
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
+        is_admin = isinstance(user, dict) and user.get("is_admin")
+        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, skip_limits=bool(is_admin))
 
         response = HTMLResponse(content="", status_code=201)
         return response

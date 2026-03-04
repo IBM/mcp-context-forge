@@ -254,7 +254,7 @@ class TeamManagementService:
         self.db.add(history)
         self.db.commit()
 
-    async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None) -> EmailTeam:
+    async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None, skip_limits: bool = False) -> EmailTeam:
         """Create a new team.
 
         Args:
@@ -325,9 +325,10 @@ class TeamManagementService:
                 raise ValueError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
 
             # Check max teams per user
-            max_teams = getattr(settings, "max_teams_per_user", 50)
-            if self._get_user_team_count(created_by) >= max_teams:
-                raise ValueError(f"User has reached the maximum team limit of {max_teams}")
+            if not skip_limits:
+                max_teams = getattr(settings, "max_teams_per_user", 50)
+                if self._get_user_team_count(created_by) >= max_teams:
+                    raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
             # Apply default max members from settings
             if max_members is None:
