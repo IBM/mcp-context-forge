@@ -11109,8 +11109,10 @@ function reloadAssociatedItems() {
         ? "edit-server-view-public"
         : "add-server-view-public";
     const vpCheckbox = document.getElementById(vpCheckboxId);
-    const urlTeamId = new URL(window.location.href).searchParams.get("team_id");
-    let teamIdSuffix = urlTeamId ? `&team_id=${encodeURIComponent(urlTeamId)}` : "";
+    const urlTeamId = getCurrentTeamId();
+    let teamIdSuffix = urlTeamId
+        ? `&team_id=${encodeURIComponent(urlTeamId)}`
+        : "";
     if (vpCheckbox && vpCheckbox.checked) {
         teamIdSuffix += "&include_public=true";
     }
@@ -27743,9 +27745,7 @@ async function serverSideToolSearch(searchTerm) {
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
+            const urlTeamId = getCurrentTeamId();
             if (urlTeamId) {
                 toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
             }
@@ -28074,9 +28074,7 @@ async function serverSidePromptSearch(searchTerm) {
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
+            const urlTeamId = getCurrentTeamId();
             if (urlTeamId) {
                 promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
             }
@@ -28324,9 +28322,7 @@ async function serverSideResourceSearch(searchTerm) {
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
+            const urlTeamId = getCurrentTeamId();
             if (urlTeamId) {
                 resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
             }
@@ -28585,9 +28581,7 @@ async function serverSideEditToolSearch(searchTerm) {
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
+            const urlTeamId = getCurrentTeamId();
             if (urlTeamId) {
                 toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
             }
@@ -28922,9 +28916,7 @@ async function serverSideEditPromptsSearch(searchTerm) {
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
+            const urlTeamId = getCurrentTeamId();
             if (urlTeamId) {
                 promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
             }
@@ -29249,9 +29241,7 @@ async function serverSideEditResourcesSearch(searchTerm) {
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
+            const urlTeamId = getCurrentTeamId();
             if (urlTeamId) {
                 resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
             }

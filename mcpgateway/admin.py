@@ -7821,6 +7821,9 @@ async def admin_tools_partial_html(
                 and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
             ]
             if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
                 team_access.append(DbTool.visibility == "public")
             query = query.where(or_(*team_access))
             LOGGER.debug(f"Filtering tools by team_id: {team_id}{' (include_public)' if include_public else ''}")
@@ -7950,6 +7953,8 @@ async def admin_tools_partial_html(
                 "pagination": pagination.model_dump(),
                 "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
+                "team_id": team_id,
+                "include_public": include_public,
             },
         )
 
@@ -8398,6 +8403,9 @@ async def admin_prompts_partial_html(
                 and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
             ]
             if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
                 team_access.append(DbPrompt.visibility == "public")
             query = query.where(or_(*team_access))
             LOGGER.debug(f"Filtering prompts by team_id: {team_id}{' (include_public)' if include_public else ''}")
@@ -8514,6 +8522,8 @@ async def admin_prompts_partial_html(
                 "pagination": pagination.model_dump(),
                 "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
+                "team_id": team_id,
+                "include_public": include_public,
             },
         )
 
@@ -8609,6 +8619,9 @@ async def admin_gateways_partial_html(
                 and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
             ]
             if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
                 team_access.append(DbGateway.visibility == "public")
             query = query.where(or_(*team_access))
             LOGGER.debug(f"Filtering gateways by team_id: {team_id}{' (include_public)' if include_public else ''}")
@@ -8708,7 +8721,7 @@ async def admin_gateways_partial_html(
         return request.app.state.templates.TemplateResponse(
             request,
             "gateways_selector_items.html",
-            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": _resolve_root_path(request)},
+            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": _resolve_root_path(request), "team_id": team_id, "include_public": include_public},
         )
 
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
@@ -9172,6 +9185,9 @@ async def admin_resources_partial_html(
                 and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
             ]
             if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
                 team_access.append(DbResource.visibility == "public")
             query = query.where(or_(*team_access))
             LOGGER.debug(f"Filtering resources by team_id: {team_id}{' (include_public)' if include_public else ''}")
@@ -9287,6 +9303,8 @@ async def admin_resources_partial_html(
                 "pagination": pagination.model_dump(),
                 "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
+                "team_id": team_id,
+                "include_public": include_public,
             },
         )
 
