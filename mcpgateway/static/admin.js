@@ -3890,11 +3890,36 @@ async function editTool(toolId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
+                    const unmaskedHeaders =
+                        Array.isArray(tool.auth.authHeadersUnmasked) &&
+                        tool.auth.authHeadersUnmasked.length > 0
+                            ? tool.auth.authHeadersUnmasked
+                            : tool.auth.authHeaders;
+                    if (
+                        Array.isArray(unmaskedHeaders) &&
+                        unmaskedHeaders.length > 0
+                    ) {
+                        loadAuthHeaders(
+                            "edit-auth-headers-container",
+                            unmaskedHeaders,
+                            { maskValues: true },
+                        );
+                    } else {
+                        updateAuthHeadersJSON("edit-auth-headers-container");
+                    }
                     if (authHeaderKeyField) {
                         authHeaderKeyField.value =
                             tool.auth.authHeaderKey || "";
                     }
                     if (authHeaderValueField) {
+                        if (
+                            Array.isArray(unmaskedHeaders) &&
+                            unmaskedHeaders.length === 1
+                        ) {
+                            authHeaderValueField.dataset.isMasked = "true";
+                            authHeaderValueField.dataset.realValue =
+                                unmaskedHeaders[0].value ?? "";
+                        }
                         authHeaderValueField.value = "*****"; // masked
                     }
                 }
