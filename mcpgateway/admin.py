@@ -407,20 +407,26 @@ def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: O
     return normalized
 
 
-def get_ui_visibility_config(request: Request) -> Dict[str, Any]:
+def get_ui_visibility_config(request: Request, is_admin: bool = False) -> Dict[str, Any]:
     """Build final UI visibility settings for the current admin request.
 
     Args:
         request: Incoming FastAPI request.
+        is_admin: Whether the current user is an admin. Admins use separate
+            hide lists and are not affected by embedded-mode defaults.
 
     Returns:
         Dict[str, Any]: Hidden sections/header items/tabs plus cookie update intent.
     """
-    hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
-    hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items", []), UI_HIDABLE_HEADER_ITEMS)
+    if is_admin:
+        hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections_admin", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
+        hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items_admin", []), UI_HIDABLE_HEADER_ITEMS)
+    else:
+        hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
+        hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items", []), UI_HIDABLE_HEADER_ITEMS)
 
-    if bool(getattr(settings, "mcpgateway_ui_embedded", False)):
-        hidden_header_items.update(UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS)
+        if bool(getattr(settings, "mcpgateway_ui_embedded", False)):
+            hidden_header_items.update(UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS)
 
     query_ui_hide_raw = request.query_params.get("ui_hide")
     query_ui_hide_values = _normalize_ui_hide_values(query_ui_hide_raw, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES) if query_ui_hide_raw is not None else set()
@@ -3508,7 +3514,8 @@ async def admin_ui(
     """
     LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI (team_id={team_id})")
     user_email = get_user_email(user)
-    ui_visibility_config = get_ui_visibility_config(request)
+    is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    ui_visibility_config = get_ui_visibility_config(request, is_admin=is_admin)
     hidden_sections = set(ui_visibility_config["hidden_sections"])
     hidden_header_items = set(ui_visibility_config["hidden_header_items"])
 
@@ -3961,7 +3968,7 @@ async def admin_ui(
             "performance_enabled": getattr(settings, "mcpgateway_performance_tracking", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
-            "is_admin": bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)),
+            "is_admin": is_admin,
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
