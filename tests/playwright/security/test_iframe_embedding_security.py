@@ -78,53 +78,6 @@ def captured_admin_headers(page: Page, base_url: str) -> Dict[str, str]:
 
 
 @pytest.fixture
-def iframe_host(page: Page, base_url: str):
-    """Load admin inside an iframe, stripping X-Frame-Options/CSP restrictions.
-
-    Returns a tuple of (frame_locator, frame_object) for interacting with
-    the embedded admin.
-    """
-    _ensure_admin_logged_in(page, base_url)
-
-    def _strip_headers(route: Route) -> None:
-        try:
-            response = route.fetch()
-            headers = dict(response.headers)
-            headers.pop("x-frame-options", None)
-            if "content-security-policy" in headers:
-                headers["content-security-policy"] = headers["content-security-policy"].replace("frame-ancestors 'none'", "frame-ancestors 'self'")
-            route.fulfill(status=response.status, headers=headers, body=response.body())
-        except Exception:
-            pass
-
-    admin_pattern = re.compile(r".*/admin.*")
-    page.route(admin_pattern, _strip_headers)
-
-    admin_url = f"{base_url}/admin/"
-    page.set_content(
-        f"""<!DOCTYPE html>
-<html><head><title>iframe host</title></head>
-<body style="margin:0;padding:0">
-<iframe id="admin-frame"
-        src="{admin_url}"
-        style="width:100%;height:100vh;border:none"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
-</iframe>
-</body></html>"""
-    )
-
-    frame = page.frame_locator("#admin-frame")
-    try:
-        frame.locator('[data-testid="servers-tab"]').wait_for(state="visible", timeout=30000)
-    except PlaywrightTimeoutError:
-        pass  # CI may be slower; tests will assert individually
-
-    yield frame
-
-    page.unroute(admin_pattern)
-
-
-@pytest.fixture
 def console_errors(page: Page):
     """Capture JS pageerror events from the page (including same-origin iframes).
 

@@ -237,8 +237,11 @@ class MCPRegistryPage(BasePage):
     def clear_filters(self) -> None:
         """Clear all filters and search."""
         self.category_filter.select_option("")
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
         self.auth_filter.select_option("")
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
         self.search_input.fill("")
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
         self.page.wait_for_timeout(1000)
 
     def click_category_badge(self, category: str) -> None:
