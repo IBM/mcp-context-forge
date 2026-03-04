@@ -1297,6 +1297,7 @@ class TeamManagementService:
         base_url: Optional[str] = None,
         include_personal: bool = False,
         search_query: Optional[str] = None,
+        personal_owner_email: Optional[str] = None,
     ) -> Union[Tuple[List[EmailTeam], Optional[str]], Dict[str, Any]]:
         """List teams with pagination support (cursor or page based).
 
@@ -1311,6 +1312,7 @@ class TeamManagementService:
             base_url: Base URL for pagination links
             include_personal: Whether to include personal teams
             search_query: Search term for name/slug/description
+            personal_owner_email: When set (and include_personal=False), includes this user's personal team alongside non-personal teams
 
         Returns:
             Union[Tuple[List[EmailTeam], Optional[str]], Dict[str, Any]]:
@@ -1320,7 +1322,15 @@ class TeamManagementService:
         query = select(EmailTeam)
 
         if not include_personal:
-            query = query.where(EmailTeam.is_personal.is_(False))
+            if personal_owner_email:
+                query = query.where(
+                    or_(
+                        EmailTeam.is_personal.is_(False),
+                        and_(EmailTeam.is_personal.is_(True), EmailTeam.created_by == personal_owner_email),
+                    )
+                )
+            else:
+                query = query.where(EmailTeam.is_personal.is_(False))
 
         if not include_inactive:
             query = query.where(EmailTeam.is_active.is_(True))
@@ -1372,6 +1382,7 @@ class TeamManagementService:
         visibility_filter: Optional[str] = None,
         include_personal: bool = False,
         search_query: Optional[str] = None,
+        personal_owner_email: Optional[str] = None,
     ) -> List[int]:
         """Get all team IDs matching criteria (unpaginated).
 
@@ -1380,6 +1391,7 @@ class TeamManagementService:
             visibility_filter: Filter by visibility (private, team, public)
             include_personal: Whether to include personal teams
             search_query: Search term for name/slug
+            personal_owner_email: When set (and include_personal=False), includes this user's personal team alongside non-personal teams
 
         Returns:
             List[int]: List of team IDs
@@ -1387,7 +1399,15 @@ class TeamManagementService:
         query = select(EmailTeam.id)
 
         if not include_personal:
-            query = query.where(EmailTeam.is_personal.is_(False))
+            if personal_owner_email:
+                query = query.where(
+                    or_(
+                        EmailTeam.is_personal.is_(False),
+                        and_(EmailTeam.is_personal.is_(True), EmailTeam.created_by == personal_owner_email),
+                    )
+                )
+            else:
+                query = query.where(EmailTeam.is_personal.is_(False))
 
         if not include_inactive:
             query = query.where(EmailTeam.is_active.is_(True))

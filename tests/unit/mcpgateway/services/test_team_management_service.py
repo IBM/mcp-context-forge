@@ -2260,7 +2260,7 @@ class TestTeamManagementService:
     async def test_get_user_personal_team_found(self, mock_db):
         """Test get_user_personal_team returns personal team when found."""
         service = TeamManagementService(mock_db)
-        
+
         # Create mock personal team
         mock_team = MagicMock(spec=EmailTeam)
         mock_team.id = "personal123"
@@ -2268,14 +2268,14 @@ class TestTeamManagementService:
         mock_team.is_personal = True
         mock_team.is_active = True
         mock_team.created_by = "user@example.com"
-        
+
         # Mock query result
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_team
         mock_db.execute.return_value = mock_result
-        
+
         result = await service.get_user_personal_team("user@example.com")
-        
+
         assert result == mock_team
         assert result.is_personal is True
         mock_db.commit.assert_called_once()
@@ -2284,14 +2284,14 @@ class TestTeamManagementService:
     async def test_get_user_personal_team_not_found(self, mock_db):
         """Test get_user_personal_team returns None when no personal team exists."""
         service = TeamManagementService(mock_db)
-        
+
         # Mock query result with no team
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
-        
+
         result = await service.get_user_personal_team("user@example.com")
-        
+
         assert result is None
         mock_db.commit.assert_called_once()
 
@@ -2299,12 +2299,12 @@ class TestTeamManagementService:
     async def test_get_user_personal_team_database_error(self, mock_db):
         """Test get_user_personal_team handles database errors gracefully."""
         service = TeamManagementService(mock_db)
-        
+
         # Mock database error
         mock_db.execute.side_effect = Exception("Database connection failed")
-        
+
         result = await service.get_user_personal_team("user@example.com")
-        
+
         assert result is None
         mock_db.rollback.assert_called_once()
 
@@ -2312,18 +2312,18 @@ class TestTeamManagementService:
     async def test_get_user_personal_team_filters_correctly(self, mock_db):
         """Test get_user_personal_team uses correct filters in query."""
         service = TeamManagementService(mock_db)
-        
+
         mock_team = MagicMock(spec=EmailTeam)
         mock_team.id = "personal123"
         mock_team.is_personal = True
         mock_team.is_active = True
-        
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_team
         mock_db.execute.return_value = mock_result
-        
+
         await service.get_user_personal_team("test@example.com")
-        
+
         # Verify execute was called (query construction is internal)
         mock_db.execute.assert_called_once()
         mock_db.commit.assert_called_once()
@@ -2336,11 +2336,11 @@ class TestTeamManagementService:
         mock_team.name = "Test Team"
         mock_team.slug = "test-team"
         mock_team.description = "A test description"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=True, visibility=None, search_query=None
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_filters_inactive_team(self):
@@ -2351,11 +2351,11 @@ class TestTeamManagementService:
         mock_team.name = "Inactive Team"
         mock_team.slug = "inactive-team"
         mock_team.description = "An inactive team"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query=None
         )
-        
+
         assert result is False
 
     def test_should_include_personal_team_includes_inactive_when_flag_set(self):
@@ -2366,11 +2366,11 @@ class TestTeamManagementService:
         mock_team.name = "Inactive Team"
         mock_team.slug = "inactive-team"
         mock_team.description = "An inactive team"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=True, visibility=None, search_query=None
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_filters_by_visibility(self):
@@ -2381,12 +2381,12 @@ class TestTeamManagementService:
         mock_team.name = "Private Team"
         mock_team.slug = "private-team"
         mock_team.description = "A private team"
-        
+
         # Should filter out when visibility doesn't match
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility="public", search_query=None
         )
-        
+
         assert result is False
 
     def test_should_include_personal_team_matches_visibility(self):
@@ -2397,11 +2397,11 @@ class TestTeamManagementService:
         mock_team.name = "Public Team"
         mock_team.slug = "public-team"
         mock_team.description = "A public team"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility="public", search_query=None
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_search_matches_name(self):
@@ -2412,11 +2412,11 @@ class TestTeamManagementService:
         mock_team.name = "Engineering Team"
         mock_team.slug = "eng-team"
         mock_team.description = "Team for engineers"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query="engineering"
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_search_matches_slug(self):
@@ -2427,11 +2427,11 @@ class TestTeamManagementService:
         mock_team.name = "Team Alpha"
         mock_team.slug = "alpha-squad"
         mock_team.description = "First team"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query="squad"
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_search_matches_description(self):
@@ -2442,11 +2442,11 @@ class TestTeamManagementService:
         mock_team.name = "Team Beta"
         mock_team.slug = "beta"
         mock_team.description = "Specialized operations team"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query="operations"
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_search_case_insensitive(self):
@@ -2457,11 +2457,11 @@ class TestTeamManagementService:
         mock_team.name = "DevOps Team"
         mock_team.slug = "devops"
         mock_team.description = "Infrastructure team"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query="DEVOPS"
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_search_no_match(self):
@@ -2472,11 +2472,11 @@ class TestTeamManagementService:
         mock_team.name = "Marketing Team"
         mock_team.slug = "marketing"
         mock_team.description = "Marketing operations"
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query="engineering"
         )
-        
+
         assert result is False
 
     def test_should_include_personal_team_search_with_none_description(self):
@@ -2487,12 +2487,12 @@ class TestTeamManagementService:
         mock_team.name = "Sales Team"
         mock_team.slug = "sales"
         mock_team.description = None
-        
+
         # Should not match description (None), but should match name
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query="sales"
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_search_no_match_with_none_description(self):
@@ -2503,11 +2503,11 @@ class TestTeamManagementService:
         mock_team.name = "Finance Team"
         mock_team.slug = "finance"
         mock_team.description = None
-        
+
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility=None, search_query="marketing"
         )
-        
+
         assert result is False
 
     def test_should_include_personal_team_multiple_filters_combined(self):
@@ -2518,12 +2518,12 @@ class TestTeamManagementService:
         mock_team.name = "Open Source Team"
         mock_team.slug = "opensource"
         mock_team.description = "Public contributions"
-        
+
         # All filters should pass
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility="public", search_query="open"
         )
-        
+
         assert result is True
 
     def test_should_include_personal_team_multiple_filters_one_fails(self):
@@ -2534,10 +2534,10 @@ class TestTeamManagementService:
         mock_team.name = "Internal Team"
         mock_team.slug = "internal"
         mock_team.description = "Private operations"
-        
+
         # Visibility filter should fail
         result = TeamManagementService.should_include_personal_team(
             mock_team, include_inactive=False, visibility="public", search_query="internal"
         )
-        
+
         assert result is False
