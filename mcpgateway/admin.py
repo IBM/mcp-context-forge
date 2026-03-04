@@ -5144,6 +5144,9 @@ async def admin_create_team(
         response = HTMLResponse(content=error_content, status_code=403)
         return response
 
+    if not getattr(settings, "allow_team_creation", True) and not (isinstance(user, dict) and user.get("is_admin")):
+        return HTMLResponse(content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team creation is currently disabled</div>', status_code=403)
+
     try:
         form = await request.form()
         name = form.get("name")
@@ -6225,6 +6228,9 @@ async def admin_create_join_request(
     """
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+
+    if not getattr(settings, "allow_team_join_requests", True):
+        return HTMLResponse(content='<div class="text-red-500">Team join requests are currently disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
