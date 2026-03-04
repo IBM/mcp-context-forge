@@ -665,7 +665,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         )
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Insufficient permissions. Required: {permission}",
+                            detail="Access denied",
                         )
 
             # No plugin handled it, fall through to standard RBAC check
@@ -703,7 +703,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -783,7 +783,7 @@ def require_admin_permission():
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
             # Admin permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -923,7 +923,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permissions={permissions}, resource_type={resource_type}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required one of: {', '.join(permissions)}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -1066,4 +1066,4 @@ class PermissionChecker:
             HTTPException: If permission is not granted
         """
         if not await self.has_permission(permission, resource_type, resource_id, team_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")

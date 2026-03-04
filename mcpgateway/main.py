@@ -573,7 +573,7 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     if request is not None:
         scoped = _extract_scoped_permissions(request)
         if scoped is not None and "*" not in scoped and permission not in scoped:
-            raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+            raise JSONRPCError(-32003, "Access denied", {"method": method})
 
     # Layer 2: RBAC check
     # Session tokens have no explicit team_id, so check across all team-scoped roles.
@@ -581,7 +581,7 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     check_any_team = isinstance(user, dict) and user.get("token_use") == "session"
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
     if not await checker.has_permission(permission, check_any_team=check_any_team):
-        raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+        raise JSONRPCError(-32003, "Access denied", {"method": method})
 
 
 def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:

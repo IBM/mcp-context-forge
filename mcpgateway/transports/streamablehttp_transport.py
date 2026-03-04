@@ -985,7 +985,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "tools.execute"):
-            raise PermissionError("Insufficient permissions. Required: tools.execute")
+            raise PermissionError("Access denied")
         # Layer 2: RBAC check
         # Session tokens have no explicit team_id; check across all team-scoped roles.
         # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
@@ -996,7 +996,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
             check_any_team=_is_session_token,
         )
         if not has_execute_permission:
-            raise PermissionError("Insufficient permissions. Required: tools.execute")
+            raise PermissionError("Access denied")
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
     gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -1445,7 +1445,7 @@ async def list_tools() -> List[types.Tool]:
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError("Insufficient permissions. Required: tools.read")
+            raise PermissionError("Access denied")
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1566,7 +1566,7 @@ async def list_prompts() -> List[types.Prompt]:
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError("Insufficient permissions. Required: prompts.read")
+            raise PermissionError("Access denied")
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1640,7 +1640,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError("Insufficient permissions. Required: prompts.read")
+            raise PermissionError("Access denied")
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -1723,7 +1723,7 @@ async def list_resources() -> List[types.Resource]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError("Insufficient permissions. Required: resources.read")
+            raise PermissionError("Access denied")
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1837,7 +1837,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError("Insufficient permissions. Required: resources.read")
+            raise PermissionError("Access denied")
 
     # Extract authorization parameters from user context (same pattern as list_resources)
     user_email = user_context.get("email") if user_context else None
@@ -1976,7 +1976,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError("Insufficient permissions. Required: resources.read")
+            raise PermissionError("Access denied")
 
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
@@ -2050,14 +2050,14 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "admin.system_config"):
-            raise PermissionError("Insufficient permissions. Required: admin.system_config")
+            raise PermissionError("Access denied")
         # Layer 2: RBAC check
         has_admin_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="admin.system_config",
         )
         if not has_admin_permission:
-            raise PermissionError("Insufficient permissions. Required: admin.system_config")
+            raise PermissionError("Access denied")
 
     try:
         # Convert MCP logging level to our LogLevel enum
@@ -2114,7 +2114,7 @@ async def complete(
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError("Insufficient permissions. Required: tools.read")
+            raise PermissionError("Access denied")
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2359,7 +2359,7 @@ class SessionManagerWrapper:
             )
             if not has_server_access:
                 response = ORJSONResponse(
-                    {"detail": "Insufficient permissions. Required: servers.use"},
+                {"detail": "Access denied"},
                     status_code=HTTP_403_FORBIDDEN,
                 )
                 await response(scope, receive, send)
