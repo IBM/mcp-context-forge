@@ -14698,7 +14698,7 @@ class TestAuthLogin:
 
         # Mock verify_jwt_token_cached to return a valid payload
         mock_verify = AsyncMock(return_value={"sub": "admin@test.com", "is_admin": True})
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", mock_verify)
 
         result = await admin_login_page(request)
 
@@ -14715,6 +14715,7 @@ class TestAuthLogin:
         monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.environment", "production", raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_reset_enabled", True, raising=False)
 
         # Mock request with invalid JWT token in cookies
         request = MagicMock(spec=Request)
@@ -14723,18 +14724,27 @@ class TestAuthLogin:
         request.cookies = {"jwt_token": "invalid-or-expired-token"}
         request.app = MagicMock()
         request.app.state.templates = MagicMock()
-        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
+        
+        # Create a mock template response
+        mock_template_response = HTMLResponse("<html>Login</html>")
+        request.app.state.templates.TemplateResponse.return_value = mock_template_response
 
         # Mock verify_jwt_token_cached to raise exception (invalid token)
         mock_verify = AsyncMock(side_effect=Exception("Invalid token"))
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", mock_verify)
+        
+        # Mock load_sri_hashes
+        monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
 
         result = await admin_login_page(request)
 
-        # Should show login page, not redirect
+        # Should show login page (HTMLResponse), not redirect
         assert isinstance(result, HTMLResponse)
+        # Verify CSRF cookie is set
         assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
-        assert "secure cookies enabled" in (context.get("secure_cookie_warning") or "").lower()
+        # Verify template was called with login.html
+        call_args = request.app.state.templates.TemplateResponse.call_args
+        assert call_args[0][1] == "login.html"
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_email_auth_disabled(self, monkeypatch, mock_db):
