@@ -602,11 +602,7 @@ class Settings(BaseSettings):
     )
     mcpgateway_ui_hide_sections_admin: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
-        description=(
-            "CSV/JSON list of UI sections to hide for admin users. "
-            "Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. "
-            "When unset, admins see all sections."
-        ),
+        description=("CSV/JSON list of UI sections to hide for admin users. " "Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. " "When unset, admins see all sections."),
     )
     mcpgateway_ui_hide_header_items_admin: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
