@@ -39,8 +39,6 @@ from ..conftest import _ensure_admin_logged_in
 def admin_page(page: Page, base_url: str):
     """Navigate to admin UI and ensure user is logged in."""
     _ensure_admin_logged_in(page, base_url)
-    page.goto(f"{base_url}/admin/")
-    page.wait_for_load_state("networkidle")
     yield page
 
 
@@ -333,7 +331,7 @@ class TestStatePersistence:
 
         # Step 2: Refresh page
         admin_page.reload()
-        admin_page.wait_for_load_state("networkidle")
+        admin_page.wait_for_load_state("domcontentloaded")
 
         # Step 3: Verify tab still selected
         tools_tab_after = admin_page.locator('[data-testid="tools-tab"]')
@@ -383,7 +381,7 @@ class TestStatePersistence:
 
         # Step 3: Refresh page
         admin_page.reload()
-        admin_page.wait_for_load_state("networkidle")
+        admin_page.wait_for_load_state("domcontentloaded")
 
         # Step 4: Verify team_id still in URL
         refreshed_url = admin_page.url
@@ -436,7 +434,7 @@ class TestStatePersistence:
 
         # Step 4: Refresh page
         admin_page.reload()
-        admin_page.wait_for_load_state("networkidle")
+        admin_page.wait_for_load_state("domcontentloaded")
 
         # Step 5: Verify search term persists
         search_input_after = admin_page.locator('input[type="search"], input[placeholder*="Search" i]').first
@@ -490,7 +488,7 @@ class TestErrorMonitoring:
         3. Verify no failed API calls (4xx/5xx)
         """
         # Page already loaded by fixture
-        admin_page.wait_for_load_state("networkidle")
+        admin_page.wait_for_load_state("domcontentloaded")
         admin_page.wait_for_timeout(2_000)
 
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
