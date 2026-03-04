@@ -151,8 +151,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
         search_box = admin_page.locator('#catalog-panel input[type="text"][placeholder*="Search" i]').first
         search_box.fill(server_name)
-        admin_page.wait_for_timeout(2_000)
-        server_cell = admin_page.locator(f'td:has-text("{server_name}")')
+        server_cell = admin_page.locator(f'#catalog-panel td:has-text("{server_name}")')
         expect(server_cell.first).to_be_visible(timeout=10_000)
 
         # Step 6 & 7: Verify no errors
@@ -191,7 +190,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
 
         # Step 2: Find first server row with edit button
-        edit_button = admin_page.locator('button[data-action="edit"]:visible, button:has-text("Edit"):visible').first
+        edit_button = admin_page.locator('#catalog-panel button:has-text("Edit"):visible').first
 
         try:
             edit_button.wait_for(state="visible", timeout=3_000)
@@ -222,8 +221,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
         search_box = admin_page.locator('#catalog-panel input[type="text"][placeholder*="Search" i]').first
         search_box.fill(updated_name)
-        admin_page.wait_for_timeout(2_000)
-        updated_cell = admin_page.locator(f'td:has-text("{updated_name}")')
+        updated_cell = admin_page.locator(f'#catalog-panel td:has-text("{updated_name}")')
         expect(updated_cell.first).to_be_visible(timeout=10_000)
 
         # Step 7 & 8: Verify no errors
@@ -260,9 +258,8 @@ class TestVirtualServerCRUD:
 
         admin_page.wait_for_timeout(2_000)
 
-        # Step 2: Find delete button within Servers panel
-        servers_panel = admin_page.locator('#serversBody, #servers-panel, [data-testid="servers-panel"]')
-        delete_button = servers_panel.locator('button[data-action="delete"]:visible').first
+        # Step 2: Find delete button within catalog panel
+        delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
 
         try:
             delete_button.wait_for(state="visible", timeout=3_000)
@@ -273,20 +270,13 @@ class TestVirtualServerCRUD:
         server_row = delete_button.locator('xpath=ancestor::tr')
         server_name = server_row.locator('td').first.text_content()
 
-        # Step 3: Click delete button
+        # Step 3 & 4: Accept native confirm() dialogs and click delete
+        admin_page.on("dialog", lambda d: d.accept())
         delete_button.click()
-
-        # Step 4: Confirm deletion (if confirmation dialog appears)
-        try:
-            confirm_button = admin_page.locator('[role="dialog"] button:has-text("Confirm"), [role="dialog"] button:has-text("Yes"), [role="dialog"] button:has-text("Delete")')
-            confirm_button.first.wait_for(state="visible", timeout=2_000)
-            confirm_button.first.click()
-        except PlaywrightTimeoutError:
-            pass  # No confirmation dialog
 
         # Step 5: Verify server removed
         admin_page.wait_for_timeout(2_000)
-        deleted_row = admin_page.locator(f'tr:has-text("{server_name}")')
+        deleted_row = admin_page.locator(f'#catalog-panel tr:has-text("{server_name}")')
         expect(deleted_row).not_to_be_visible(timeout=5_000)
 
         # Step 6 & 7: Verify no errors
@@ -334,10 +324,9 @@ class TestStatePersistence:
         # Verify tab is active (tabs use CSS class "active", not aria-selected)
         expect(tools_tab).to_have_class(re.compile(r"\bactive\b"), timeout=5_000)
 
-        # Step 2: Refresh page
+        # Step 2: Refresh page (use "load" to wait for Alpine.js initialization)
         admin_page.reload()
-        admin_page.wait_for_load_state("domcontentloaded")
-        admin_page.wait_for_timeout(2_000)
+        admin_page.wait_for_load_state("load", timeout=15_000)
 
         # Step 3: Verify tab still selected (URL hash #tools persists)
         tools_tab_after = admin_page.locator('[data-testid="tools-tab"]')
@@ -387,9 +376,9 @@ class TestStatePersistence:
         if "team_id=" not in current_url:
             pytest.skip("Team selection did not update URL")
 
-        # Step 3: Refresh page
+        # Step 3: Refresh page (use "load" to wait for Alpine.js initialization)
         admin_page.reload()
-        admin_page.wait_for_load_state("domcontentloaded")
+        admin_page.wait_for_load_state("load", timeout=15_000)
 
         # Step 4: Verify team_id still in URL
         refreshed_url = admin_page.url
@@ -440,9 +429,9 @@ class TestStatePersistence:
         if "search=" not in current_url and "q=" not in current_url:
             pytest.skip("Search did not update URL")
 
-        # Step 4: Refresh page
+        # Step 4: Refresh page (use "load" to wait for Alpine.js initialization)
         admin_page.reload()
-        admin_page.wait_for_load_state("domcontentloaded")
+        admin_page.wait_for_load_state("load", timeout=15_000)
 
         # Step 5: Verify search term persists
         search_input_after = admin_page.locator('input[type="search"], input[placeholder*="Search" i]').first
@@ -582,5 +571,3 @@ class TestErrorMonitoring:
             "JavaScript errors when clicking data-action buttons:\n"
             + "\n".join(f"  - {e}" for e in js_errors)
         )
-
-# Made with Bob
