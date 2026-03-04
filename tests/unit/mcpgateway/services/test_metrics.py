@@ -68,7 +68,8 @@ def test_setup_metrics_enabled_sqlite():
         mock_inst_cls.return_value = inst
         setup_metrics(app)
     inst.instrument.assert_called_once_with(app)
-    inst.expose.assert_called_once()
+    # Auth-gated endpoint is registered directly via app.get (not instrumentator.expose)
+    app.get.assert_called()
 
 
 def test_setup_metrics_enabled_postgresql():

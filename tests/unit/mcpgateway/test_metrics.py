@@ -27,8 +27,10 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(scope="function")
 def client(monkeypatch):
-    """Provides a FastAPI TestClient with metrics enabled."""
-    monkeypatch.setenv("ENABLE_METRICS", "true")
+    """Provides a FastAPI TestClient with metrics enabled and auth bypassed."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
 
     from prometheus_client import REGISTRY
 
@@ -42,9 +44,13 @@ def client(monkeypatch):
     # Create a fresh app instance with metrics enabled
     from fastapi import FastAPI
     from mcpgateway.services.metrics import setup_metrics
+    from mcpgateway.utils.verify_credentials import require_auth
 
     app = FastAPI()
     setup_metrics(app)
+
+    # Override auth dependency so unit tests can access /metrics/prometheus
+    app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
 
     yield TestClient(app)
 
@@ -93,8 +99,10 @@ def test_metrics_counters_increment(client):
 
 def test_metrics_excluded_paths(monkeypatch):
     """✅ Excluded paths do not appear in metrics."""
-    monkeypatch.setenv("ENABLE_METRICS", "true")
-    monkeypatch.setenv("METRICS_EXCLUDED_HANDLERS", ".*health.*")
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+    monkeypatch.setattr(settings, "METRICS_EXCLUDED_HANDLERS", ".*health.*")
 
     from prometheus_client import REGISTRY
 
@@ -109,6 +117,7 @@ def test_metrics_excluded_paths(monkeypatch):
         # Create fresh app with exclusions
         from fastapi import FastAPI
         from mcpgateway.services.metrics import setup_metrics
+        from mcpgateway.utils.verify_credentials import require_auth
 
         app = FastAPI()
 
@@ -117,6 +126,7 @@ def test_metrics_excluded_paths(monkeypatch):
             return {"status": "ok"}
 
         setup_metrics(app)
+        app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
         client = TestClient(app)
 
         # Hit the /health endpoint

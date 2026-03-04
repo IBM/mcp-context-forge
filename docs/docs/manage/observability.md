@@ -53,22 +53,22 @@ available to Prometheus scrapers is:
 
 - GET /metrics/prometheus
 
-The route is created by `Instrumentator.expose` inside
-`mcpgateway/services/metrics.py` (not by manually adding a GET handler in
-`main.py`). The endpoint is registered with `include_in_schema=True` (so it
-appears in OpenAPI / Swagger) and gzip compression is enabled by default
-(`should_gzip=True`) for the exposition handler.
+The route is defined as a custom FastAPI endpoint in
+`mcpgateway/services/metrics.py` with `Depends(require_auth)` for JWT
+authentication. The endpoint is registered with `include_in_schema=True` (so it
+appears in OpenAPI / Swagger) and supports gzip compression via the
+`Accept-Encoding` header.
 
 ### Env vars / settings that control metrics
 
-- `ENABLE_METRICS` (env) — set to `true` (default) to enable instrumentation; set `false` to disable.
+- `ENABLE_METRICS` (env) — set to `true` to enable instrumentation; defaults to `false`. The endpoint requires JWT authentication when enabled.
 - `METRICS_EXCLUDED_HANDLERS` (env / settings) — comma-separated regexes for endpoints to exclude from instrumentation (useful for SSE/WS or per-request high-cardinality paths). The implementation reads `settings.METRICS_EXCLUDED_HANDLERS` and compiles the patterns.
 - `METRICS_CUSTOM_LABELS` (env / settings) — comma-separated `key=value` pairs used as static labels on the `app_info` gauge (low-cardinality values only). When present, a Prometheus `app_info` gauge is created and set to 1 with those labels.
 - Additional settings in `mcpgateway/config.py`: `METRICS_NAMESPACE`, `METRICS_SUBSYSTEM`. Note: these config fields exist, but the current `metrics` module does not wire them into the instrumentator by default (they're available for future use/consumption by custom collectors).
 
 ### Enable / verify locally
 
-1. Ensure `ENABLE_METRICS=true` in your shell or `.env`.
+1. Set `ENABLE_METRICS=true` in your shell or `.env` and generate a scrape token.
 
      ```bash
      export ENABLE_METRICS=true
@@ -141,8 +141,9 @@ deploying Prometheus in Kubernetes.
 ### Quick checklist
 
 - [ ] `ENABLE_METRICS=true`
-- [ ] `/metrics/prometheus` reachable
-- [ ] Add scrape job to Prometheus
+- [ ] Generate scrape JWT: `python -m mcpgateway.utils.create_jwt_token --username prometheus@monitoring --exp 0 --secret $JWT_SECRET_KEY`
+- [ ] `/metrics/prometheus` reachable (with `Authorization: Bearer <token>`)
+- [ ] Add scrape job to Prometheus with `authorization: { type: Bearer, credentials_file: <path> }`
 - [ ] Exclude high-cardinality paths with `METRICS_EXCLUDED_HANDLERS`
 - [ ] Use tracing (OTel) for high-cardinality debugging information
 
