@@ -3732,6 +3732,7 @@ async def admin_login_page(request: Request) -> Response:
 
     This endpoint serves the login form for email-based authentication.
     If email auth is disabled, redirects to the main admin page.
+    If user is already authenticated, redirects to the dashboard.
 
     Args:
         request (Request): FastAPI request object.
@@ -3765,6 +3766,22 @@ async def admin_login_page(request: Request) -> Response:
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     root_path = settings.app_root_path
+
+    # Check if user is already authenticated via JWT cookie
+    jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    if jwt_token:
+        try:
+            # Verify the token is valid
+            # First-Party
+            from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+
+            payload = await verify_jwt_token_cached(jwt_token, request)
+            if payload:
+                # User is authenticated, redirect to dashboard
+                return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        except Exception:
+            # Token is invalid or expired, continue to show login page
+            pass
 
     # Only show secure cookie warning if there's a login error AND problematic config
     secure_cookie_warning = None
