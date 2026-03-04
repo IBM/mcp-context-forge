@@ -355,10 +355,15 @@ function toggleViewPublic(checkboxId, containerIds, teamId) {
             if (!url) return;
 
             if (includePublic) {
-                // Remove team_id param to show team + public items
-                url = url.replace(/&team_id=[^&]*/, "");
+                // Keep team_id to maintain team scope, add include_public to also show public items
+                if (!url.includes("team_id=")) {
+                    url += `&team_id=${encodeURIComponent(teamId)}`;
+                }
+                url = url.replace(/&include_public=[^&]*/, "");
+                url += "&include_public=true";
             } else {
-                // Add team_id param back to filter to team-only
+                // Remove include_public param and ensure team_id is set
+                url = url.replace(/&include_public=[^&]*/, "");
                 if (!url.includes("team_id=")) {
                     url += `&team_id=${encodeURIComponent(teamId)}`;
                 }
@@ -7006,29 +7011,29 @@ async function editServer(serverId) {
         );
 
         if (oauthEnabledCheckbox) {
-            oauthEnabledCheckbox.checked = server.oauth_enabled || false;
+            oauthEnabledCheckbox.checked = server.oauthEnabled || false;
         }
 
-        // Show/hide OAuth config section based on oauth_enabled state
+        // Show/hide OAuth config section based on oauthEnabled state
         if (oauthConfigSection) {
-            if (server.oauth_enabled) {
+            if (server.oauthEnabled) {
                 oauthConfigSection.classList.remove("hidden");
             } else {
                 oauthConfigSection.classList.add("hidden");
             }
         }
 
-        // Populate OAuth config fields if oauth_config exists
-        if (server.oauth_config) {
+        // Populate OAuth config fields if oauthConfig exists
+        if (server.oauthConfig) {
             // Extract authorization server (may be in authorization_servers array or authorization_server string)
             let authServer = "";
             if (
-                server.oauth_config.authorization_servers &&
-                server.oauth_config.authorization_servers.length > 0
+                server.oauthConfig.authorization_servers &&
+                server.oauthConfig.authorization_servers.length > 0
             ) {
-                authServer = server.oauth_config.authorization_servers[0];
-            } else if (server.oauth_config.authorization_server) {
-                authServer = server.oauth_config.authorization_server;
+                authServer = server.oauthConfig.authorization_servers[0];
+            } else if (server.oauthConfig.authorization_server) {
+                authServer = server.oauthConfig.authorization_server;
             }
             if (oauthAuthServerField) {
                 oauthAuthServerField.value = authServer;
@@ -7036,8 +7041,8 @@ async function editServer(serverId) {
 
             // Extract scopes (may be scopes_supported array or scopes array)
             const scopes =
-                server.oauth_config.scopes_supported ||
-                server.oauth_config.scopes ||
+                server.oauthConfig.scopes_supported ||
+                server.oauthConfig.scopes ||
                 [];
             if (oauthScopesField) {
                 oauthScopesField.value = Array.isArray(scopes)
@@ -7048,7 +7053,7 @@ async function editServer(serverId) {
             // Extract token endpoint
             if (oauthTokenEndpointField) {
                 oauthTokenEndpointField.value =
-                    server.oauth_config.token_endpoint || "";
+                    server.oauthConfig.token_endpoint || "";
             }
         } else {
             // Clear OAuth config fields when no config exists
@@ -10782,7 +10787,7 @@ function initGatewaySelect(
 
             try {
                 // Fetch all gateway IDs from the server.
-                // Respect View Public checkbox: omit team_id when checked.
+                // Respect View Public checkbox: keep team_id, add include_public when checked.
                 // Use the correct checkbox for the active modal context.
                 const selectedTeamId = getCurrentTeamId();
                 const vpCbId = selectId.includes("Edit")
@@ -10790,8 +10795,11 @@ function initGatewaySelect(
                     : "add-server-view-public";
                 const vpCb = document.getElementById(vpCbId);
                 const params = new URLSearchParams();
-                if (selectedTeamId && (!vpCb || !vpCb.checked)) {
+                if (selectedTeamId) {
                     params.set("team_id", selectedTeamId);
+                }
+                if (vpCb && vpCb.checked) {
+                    params.set("include_public", "true");
                 }
                 const queryString = params.toString();
                 const response = await fetch(
@@ -11096,16 +11104,18 @@ function reloadAssociatedItems() {
         ? "edit-server-prompts"
         : "associatedPrompts";
 
-    // Respect View Public checkbox: include team_id only when unchecked
+    // Respect View Public checkbox: always include team_id, add include_public when checked
     const vpCheckboxId = useEditContainers
         ? "edit-server-view-public"
         : "add-server-view-public";
     const vpCheckbox = document.getElementById(vpCheckboxId);
-    const urlTeamId = new URL(window.location.href).searchParams.get("team_id");
-    const teamIdSuffix =
-        urlTeamId && (!vpCheckbox || !vpCheckbox.checked)
-            ? `&team_id=${encodeURIComponent(urlTeamId)}`
-            : "";
+    const urlTeamId = getCurrentTeamId();
+    let teamIdSuffix = urlTeamId
+        ? `&team_id=${encodeURIComponent(urlTeamId)}`
+        : "";
+    if (vpCheckbox && vpCheckbox.checked) {
+        teamIdSuffix += "&include_public=true";
+    }
 
     // Reload tools
     const toolsContainer = document.getElementById(toolsContainerId);
@@ -27731,15 +27741,16 @@ async function serverSideToolSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                toolsUrl += "&include_public=true";
             }
 
             console.log(
@@ -27815,12 +27826,15 @@ async function serverSideToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const addViewPublicCb = document.getElementById(
             "add-server-view-public",
         );
-        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
@@ -28056,15 +28070,16 @@ async function serverSidePromptSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                promptsUrl += "&include_public=true";
             }
 
             console.log(
@@ -28139,12 +28154,15 @@ async function serverSidePromptSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const addViewPublicCb = document.getElementById(
             "add-server-view-public",
         );
-        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
@@ -28300,15 +28318,16 @@ async function serverSideResourceSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                resourcesUrl += "&include_public=true";
             }
 
             console.log(
@@ -28379,12 +28398,15 @@ async function serverSideResourceSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const addViewPublicCb = document.getElementById(
             "add-server-view-public",
         );
-        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
@@ -28555,15 +28577,16 @@ async function serverSideEditToolSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                toolsUrl += "&include_public=true";
             }
 
             const response = await fetch(toolsUrl);
@@ -28682,15 +28705,15 @@ async function serverSideEditToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const editViewPublicCb = document.getElementById(
             "edit-server-view-public",
         );
-        if (
-            selectedTeamId &&
-            (!editViewPublicCb || !editViewPublicCb.checked)
-        ) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
@@ -28889,15 +28912,16 @@ async function serverSideEditPromptsSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                promptsUrl += "&include_public=true";
             }
 
             console.log(
@@ -29004,15 +29028,15 @@ async function serverSideEditPromptsSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const editViewPublicCb = document.getElementById(
             "edit-server-view-public",
         );
-        if (
-            selectedTeamId &&
-            (!editViewPublicCb || !editViewPublicCb.checked)
-        ) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
@@ -29213,15 +29237,16 @@ async function serverSideEditResourcesSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                resourcesUrl += "&include_public=true";
             }
 
             console.log(
@@ -29325,15 +29350,15 @@ async function serverSideEditResourcesSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const editViewPublicCb = document.getElementById(
             "edit-server-view-public",
         );
-        if (
-            selectedTeamId &&
-            (!editViewPublicCb || !editViewPublicCb.checked)
-        ) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 

@@ -1261,7 +1261,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("associatedTools");
             makeViewPublicCheckbox("add-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1277,7 +1277,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideToolSearch("myTool");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1307,7 +1308,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("associatedPrompts");
             makeViewPublicCheckbox("add-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1323,7 +1324,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSidePromptSearch("myPrompt");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1353,7 +1355,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("associatedResources");
             makeViewPublicCheckbox("add-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1369,7 +1371,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideResourceSearch("myRes");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1399,7 +1402,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("edit-server-tools");
             makeViewPublicCheckbox("edit-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1415,7 +1418,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideEditToolSearch("myTool");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1445,7 +1449,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("edit-server-prompts");
             makeViewPublicCheckbox("edit-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1461,7 +1465,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideEditPromptsSearch("myPrompt");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 
@@ -1491,7 +1496,7 @@ describe("View Public checkbox — search function integration", () => {
             expect(fetchUrl).toContain("team_id=team-abc");
         });
 
-        test("keyword search omits team_id when View Public is checked", async () => {
+        test("keyword search includes team_id and include_public when View Public is checked", async () => {
             makeContainer("edit-server-resources");
             makeViewPublicCheckbox("edit-server-view-public", true);
             win.getCurrentTeamId = () => "team-abc";
@@ -1507,7 +1512,8 @@ describe("View Public checkbox — search function integration", () => {
             await win.serverSideEditResourcesSearch("myRes");
 
             const fetchUrl = win.fetch.mock.calls[0][0];
-            expect(fetchUrl).not.toContain("team_id");
+            expect(fetchUrl).toContain("team_id=team-abc");
+            expect(fetchUrl).toContain("include_public=true");
         });
     });
 });
@@ -1659,6 +1665,253 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
 
         const teamRadio = flagDoc.getElementById("edit-server-visibility-team");
         expect(teamRadio.checked).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// editServer — OAuth settings restoration with camelCase properties (#3405)
+// ---------------------------------------------------------------------------
+describe("editServer restores OAuth settings from camelCase API response (#3405)", () => {
+    let oauthWin;
+    let oauthDoc;
+
+    beforeAll(() => {
+        oauthWin = loadAdminJs();
+        oauthDoc = oauthWin.document;
+    });
+
+    afterAll(() => {
+        cleanupAdminJs();
+    });
+
+    beforeEach(() => {
+        oauthDoc.body.textContent = "";
+        oauthWin.ROOT_PATH = "";
+    });
+
+    function buildEditServerOAuthDOM() {
+        const form = oauthDoc.createElement("form");
+        form.id = "edit-server-form";
+
+        // Visibility radios
+        ["public", "team", "private"].forEach((val) => {
+            const input = oauthDoc.createElement("input");
+            input.type = "radio";
+            input.name = "visibility";
+            input.value = val;
+            input.id = `edit-server-visibility-${val}`;
+            form.appendChild(input);
+        });
+
+        // OAuth enabled checkbox
+        const oauthCheckbox = oauthDoc.createElement("input");
+        oauthCheckbox.type = "checkbox";
+        oauthCheckbox.id = "edit-server-oauth-enabled";
+        form.appendChild(oauthCheckbox);
+
+        // OAuth config section
+        const oauthSection = oauthDoc.createElement("div");
+        oauthSection.id = "edit-server-oauth-config-section";
+        oauthSection.className = "hidden";
+        form.appendChild(oauthSection);
+
+        // OAuth authorization server field
+        const authServerInput = oauthDoc.createElement("input");
+        authServerInput.id = "edit-server-oauth-authorization-server";
+        form.appendChild(authServerInput);
+
+        // OAuth scopes field
+        const scopesInput = oauthDoc.createElement("input");
+        scopesInput.id = "edit-server-oauth-scopes";
+        form.appendChild(scopesInput);
+
+        // OAuth token endpoint field
+        const tokenEndpointInput = oauthDoc.createElement("input");
+        tokenEndpointInput.id = "edit-server-oauth-token-endpoint";
+        form.appendChild(tokenEndpointInput);
+
+        oauthDoc.body.appendChild(form);
+
+        // Server modal (openModal looks for this)
+        const modal = oauthDoc.createElement("div");
+        modal.id = "server-modal";
+        modal.className = "hidden";
+        oauthDoc.body.appendChild(modal);
+    }
+
+    function mockFetch(serverData) {
+        const makeResponse = () => ({
+            ok: true,
+            status: 200,
+            headers: { get: () => "application/json" },
+            json: () => Promise.resolve(serverData),
+            text: () => Promise.resolve(JSON.stringify(serverData)),
+            clone: makeResponse,
+        });
+        oauthWin.fetch = vi
+            .fn()
+            .mockImplementation(() => Promise.resolve(makeResponse()));
+    }
+
+    test("populates OAuth checkbox and config from camelCase response", async () => {
+        buildEditServerOAuthDOM();
+        mockFetch({
+            id: "srv-oauth",
+            name: "OAuthServer",
+            visibility: "team",
+            oauthEnabled: true,
+            oauthConfig: {
+                authorization_servers: ["https://idp.example.com"],
+                scopes_supported: ["openid", "profile"],
+                token_endpoint: "https://idp.example.com/token",
+            },
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-oauth");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        const checkbox = oauthDoc.getElementById("edit-server-oauth-enabled");
+        expect(checkbox.checked).toBe(true);
+
+        const section = oauthDoc.getElementById(
+            "edit-server-oauth-config-section",
+        );
+        expect(section.classList.contains("hidden")).toBe(false);
+
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("https://idp.example.com");
+
+        const scopes = oauthDoc.getElementById("edit-server-oauth-scopes");
+        expect(scopes.value).toBe("openid profile");
+
+        const tokenEndpoint = oauthDoc.getElementById(
+            "edit-server-oauth-token-endpoint",
+        );
+        expect(tokenEndpoint.value).toBe("https://idp.example.com/token");
+    });
+
+    test("hides OAuth config section when oauthEnabled is false", async () => {
+        buildEditServerOAuthDOM();
+        mockFetch({
+            id: "srv-no-oauth",
+            name: "NoOAuthServer",
+            visibility: "team",
+            oauthEnabled: false,
+            oauthConfig: null,
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-no-oauth");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        const checkbox = oauthDoc.getElementById("edit-server-oauth-enabled");
+        expect(checkbox.checked).toBe(false);
+
+        const section = oauthDoc.getElementById(
+            "edit-server-oauth-config-section",
+        );
+        expect(section.classList.contains("hidden")).toBe(true);
+
+        // Fields should be cleared
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("");
+
+        const scopes = oauthDoc.getElementById("edit-server-oauth-scopes");
+        expect(scopes.value).toBe("");
+
+        const tokenEndpoint = oauthDoc.getElementById(
+            "edit-server-oauth-token-endpoint",
+        );
+        expect(tokenEndpoint.value).toBe("");
+    });
+
+    test("handles authorization_server string fallback", async () => {
+        buildEditServerOAuthDOM();
+        mockFetch({
+            id: "srv-oauth-str",
+            name: "OAuthStringServer",
+            visibility: "team",
+            oauthEnabled: true,
+            oauthConfig: {
+                authorization_server: "https://auth.example.com",
+                scopes: ["read", "write"],
+            },
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-oauth-str");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("https://auth.example.com");
+
+        const scopes = oauthDoc.getElementById("edit-server-oauth-scopes");
+        expect(scopes.value).toBe("read write");
+    });
+
+    test("snake_case properties are NOT read (regression guard)", async () => {
+        buildEditServerOAuthDOM();
+        // Simulate a response with ONLY snake_case keys — these must NOT be picked up
+        mockFetch({
+            id: "srv-snake",
+            name: "SnakeCaseServer",
+            visibility: "team",
+            oauth_enabled: true,
+            oauth_config: {
+                authorization_servers: [
+                    "https://should-not-appear.example.com",
+                ],
+                scopes_supported: ["admin"],
+                token_endpoint: "https://should-not-appear.example.com/token",
+            },
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-snake");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        // snake_case oauth_enabled is NOT read → checkbox stays unchecked
+        const checkbox = oauthDoc.getElementById("edit-server-oauth-enabled");
+        expect(checkbox.checked).toBe(false);
+
+        // OAuth config section stays hidden
+        const section = oauthDoc.getElementById(
+            "edit-server-oauth-config-section",
+        );
+        expect(section.classList.contains("hidden")).toBe(true);
+
+        // Fields remain empty because oauth_config (snake_case) is not read
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("");
     });
 });
 

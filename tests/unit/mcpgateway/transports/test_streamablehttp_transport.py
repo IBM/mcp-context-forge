@@ -38,6 +38,7 @@ from starlette.types import Scope
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
+from mcpgateway.transports.streamablehttp_transport import _MCPGATEWAY_CONTEXT_KEY
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
@@ -3393,7 +3394,7 @@ async def test_set_logging_level_exception():
 
 @pytest.mark.asyncio
 async def test_set_logging_level_requires_admin_system_config(monkeypatch):
-    """Authenticated Streamable HTTP logging/setLevel must enforce admin.system_config."""
+    """logging/setLevel is process-wide and must require admin.system_config for authenticated users."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
@@ -3403,14 +3404,58 @@ async def test_set_logging_level_requires_admin_system_config(monkeypatch):
             return_value=(
                 "server-1",
                 {},
-                {"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True},
+                {"email": "dev@example.com", "teams": [], "is_admin": False, "is_authenticated": True},
             )
         ),
     )
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_server_oauth_enforcement", AsyncMock())
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=False),
+    )
 
+    mock_logging_service = MagicMock()
+    mock_logging_service.set_level = AsyncMock()
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.logging_service", mock_logging_service)
+
+    # Should raise PermissionError for non-admin user without admin.system_config
     with pytest.raises(PermissionError, match="admin.system_config"):
         await set_logging_level("info")
+    mock_logging_service.set_level.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_set_logging_level_admin_allowed(monkeypatch):
+    """logging/setLevel succeeds when the caller has admin.system_config permission."""
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True},
+            )
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_server_oauth_enforcement", AsyncMock())
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=True),
+    )
+
+    mock_logging_service = MagicMock()
+    mock_logging_service.set_level = AsyncMock()
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.logging_service", mock_logging_service)
+
+    result = await set_logging_level("info")
+    assert isinstance(result, mcp_types.EmptyResult)
+    mock_logging_service.set_level.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -10642,6 +10687,326 @@ async def test_call_tool_allowed_with_empty_scoped_permissions(monkeypatch):
     tool_service.invoke_tool.assert_called_once()
 
 
+# ---------------------------------------------------------------------------
+# Regression tests for context propagation and RBAC fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_should_enforce_streamable_rbac_false_for_unauthenticated():
+    """_should_enforce_streamable_rbac must return False when is_authenticated is False.
+
+    Regression: the original implementation checked key existence
+    (``"is_authenticated" in user_context``) instead of the value, so a
+    context with ``is_authenticated: False`` would incorrectly trigger RBAC.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _should_enforce_streamable_rbac
+
+    # Unauthenticated context (set by middleware for public access)
+    assert _should_enforce_streamable_rbac({"email": None, "teams": [], "is_authenticated": False, "is_admin": False}) is False
+
+    # Authenticated context — RBAC should be enforced
+    assert _should_enforce_streamable_rbac({"email": "user@example.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False}) is True
+
+    # Empty dict (default ContextVar value) — no RBAC
+    assert _should_enforce_streamable_rbac({}) is False
+
+    # None — no RBAC
+    assert _should_enforce_streamable_rbac(None) is False
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_reads_scope_context(monkeypatch):
+    """_get_request_context_or_default reads _mcpgateway_context from ASGI scope.
+
+    Regression: ContextVars set by the middleware are lost when the MCP SDK
+    dispatches handlers in tasks spawned from its startup-time task group.
+    The fix stores context on scope["_mcpgateway_context"] before SDK dispatch
+    and reads it back in _get_request_context_or_default.
+    """
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    # Ensure ContextVars are at defaults (simulating SDK task context)
+    token = server_id_var.set("default_server_id")
+
+    injected_user_context = {"email": "pub@example.com", "teams": [], "is_authenticated": True, "is_admin": False}
+    injected_headers = {"authorization": "Bearer tok123"}
+    injected_server_id = "abc123def456"
+
+    mock_scope = {
+        _MCPGATEWAY_CONTEXT_KEY: {
+            "server_id": injected_server_id,
+            "request_headers": injected_headers,
+            "user_context": injected_user_context,
+        }
+    }
+
+    mock_request = MagicMock()
+    mock_request.scope = mock_scope
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+
+            assert sid == injected_server_id
+            assert headers == injected_headers
+            assert user == injected_user_context
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_scope_fallback_to_reauth(monkeypatch):
+    """When _mcpgateway_context is absent from scope, falls back to re-authentication."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    valid_hex_id = "abc123def456"
+
+    mock_request = MagicMock()
+    mock_request.scope = {}  # No _mcpgateway_context
+    mock_request.url.path = f"/servers/{valid_hex_id}/mcp"
+    mock_request.headers = {"authorization": "Bearer token"}
+    mock_request.cookies = {}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    raw_jwt = {"sub": "test_user@example.com", "token_use": "api", "teams": ["team-1"]}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", AsyncMock(return_value=raw_jwt))
+
+    normalized = {"email": "test_user@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+
+            assert sid == valid_hex_id
+            assert user == normalized
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_should_enforce_streamable_rbac_rejects_truthy_non_bool():
+    """_should_enforce_streamable_rbac must only trigger on ``True``, not on truthy values.
+
+    Regression: using ``is True`` identity comparison prevents objects like
+    non-empty strings or integers from accidentally enabling RBAC enforcement.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _should_enforce_streamable_rbac
+
+    # Truthy non-bool values must NOT trigger RBAC
+    assert _should_enforce_streamable_rbac({"is_authenticated": 1}) is False
+    assert _should_enforce_streamable_rbac({"is_authenticated": "yes"}) is False
+
+    # Only explicit True triggers RBAC
+    assert _should_enforce_streamable_rbac({"is_authenticated": True}) is True
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_scope_null_server_id_falls_back(monkeypatch):
+    """When _mcpgateway_context has server_id=None, falls back to the ContextVar default."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    injected_user_context = {"email": "u@example.com", "teams": [], "is_authenticated": True, "is_admin": False}
+
+    mock_scope = {
+        _MCPGATEWAY_CONTEXT_KEY: {
+            "server_id": None,  # Null server_id — should fall back to s_id
+            "request_headers": {"x-custom": "val"},
+            "user_context": injected_user_context,
+        }
+    }
+
+    mock_request = MagicMock()
+    mock_request.scope = mock_scope
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+
+            # server_id falls back to s_id ("default_server_id") because gw_ctx value is None
+            assert sid == "default_server_id"
+            assert headers == {"x-custom": "val"}
+            assert user == injected_user_context
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_scope_non_dict_mcpgateway_context_skipped(monkeypatch):
+    """When _mcpgateway_context is not a dict, scope path is skipped and falls to re-auth."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    mock_request = MagicMock()
+    mock_request.scope = {_MCPGATEWAY_CONTEXT_KEY: "not-a-dict"}  # Invalid type
+    mock_request.url.path = "/mcp"
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.require_auth_header_first",
+        AsyncMock(return_value="anonymous"),
+    )
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, _headers, user = await _get_request_context_or_default()
+
+            # Fell through to re-auth fallback → anonymous → empty context
+            assert sid == "default_server_id"
+            assert user == {}
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_scope_request_none_returns_defaults():
+    """When request_context.request is None in the scope-reading step, returns ContextVar defaults."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var, user_context_var
+
+    sid_token = server_id_var.set("default_server_id")
+    uc_token = user_context_var.set({})
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = None  # No request available
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, _headers, user = await _get_request_context_or_default()
+
+            # request is None → scope path skipped → falls to re-auth fallback
+            # re-auth fallback also sees request=None → logs warning and returns defaults
+            assert sid == "default_server_id"
+            assert user == {}
+    finally:
+        server_id_var.reset(sid_token)
+        user_context_var.reset(uc_token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_scope_lookup_error_returns_defaults():
+    """LookupError in scope-reading step returns ContextVar defaults."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var, user_context_var
+
+    sid_token = server_id_var.set("default_server_id")
+    uc_token = user_context_var.set({})
+
+    try:
+        with patch.object(
+            type(mcp_app),
+            "request_context",
+            new_callable=PropertyMock,
+            side_effect=LookupError("no active context"),
+        ):
+            sid, _headers, user = await _get_request_context_or_default()
+
+            assert sid == "default_server_id"
+            assert user == {}
+    finally:
+        server_id_var.reset(sid_token)
+        user_context_var.reset(uc_token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_scope_generic_exception_falls_through(monkeypatch, caplog):
+    """Generic exception in scope-reading step logs debug and falls through to re-auth."""
+    # Standard
+    import logging
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    mock_ctx = MagicMock()
+    mock_request = MagicMock()
+    # First access (scope-reading step) raises generic error
+    type(mock_request).scope = PropertyMock(side_effect=RuntimeError("scope broken"))
+    mock_ctx.request = mock_request
+
+    # Re-auth fallback: need a fresh mock_ctx that works
+    call_count = 0
+
+    def get_request_context():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: scope-reading step — request.scope raises
+            return mock_ctx
+        # Second call: re-auth fallback
+        fallback_request = MagicMock()
+        fallback_request.url.path = "/mcp"
+        fallback_request.headers = {}
+        fallback_request.cookies = {}
+        fallback_ctx = MagicMock()
+        fallback_ctx.request = fallback_request
+        return fallback_ctx
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.require_auth_header_first",
+        AsyncMock(return_value="anonymous"),
+    )
+
+    try:
+        with patch.object(
+            type(mcp_app),
+            "request_context",
+            new_callable=PropertyMock,
+            side_effect=get_request_context,
+        ):
+            with caplog.at_level(logging.DEBUG, logger="mcpgateway.transports.streamablehttp_transport"):
+                sid, _headers, user = await _get_request_context_or_default()
+
+                assert sid == "default_server_id"
+                assert user == {}
+                assert "Failed to read _mcpgateway_context from scope" in caplog.text
+    finally:
+        server_id_var.reset(token)
+
+
 def _scoped_user_context(scoped_permissions):
     """Build an authenticated user context with scoped permissions for testing."""
     return {
@@ -10832,3 +11197,69 @@ async def test_complete_denied_by_token_scope(monkeypatch):
 
     with pytest.raises(PermissionError, match="tools.read"):
         await complete(ref, argument)
+
+
+@pytest.mark.asyncio
+async def test_validate_session_access_skips_rbac_for_unauthenticated(monkeypatch):
+    """_validate_streamable_session_access skips RBAC for unauthenticated context.
+
+    Regression: with the is_authenticated value-check fix, contexts with
+    is_authenticated=False must cause the function to return (True, 200, "")
+    without hitting session-ownership checks.
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    # Should NOT reach session registry at all
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(side_effect=AssertionError("should not be called"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-abc",
+        user_context={"email": None, "teams": [], "is_authenticated": False, "is_admin": False},
+        rpc_method="tools/call",
+    )
+    assert allowed is True
+    assert status == 200
+
+
+@pytest.mark.asyncio
+async def test_call_tool_skips_rbac_for_unauthenticated_context(monkeypatch):
+    """call_tool must skip the tools.execute RBAC gate for unauthenticated contexts.
+
+    Regression: _should_enforce_streamable_rbac now correctly returns False
+    when is_authenticated is False, so the handler should not attempt
+    permission checks at all.
+    """
+    # Third-Party
+    from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(
+            return_value=(
+                "server-1",
+                {},
+                {"email": None, "teams": [], "is_authenticated": False, "is_admin": False},
+            )
+        ),
+    )
+    # _check_streamable_permission should NOT be called — if it is, fail the test
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(side_effect=AssertionError("RBAC check should not be reached for unauthenticated")),
+    )
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_server_oauth_enforcement", AsyncMock())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+
+    mock_result = MagicMock()
+    mock_result.content = [mcp_types.TextContent(type="text", text="ok")]
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    # Should succeed without hitting the permission check
+    result = await call_tool("mytool", {"foo": "bar"})
+    assert result is not None

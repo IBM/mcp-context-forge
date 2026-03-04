@@ -2,8 +2,8 @@
  * Tests for the toggleViewPublic function and View Public checkbox behaviour.
  *
  * Covers:
- *  - Checking the box removes team_id from selector hx-get URLs
- *  - Unchecking adds team_id back
+ *  - Checking the box keeps team_id and adds include_public=true to selector hx-get URLs
+ *  - Unchecking removes include_public and keeps team_id
  *  - Round-trip: check → uncheck → check
  *  - team_id is not duplicated when unchecking with it already present
  *  - HTMX process + trigger are called per container per toggle
@@ -64,7 +64,7 @@ function makeHtmxContainer(id, url) {
 // ---------------------------------------------------------------------------
 
 describe("toggleViewPublic — URL mutation", () => {
-    test("checking the box removes team_id from the container hx-get URL", () => {
+    test("checking the box keeps team_id and adds include_public=true", () => {
         makeCheckbox("add-server-view-public");
         const container = makeHtmxContainer(
             "associatedTools",
@@ -81,14 +81,16 @@ describe("toggleViewPublic — URL mutation", () => {
         cb.checked = true;
         cb.dispatchEvent(new win.Event("change"));
 
-        expect(container.getAttribute("hx-get")).not.toContain("team_id");
+        const url = container.getAttribute("hx-get");
+        expect(url).toContain("team_id=team-abc");
+        expect(url).toContain("include_public=true");
     });
 
-    test("unchecking the box adds team_id back to the container hx-get URL", () => {
+    test("unchecking the box removes include_public and keeps team_id", () => {
         makeCheckbox("add-server-view-public");
         const container = makeHtmxContainer(
             "associatedTools",
-            "/admin/tools/partial?page=1&render=selector",
+            "/admin/tools/partial?page=1&render=selector&team_id=team-abc&include_public=true",
         );
 
         win.toggleViewPublic(
@@ -101,10 +103,12 @@ describe("toggleViewPublic — URL mutation", () => {
         cb.checked = false;
         cb.dispatchEvent(new win.Event("change"));
 
-        expect(container.getAttribute("hx-get")).toContain("team_id=team-abc");
+        const url = container.getAttribute("hx-get");
+        expect(url).toContain("team_id=team-abc");
+        expect(url).not.toContain("include_public");
     });
 
-    test("round-trip check → uncheck → check leaves team_id absent", () => {
+    test("round-trip check → uncheck → check keeps team_id throughout and toggles include_public", () => {
         makeCheckbox("add-server-view-public");
         const container = makeHtmxContainer(
             "associatedTools",
@@ -128,7 +132,9 @@ describe("toggleViewPublic — URL mutation", () => {
         cb.checked = true;
         cb.dispatchEvent(new win.Event("change"));
 
-        expect(container.getAttribute("hx-get")).not.toContain("team_id");
+        const url = container.getAttribute("hx-get");
+        expect(url).toContain("team_id=team-abc");
+        expect(url).toContain("include_public=true");
     });
 
     test("unchecking does not add team_id a second time when it is already present", () => {
@@ -172,6 +178,51 @@ describe("toggleViewPublic — URL mutation", () => {
         expect(container.getAttribute("hx-get")).toContain(
             "team_id=team%20with%20spaces",
         );
+    });
+
+    test("checking adds include_public even when team_id was not initially in URL", () => {
+        makeCheckbox("add-server-view-public");
+        const container = makeHtmxContainer(
+            "associatedTools",
+            "/admin/tools/partial?page=1&render=selector",
+        );
+
+        win.toggleViewPublic(
+            "add-server-view-public",
+            ["associatedTools"],
+            "team-abc",
+        );
+
+        const cb = doc.getElementById("add-server-view-public");
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change"));
+
+        const url = container.getAttribute("hx-get");
+        expect(url).toContain("team_id=team-abc");
+        expect(url).toContain("include_public=true");
+    });
+
+    test("include_public is not duplicated on repeated checks", () => {
+        makeCheckbox("add-server-view-public");
+        const container = makeHtmxContainer(
+            "associatedTools",
+            "/admin/tools/partial?page=1&render=selector&team_id=team-abc",
+        );
+
+        win.toggleViewPublic(
+            "add-server-view-public",
+            ["associatedTools"],
+            "team-abc",
+        );
+
+        const cb = doc.getElementById("add-server-view-public");
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change"));
+        cb.checked = true;
+        cb.dispatchEvent(new win.Event("change"));
+
+        const url = container.getAttribute("hx-get");
+        expect((url.match(/include_public=/g) || []).length).toBe(1);
     });
 });
 
@@ -245,7 +296,7 @@ describe("toggleViewPublic — HTMX side-effects", () => {
         expect(win.htmx.trigger).toHaveBeenCalledTimes(3);
     });
 
-    test("all containers have team_id removed when checking with multiple containers", () => {
+    test("all containers have include_public=true added when checking with multiple containers", () => {
         makeCheckbox("add-server-view-public");
         const containers = [
             "associatedTools",
@@ -269,7 +320,9 @@ describe("toggleViewPublic — HTMX side-effects", () => {
         cb.dispatchEvent(new win.Event("change"));
 
         containers.forEach((c) => {
-            expect(c.getAttribute("hx-get")).not.toContain("team_id");
+            const url = c.getAttribute("hx-get");
+            expect(url).toContain("team_id=team-abc");
+            expect(url).toContain("include_public=true");
         });
     });
 });
@@ -319,7 +372,9 @@ describe("toggleViewPublic — early-return guards", () => {
         cb.dispatchEvent(new win.Event("change"));
 
         // Present container updated, no error for missing one
-        expect(present.getAttribute("hx-get")).not.toContain("team_id");
+        const url = present.getAttribute("hx-get");
+        expect(url).toContain("team_id=team-abc");
+        expect(url).toContain("include_public=true");
         expect(win.htmx.process).toHaveBeenCalledTimes(1);
     });
 
@@ -348,7 +403,7 @@ describe("toggleViewPublic — early-return guards", () => {
 // ---------------------------------------------------------------------------
 
 describe("toggleViewPublic — gateway_id preservation", () => {
-    test("preserves gateway_id already present in hx-get when toggling", () => {
+    test("preserves team_id and adds include_public when toggling (no active gateway selection)", () => {
         makeCheckbox("add-server-view-public");
         const container = makeHtmxContainer(
             "associatedTools",
@@ -369,8 +424,9 @@ describe("toggleViewPublic — gateway_id preservation", () => {
         cb.dispatchEvent(new win.Event("change"));
 
         const url = container.getAttribute("hx-get");
-        // team_id removed, gateway_id stripped (no active selection)
-        expect(url).not.toContain("team_id");
+        // team_id preserved, include_public added, gateway_id stripped (no active selection)
+        expect(url).toContain("team_id=team-abc");
+        expect(url).toContain("include_public=true");
         expect(url).not.toContain("gateway_id");
     });
 
@@ -395,7 +451,8 @@ describe("toggleViewPublic — gateway_id preservation", () => {
         cb.dispatchEvent(new win.Event("change"));
 
         const url = container.getAttribute("hx-get");
-        expect(url).not.toContain("team_id");
+        expect(url).toContain("team_id=team-abc");
+        expect(url).toContain("include_public=true");
         expect(url).toContain("gateway_id=gw-1%2Cgw-2");
     });
 
@@ -427,6 +484,7 @@ describe("toggleViewPublic — gateway_id preservation", () => {
         const url = container.getAttribute("hx-get");
         expect(url).toContain("team_id=team-abc");
         expect(url).toContain("gateway_id=gw-1");
+        expect(url).not.toContain("include_public");
     });
 });
 
@@ -457,7 +515,7 @@ describe("initGatewaySelect — edit-modal Select All checkbox lookup", () => {
         doc.body.appendChild(clearBtn);
     }
 
-    test("edit-modal Select All omits team_id when edit View Public is checked (not add)", async () => {
+    test("edit-modal Select All includes team_id and include_public when edit View Public is checked", async () => {
         // Both checkboxes exist in DOM (as on a team-scoped page)
         const addCb = makeCheckbox("add-server-view-public");
         addCb.checked = false; // add-modal unchecked
@@ -495,12 +553,13 @@ describe("initGatewaySelect — edit-modal Select All checkbox lookup", () => {
         // Let the async handler run
         await new Promise((resolve) => setTimeout(resolve, 50));
 
-        // Should NOT contain team_id because edit checkbox is checked
+        // Should contain team_id AND include_public because edit checkbox is checked
         expect(fetchedUrl).not.toBeNull();
-        expect(fetchedUrl).not.toContain("team_id");
+        expect(fetchedUrl).toContain("team_id=team-abc");
+        expect(fetchedUrl).toContain("include_public=true");
     });
 
-    test("edit-modal Select All includes team_id when edit View Public is unchecked", async () => {
+    test("edit-modal Select All includes team_id without include_public when edit View Public is unchecked", async () => {
         const addCb = makeCheckbox("add-server-view-public");
         addCb.checked = true; // add-modal checked (should be ignored)
         const editCb = makeCheckbox("edit-server-view-public");
@@ -535,5 +594,6 @@ describe("initGatewaySelect — edit-modal Select All checkbox lookup", () => {
 
         expect(fetchedUrl).not.toBeNull();
         expect(fetchedUrl).toContain("team_id=team-abc");
+        expect(fetchedUrl).not.toContain("include_public");
     });
 });
