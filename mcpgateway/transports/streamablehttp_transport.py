@@ -2359,7 +2359,7 @@ class SessionManagerWrapper:
             )
             if not has_server_access:
                 response = ORJSONResponse(
-                {"detail": "Access denied"},
+                    {"detail": "Access denied"},
                     status_code=HTTP_403_FORBIDDEN,
                 )
                 await response(scope, receive, send)
