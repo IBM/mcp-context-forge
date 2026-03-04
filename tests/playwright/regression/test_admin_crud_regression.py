@@ -20,6 +20,7 @@ pattern do not break core admin functionality.
 from __future__ import annotations
 
 # Standard
+import re
 from typing import Any, Dict, List
 # Third-Party
 from playwright.sync_api import Page, expect
@@ -129,15 +130,14 @@ class TestVirtualServerCRUD:
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
 
-        # Step 2: Click Add Server button
-        add_button = admin_page.locator('button:has-text("Add Server"), button:has-text("Create Server")')
-        expect(add_button.first).to_be_visible(timeout=5_000)
-        add_button.first.click()
+        # Step 2: Scroll to the add-server form section
+        add_form = admin_page.locator("#add-server-form")
+        add_form.scroll_into_view_if_needed(timeout=5_000)
 
         # Step 3: Fill in server details
         server_name = f"regression-test-server-{admin_page.evaluate('Date.now()')}"
 
-        name_input = admin_page.locator('input[name="name"], input[id="name"]')
+        name_input = admin_page.locator("#server-name")
         expect(name_input).to_be_visible(timeout=5_000)
         name_input.fill(server_name)
 
@@ -150,9 +150,9 @@ class TestVirtualServerCRUD:
             pass
 
         # Step 4: Submit form
-        submit_button = admin_page.locator('button[type="submit"]:has-text("Create"), button[type="submit"]:has-text("Save")')
-        expect(submit_button.first).to_be_visible(timeout=5_000)
-        submit_button.first.click()
+        submit_button = admin_page.locator("#add-server-form button[type=\"submit\"]")
+        expect(submit_button).to_be_visible(timeout=5_000)
+        submit_button.click()
 
         # Step 5: Verify server appears in list
         admin_page.wait_for_timeout(2_000)  # Wait for list refresh
@@ -195,7 +195,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
 
         # Step 2: Find first server row with edit button
-        edit_button = admin_page.locator('button[data-action="edit"], button:has-text("Edit")').first
+        edit_button = admin_page.locator('[data-testid="server-item"] button:has-text("Edit")').first
 
         if not edit_button.is_visible(timeout=3_000):
             pytest.skip("No servers available to edit")
@@ -208,7 +208,7 @@ class TestVirtualServerCRUD:
         edit_button.click()
 
         # Step 4: Modify server details
-        name_input = admin_page.locator('input[name="name"], input[id="name"]')
+        name_input = admin_page.locator("#server-name")
         expect(name_input).to_be_visible(timeout=5_000)
 
         updated_name = f"{original_name}-edited-{admin_page.evaluate('Date.now()')}"
@@ -259,7 +259,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
 
         # Step 2: Find delete button
-        delete_button = admin_page.locator('button[data-action="delete"], button:has-text("Delete")').first
+        delete_button = admin_page.locator('[data-testid="server-item"] button:has-text("Delete")').first
 
         if not delete_button.is_visible(timeout=3_000):
             pytest.skip("No servers available to delete")
@@ -268,16 +268,9 @@ class TestVirtualServerCRUD:
         server_row = delete_button.locator('xpath=ancestor::tr')
         server_name = server_row.locator('td').first.text_content()
 
-        # Step 3: Click delete button
+        # Step 3 & 4: Register handler for window.confirm() dialogs, then click delete
+        admin_page.on("dialog", lambda dialog: dialog.accept())
         delete_button.click()
-
-        # Step 4: Confirm deletion (if confirmation dialog appears)
-        try:
-            confirm_button = admin_page.locator('button:has-text("Confirm"), button:has-text("Yes"), button:has-text("Delete")')
-            if confirm_button.is_visible(timeout=2_000):
-                confirm_button.first.click()
-        except PlaywrightTimeoutError:
-            pass  # No confirmation dialog
 
         # Step 5: Verify server removed
         admin_page.wait_for_timeout(2_000)
@@ -327,7 +320,7 @@ class TestStatePersistence:
         admin_page.wait_for_timeout(1_000)
 
         # Verify tab is active
-        expect(tools_tab).to_have_attribute("aria-selected", "true", timeout=5_000)
+        expect(tools_tab).to_have_class(re.compile(r"active"), timeout=5_000)
 
         # Step 2: Refresh page
         admin_page.reload()
@@ -335,7 +328,7 @@ class TestStatePersistence:
 
         # Step 3: Verify tab still selected
         tools_tab_after = admin_page.locator('[data-testid="tools-tab"]')
-        expect(tools_tab_after).to_have_attribute("aria-selected", "true", timeout=10_000)
+        expect(tools_tab_after).to_have_class(re.compile(r"active"), timeout=10_000)
 
         # Step 4: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
@@ -358,7 +351,7 @@ class TestStatePersistence:
         6. Verify no console errors
         """
         # Step 1: Try to open team selector
-        team_selector = admin_page.locator('[data-testid="team-selector-toggle"], button:has-text("Team")')
+        team_selector = admin_page.locator("#team-selector-button")
 
         if not team_selector.is_visible(timeout=3_000):
             pytest.skip("Team selector not available (single-team deployment)")
@@ -367,7 +360,7 @@ class TestStatePersistence:
         admin_page.wait_for_timeout(1_000)
 
         # Click first team item
-        team_item = admin_page.locator('.team-selector-item').first
+        team_item = admin_page.locator("#team-selector-items .team-selector-item").first
         if not team_item.is_visible(timeout=3_000):
             pytest.skip("No teams available in selector")
 
