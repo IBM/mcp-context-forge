@@ -18728,7 +18728,7 @@ async def test_admin_prompts_selector_template_includes_team_id_and_include_publ
 async def test_admin_search_tools_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
     from mcpgateway.admin import admin_search_tools
     setup_team_service(monkeypatch, ["team-1"])
-    response = await admin_search_tools(q="", tags=None, include_inactive=False, limit=10, gateway_id=None, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_search_tools(q="tool", tags=None, include_inactive=False, limit=10, gateway_id=None, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response is not None
 
 @pytest.mark.asyncio
@@ -18742,19 +18742,19 @@ async def test_admin_get_all_gateways_ids_include_public_adds_visibility_conditi
 async def test_admin_search_gateways_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
     from mcpgateway.admin import admin_search_gateways
     setup_team_service(monkeypatch, ["team-1"])
-    response = await admin_search_gateways(q="", include_inactive=False, limit=10, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_search_gateways(q="gate", include_inactive=False, limit=10, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response is not None
 
 @pytest.mark.asyncio
 async def test_admin_search_resources_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
     from mcpgateway.admin import admin_search_resources
     setup_team_service(monkeypatch, ["team-1"])
-    response = await admin_search_resources(q="", tags=None, limit=10, gateway_id=None, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_search_resources(q="res", tags=None, limit=10, gateway_id=None, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response is not None
 
 @pytest.mark.asyncio
 async def test_admin_search_prompts_include_public_adds_visibility_condition(monkeypatch, mock_request, mock_db):
     from mcpgateway.admin import admin_search_prompts
     setup_team_service(monkeypatch, ["team-1"])
-    response = await admin_search_prompts(q="", tags=None, limit=10, gateway_id=None, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_search_prompts(q="prompt", tags=None, limit=10, gateway_id=None, team_id="team-1", include_public=True, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response is not None
