@@ -1374,8 +1374,6 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
                 SimpleNamespace(id="team-4", name="Beta", slug="beta", is_active=False, visibility="private"),
             ]
 
-        async def get_user_personal_team(self, _email):
-            return None
 
     class _StubAuthService:
         def __init__(self, _db):
@@ -1436,8 +1434,6 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
                 SimpleNamespace(id="t-3", name="Gamma", slug="gamma", description="desc", visibility="private", is_active=False),
             ]
 
-        async def get_user_personal_team(self, _email):
-            return None
 
     class _StubAuthService:
         def __init__(self, _db):
