@@ -503,7 +503,6 @@ async def update_headers_with_passthrough_headers(gateway: Any, request_headers:
     return headers
 
 
-
 def _should_enforce_streamable_rbac(user_context: Optional[dict[str, Any]]) -> bool:
     """Return True when request originated from authenticated Streamable HTTP middleware.
 
