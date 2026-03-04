@@ -1104,14 +1104,23 @@ class TestMultiWorkerSessionAffinityE2E:
         Since _execute_forwarded_request now makes an internal HTTP call to /rpc,
         it will fail with a connection error when no server is running.
         """
+        import httpx
+        from unittest.mock import AsyncMock, patch
+
         pool = MCPSessionPool()
 
         try:
-            result = await pool._execute_forwarded_request({
-                "method": "unknown/method",
-                "params": {},
-                "headers": {},
-            })
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+                result = await pool._execute_forwarded_request({
+                    "method": "unknown/method",
+                    "params": {},
+                    "headers": {},
+                })
 
             assert "error" in result
             # -32603 is the internal error code returned when HTTP call fails
@@ -1297,22 +1306,32 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_affinity_logs_when_executing_forwarded_request(self, caplog):
         """Verify [AFFINITY] logs are emitted when executing a forwarded request."""
         import logging
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        import httpx
+
         from mcpgateway.services.mcp_session_pool import WORKER_ID
 
         pool = MCPSessionPool()
 
         try:
             with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
-                # This will fail with connection error since no server is running,
-                # but should still emit the log before attempting the HTTP call
-                result = await pool._execute_forwarded_request({
-                    "method": "tools/call",
-                    "params": {"name": "test_tool"},
-                    "mcp_session_id": "test-session-forwarded",
-                    "req_id": 1
-                })
+                # Patch httpx.AsyncClient to raise ConnectError so the test is
+                # deterministic regardless of what is running on the local port.
+                mock_client = AsyncMock()
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=False)
+                mock_client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
 
-                # Should return error (no server running)
+                with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+                    result = await pool._execute_forwarded_request({
+                        "method": "tools/call",
+                        "params": {"name": "test_tool"},
+                        "mcp_session_id": "test-session-forwarded",
+                        "req_id": 1
+                    })
+
+                # Should return error (connection refused)
                 assert "error" in result
 
                 # Verify affinity logs were emitted

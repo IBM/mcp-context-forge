@@ -248,7 +248,7 @@ class TestHttpAuthMiddlewareWithoutPlugins:
             # Request without authentication should fail (use POST for initialize)
             response = client.post("/protocol/initialize", json={})
 
-            # Should get 401 because no credentials provided
+            # Should get 401 because no credentials provided (authentication middleware returns 401)
             assert response.status_code == 401
 
     def test_health_endpoint_accessible_without_auth(self, app):

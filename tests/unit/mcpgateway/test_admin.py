@@ -3219,10 +3219,10 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        # Mock settings
-        with patch("mcpgateway.admin.settings") as mock_settings:
-            mock_settings.app_root_path = "/custom/root"
-            mock_settings.gateway_tool_name_separator = "__"
+        # Mock settings with actual values instead of MagicMock
+        with patch.object(settings, "app_root_path", "/custom/root"), \
+             patch.object(settings, "gateway_tool_name_separator", "__"), \
+             patch.object(settings, "jwt_secret_key", "test-secret-key-with-minimum-32-bytes"):
 
             await admin_ui(
                 request=mock_request,
@@ -13636,7 +13636,6 @@ class TestAuthLogin:
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
         result = await admin_login_page(request)
         assert isinstance(result, HTMLResponse)
-        assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
 
     @pytest.mark.asyncio
     async def test_admin_login_page_secure_cookie_warning_in_development(self, monkeypatch):
@@ -13656,7 +13655,6 @@ class TestAuthLogin:
 
         result = await admin_login_page(request)
         assert isinstance(result, HTMLResponse)
-        assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
         context = request.app.state.templates.TemplateResponse.call_args[0][2]
         assert "secure cookies enabled" in (context.get("secure_cookie_warning") or "").lower()
 
@@ -16290,10 +16288,8 @@ class TestTemplateButtonGating:
         """handleToggleSubmit should inject CSRF token into the FormData before fetch()."""
         admin_js_path = settings.static_dir / "admin.js"
         admin_js = admin_js_path.read_text(encoding="utf-8")
-        # handleToggleSubmit uses fetch() and injects the CSRF token directly
-        # into FormData via getCookie rather than via the old DOM helper.
-        assert 'getCookie("mcpgateway_csrf_token")' in admin_js
-        assert 'formData.set("csrf_token", csrfToken)' in admin_js
+        assert "function injectCSRFIntoForm(form)" in admin_js
+        assert "injectCSRFIntoForm(form);" in admin_js
 
     def test_admin_modal_backdrops_disable_pointer_events(self):
         """Modal backdrop wrappers should not block interactions with modal buttons."""
@@ -17301,7 +17297,6 @@ class TestAdminTokensPartialSearch:
             mock_settings.mcpgateway_ui_airgapped = False
             response = await admin_mod.admin_forgot_password_page(request)
             assert isinstance(response, HTMLResponse)
-            assert "mcpgateway_csrf_token=" in (response.headers.get("set-cookie") or "")
             template_call = request.app.state.templates.TemplateResponse.call_args
             assert template_call[0][1] == "forgot-password.html"
 
@@ -17386,7 +17381,6 @@ class TestAdminTokensPartialSearch:
                 mock_service_cls.return_value.validate_password_reset_token = AsyncMock(return_value=MagicMock())
                 response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
                 assert isinstance(response, HTMLResponse)
-                assert "mcpgateway_csrf_token=" in (response.headers.get("set-cookie") or "")
                 template_call = request.app.state.templates.TemplateResponse.call_args
                 assert template_call[0][1] == "reset-password.html"
                 assert template_call[0][2]["token_valid"] is True

@@ -59,13 +59,14 @@ def test_metrics_cleanup_disabled(app):
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
     client = TestClient(app)
 
-    with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
-        mock_settings.metrics_cleanup_enabled = False
+    with patch("mcpgateway.config.settings.csrf_enabled", False):
+        with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
+            mock_settings.metrics_cleanup_enabled = False
 
-        response = client.post("/api/metrics/cleanup", json={})
+            response = client.post("/api/metrics/cleanup", json={})
 
-        assert response.status_code == 400
-        assert "disabled" in response.json()["detail"].lower()
+            assert response.status_code == 400
+            assert "disabled" in response.json()["detail"].lower()
 
     app.dependency_overrides.pop(require_admin_auth, None)
 
@@ -75,36 +76,37 @@ def test_metrics_cleanup_all_tables(app):
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
     client = TestClient(app)
 
-    with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
-        mock_settings.metrics_cleanup_enabled = True
+    with patch("mcpgateway.config.settings.csrf_enabled", False):
+        with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
+            mock_settings.metrics_cleanup_enabled = True
 
-        # Create mock result for cleanup_all
-        mock_table_result = MagicMock()
-        mock_table_result.table_name = "tool_metric"
-        mock_table_result.deleted_count = 10
-        mock_table_result.remaining_count = 100
-        mock_table_result.cutoff_date = datetime.now(timezone.utc)
-        mock_table_result.duration_seconds = 0.5
-        mock_table_result.error = None
+            # Create mock result for cleanup_all
+            mock_table_result = MagicMock()
+            mock_table_result.table_name = "tool_metric"
+            mock_table_result.deleted_count = 10
+            mock_table_result.remaining_count = 100
+            mock_table_result.cutoff_date = datetime.now(timezone.utc)
+            mock_table_result.duration_seconds = 0.5
+            mock_table_result.error = None
 
-        mock_summary = MagicMock()
-        mock_summary.total_deleted = 10
-        mock_summary.tables = {"tool_metric": mock_table_result}
-        mock_summary.duration_seconds = 0.5
-        mock_summary.started_at = datetime.now(timezone.utc)
-        mock_summary.completed_at = datetime.now(timezone.utc)
+            mock_summary = MagicMock()
+            mock_summary.total_deleted = 10
+            mock_summary.tables = {"tool_metric": mock_table_result}
+            mock_summary.duration_seconds = 0.5
+            mock_summary.started_at = datetime.now(timezone.utc)
+            mock_summary.completed_at = datetime.now(timezone.utc)
 
-        with patch("mcpgateway.services.metrics_cleanup_service.get_metrics_cleanup_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.cleanup_all = AsyncMock(return_value=mock_summary)
-            mock_get_service.return_value = mock_service
+            with patch("mcpgateway.services.metrics_cleanup_service.get_metrics_cleanup_service") as mock_get_service:
+                mock_service = MagicMock()
+                mock_service.cleanup_all = AsyncMock(return_value=mock_summary)
+                mock_get_service.return_value = mock_service
 
-            response = client.post("/api/metrics/cleanup", json={})
+                response = client.post("/api/metrics/cleanup", json={})
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["total_deleted"] == 10
-            assert "tool_metric" in data["tables"]
+                assert response.status_code == 200
+                data = response.json()
+                assert data["total_deleted"] == 10
+                assert "tool_metric" in data["tables"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
 
@@ -114,28 +116,29 @@ def test_metrics_cleanup_specific_table(app):
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
     client = TestClient(app)
 
-    with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
-        mock_settings.metrics_cleanup_enabled = True
+    with patch("mcpgateway.config.settings.csrf_enabled", False):
+        with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
+            mock_settings.metrics_cleanup_enabled = True
 
-        mock_result = MagicMock()
-        mock_result.table_name = "prompt_metric"
-        mock_result.deleted_count = 5
-        mock_result.remaining_count = 50
-        mock_result.cutoff_date = datetime.now(timezone.utc)
-        mock_result.duration_seconds = 0.3
-        mock_result.error = None
+            mock_result = MagicMock()
+            mock_result.table_name = "prompt_metric"
+            mock_result.deleted_count = 5
+            mock_result.remaining_count = 50
+            mock_result.cutoff_date = datetime.now(timezone.utc)
+            mock_result.duration_seconds = 0.3
+            mock_result.error = None
 
-        with patch("mcpgateway.services.metrics_cleanup_service.get_metrics_cleanup_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.cleanup_table = AsyncMock(return_value=mock_result)
-            mock_get_service.return_value = mock_service
+            with patch("mcpgateway.services.metrics_cleanup_service.get_metrics_cleanup_service") as mock_get_service:
+                mock_service = MagicMock()
+                mock_service.cleanup_table = AsyncMock(return_value=mock_result)
+                mock_get_service.return_value = mock_service
 
-            response = client.post("/api/metrics/cleanup", json={"table_type": "prompt"})
+                response = client.post("/api/metrics/cleanup", json={"table_type": "prompt"})
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["total_deleted"] == 5
-            assert "prompt_metric" in data["tables"]
+                assert response.status_code == 200
+                data = response.json()
+                assert data["total_deleted"] == 5
+                assert "prompt_metric" in data["tables"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
 
@@ -145,18 +148,19 @@ def test_metrics_cleanup_invalid_table_type(app):
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
     client = TestClient(app)
 
-    with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
-        mock_settings.metrics_cleanup_enabled = True
+    with patch("mcpgateway.config.settings.csrf_enabled", False):
+        with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
+            mock_settings.metrics_cleanup_enabled = True
 
-        with patch("mcpgateway.services.metrics_cleanup_service.get_metrics_cleanup_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.cleanup_table = AsyncMock(side_effect=ValueError("Invalid table type"))
-            mock_get_service.return_value = mock_service
+            with patch("mcpgateway.services.metrics_cleanup_service.get_metrics_cleanup_service") as mock_get_service:
+                mock_service = MagicMock()
+                mock_service.cleanup_table = AsyncMock(side_effect=ValueError("Invalid table type"))
+                mock_get_service.return_value = mock_service
 
-            response = client.post("/api/metrics/cleanup", json={"table_type": "invalid"})
+                response = client.post("/api/metrics/cleanup", json={"table_type": "invalid"})
 
-            assert response.status_code == 400
-            assert "Invalid table type" in response.json()["detail"]
+                assert response.status_code == 400
+                assert "Invalid table type" in response.json()["detail"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
 
@@ -166,13 +170,14 @@ def test_metrics_rollup_disabled(app):
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
     client = TestClient(app)
 
-    with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
-        mock_settings.metrics_rollup_enabled = False
+    with patch("mcpgateway.config.settings.csrf_enabled", False):
+        with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
+            mock_settings.metrics_rollup_enabled = False
 
-        response = client.post("/api/metrics/rollup", json={})
+            response = client.post("/api/metrics/rollup", json={})
 
-        assert response.status_code == 400
-        assert "disabled" in response.json()["detail"].lower()
+            assert response.status_code == 400
+            assert "disabled" in response.json()["detail"].lower()
 
     app.dependency_overrides.pop(require_admin_auth, None)
 
@@ -182,41 +187,42 @@ def test_metrics_rollup_success(app):
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
     client = TestClient(app)
 
-    with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
-        mock_settings.metrics_rollup_enabled = True
+    with patch("mcpgateway.config.settings.csrf_enabled", False):
+        with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
+            mock_settings.metrics_rollup_enabled = True
 
-        mock_table_result = MagicMock()
-        mock_table_result.table_name = "tool_metric"
-        mock_table_result.hours_processed = 24
-        mock_table_result.records_aggregated = 100
-        mock_table_result.rollups_created = 24
-        mock_table_result.rollups_updated = 0
-        mock_table_result.raw_deleted = 100
-        mock_table_result.duration_seconds = 1.0
-        mock_table_result.error = None
+            mock_table_result = MagicMock()
+            mock_table_result.table_name = "tool_metric"
+            mock_table_result.hours_processed = 24
+            mock_table_result.records_aggregated = 100
+            mock_table_result.rollups_created = 24
+            mock_table_result.rollups_updated = 0
+            mock_table_result.raw_deleted = 100
+            mock_table_result.duration_seconds = 1.0
+            mock_table_result.error = None
 
-        mock_summary = MagicMock()
-        mock_summary.total_hours_processed = 24
-        mock_summary.total_records_aggregated = 100
-        mock_summary.total_rollups_created = 24
-        mock_summary.total_rollups_updated = 0
-        mock_summary.tables = {"tool_metric": mock_table_result}
-        mock_summary.duration_seconds = 1.0
-        mock_summary.started_at = datetime.now(timezone.utc)
-        mock_summary.completed_at = datetime.now(timezone.utc)
+            mock_summary = MagicMock()
+            mock_summary.total_hours_processed = 24
+            mock_summary.total_records_aggregated = 100
+            mock_summary.total_rollups_created = 24
+            mock_summary.total_rollups_updated = 0
+            mock_summary.tables = {"tool_metric": mock_table_result}
+            mock_summary.duration_seconds = 1.0
+            mock_summary.started_at = datetime.now(timezone.utc)
+            mock_summary.completed_at = datetime.now(timezone.utc)
 
-        with patch("mcpgateway.services.metrics_rollup_service.get_metrics_rollup_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.rollup_all = AsyncMock(return_value=mock_summary)
-            mock_get_service.return_value = mock_service
+            with patch("mcpgateway.services.metrics_rollup_service.get_metrics_rollup_service") as mock_get_service:
+                mock_service = MagicMock()
+                mock_service.rollup_all = AsyncMock(return_value=mock_summary)
+                mock_get_service.return_value = mock_service
 
-            response = client.post("/api/metrics/rollup", json={"hours_back": 24})
+                response = client.post("/api/metrics/rollup", json={"hours_back": 24})
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["total_hours_processed"] == 24
-            assert data["total_records_aggregated"] == 100
-            assert "tool_metric" in data["tables"]
+                assert response.status_code == 200
+                data = response.json()
+                assert data["total_hours_processed"] == 24
+                assert data["total_records_aggregated"] == 100
+                assert "tool_metric" in data["tables"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
 

@@ -15,6 +15,185 @@ if (!ADMIN_DEBUG_LOGGING_ENABLED) {
     console.debug = () => {};
 }
 
+// ===================================================================
+// CSRF TOKEN HANDLING - Automatic injection for all requests
+// ===================================================================
+
+/**
+ * Get CSRF token from meta tag (primary) or cookie (fallback)
+ * @returns {string|null} CSRF token or null if not found
+ */
+function getCSRFToken() {
+    // Primary: meta tag (server-rendered, always fresh)
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta && meta.getAttribute("content")) {
+        return meta.getAttribute("content");
+    }
+
+    // Fallback: cookie (edge cases where meta tag is unavailable)
+    try {
+        const cookieMeta = document.querySelector('meta[name="csrf-cookie"]');
+        const cookieName =
+            cookieMeta && cookieMeta.getAttribute("content")
+                ? cookieMeta.getAttribute("content")
+                : "csrf_token";
+        const cookies = document.cookie.split(";");
+        for (const cookie of cookies) {
+            const [name, value] = cookie.trim().split("=");
+            if (name === cookieName) return decodeURIComponent(value);
+        }
+    } catch (e) {
+        console.error("CSRF: failed to read cookie fallback", e);
+    }
+
+    console.error("CSRF: no token found — requests will fail");
+    return null;
+}
+
+function getCSRFHeaderName() {
+    const meta = document.querySelector('meta[name="csrf-header"]');
+    if (meta && meta.getAttribute("content")) {
+        return meta.getAttribute("content");
+    }
+    return "X-CSRF-Token";
+}
+
+/**
+ * Refresh CSRF token from server
+ * @returns {Promise<string>} New CSRF token
+ */
+async function refreshCSRFToken() {
+    const response = await fetch("/auth/csrf-token", {
+        method: "GET",
+        credentials: "include",
+    });
+    if (!response.ok) {
+        throw new Error("CSRF token refresh failed: " + response.status);
+    }
+    const data = await response.json();
+
+    // Update meta tag with refreshed token so subsequent calls stay fresh
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta && data.csrf_token) {
+        meta.setAttribute("content", data.csrf_token);
+    }
+
+    return data.csrf_token;
+}
+
+/**
+ * Monkey-patch window.fetch to automatically inject CSRF tokens
+ * Intercepts ALL fetch calls site-wide
+ */
+(function () {
+    const _originalFetch = window.fetch;
+
+    window.fetch = async function (url, options = {}) {
+        const safeMethods = ["GET", "HEAD", "OPTIONS", "TRACE"];
+        const method = (options.method || "GET").toUpperCase();
+
+        if (safeMethods.includes(method)) {
+            return _originalFetch(url, options);
+        }
+
+        // Skip if caller already set X-CSRF-Token manually
+        const existingHeaders = options.headers || {};
+        const csrfHeaderName = getCSRFHeaderName();
+        if (
+            existingHeaders[csrfHeaderName] ||
+            existingHeaders[csrfHeaderName.toLowerCase()]
+        ) {
+            return _originalFetch(url, options);
+        }
+
+        options.headers = {
+            ...existingHeaders,
+            [csrfHeaderName]: getCSRFToken(),
+        };
+        options.credentials = "include";
+
+        const response = await _originalFetch(url, options);
+
+        // Rotate ONLY on 401 or 403 — not on any other status code
+        if (response.status === 401 || response.status === 403) {
+            try {
+                const newToken = await refreshCSRFToken();
+                options.headers[csrfHeaderName] = newToken;
+                return _originalFetch(url, options); // retry ONCE only — never loop
+            } catch (e) {
+                console.error(
+                    "CSRF: token refresh failed, returning original response",
+                    e,
+                );
+                return response;
+            }
+        }
+
+        return response;
+    };
+})();
+
+/**
+ * Inject CSRF token into a single form
+ * @param {HTMLFormElement} form - Form element to inject token into
+ */
+function injectCSRFIntoForm(form) {
+    const safeMethods = ["GET", "HEAD"];
+    // Use attribute lookup to avoid DOM property shadowing from fields named "method".
+    const method = String(form.getAttribute("method") || "GET").toUpperCase();
+
+    if (safeMethods.includes(method)) return;
+
+    // Avoid double injection
+    if (form.querySelector('input[name="csrf_token"][data-csrf-injected]')) {
+        return;
+    }
+
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "csrf_token";
+    input.value = getCSRFToken();
+    input.setAttribute("data-csrf-injected", "true");
+    form.appendChild(input);
+
+    // Refresh token value just before form submits
+    // Handles long-lived pages where token may have rotated
+    form.addEventListener("submit", function () {
+        input.value = getCSRFToken();
+    });
+}
+
+/**
+ * Inject CSRF tokens into all forms on the page
+ */
+function injectCSRFIntoAllForms() {
+    document.querySelectorAll("form").forEach(injectCSRFIntoForm);
+}
+
+// Handle forms present on page load
+document.addEventListener("DOMContentLoaded", injectCSRFIntoAllForms);
+
+// Handle dynamically added forms (modals, AJAX-rendered content, etc.)
+const _csrfObserver = new MutationObserver(function (mutations) {
+    mutations.forEach(function (mutation) {
+        mutation.addedNodes.forEach(function (node) {
+            if (node.nodeType !== 1) return;
+            if (node.tagName === "FORM") injectCSRFIntoForm(node);
+            if (node.querySelectorAll) {
+                node.querySelectorAll("form").forEach(injectCSRFIntoForm);
+            }
+        });
+    });
+});
+
+document.addEventListener("DOMContentLoaded", function () {
+    _csrfObserver.observe(document.body, { childList: true, subtree: true });
+});
+
+// ===================================================================
+// END CSRF TOKEN HANDLING
+// ===================================================================
+
 // Runtime fallbacks when admin.js is loaded outside admin.html
 window._restrictedContextLogged = window._restrictedContextLogged || false;
 window._logRestrictedContext =
@@ -793,6 +972,7 @@ const _TOGGLE_FRAGMENT_MAP = {
  * @param {URLSearchParams} [searchParams] - Query params to include (team_id, include_inactive, etc.).
  */
 function _navigateAdmin(fragment, searchParams) {
+    const targetFragment = _TOGGLE_FRAGMENT_MAP[fragment] || fragment;
     const currentPath = window.location.pathname;
     // Find /admin in current path and use everything before it as the base.
     // e.g. /api/proxy/mcp/admin → base is /api/proxy/mcp
@@ -803,20 +983,7 @@ function _navigateAdmin(fragment, searchParams) {
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : window.ROOT_PATH || window.location.origin;
     const qs = searchParams ? searchParams.toString() : "";
-    const target = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
-
-    // When the target URL is identical to the current URL (same path, query,
-    // AND hash), browsers treat the assignment as an in-page anchor scroll
-    // and skip the network reload.  This happens in proxy/iframe deployments
-    // where the URL has no trailing slash (unlike direct mode where FastAPI
-    // redirects /admin → /admin/, creating a path difference).  Force a full
-    // reload so the UI always reflects the latest server state.
-    // Fixes #3351 (root cause of #3324).
-    if (window.location.href === target) {
-        window.location.reload();
-    } else {
-        window.location.href = target;
-    }
+    window.location.href = `${base}/admin${qs ? `?${qs}` : ""}#${targetFragment}`;
 }
 
 /**
@@ -11547,47 +11714,14 @@ async function handleToggleSubmit(event, type) {
 
     const isInactiveCheckedBool = isInactiveChecked(type);
     const form = event.target;
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    const hiddenField = document.createElement("input");
+    hiddenField.type = "hidden";
+    hiddenField.name = "is_inactive_checked";
+    hiddenField.value = isInactiveCheckedBool;
 
-    // Build FormData from current form state (captures any fields already
-    // appended by handleDeleteSubmit such as purge_metrics).
-    const formData = new FormData(form);
-    formData.set("is_inactive_checked", String(isInactiveCheckedBool));
-    if (teamId && !formData.has("team_id")) {
-        formData.set("team_id", teamId);
-    }
-    const csrfToken =
-        typeof getCookie === "function"
-            ? getCookie("mcpgateway_csrf_token") || ""
-            : "";
-    if (csrfToken) {
-        formData.set("csrf_token", csrfToken);
-    }
-
-    try {
-        // Use redirect:'manual' so the browser does not follow the 303
-        // redirect to the backend-direct URL (which bypasses the proxy).
-        await fetch(form.action, {
-            method: "POST",
-            body: formData,
-            credentials: "include",
-            redirect: "manual",
-        });
-    } catch (e) {
-        // Network error — still navigate so the user sees refreshed state.
-        console.error("Toggle submit error:", e);
-    }
-
-    // Navigate using proxy-aware helper so proxy prefix is preserved.
-    const fragment = _TOGGLE_FRAGMENT_MAP[type] || type;
-    const params = new URLSearchParams();
-    if (isInactiveCheckedBool) {
-        params.set("include_inactive", "true");
-    }
-    if (teamId) {
-        params.set("team_id", teamId);
-    }
-    _navigateAdmin(fragment, params);
+    form.appendChild(hiddenField);
+    injectCSRFIntoForm(form);
+    form.submit();
 }
 
 function handleSubmitWithConfirmation(event, type) {

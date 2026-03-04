@@ -451,7 +451,7 @@
       }
 
       function attachCsrfToPostForms() {
-        const csrfToken = getCookie("mcpgateway_csrf_token");
+        const csrfToken = getCookie("csrf_token");
         if (!csrfToken) return;
         const forms = document.querySelectorAll("form");
         forms.forEach((form) => {

@@ -791,7 +791,9 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
 
     response = await admin.admin_ui(request, "team-1", True, mock_db, user=user)
     assert isinstance(response, HTMLResponse)
-    assert "jwt_token" in response.headers.get("set-cookie", "")
+    # Check that JWT token cookie is set (may be alongside other cookies like csrf_token)
+    set_cookie_header = response.headers.get("set-cookie", "")
+    assert "jwt_token=" in set_cookie_header or any("jwt_token=" in cookie for cookie in response.headers.getlist("set-cookie"))
     context = request.app.state.templates.TemplateResponse.call_args[0][2]
     assert context["selected_team_id"] == "team-1"
     assert len(context["tools"]) == 1
