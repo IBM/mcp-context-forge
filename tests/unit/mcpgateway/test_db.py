@@ -2725,3 +2725,9 @@ def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     team = Target("Team Name")
     db.set_email_team_slug(None, None, team)
     assert team.slug == "team-name"
+
+    # Verify guard: pre-set slug is preserved
+    team_with_slug = Target("Team Name")
+    team_with_slug.slug = "workspace-alice-example-com"
+    db.set_email_team_slug(None, None, team_with_slug)
+    assert team_with_slug.slug == "workspace-alice-example-com"
