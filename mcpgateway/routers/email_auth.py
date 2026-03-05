@@ -143,10 +143,8 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expire = now + expires_delta
 
     # Determine teams claim based on user's admin status and team memberships
-    # SECURITY: This is critical for token scoping and RBAC
-    # - Admin users get teams=null for admin bypass (sees all resources)
-    # - Non-admin users get their actual team IDs (sees public + team resources)
-    teams_claim = None  # Default to admin bypass
+
+    teams_claim = None  
     is_admin = bool(getattr(user, "is_admin", False))
     
     if not is_admin:
