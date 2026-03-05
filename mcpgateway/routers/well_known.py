@@ -26,6 +26,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Get logger instance
@@ -164,19 +165,22 @@ async def get_oauth_protected_resource_rfc9728(
 
     # Validate path structure
     if len(path_parts) < 2 or path_parts[0] != "servers":
-        logger.debug(f"Invalid RFC 9728 path format: {path}")
+        # Sanitize untrusted path before logging to prevent log injection
+        logger.debug(f"Invalid RFC 9728 path format: {sanitize_for_log(path)}")
         raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
 
     server_id = path_parts[1]
 
     # Validate server_id is a valid UUID (prevents path traversal and injection)
     if not UUID_PATTERN.match(server_id):
-        logger.warning(f"Invalid server_id format (not a UUID): {server_id}")
+        # Sanitize untrusted server_id before logging to prevent log injection
+        logger.warning(f"Invalid server_id format (not a UUID): {sanitize_for_log(server_id)}")
         raise HTTPException(status_code=404, detail="Invalid server_id format. Must be a valid UUID.")
 
     # Reject paths with extra segments after /mcp (e.g., servers/uuid/mcp/extra)
     if len(path_parts) > 3:
-        logger.warning(f"RFC 9728 path has unexpected segments: {path}")
+        # Sanitize untrusted path before logging to prevent log injection
+        logger.warning(f"RFC 9728 path has unexpected segments: {sanitize_for_log(path)}")
         raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
 
     # Build resource URL with /mcp suffix per MCP specification

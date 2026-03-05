@@ -24,6 +24,7 @@ from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import SSOService
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 
 # Initialize logging
 logging_service = LoggingService()
@@ -252,7 +253,8 @@ async def initiate_sso_login(
     # Validate redirect_uri to prevent open redirect attacks
     # Uses server-side allowlist (allowed_origins, app_domain) - does NOT trust Host header
     if not _validate_redirect_uri(redirect_uri, request):
-        logger.warning(f"SSO login rejected - invalid redirect_uri: {redirect_uri}")
+        # Sanitize untrusted redirect_uri before logging to prevent log injection
+        logger.warning(f"SSO login rejected - invalid redirect_uri: {sanitize_for_log(redirect_uri)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid redirect_uri. Must be a relative path or URL matching allowed origins.",
