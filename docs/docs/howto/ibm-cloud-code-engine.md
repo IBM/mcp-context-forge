@@ -1,7 +1,3 @@
-!!! warning "DRAFT"
-
-    This guide is a draft and may contain inaccuracies. Verify all commands and configurations against current IBM Cloud documentation before use in production.
-
 # Deploy ContextForge on IBM Cloud with Code Engine
 
 This guide covers two supported deployment paths for the **ContextForge**:
@@ -27,7 +23,7 @@ This guide covers two supported deployment paths for the **ContextForge**:
 ## 2 - Environment files
 
 Both files are already in **`.gitignore`**.
-Template named **`.env.example`** **`.env.ce.example`** and are included; copy them:
+Templates named **`.env.example`** and **`.env.ce.example`** are included; copy them:
 
 ```bash
 cp .env.example .env         # runtime settings (inside the container)
@@ -44,7 +40,7 @@ This file is **mounted into the container** (via `--env-file=.env`), so its keys
 # ─────────────────────────────────────────────────────────────────────────────
 AUTH_REQUIRED=true
 # Generate once:  openssl rand -hex 32
-JWT_SECRET_KEY=eef5e9f70ca7fe6f9677ad2acaf4d32c55e9d98e9cb74299b33f5c5d1a3c8ef
+JWT_SECRET_KEY=eef5e9f70ca7fe6f9677ad2acaf4d32c55e9d98e9cb74299b33f5c5d1a3c8ef0
 
 HOST=0.0.0.0
 PORT=4444
@@ -265,7 +261,7 @@ Test the API endpoints with the generated `MCPGATEWAY_BEARER_TOKEN`:
 # Generate a one-off token for the default admin user
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com)
 
-# Call a protected endpoint. Since there are not tools, initially this just returns `[]`
+# Call a protected endpoint. Since there are no tools, initially this just returns `[]`
 curl -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
      https://mcpgateway.us-south.codeengine.appdomain.cloud/tools
 
@@ -457,7 +453,7 @@ reducing latency and database load.
 
 ---
 
-## 9. Gunicorn configuration (optional tuning)
+## 9 - Gunicorn configuration (optional tuning)
 
 The container starts `gunicorn` with the settings defined in **`gunicorn.conf.py`** found at the project root.
 If you need to change worker counts, ports, or time-outs, edit this file **before** you build the image (`make podman` or `make docker`). The settings are baked into the container at build time.
