@@ -1932,7 +1932,7 @@ class ToolService(BaseService):
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbTool.enabled)
-        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id, is_admin=requesting_user_is_admin)
 
         if visibility:
             query = query.where(DbTool.visibility == visibility)

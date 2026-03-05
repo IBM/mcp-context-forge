@@ -1283,9 +1283,12 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     # 1. Try context vars first (fast path)
     s_id = server_id_var.get()
 
-    # Check if context vars are populated with real data (not defaults)
-    if s_id != "default_server_id":
-        return s_id, request_headers_var.get(), user_context_var.get()
+    # Check if user_context_var is populated with real data (not empty dict)
+    user_ctx = user_context_var.get()
+    logger.warning(f"[CONTEXT DEBUG] Step 1 - ContextVar: user_ctx={user_ctx}")
+    if user_ctx and user_ctx.get("is_authenticated"):
+        logger.warning(f"[CONTEXT DEBUG] Step 1 - Using ContextVar path")
+        return s_id, request_headers_var.get(), user_ctx
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
@@ -1294,16 +1297,21 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         request = ctx.request
         if request:
             gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
+            logger.warning(f"[CONTEXT DEBUG] Step 2 - ASGI scope: gw_ctx={gw_ctx}")
             if isinstance(gw_ctx, dict):
+                result_ctx = gw_ctx.get("user_context", {})
+                logger.warning(f"[CONTEXT DEBUG] Step 2 - Using ASGI scope path, user_context={result_ctx}")
                 return (
                     gw_ctx.get("server_id") or s_id,
                     gw_ctx.get("request_headers", {}),
-                    gw_ctx.get("user_context", {}),
+                    result_ctx,
                 )
     except LookupError:
         # Not in a request context — fall through to ContextVar defaults
+        logger.warning(f"[CONTEXT DEBUG] Step 2 - LookupError, falling back to ContextVar")
         return s_id, request_headers_var.get(), user_context_var.get()
     except Exception as e:
+        logger.warning(f"[CONTEXT DEBUG] Step 2 - Exception: {e}")
         logger.debug("Failed to read %s from scope: %s", _MCPGATEWAY_CONTEXT_KEY, e)
 
     # 3. Re-authentication fallback (stateful session path)
@@ -1371,7 +1379,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated.
     """
-    email = payload.get("sub") or payload.get("email")
+    email = payload.get("sub") or payload.get("email")  
     is_admin = payload.get("is_admin", False)
     if not is_admin:
         user_info = payload.get("user", {})
@@ -1435,6 +1443,8 @@ async def list_tools() -> List[types.Tool]:
         >>> sig.return_annotation
         typing.List[mcp.types.Tool]
     """
+    import sys
+    
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Token scope cap: deny early if scoped permissions exclude tools.read
@@ -1447,14 +1457,12 @@ async def list_tools() -> List[types.Tool]:
     # Use None as default to distinguish "no teams specified" from "empty teams array"
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
+    
+    logger.warning(f"[STREAMABLE LIST_TOOLS DEBUG] user_email={user_email}, token_teams={token_teams}, is_admin={is_admin}")
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Note: Admin bypass is handled in base_service._apply_access_control()
+    # We pass the original user_email, token_teams, and is_admin flag
+    # The base service will apply the bypass when is_admin=True
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -1521,7 +1529,14 @@ async def list_tools() -> List[types.Tool]:
                     return []
 
                 # Default cache mode: use database
-                tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
+                tools = await tool_service.list_server_tools(
+                    db,
+                    server_id,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_is_admin=is_admin,  # CRITICAL: Pass is_admin flag for admin bypass
+                    _request_headers=request_headers
+                )
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.error("Error listing tools:%s", e)
@@ -1529,7 +1544,15 @@ async def list_tools() -> List[types.Tool]:
     else:
         try:
             async with get_db() as db:
-                tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
+                tools, _ = await tool_service.list_tools(
+                    db,
+                    include_inactive=False,
+                    limit=0,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_is_admin=is_admin,  # CRITICAL: Pass is_admin flag for admin bypass
+                    _request_headers=request_headers
+                )
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
@@ -2344,7 +2367,9 @@ class SessionManagerWrapper:
 
         # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
-        user_context = user_context_var.get()
+        # Read user context from ASGI scope (set by auth middleware) instead of ContextVar
+        # because ContextVars are lost across async context boundaries (MCP SDK task groups)
+        user_context = scope.get("mcp_user_context") or user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
@@ -2662,16 +2687,33 @@ class SessionManagerWrapper:
                         captured_session_id = header_value
                         break
             await send(message)
-
+            
         # Propagate middleware-resolved context via ASGI scope so that MCP
         # handlers can retrieve it even when ContextVars are lost (the SDK's
         # task group was created at startup, so spawned handler tasks inherit
         # the startup context rather than the per-request context).
+        # Use the same user_context we retrieved above (from ASGI scope or ContextVar)
         scope[_MCPGATEWAY_CONTEXT_KEY] = {
             "server_id": server_id_var.get(),
             "request_headers": headers,
             "user_context": user_context,
         }
+
+        # CRITICAL: Explicitly set ContextVars before calling session_manager
+        # The MCP SDK may create new async contexts in stateless mode, losing our context
+        # We must set these immediately before the call to ensure they're available
+        user_context_var.set(user_context)
+        request_headers_var.set(headers)
+        if match:
+            server_id_var.set(match.group("server_id"))
+        else:
+            server_id_var.set(None)
+        
+        logger.debug(f"🔍 Before session_manager.handle_request - ContextVars set:")
+        logger.debug(f"  user_context_var: {user_context_var.get()}")
+        logger.debug(f"  request_headers_var: {request_headers_var.get()}")
+        logger.debug(f"  server_id_var: {server_id_var.get()}")
+
 
         try:
             await self.session_manager.handle_request(scope, receive, send_with_capture)
@@ -2803,7 +2845,9 @@ class _StreamableHttpAuthHandler:
             False if authentication fails and a 401 response is sent.
         """
         path = self.scope.get("path", "")
-        if (not path.endswith("/mcp") and not path.endswith("/mcp/")) or path.startswith("/.well-known/"):
+        # Auth applies to /mcp and all sub-paths (/mcp/*, /mcp/messages, etc.)
+        # but not to RFC 9728 metadata endpoints
+        if not (path == "/mcp" or path.startswith("/mcp/")) or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
@@ -3020,7 +3064,13 @@ class _StreamableHttpAuthHandler:
             jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
             if jwt_scoped_perms:
                 auth_user_ctx["scoped_permissions"] = jwt_scoped_perms
+            
             user_context_var.set(auth_user_ctx)
+            
+            # Store in ASGI scope for mounted apps (e.g., /mcp mount)
+            # This ensures the context is available even when ContextVars are lost
+            # across async context boundaries (e.g., MCP SDK task groups)
+            self.scope["mcp_user_context"] = auth_user_ctx
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})

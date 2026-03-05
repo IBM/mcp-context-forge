@@ -426,7 +426,6 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
     token_teams = _get_token_teams_from_request(request)
 
     # Check if user is admin - MUST come from token, not DB user
-    # This ensures that tokens with restricted scope (empty teams) don't inherit admin bypass
     is_admin = False
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:
@@ -434,11 +433,6 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
         if payload:
             # Check both top-level is_admin and nested user.is_admin in token
             is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-
-    # If token has empty teams array (public-only token), admin bypass is disabled
-    # This allows admins to create properly scoped tokens for restricted access
-    if token_teams is not None and len(token_teams) == 0:
-        is_admin = False
 
     return user_email, token_teams, is_admin
 
@@ -6111,14 +6105,19 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            logger.warning(f"[TOOLS/LIST DEBUG] BEFORE bypass - user_email={user_email}, token_teams={token_teams}, is_admin={is_admin}")
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions
-            if is_admin and token_teams is None:
+            # Admin bypass - admins see all resources regardless of token teams
+            if is_admin:
                 user_email = None
                 token_teams = None  # Admin unrestricted
+                logger.warning(f"[TOOLS/LIST DEBUG] ADMIN BYPASS APPLIED - user_email={user_email}, token_teams={token_teams}")
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
+                logger.warning(f"[TOOLS/LIST DEBUG] Non-admin public-only - token_teams={token_teams}")
+            else:
+                logger.warning(f"[TOOLS/LIST DEBUG] No bypass - user_email={user_email}, token_teams={token_teams}")
             if server_id:
                 tools = await tool_service.list_server_tools(
                     db,
@@ -6145,10 +6144,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     requesting_user_is_admin=_req_is_admin,
                     requesting_user_team_roles=_req_team_roles,
                 )
+                logger.warning(f"[TOOLS/LIST DEBUG] Retrieved {len(tools)} tools from service")
                 # Release DB connection early to prevent idle-in-transaction under load
                 db.commit()
                 db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                logger.warning(f"[TOOLS/LIST DEBUG] Returning {len(result['tools'])} tools in result")
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
@@ -6156,9 +6157,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions (token_teams is None)
-            # If token has explicit team scope (even empty [] for public-only), respect it
-            if is_admin and token_teams is None:
+            # Admin bypass - admins see all resources regardless of token teams
+            if is_admin:
                 user_email = None
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
@@ -7859,8 +7859,18 @@ if ADMIN_API_ENABLED:
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
-# Streamable http Mount
-app.mount("/mcp", app=streamable_http_session.handle_streamable_http)
+# Streamable http Mount with auth middleware wrapper
+async def streamable_http_with_auth(scope, receive, send):
+    """Wrapper that applies auth middleware before delegating to streamable HTTP handler."""
+    # Apply authentication middleware first
+    auth_ok = await streamable_http_auth(scope, receive, send)
+    if not auth_ok:
+        # Auth middleware already sent error response
+        return
+    # Auth succeeded, delegate to streamable HTTP handler
+    await streamable_http_session.handle_streamable_http(scope, receive, send)
+
+app.mount("/mcp", app=streamable_http_with_auth)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:

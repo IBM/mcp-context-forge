@@ -50,6 +50,7 @@ from mcpgateway.services.email_auth_service import AuthenticationError, EmailAut
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.services.team_management_service import TeamManagementService 
 
 # Initialize logging
 logging_service = LoggingService()
@@ -141,7 +142,25 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Create JWT payload — session token (teams resolved server-side at request time)
+    # Determine teams claim based on user's admin status and team memberships
+    # SECURITY: This is critical for token scoping and RBAC
+    # - Admin users get teams=null for admin bypass (sees all resources)
+    # - Non-admin users get their actual team IDs (sees public + team resources)
+    teams_claim = None  # Default to admin bypass
+    is_admin = bool(getattr(user, "is_admin", False))
+    
+    if not is_admin:
+        # Non-admin users: get their actual team memberships from DB
+        try:
+            with SessionLocal() as db:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user.email, include_personal=True)
+                teams_claim = [str(team.id) for team in user_teams]
+        except Exception as exc:
+            logger.warning(f"Failed to fetch teams for user {user.email}: {exc}. Defaulting to public-only access.")
+            teams_claim = []  # Fail closed: public-only access if team lookup fails
+
+    # Create JWT payload — session token with teams claim for proper RBAC
     payload = {
         # Standard JWT claims
         "sub": user.email,
@@ -154,12 +173,17 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         "user": {
             "email": str(getattr(user, "email", "")),
             "full_name": str(getattr(user, "full_name", "")),
-            "is_admin": bool(getattr(user, "is_admin", False)),
+            "is_admin": is_admin,
             "auth_provider": str(getattr(user, "auth_provider", "local")),
         },
         "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
+        # CRITICAL: teams claim for token scoping and RBAC
+        # - None = admin bypass (sees all)
+        # - [] = public-only (sees only public resources)
+        # - [...] = team-scoped (sees public + team resources)
+        "teams": teams_claim,
     }
 
     # Generate token using centralized token creation

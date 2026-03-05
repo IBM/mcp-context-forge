@@ -6,6 +6,7 @@
 # Standard
 from abc import ABC
 from typing import Any, List, Optional
+from asyncio.base_events import sys
 
 # Third-Party
 from sqlalchemy import and_, or_
@@ -40,30 +41,47 @@ class BaseService(ABC):
         user_email: Optional[str],
         token_teams: Optional[List[str]],
         team_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Any:
         """Resolve team membership and apply visibility filtering to a query.
 
         Handles the full access-control flow for list endpoints:
-        1. Returns query unmodified when no auth context is present (admin bypass)
-        2. Resolves effective teams from JWT token_teams or DB lookup
-        3. Suppresses owner matching for public-only tokens (token_teams=[])
-        4. Delegates to _apply_visibility_filter for SQL WHERE construction
+        1. Returns query unmodified for admin bypass (token_teams=None AND is_admin=True)
+        2. Returns query unmodified when no auth context (both user_email and token_teams are None)
+        3. Resolves effective teams from JWT token_teams or DB lookup
+        4. Suppresses owner matching for public-only tokens (token_teams=[])
+        5. Delegates to _apply_visibility_filter for SQL WHERE construction
 
         Args:
             query: SQLAlchemy query to filter
             db: Database session (for team membership lookup when token_teams is None)
             user_email: User's email. None = no user context.
             token_teams: Teams from JWT via normalize_token_teams().
-                None = admin bypass or no auth context.
-                [] = public-only token.
-                [...] = team-scoped token.
+                None = admin bypass candidate (requires is_admin=True).
+                [] = public-only token (sees only public resources).
+                [...] = team-scoped token (sees public + team + owned private).
             team_id: Optional specific team filter
+            is_admin: Whether the user is an admin (from JWT or user record)
 
         Returns:
             Query with visibility WHERE clauses applied, or unmodified
-            if no auth context is present.
+            if admin bypass or no auth context.
         """
+        # Standard
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.warning(f"[ACCESS_CONTROL DEBUG] user_email={user_email}, token_teams={token_teams}, is_admin={is_admin}, team_id={team_id}")
+        
+        # Admin bypass: requires BOTH token_teams=None AND is_admin=True
+        # This prevents privilege escalation via token manipulation
+        if token_teams is None and is_admin:
+            logger.warning(f"[ACCESS_CONTROL DEBUG] ADMIN BYPASS - returning unfiltered query")
+            return query
+
+        # No auth context: both user_email and token_teams are None
         if user_email is None and token_teams is None:
+            logger.warning(f"[ACCESS_CONTROL DEBUG] NO AUTH CONTEXT - returning unfiltered query")
             return query
 
         effective_teams: List[str] = []
@@ -76,6 +94,8 @@ class BaseService(ABC):
 
         # Public-only tokens (explicit token_teams=[]) must not get owner access
         filter_email = None if (token_teams is not None and not token_teams) else user_email
+        
+        logger.warning(f"[ACCESS_CONTROL DEBUG] APPLYING FILTER - filter_email={filter_email}, effective_teams={effective_teams}")
 
         return self._apply_visibility_filter(query, filter_email, effective_teams, team_id)
 
@@ -127,7 +147,9 @@ class BaseService(ABC):
         if user_email:
             access_conditions.append(and_(model_cls.owner_email == user_email, model_cls.visibility == "private"))
 
-        if token_teams:
+        # Include team resources only if token_teams is non-empty
+        # Empty list [] means public-only token (no team access)
+        if token_teams:  # Non-empty list
             access_conditions.append(and_(model_cls.team_id.in_(token_teams), model_cls.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))

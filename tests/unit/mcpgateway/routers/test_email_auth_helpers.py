@@ -33,7 +33,7 @@ class DummyUser:
 
 @pytest.mark.asyncio
 async def test_create_access_token_payload(monkeypatch: pytest.MonkeyPatch):
-    """Session tokens should have token_use='session' and no 'teams' claim."""
+    """Session tokens should have token_use='session' and teams claim for token scoping."""
     captured = {}
 
     async def fake_create_jwt_token(payload):
@@ -47,13 +47,14 @@ async def test_create_access_token_payload(monkeypatch: pytest.MonkeyPatch):
 
     assert token == "token"
     assert captured.get("token_use") == "session"
-    assert "teams" not in captured  # Session tokens don't embed teams
+    assert "teams" in captured  # Session tokens now include teams for token scoping
+    assert isinstance(captured["teams"], list)  # Should be a list of team IDs
     assert "namespaces" not in captured  # Namespaces removed
 
 
 @pytest.mark.asyncio
 async def test_create_access_token_admin(monkeypatch: pytest.MonkeyPatch):
-    """Admin session tokens should also have token_use='session' and no 'teams' claim."""
+    """Admin session tokens should have token_use='session' and teams=None for admin bypass."""
     captured = {}
 
     async def fake_create_jwt_token(payload):
@@ -66,12 +67,13 @@ async def test_create_access_token_admin(monkeypatch: pytest.MonkeyPatch):
     await email_auth.create_access_token(user)
 
     assert captured.get("token_use") == "session"
-    assert "teams" not in captured  # Session tokens don't embed teams
+    assert "teams" in captured  # Session tokens now include teams claim
+    assert captured["teams"] is None  # Admin tokens have teams=None for bypass
 
 
 @pytest.mark.asyncio
 async def test_create_access_token_handles_team_errors(monkeypatch: pytest.MonkeyPatch):
-    """Teams with broken id property should be silently skipped (no teams in session token anyway)."""
+    """Teams with broken id property should be silently skipped, resulting in empty teams list."""
     captured = {}
 
     class BadTeam:
@@ -96,7 +98,8 @@ async def test_create_access_token_handles_team_errors(monkeypatch: pytest.Monke
     token, _ = await email_auth.create_access_token(user)
     assert token == "token"
     assert captured.get("token_use") == "session"
-    assert "teams" not in captured  # Session tokens don't embed teams
+    assert "teams" in captured  # Session tokens now include teams claim
+    assert captured["teams"] == []  # Bad teams result in empty list
 
 
 @pytest.mark.asyncio
