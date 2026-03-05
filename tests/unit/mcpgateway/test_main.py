@@ -42,7 +42,6 @@ from mcpgateway.schemas import (
     ServerMetrics,
     PromptMetrics
 )
-# from mcpgateway.schemas import ToolMetrics, PromptMetrics, ServerMetrics, ResourceMetrics
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -2682,10 +2681,10 @@ class TestRealtimeEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics collection, aggregation, and reset functionality."""
 
-    @patch("mcpgateway.main.prompt_service.aggregate_metrics")
-    @patch("mcpgateway.main.server_service.aggregate_metrics")
-    @patch("mcpgateway.main.resource_service.aggregate_metrics")
-    @patch("mcpgateway.main.tool_service.aggregate_metrics")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
     def test_get_metrics(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
         
@@ -2701,10 +2700,10 @@ class TestMetricsEndpoints:
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
 
-    @patch("mcpgateway.main.prompt_service.aggregate_metrics")
-    @patch("mcpgateway.main.server_service.aggregate_metrics")
-    @patch("mcpgateway.main.resource_service.aggregate_metrics")
-    @patch("mcpgateway.main.tool_service.aggregate_metrics")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
     def test_get_metrics_returns_service_dicts(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Metrics endpoint should return service metric dicts faithfully."""
         mock_tool.return_value = ToolMetrics(total_executions=4, successful_executions=4, failed_executions=0, failure_rate=0.0)
