@@ -682,3 +682,94 @@ async def test_skips_rejected_api_token_missing_jti():
         await _make_asgi_call(middleware, scope)
 
     mock_token_service.log_token_usage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_skips_rejected_request_without_bearer_header():
+    """Middleware skips logging when a 401/403 response has no Bearer authorization header."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [],  # No authorization header
+    }
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_session:
+        await _make_asgi_call(middleware, scope)
+
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skips_rejected_non_api_token_jwt():
+    """Middleware skips logging when a 401/403 response carries a JWT that is not an API token."""
+    # Standard
+    import jwt as _jwt_lib
+
+    token_payload = {
+        "jti": "jti-jwt-session",
+        "sub": "user@example.com",
+        "user": {"auth_provider": "email"},  # Not an API token
+    }
+    raw_token = _jwt_lib.encode(token_payload, "test-secret-key-for-unit-tests-only", algorithm="HS256")
+
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 403, "headers": []})
+        await send({"type": "http.response.body", "body": b"forbidden"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
+    }
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_session:
+        await _make_asgi_call(middleware, scope)
+
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skips_rejected_request_with_malformed_token():
+    """Middleware skips logging when a 401/403 response carries a malformed token that cannot be decoded."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", b"Bearer not-a-valid-jwt-at-all")],
+    }
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_session:
+        await _make_asgi_call(middleware, scope)
+
+    mock_session.assert_not_called()

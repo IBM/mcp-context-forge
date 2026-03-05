@@ -935,6 +935,14 @@ class TestApiTokenAuth:
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
+    @pytest.mark.asyncio
+    async def test_list_team_tokens_blocked_for_api_token(self, mock_db, api_token_user):
+        """API token cannot list team tokens (management plane isolation)."""
+        with pytest.raises(HTTPException) as exc_info:
+            await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=api_token_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
 
 class TestAuthenticatedSessionErrorMessages:
     """Test error message content for _require_authenticated_session."""
