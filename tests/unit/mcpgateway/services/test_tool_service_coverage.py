@@ -4281,9 +4281,9 @@ class TestUpdateToolBranches:
             with pytest.raises(ToolNameConflictError):
                 await tool_service.update_tool(db, "t1", tool_update)
     @pytest.mark.asyncio
-    async def test_update_tool_visibility_none_uses_db_visibility_for_conflict_check(self, tool_service):
-        """When ToolUpdate.visibility is None, should use tool.visibility from DB for conflict check and successful update."""
-        tool = MagicMock(spec=DbTool)
+    async def test_update_tool_visibility_none_team_conflict_check(self, tool_service, mock_tool):
+        """When ToolUpdate.visibility is None and tool.visibility is team, should check team conflicts and allow successful update."""
+        tool = mock_tool
         tool.id = "t1"
         tool.name = "old_name"
         tool.custom_name = "old_name"
@@ -4305,7 +4305,7 @@ class TestUpdateToolBranches:
         tool_update.annotations = None
         tool_update.jsonpath_filter = None
         tool_update.visibility = None  # None should fall back to tool.visibility
-        tool_update.team_id = None
+        tool_update.team_id = "team-1"  # Must match tool.team_id for conflict check to work
         tool_update.auth = None
         tool_update.tags = None
 
@@ -4338,13 +4338,13 @@ class TestUpdateToolBranches:
         assert tool.custom_name == "new_name"
         assert tool.description == "Updated description"
         assert tool.visibility == "team"  # Should remain unchanged since visibility=None
-        assert tool.team_id == "team-1"  # Should remain unchanged since team_id=None
+        assert tool.team_id == "team-1"  # Should remain unchanged
         assert tool.version == 2  # Should be incremented
 
     @pytest.mark.asyncio
-    async def test_update_tool_visibility_none_public_conflict_check(self, tool_service):
+    async def test_update_tool_visibility_none_public_conflict_check(self, tool_service, mock_tool):
         """When ToolUpdate.visibility is None and tool.visibility is public, should check public conflicts and allow successful update."""
-        tool = MagicMock(spec=DbTool)
+        tool = mock_tool
         tool.id = "t1"
         tool.name = "old_name"
         tool.custom_name = "old_name"
