@@ -298,3 +298,190 @@ async def test_failure_logging_close_exception(monkeypatch):
 
     assert response.status_code == 200
     mock_db.close.assert_called_once()
+
+
+# ============================================================================
+# HTTPException 401/403 hard-deny tests (auth_middleware lines 148-194)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_http_401_returns_json_deny_for_api_request():
+    """HTTPException 401 from get_current_user returns JSON 401 for API requests."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_http_403_returns_json_deny_for_api_request():
+    """HTTPException 403 from get_current_user returns JSON 403 for API requests."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_http_401_browser_request_continues_for_redirect():
+    """HTTPException 401 for browser/HTMX requests continues to allow RBAC redirect."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("login page", status_code=200))
+    request = MagicMock(spec=Request)
+    request.url.path = "/admin/overview/partial"
+    request.cookies = {"jwt_token": "stale_cookie"}
+    request.headers = {"accept": "text/html", "hx-request": "true"}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # Browser request should pass through for RBAC redirect, not get JSON 401
+    call_next.assert_awaited_once_with(request)
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_http_401_with_failure_logging_enabled():
+    """HTTPException 401 logs the failure when auth failure logging is enabled."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "10.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    mock_security_logger.log_authentication_attempt.assert_called_once()
+    mock_db.commit.assert_called_once()
+    mock_db.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_http_401_logging_db_error_handled():
+    """DB error during 401 failure logging is caught gracefully."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "10.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt = MagicMock(side_effect=Exception("DB down"))
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # Should still return 401 despite logging failure
+    assert response.status_code == 401
+    mock_db.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_http_401_logging_db_close_error_handled():
+    """DB close error during 401 failure logging is caught gracefully."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "10.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_db = MagicMock()
+    mock_db.close.side_effect = Exception("close failed")
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_non_401_403_http_exception_continues_as_anonymous():
+    """HTTPException with non-401/403 status continues as anonymous."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "some_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=500, detail="Internal error"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # Non-security error: continue as anonymous
+    call_next.assert_awaited_once_with(request)
+    assert response.status_code == 200
