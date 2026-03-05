@@ -4621,6 +4621,22 @@ class TestUpdateToolBranches:
         assert tool.custom_name == "display_name"  # Should NOT have changed
         assert tool.version == 2
 
+    def test_check_tool_name_conflict_skips_team_without_team_id(self, tool_service):
+        """When visibility is 'team' but team_id is None, should log warning and skip conflict check."""
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.logger") as mock_logger:
+            tool_service._check_tool_name_conflict(db, "my_tool", "team", "t1", team_id=None, owner_email=None)
+        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_args[0][3] == "team_id"
+
+    def test_check_tool_name_conflict_skips_private_without_owner_email(self, tool_service):
+        """When visibility is 'private' but owner_email is None, should log warning and skip conflict check."""
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.logger") as mock_logger:
+            tool_service._check_tool_name_conflict(db, "my_tool", "private", "t1", team_id=None, owner_email=None)
+        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_args[0][3] == "owner_email"
+
     @pytest.mark.asyncio
     async def test_permission_check_on_update(self, tool_service):
         """Non-owner user gets PermissionError on update."""

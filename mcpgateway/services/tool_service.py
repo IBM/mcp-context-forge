@@ -4153,6 +4153,7 @@ class ToolService(BaseService):
                 ),
             )
         else:
+            logger.warning("Skipping conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
             return
         if existing_tool:
             raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
@@ -4246,7 +4247,7 @@ class ToolService(BaseService):
                 tool.name = tool_update.name
 
             # Check for conflicts when visibility changes without a name change
-            if tool_update.visibility is not None and tool_update.visibility.lower() != (tool.visibility or "public") and not name_is_changing:
+            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
                 new_visibility = tool_update.visibility.lower()
                 self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 
