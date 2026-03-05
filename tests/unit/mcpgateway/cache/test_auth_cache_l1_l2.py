@@ -589,6 +589,7 @@ async def test_auth_cache_redis_error_paths(monkeypatch):
 
     redis = AsyncMock()
     redis.get = AsyncMock(side_effect=RuntimeError("boom"))
+    redis.exists = AsyncMock(side_effect=RuntimeError("boom"))
     redis.setex = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=redis))
 
