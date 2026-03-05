@@ -2771,7 +2771,7 @@ class TestSyncUserRoles:
         """Roles no longer in desired set are revoked."""
         old_role = SimpleNamespace(
             role=SimpleNamespace(name="old-role", id="r-old"),
-            scope="team", scope_id=None, granted_by="sso_system", role_id="r-old",
+            scope="team", scope_id=None, grant_source="sso", role_id="r-old",
         )
 
         with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:

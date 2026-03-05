@@ -606,7 +606,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
   {
     "role_name": "developer",
     "scope": "team",
-    "granted_by": "sso_system"
+    "grant_source": "sso"
   }
 ]
 ```
@@ -643,7 +643,7 @@ Roles are automatically synchronized:
 
 - Admins can manually assign additional roles via Admin UI
 - Manually assigned roles are preserved during sync
-- Only SSO-granted roles (granted_by='sso_system') are synchronized
+- Only SSO-granted roles (`grant_source='sso'`) are synchronized
 
 ### 8.5.7 Troubleshooting Role Mapping
 
