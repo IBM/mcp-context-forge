@@ -1,0 +1,16 @@
+# How-To Guides
+
+How-to guides are task-oriented walkthroughs that help you accomplish specific operational goals with ContextForge. Unlike tutorials, which are learning-oriented, or reference documentation, which is information-oriented, each how-to guide focuses on a concrete outcome you need to achieve.
+
+---
+
+## Available Guides
+
+- [Configure RBAC for Tool Authorization](rbac-tool-authorization.md) -- Configure RBAC roles and token scoping to control who can list and execute tools on a virtual server.
+
+---
+
+## Related Documentation
+
+- [Manage](../manage/index.md) -- Administration and configuration reference for ContextForge.
+- [Tutorials](../tutorials/index.md) -- Step-by-step learning guides for deploying and integrating ContextForge.
