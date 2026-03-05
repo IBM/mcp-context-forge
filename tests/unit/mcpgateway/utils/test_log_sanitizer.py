@@ -9,7 +9,6 @@ This test suite verifies that the log sanitizer correctly prevents log injection
 attacks by removing or replacing control characters in untrusted input.
 """
 
-import pytest
 from mcpgateway.utils.log_sanitizer import (
     sanitize_for_log,
     sanitize_dict_for_log,
