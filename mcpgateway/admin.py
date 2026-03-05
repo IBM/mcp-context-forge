@@ -7524,7 +7524,9 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, email_verified=email_verified, password=password, admin_origin_source="ui", requesting_user_email=current_user_email)
+        await auth_service.update_user(
+            email=decoded_email, full_name=full_name, is_admin=is_admin, email_verified=email_verified, password=password, admin_origin_source="ui", requesting_user_email=current_user_email
+        )
 
         # Return success message with auto-close and refresh
         success_html = """
