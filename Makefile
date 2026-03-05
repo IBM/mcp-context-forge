@@ -5339,10 +5339,14 @@ container-health:
 	@echo "Logs:"
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
 
+# Default platforms if not specified
+PLATFORMS ?= linux/amd64,linux/arm64,linux/s390x,linux/ppc64le
+
 .PHONY: container-build-multi
 container-build-multi:
-	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x, ppc64le)..."
+	@echo "🔨 Building multi-architecture image for platforms: $(PLATFORMS)..."
 	@echo "💡 Note: Multiplatform images require a registry. Use REGISTRY= to push, or omit to validate only."
+	@echo "💡 Tip: Override platforms with PLATFORMS='linux/amd64,linux/arm64' to build specific architectures."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
 		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
 			echo "📦 Creating buildx builder with docker-container driver..."; \
@@ -5351,7 +5355,7 @@ container-build-multi:
 		docker buildx use $(PROJECT_NAME)-builder; \
 		if [ -n "$(REGISTRY)" ]; then \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
+				--platform=$(PLATFORMS) \
 				-f $(CONTAINER_FILE) \
 				--tag $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG) \
 				--push \
@@ -5359,7 +5363,7 @@ container-build-multi:
 			echo "✅ Multiplatform image pushed to $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG)"; \
 		else \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
+				--platform=$(PLATFORMS) \
 				-f $(CONTAINER_FILE) \
 				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 				.; \
@@ -5367,7 +5371,7 @@ container-build-multi:
 		fi; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
-		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
+		$(CONTAINER_RUNTIME) build --platform=$(PLATFORMS) \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
