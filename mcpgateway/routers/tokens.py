@@ -67,10 +67,7 @@ def _require_authenticated_session(current_user: dict) -> None:
     if auth_method == "api_token":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Token management requires an interactive session (JWT from web login or SSO). "
-                "API tokens cannot create, list, or revoke other tokens."
-            ),
+            detail=("Token management requires an interactive session (JWT from web login or SSO). " "API tokens cannot create, list, or revoke other tokens."),
         )
 
 
