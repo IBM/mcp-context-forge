@@ -107,7 +107,7 @@ class PersonalTeamService:
             # First-Party
             from mcpgateway.config import settings
 
-            prefix = settings.personal_team_prefix
+            prefix = slugify(settings.personal_team_prefix.strip()) if settings.personal_team_prefix.strip() else ""
             if prefix:
                 email_slug = user.email.replace("@", "-").replace(".", "-").lower()
                 team_slug = f"{prefix}-{email_slug}"
