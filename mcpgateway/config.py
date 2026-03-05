@@ -572,6 +572,11 @@ class Settings(BaseSettings):
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 
+    # Team Governance
+    allow_team_creation: bool = Field(default=True, description="Allow users to create organizational teams. Admins can always create teams.")
+    allow_team_join_requests: bool = Field(default=True, description="Allow users to request to join public teams")
+    allow_team_invitations: bool = Field(default=True, description="Allow team owners to send invitations")
+
     # Default Role Configuration
     default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
     default_user_role: str = Field(default="platform_viewer", description="Global role assigned to non-admin users")

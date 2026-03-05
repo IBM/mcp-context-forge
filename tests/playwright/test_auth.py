@@ -150,24 +150,28 @@ class TestAuthentication:
         if not login_page.is_login_form_available(timeout=3000):
             pytest.fail("Admin login form not available. Email auth may be disabled.")
 
-        # Attempt login with correct credentials
-        login_page.submit_login(ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0])
+        # Attempt login with all candidate passwords (the active password
+        # may have been rotated by a prior test session).
+        settings = Settings()
+        logged_in = _attempt_admin_login_with_password(page, login_page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0])
+        if not logged_in:
+            for candidate in _candidate_admin_passwords(settings, ADMIN_ACTIVE_PASSWORD[0]):
+                if candidate == ADMIN_ACTIVE_PASSWORD[0]:
+                    continue
+                if _attempt_admin_login_with_password(page, login_page, ADMIN_EMAIL, candidate):
+                    logged_in = True
+                    break
 
-        # Check for invalid credentials error
-        if login_page.has_invalid_credentials_error():
+        if not logged_in:
             error_msg = (
-                f"Login FAILED with correct credentials!\n"
+                f"Login FAILED with all candidate credentials!\n"
                 f"Email: {ADMIN_EMAIL}\n"
                 f"Password source: {'ENV VAR' if env_password else 'DEFAULT'}\n"
-                f"\nPossible causes:\n"
-                f"1. The password in the environment variable doesn't match the server's expected password\n"
-                f"2. The server may be using a different password than what's configured\n"
-                f"3. The password may have been changed on the server but not updated in the env var\n"
                 f"\nTo fix: Verify the correct password on the server and update PLATFORM_ADMIN_PASSWORD"
             )
             pytest.fail(error_msg)
 
-        # Verify successful login by checking URL
+        # Verify successful login by checking URL (allow change-password page as a valid post-login destination)
         try:
             expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=5000)
         except PlaywrightTimeoutError:

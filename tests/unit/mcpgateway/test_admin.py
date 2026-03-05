@@ -7286,7 +7286,7 @@ async def test_admin_create_user_exception(monkeypatch, mock_db, allow_permissio
 async def test_admin_get_user_edit_success(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False, is_email_verified=lambda: False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
@@ -7401,7 +7401,7 @@ async def test_admin_get_user_edit_hides_admin_checkbox_when_editing_self(monkey
     """Test that Administrator checkbox is hidden when user edits themselves."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="admin@example.com", full_name="Admin User", is_admin=True))
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="admin@example.com", full_name="Admin User", is_admin=True, is_email_verified=lambda: True))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # User editing themselves (same email)
@@ -7418,7 +7418,7 @@ async def test_admin_get_user_edit_shows_admin_checkbox_when_editing_other(monke
     """Test that Administrator checkbox is shown when editing another user."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="other@example.com", full_name="Other User", is_admin=False))
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="other@example.com", full_name="Other User", is_admin=False, is_email_verified=lambda: False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # Admin editing another user (different email)
@@ -11202,7 +11202,7 @@ async def test_admin_get_user_edit_with_password_requirements(monkeypatch, mock_
     monkeypatch.setattr(settings, "password_min_length", 10)
 
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False, is_email_verified=lambda: False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
@@ -11215,7 +11215,7 @@ async def test_admin_get_user_edit_has_error_display(monkeypatch, mock_request, 
     """Test that the edit user form has complete error display plumbing (container + HTMX targeting)."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False, is_email_verified=lambda: False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})

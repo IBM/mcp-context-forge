@@ -260,6 +260,13 @@ services:
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - SMTP_USE_SSL=${SMTP_USE_SSL:-false}
       - SMTP_TIMEOUT_SECONDS=${SMTP_TIMEOUT_SECONDS:-15}
+      # ── Team Governance (all default to true) ──
+      # - AUTO_CREATE_PERSONAL_TEAMS=true
+      # - ALLOW_TEAM_CREATION=true
+      # - ALLOW_TEAM_JOIN_REQUESTS=true
+      # - ALLOW_TEAM_INVITATIONS=true
+      # - MAX_TEAMS_PER_USER=50
+      # - MAX_MEMBERS_PER_TEAM=100
       # ═══════════════════════════════════════════════════════════════════════════
       # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
       # ═══════════════════════════════════════════════════════════════════════════
