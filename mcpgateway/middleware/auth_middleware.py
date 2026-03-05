@@ -20,10 +20,11 @@ import logging
 from typing import Callable
 
 # Third-Party
+from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 # First-Party
 from mcpgateway.auth import get_current_user
@@ -144,8 +145,45 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     except Exception as close_error:
                         logger.debug(f"Failed to close database session: {close_error}")
 
+        except HTTPException as e:
+            if e.status_code in (401, 403):
+                # Security-critical rejections (revoked tokens, disabled accounts) must NOT
+                # be swallowed — propagate as a hard deny so revoked/expired tokens cannot
+                # fall through to public-access endpoints.
+                logger.info(f"✗ Auth rejected ({e.status_code}): {e.detail}")
+
+                if log_failure:
+                    db = SessionLocal()
+                    try:
+                        security_logger.log_authentication_attempt(
+                            user_id="unknown",
+                            user_email=None,
+                            auth_method="bearer_token",
+                            success=False,
+                            client_ip=request.client.host if request.client else "unknown",
+                            user_agent=request.headers.get("user-agent"),
+                            failure_reason=str(e.detail),
+                            db=db,
+                        )
+                        db.commit()
+                    except Exception as log_error:
+                        logger.debug(f"Failed to log auth failure: {log_error}")
+                    finally:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.debug(f"Failed to close database session: {close_error}")
+
+                return JSONResponse(
+                    status_code=e.status_code,
+                    content={"detail": e.detail},
+                    headers=e.headers or {},
+                )
+
+            # Non-security HTTP errors (e.g. 500 from a downstream service) — continue as anonymous
+            logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
         except Exception as e:
-            # Silently fail - let route handlers enforce auth if needed
+            # Non-HTTP errors (network, decode, etc.) — continue as anonymous
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
 
             # Log failed authentication attempt (based on logging level)
