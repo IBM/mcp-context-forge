@@ -6311,12 +6311,12 @@ async function editGateway(gatewayId) {
                         authUsernameField.value = gateway.authUsername || "";
                     }
                     if (authPasswordField) {
+                        authPasswordField.dataset.isMasked = "true";
+                        authPasswordField.dataset.gatewayId = gatewayId;
                         if (gateway.authPasswordUnmasked) {
-                            authPasswordField.dataset.isMasked = "true";
                             authPasswordField.dataset.realValue =
                                 gateway.authPasswordUnmasked;
                         } else {
-                            delete authPasswordField.dataset.isMasked;
                             delete authPasswordField.dataset.realValue;
                         }
                         authPasswordField.value = MASKED_AUTH_VALUE;
@@ -6327,16 +6327,15 @@ async function editGateway(gatewayId) {
                 if (authBearerSection) {
                     authBearerSection.style.display = "block";
                     if (authTokenField) {
+                        authTokenField.dataset.isMasked = "true";
+                        authTokenField.dataset.gatewayId = gatewayId;
                         if (gateway.authTokenUnmasked) {
-                            authTokenField.dataset.isMasked = "true";
                             authTokenField.dataset.realValue =
                                 gateway.authTokenUnmasked;
-                            authTokenField.value = MASKED_AUTH_VALUE;
                         } else {
-                            delete authTokenField.dataset.isMasked;
                             delete authTokenField.dataset.realValue;
-                            authTokenField.value = gateway.authToken || "";
                         }
+                        authTokenField.value = MASKED_AUTH_VALUE;
                     }
                 }
                 break;
@@ -6359,13 +6358,16 @@ async function editGateway(gatewayId) {
                         authHeaderKeyField.value = gateway.authHeaderKey || "";
                     }
                     if (authHeaderValueField) {
+                        authHeaderValueField.dataset.isMasked = "true";
+                        authHeaderValueField.dataset.gatewayId = gatewayId;
                         if (
                             Array.isArray(gateway.authHeaders) &&
                             gateway.authHeaders.length === 1
                         ) {
-                            authHeaderValueField.dataset.isMasked = "true";
                             authHeaderValueField.dataset.realValue =
-                                gateway.authHeaders[0].value ?? "";
+                                unmaskedHeaders[0].value ?? "";
+                        } else {
+                            delete authHeaderValueField.dataset.realValue;
                         }
                         authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
@@ -20238,11 +20240,37 @@ window.updateAvailableTags = updateAvailableTags;
  * @param {HTMLElement|string} inputOrId - Target input element or its ID
  * @param {HTMLElement} button - Button triggering the toggle
  *
- * SECURITY NOTE: Stored secrets cannot be revealed. The "Show" button only works
- * for newly entered values, not for existing credentials stored in the database.
- * This is intentional - stored secrets are write-only for security.
+ * SECURITY NOTE: Stored secrets are retrieved on demand via the credential reveal
+ * endpoint. The "Show" button calls POST /admin/gateways/{id}/reveal for stored
+ * credentials, which is audit-logged on every use.
  */
-function toggleInputMask(inputOrId, button) {
+
+/**
+ * Populate data-real-value on credential input fields from a reveal response.
+ * @param {Object} creds - Response from POST /admin/gateways/{id}/reveal
+ */
+function _populateRevealedCredentials(creds) {
+    const tokenField = document.querySelector(
+        "#auth-bearer-fields-gw-edit input[name='auth_token']",
+    );
+    if (tokenField && creds.authToken) {
+        tokenField.dataset.realValue = creds.authToken;
+    }
+    const passwordField = document.querySelector(
+        "#auth-basic-fields-gw-edit input[name='auth_password']",
+    );
+    if (passwordField && creds.authPassword) {
+        passwordField.dataset.realValue = creds.authPassword;
+    }
+    const headerValueField = document.querySelector(
+        "#auth-headers-fields-gw-edit input[name='auth_header_value']",
+    );
+    if (headerValueField && creds.authHeaderValue) {
+        headerValueField.dataset.realValue = creds.authHeaderValue;
+    }
+}
+
+async function toggleInputMask(inputOrId, button) {
     const input =
         typeof inputOrId === "string"
             ? document.getElementById(inputOrId)
@@ -20253,17 +20281,54 @@ function toggleInputMask(inputOrId, button) {
     }
 
     // SECURITY: Check if this is a stored secret (isMasked=true but no realValue)
-    // Stored secrets cannot be revealed - they are write-only
     const hasStoredSecret = input.dataset.isMasked === "true";
     const hasRevealableValue =
         input.dataset.realValue && input.dataset.realValue.trim() !== "";
 
     if (hasStoredSecret && !hasRevealableValue) {
-        // Stored secret with no revealable value - show tooltip/message
-        button.title =
-            "Stored secrets cannot be revealed. Enter a new value to replace.";
-        button.classList.add("cursor-not-allowed", "opacity-50");
-        return;
+        const gatewayId = input.dataset.gatewayId;
+        if (gatewayId) {
+            // Fetch plaintext credentials via the reveal endpoint (audit-logged server-side)
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = "Loading…";
+            try {
+                const response = await fetchWithTimeout(
+                    `${window.ROOT_PATH}/admin/gateways/${gatewayId}/reveal`,
+                    { method: "POST" },
+                );
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const creds = await response.json();
+                _populateRevealedCredentials(creds);
+            } catch (err) {
+                button.title = `Could not reveal credentials: ${err.message}`;
+                button.classList.add("cursor-not-allowed", "opacity-50");
+                button.disabled = false;
+                button.textContent = originalText;
+                return;
+            }
+            button.disabled = false;
+            button.textContent = originalText;
+            // Re-check — realValue should now be populated
+            if (!input.dataset.realValue || input.dataset.realValue.trim() === "") {
+                button.title = "No credentials stored for this field.";
+                button.classList.add("cursor-not-allowed", "opacity-50");
+                return;
+            }
+            // Reveal immediately without requiring a second click
+            input.type = "text";
+            input.value = input.dataset.realValue;
+            button.textContent = "Hide";
+            button.setAttribute("aria-pressed", "true");
+            return;
+        } else {
+            button.title =
+                "Stored secrets cannot be revealed. Enter a new value to replace.";
+            button.classList.add("cursor-not-allowed", "opacity-50");
+            return;
+        }
     }
 
     const revealing = input.type === "password";
