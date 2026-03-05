@@ -188,8 +188,11 @@ class TokenUsageMiddleware:
                 # Without this check, an attacker can craft a JWT with fake
                 # jti/sub and auth_provider=api_token to pollute usage logs.
                 try:
-                    from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
+                    # Third-Party
                     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
 
                     with fresh_db_session() as verify_db:
                         exists = verify_db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti)).scalar_one_or_none()
