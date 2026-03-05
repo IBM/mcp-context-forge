@@ -495,3 +495,79 @@ class TestAcceptTimeEmailVerification:
             mock_settings.max_teams_per_user = 50
             with pytest.raises(ValueError, match="not been verified"):
                 await service.accept_invitation(token="test-token", accepting_user_email="user@example.com")
+
+
+class TestAdminTeamCreationFlagDisabled:
+    """Test allow_team_creation=False in admin UI (covers admin.py:5148)."""
+
+    @pytest.mark.asyncio
+    async def test_admin_ui_team_creation_disabled_non_admin(self):
+        """Non-admin user in admin UI gets 403 when team creation is disabled."""
+        # First-Party
+        from mcpgateway.admin import admin_create_team
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.allow_team_creation = False
+
+            mock_request = MagicMock()
+            mock_db = MagicMock(spec=Session)
+            mock_user = {"email": "user@example.com", "is_admin": False}
+
+            result = await admin_create_team(request=mock_request, db=mock_db, user=mock_user)
+            assert result.status_code == 403
+            assert "disabled" in result.body.decode().lower()
+
+
+class TestAdminCreatedUserEmailVerified:
+    """Test that admin-created users get email_verified_at set (covers email_auth.py:702-703)."""
+
+    @pytest.mark.asyncio
+    async def test_admin_created_user_gets_email_verified(self):
+        """Admin-created user should have email_verified_at set automatically."""
+        # First-Party
+        from mcpgateway.routers import email_auth
+        from mcpgateway.schemas import AdminCreateUserRequest
+
+        user_request = AdminCreateUserRequest(email="newuser@example.com", password="P@ssw0rd123", full_name="New User", is_admin=False)
+        mock_db = MagicMock(spec=Session)
+
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "newuser@example.com"
+        mock_user.full_name = "New User"
+        mock_user.is_admin = False
+        mock_user.is_active = True
+        mock_user.auth_provider = "local"
+        mock_user.created_at = datetime.now(timezone.utc)
+        mock_user.last_login = None
+        mock_user.password_change_required = False
+        mock_user.is_email_verified = MagicMock(return_value=False)
+        mock_user.email_verified_at = None  # Not yet verified
+
+        with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+            mock_settings.password_change_enforcement_enabled = False
+
+            with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+                MockAuthService.return_value.create_user = AsyncMock(return_value=mock_user)
+                await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+
+        # Verify email_verified_at was set
+        assert mock_user.email_verified_at is not None
+        mock_db.commit.assert_called()
+
+
+class TestInvitationServiceGetUserTeamCount:
+    """Test _get_user_team_count on TeamInvitationService (covers team_invitation_service.py:89)."""
+
+    def test_get_user_team_count_returns_count(self):
+        """_get_user_team_count queries the database and returns an integer count."""
+        # First-Party
+        from mcpgateway.services.team_invitation_service import TeamInvitationService
+
+        db = MagicMock(spec=Session)
+        db.query.return_value.filter.return_value.count.return_value = 3
+        service = TeamInvitationService(db)
+
+        result = service._get_user_team_count("user@example.com")
+        assert result == 3
+        db.query.assert_called_once()
