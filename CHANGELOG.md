@@ -216,7 +216,7 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **Shared admin auth dependency consistency** - `require_admin_auth` now applies the same token/account validity checks before admin authorization.
 
 #### **👥 RBAC / Teams**
-* **`PERSONAL_TEAM_PREFIX` now respected** — the `before_insert` listener on `EmailTeam` unconditionally overwrote the slug with `slugify(name)`, discarding the prefix-based slug set by `create_personal_team()`. The listener now guards with `if not target.slug` so explicitly-set slugs survive insertion. Default prefix changed from `"personal"` to `""` (empty) for zero behavior change on existing deployments; setting `PERSONAL_TEAM_PREFIX=personal` (or any value) now produces collision-safe email-derived slugs (e.g. `personal-alice-example-com`) as originally intended ([#3494](https://github.com/IBM/mcp-context-forge/issues/3494))
+* **`PERSONAL_TEAM_PREFIX` now respected** — the `before_insert` listener on `EmailTeam` unconditionally overwrote the slug with `slugify(name)`, discarding the prefix-based slug set by `create_personal_team()`. The listener now guards with `if not target.slug` so explicitly-set slugs survive insertion. Default prefix changed from `"personal"` to `""` (empty) for zero behavior change on existing deployments; setting `PERSONAL_TEAM_PREFIX=personal` (or any value) now produces email-derived slugs (e.g. `personal-alice-example-com`) as originally intended ([#3494](https://github.com/IBM/mcp-context-forge/issues/3494))
 
 ### Hardening
 

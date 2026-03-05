@@ -431,6 +431,34 @@ class TestPersonalTeamService:
             assert call_args["slug"] == "workspace-testuser-example-com"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "raw_prefix,expected_slug",
+        [
+            ("   ", "test-users-team"),  # whitespace-only falls back to display name
+            ("!!!", "test-users-team"),  # punctuation-only slugifies to empty, falls back
+            ("Team Ops!", "team-ops-testuser-example-com"),  # normalized to valid slug prefix
+        ],
+    )
+    async def test_create_personal_team_prefix_normalization(self, service, mock_db, mock_user, raw_prefix, expected_slug):
+        """Test that prefix is normalized via slugify before use."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        with (
+            patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.personal_team_service.EmailTeamMember"),
+            patch("mcpgateway.config.settings") as mock_settings,
+        ):
+            mock_settings.personal_team_prefix = raw_prefix
+            mock_team = MagicMock()
+            mock_team.id = "norm-team-id"
+            MockTeam.return_value = mock_team
+
+            await service.create_personal_team(mock_user)
+
+            call_args = MockTeam.call_args[1]
+            assert call_args["slug"] == expected_slug
+
+    @pytest.mark.asyncio
     async def test_create_personal_team_rollback_on_flush_error(self, service, mock_db, mock_user):
         """Test that rollback is called if flush fails."""
         mock_db.query.return_value.filter.return_value.first.return_value = None
