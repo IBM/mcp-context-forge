@@ -46,7 +46,7 @@ class TestSanitizeForLog:
         # Simulates URL-decoded %0A in error_description
         malicious_input = "bad scope\nCRITICAL:root:SECURITY BREACH detected"
         sanitized = sanitize_for_log(malicious_input)
-        
+
         # Should be a single line with no newline
         assert "\n" not in sanitized
         assert sanitized == "bad scope CRITICAL:root:SECURITY BREACH detected"
@@ -55,7 +55,7 @@ class TestSanitizeForLog:
         """Multiple different control characters should all be replaced."""
         text = "text\nwith\rmany\tcontrol\vchars\fhere"
         sanitized = sanitize_for_log(text)
-        
+
         # Verify no control characters remain
         assert "\n" not in sanitized
         assert "\r" not in sanitized
@@ -132,10 +132,10 @@ class TestSanitizeForLog:
         # Simulates malicious OAuth callback
         error = "invalid_scope"
         error_description = "Requested scope not available\nCRITICAL:security:BREACH"
-        
+
         sanitized_error = sanitize_for_log(error)
         sanitized_desc = sanitize_for_log(error_description)
-        
+
         assert sanitized_error == "invalid_scope"
         assert "\n" not in sanitized_desc
         assert "CRITICAL:security:BREACH" in sanitized_desc
@@ -144,7 +144,7 @@ class TestSanitizeForLog:
         """Test with path traversal attempt in logs."""
         malicious_path = "../../etc/passwd\nINFO:fake:log"
         sanitized = sanitize_for_log(malicious_path)
-        
+
         assert "\n" not in sanitized
         assert sanitized == "../../etc/passwd INFO:fake:log"
 
@@ -169,7 +169,7 @@ class TestSanitizeDictForLog:
             "code": "123\t456",
         }
         result = sanitize_dict_for_log(input_dict)
-        
+
         assert result["error"] == "invalid_scope"
         assert result["description"] == "bad scope"
         assert result["code"] == "123 456"
@@ -183,7 +183,7 @@ class TestSanitizeDictForLog:
             "bool": True,
         }
         result = sanitize_dict_for_log(input_dict)
-        
+
         assert result["string"] == "text here"
         assert result["number"] == "42"
         assert result["none"] == "None"
@@ -193,7 +193,7 @@ class TestSanitizeDictForLog:
         """Custom replacement should be applied to all values."""
         input_dict = {"a": "x\ny", "b": "p\nq"}
         result = sanitize_dict_for_log(input_dict, replacement="-")
-        
+
         assert result["a"] == "x-y"
         assert result["b"] == "p-q"
 
@@ -205,7 +205,7 @@ class TestSanitizeDictForLog:
             "error_description": "User denied\nCRITICAL:fake:log",
         }
         result = sanitize_dict_for_log(params)
-        
+
         assert result["state"] == "abc123"
         assert result["error"] == "access_denied"
         assert "\n" not in result["error_description"]
@@ -286,7 +286,7 @@ class TestSecurityScenarios:
         # Attacker tries to inject HTTP headers via CRLF
         malicious = "value\r\nSet-Cookie: session=hijacked"
         sanitized = sanitize_for_log(malicious)
-        
+
         assert "\r" not in sanitized
         assert "\n" not in sanitized
 
@@ -295,7 +295,7 @@ class TestSecurityScenarios:
         # Attacker tries to forge admin action log
         malicious = "user_input\nINFO:admin:User admin deleted all data"
         sanitized = sanitize_for_log(malicious)
-        
+
         assert "\n" not in sanitized
         # The malicious content is still there but can't create a new log line
         assert "INFO:admin:User admin deleted all data" in sanitized
@@ -305,7 +305,7 @@ class TestSecurityScenarios:
         # Attacker tries to hide malicious activity by injecting benign log lines
         malicious = "failed_login\nINFO:auth:Successful login for admin"
         sanitized = sanitize_for_log(malicious)
-        
+
         assert "\n" not in sanitized
         # Both parts are in one line, can't fool SIEM
         assert "failed_login" in sanitized
@@ -315,7 +315,7 @@ class TestSecurityScenarios:
         """Test multiple injection attempts in single input."""
         malicious = "input\nFAKE1\rFAKE2\n\rFAKE3"
         sanitized = sanitize_for_log(malicious)
-        
+
         # All control chars removed
         assert "\n" not in sanitized
         assert "\r" not in sanitized
@@ -329,7 +329,7 @@ class TestSecurityScenarios:
         # Simulates what happens after URL decoding %0A
         url_decoded = "error=foo&desc=bar\nCRITICAL:root:BREACH"
         sanitized = sanitize_for_log(url_decoded)
-        
+
         assert "\n" not in sanitized
 
     def test_unicode_newline_variants(self):
@@ -339,7 +339,7 @@ class TestSecurityScenarios:
         # This is acceptable as Python's logging module doesn't treat them as newlines
         text_with_unicode_newlines = "line1\u2028line2\u2029line3"
         sanitized = sanitize_for_log(text_with_unicode_newlines)
-        
+
         # These Unicode chars are preserved (they're not in our control char range)
         # This is correct behavior - they won't create new log lines in Python logging
         assert "\u2028" in sanitized
