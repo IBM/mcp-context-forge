@@ -6701,6 +6701,7 @@ class UserRoleResponse(BaseModel):
     granted_at: datetime = Field(..., description="When role was granted")
     expires_at: Optional[datetime] = Field(None, description="Optional expiration")
     is_active: bool = Field(..., description="Whether assignment is active")
+    grant_source: Optional[str] = Field(None, description="Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')")
 
 
 class PermissionCheckRequest(BaseModel):
