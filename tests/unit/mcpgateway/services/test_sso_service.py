@@ -340,8 +340,10 @@ class TestAuthFlow:
         assert sso_service._is_email_verified_claim({"email_verified": "no"}) is False
         assert sso_service._is_email_verified_claim({"email_verified": object()}) is False
 
-    def test_is_email_verified_claim_missing_claim_defaults_to_false(self, sso_service):
-        assert sso_service._is_email_verified_claim({"email": "user@example.com"}) is False
+    def test_is_email_verified_claim_missing_claim_is_pass_through(self, sso_service):
+        # Absent claim (e.g. Entra ID, GitHub work accounts) must NOT block login.
+        assert sso_service._is_email_verified_claim({"email": "user@example.com"}) is True
+        assert sso_service._is_email_verified_claim({}) is True
 
 
 # ---------------------------------------------------------------------------
@@ -2324,8 +2326,15 @@ class TestAuthenticateOrCreateUser:
         assert result == "new-jwt"
 
     @pytest.mark.asyncio
-    async def test_new_github_user_without_email_verified_claim_is_rejected(self, sso_service, mock_db):
-        """GitHub payloads without email_verified are rejected by secure default."""
+    async def test_new_github_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """GitHub payloads without email_verified must NOT be rejected.
+
+        GitHub's /user API does not include email_verified for most accounts.
+        The service normalises the payload without the key so that
+        _is_email_verified_claim treats the absence as a pass-through.
+        Regression guard for https://github.com/IBM/mcp-context-forge/issues/3253
+        (same root cause as Entra ID).
+        """
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         new_user = SimpleNamespace(
             email="new@test.com",
@@ -2356,7 +2365,51 @@ class TestAuthenticateOrCreateUser:
             mock_jwt.return_value = "new-jwt"
             result = await sso_service.authenticate_or_create_user(normalized_user_info)
 
-        assert result is None
+        assert result == "new-jwt"
+
+    @pytest.mark.asyncio
+    async def test_new_entra_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """First-time Entra ID login must succeed even though email_verified is absent.
+
+        Regression test for https://github.com/IBM/mcp-context-forge/issues/3253:
+        Microsoft Entra ID work/school accounts do not include email_verified in
+        the userinfo response.  Absence of the claim should be treated as a
+        pass-through, not a rejection.
+        """
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        new_user = SimpleNamespace(
+            email="user@company.com",
+            full_name="Entra User",
+            auth_provider="entra",
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
+        sso_service.get_provider = lambda _id: _make_provider(id="entra")
+        normalized_user_info = sso_service._normalize_user_info(
+            _make_provider(id="entra"),
+            {
+                "email": "user@company.com",
+                "name": "Entra User",
+                "preferred_username": "user@company.com",
+                "sub": "entra-sub-123",
+                # No email_verified — typical Microsoft Entra ID response
+            },
+        )
+        # Confirm normalization did not inject the key
+        assert "email_verified" not in normalized_user_info
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "entra-jwt"
+            result = await sso_service.authenticate_or_create_user(normalized_user_info)
+
+        assert result == "entra-jwt"
 
     @pytest.mark.asyncio
     async def test_new_user_with_role_assignments_triggers_sync(self, sso_service, mock_db):
