@@ -7,6 +7,7 @@ How-to guides are task-oriented walkthroughs that help you accomplish specific o
 ## Available Guides
 
 - [Configure RBAC for Tool Authorization](rbac-tool-authorization.md) -- Configure RBAC roles and token scoping to control who can list and execute tools on a virtual server.
+- [Deploy ContextForge on IBM Cloud with Code Engine](ibm-cloud-code-engine.md) -- Provision Code Engine, Databases for PostgreSQL, and Databases for Redis for a production-ready deployment. **DRAFT**
 
 ---
 
