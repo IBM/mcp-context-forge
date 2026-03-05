@@ -31,7 +31,7 @@ from sqlalchemy.exc import IntegrityError
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from mcpgateway.schemas import PromptArgument, PromptCreate, PromptRead, PromptUpdate
+from mcpgateway.schemas import PromptArgument, PromptCreate, PromptRead, PromptUpdate, PromptMetrics
 
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -49,8 +49,7 @@ from mcpgateway.services.prompt_service import (
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, \
-         patch("mcpgateway.services.prompt_service.structured_logger") as mock_logger:
+    with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, patch("mcpgateway.services.prompt_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -73,7 +72,10 @@ def mock_prompt():
 
     return prompt
 
+
 _R = TypeVar("_R")
+
+
 def _make_execute_result(*, scalar: Any = _R | None, scalars_list: list[_R] | None = None) -> MagicMock:
     """
     Return a MagicMock that mimics the SQLAlchemy Result object:
@@ -800,7 +802,6 @@ class TestPromptService:
     #   delete_prompt
     # ──────────────────────────────────────────────────────────────────
 
-
     @pytest.mark.asyncio
     async def test_delete_prompt_success(self, prompt_service, test_db):
         p = _build_db_prompt()
@@ -828,7 +829,6 @@ class TestPromptService:
         assert test_db.execute.call_count == 2
         test_db.delete.assert_called_once_with(p)
         test_db.commit.assert_called_once()
-
 
     @pytest.mark.asyncio
     async def test_delete_prompt_not_found(self, prompt_service, test_db):
@@ -878,7 +878,6 @@ class TestPromptService:
 
         # Verify that EventService.publish_event was called with the event
         prompt_service._event_service.publish_event.assert_called_once_with(event)
-
 
     # ──────────────────────────────────────────────────────────────────
     #   Validation & Exception Handling
@@ -938,6 +937,7 @@ class TestPromptService:
     async def test_aggregate_and_reset_metrics(self, prompt_service, test_db):
         # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
+        # from mcpgateway.schemas import PromptMetrics
 
         mock_result = AggregatedMetrics(
             total_executions=10,
@@ -954,10 +954,11 @@ class TestPromptService:
 
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             metrics = await prompt_service.aggregate_metrics(test_db)
-            assert metrics["total_executions"] == 10
-            assert metrics["successful_executions"] == 8
-            assert metrics["failed_executions"] == 2
-            assert metrics["failure_rate"] == 0.2
+            assert isinstance(metrics, PromptMetrics)
+            assert metrics.total_executions == 10
+            assert metrics.successful_executions == 8
+            assert metrics.failed_executions == 2
+            assert metrics.failure_rate == 0.2
 
         # reset_metrics
         test_db.execute = Mock()
@@ -968,14 +969,19 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cache_hit_returns_cached(self, prompt_service, test_db):
-        cached = {"total_executions": 123}
+        cached = PromptMetrics(
+            total_executions=123,
+            successful_executions=100,
+            failed_executions=23,
+            failure_rate=0.23,
+        )
         with (
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
-            patch("mcpgateway.cache.metrics_cache.metrics_cache.get", return_value=cached),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache.get", return_value={"total_executions": 123, "successful_executions": 100, "failed_executions": 23, "failure_rate": 0.23}),
             patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined") as mock_agg,
         ):
             result = await prompt_service.aggregate_metrics(test_db)
-        assert result is cached
+        assert isinstance(result, PromptMetrics)
         mock_agg.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1002,7 +1008,7 @@ class TestPromptService:
             patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result),
         ):
             result = await prompt_service.aggregate_metrics(test_db)
-        assert result["total_executions"] == 1
+        assert result.total_executions == 1
         mock_get.assert_not_called()
         mock_set.assert_not_called()
 
@@ -1203,6 +1209,7 @@ class TestPromptAccessAuthorization:
         # Non-member
         assert await prompt_service._check_prompt_access(mock_db, team_prompt, user_email="outsider@test.com", token_teams=["other-team"]) is False
 
+
 # --------------------------------------------------------------------------- #
 # Prompt Namespacing tests                                                    #
 # --------------------------------------------------------------------------- #
@@ -1222,10 +1229,10 @@ class TestPromptGatewayNamespacing:
 
         # Setup prompt create data
         pc = PromptCreate(
-            name="hello",
-            description="greet a user",
-            template="Hello {{ name }}!",
-            arguments=[],
+            name="hello", 
+            description="greet a user", 
+            template="Hello {{ name }}!", 
+            arguments=[], 
             gateway_id="gateway-2"
         )
 
@@ -1284,12 +1291,12 @@ class TestPromptGatewayNamespacing:
         test_db.execute = Mock(side_effect=mock_execute)
 
         pc = PromptCreate(
-            name="hello",
-            description="",
-            template="X",
-            arguments=[],
+            name="hello", 
+            description="", 
+            template="X", 
+            arguments=[], 
             gateway_id="gateway-1"
-        )
+            )
 
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
@@ -1317,12 +1324,12 @@ class TestPromptGatewayNamespacing:
         test_db.execute = Mock(side_effect=mock_execute)
 
         pc = PromptCreate(
-            name="hello",
-            description="",
-            template="X",
-            arguments=[],
+            name="hello", 
+            description="", 
+            template="X", 
+            arguments=[], 
             gateway_id=None
-        )
+            )
 
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
@@ -2002,6 +2009,7 @@ class TestRecordPromptMetric:
         db = MagicMock()
         prompt = _build_db_prompt(pid="prompt-1")
         import time
+
         start = time.monotonic() - 0.5
         await prompt_service._record_prompt_metric(db, prompt, start, True, None)
         db.add.assert_called_once()
@@ -2016,6 +2024,7 @@ class TestRecordPromptMetric:
         db = MagicMock()
         prompt = _build_db_prompt(pid="prompt-2")
         import time
+
         start = time.monotonic()
         await prompt_service._record_prompt_metric(db, prompt, start, False, "error msg")
         metric = db.add.call_args[0][0]

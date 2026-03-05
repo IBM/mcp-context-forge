@@ -37,7 +37,12 @@ from mcpgateway.schemas import (
     ResourceRead,
     ServerRead,
     ToolRead,
+    ToolMetrics,
+    ResourceMetrics,
+    ServerMetrics,
+    PromptMetrics
 )
+# from mcpgateway.schemas import ToolMetrics, PromptMetrics, ServerMetrics, ResourceMetrics
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -2683,10 +2688,11 @@ class TestMetricsEndpoints:
     @patch("mcpgateway.main.tool_service.aggregate_metrics")
     def test_get_metrics(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
-        mock_tool.return_value = {"total": 5}
-        mock_resource.return_value = {"total": 3}
-        mock_server.return_value = {"total": 2}
-        mock_prompt.return_value = {"total": 1}
+        
+        mock_tool.return_value = ToolMetrics(total_executions=5, successful_executions=5, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
@@ -2701,16 +2707,16 @@ class TestMetricsEndpoints:
     @patch("mcpgateway.main.tool_service.aggregate_metrics")
     def test_get_metrics_returns_service_dicts(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Metrics endpoint should return service metric dicts faithfully."""
-        mock_tool.return_value = {"total": 4}
-        mock_resource.return_value = {"total": 3}
-        mock_server.return_value = {"total": 2}
-        mock_prompt.return_value = {"total": 1}
+        mock_tool.return_value = ToolMetrics(total_executions=4, successful_executions=4, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["tools"] == {"total": 4}
-        assert data["prompts"] == {"total": 1}
+        assert data["tools"]["totalExecutions"] == 4
+        assert data["prompts"]["totalExecutions"] == 1
 
     #    @patch("mcpgateway.main.a2a_service")
     #    @patch("mcpgateway.main.prompt_service.reset_metrics")

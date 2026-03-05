@@ -248,6 +248,20 @@ class A2AAgentMetrics(BaseModelWithConfigDict):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent interaction")
 
 
+class MetricsResponse(BaseModelWithConfigDict):
+    """
+    Response model for the aggregated metrics endpoint.
+
+    Contains metrics for all entity types with consistent camelCase field names.
+    """
+
+    tools: ToolMetrics
+    resources: ResourceMetrics
+    servers: ServerMetrics
+    prompts: PromptMetrics
+    a2a_agents: Optional[Dict[str, Any]] = None
+
+
 # --- JSON Path API modifier Schema
 
 
@@ -2835,7 +2849,7 @@ class GatewayCreate(BaseModel):
 
             if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 
@@ -4589,7 +4603,7 @@ class A2AAgentCreate(BaseModel):
 
             if hostname_lower not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 
