@@ -1,4 +1,8 @@
-# ⚙️ IBM Code Engine
+!!! warning "DRAFT"
+
+    This guide is a draft and may contain inaccuracies. Verify all commands and configurations against current IBM Cloud documentation before use in production.
+
+# Deploy ContextForge on IBM Cloud with Code Engine
 
 This guide covers two supported deployment paths for the **ContextForge**:
 
@@ -115,6 +119,16 @@ IBMCLOUD_REGISTRY_SECRET=my-regcred
 
 > **Tip:** run `make ibmcloud-check-env` to verify every required `IBMCLOUD_*` key is present in `.env.ce`.
 
+### Verify environment files
+
+```bash
+# Confirm both env files exist and contain required keys
+test -f .env && echo "OK: .env exists" || echo "MISSING: .env"
+test -f .env.ce && echo "OK: .env.ce exists" || echo "MISSING: .env.ce"
+grep -q DATABASE_URL .env && echo "OK: DATABASE_URL set" || echo "WARNING: DATABASE_URL not set in .env"
+grep -q JWT_SECRET_KEY .env && echo "OK: JWT_SECRET_KEY set" || echo "WARNING: JWT_SECRET_KEY not set in .env"
+```
+
 ---
 
 ## 3 - Workflow A - Makefile targets
@@ -180,7 +194,17 @@ ibmcloud cr login
 ibmcloud cr namespaces       # Ensure your namespace exists
 podman push "$IBMCLOUD_IMAGE_NAME"
 ibmcloud cr images # list images
+```
 
+### Verify image in registry
+
+```bash
+# Confirm the image is present in ICR
+ibmcloud cr images --restrict "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f2)"
+# Expected: your image listed with "No Issues" vulnerability status
+```
+
+```bash
 # 6 - Create registry secret (first time)
 ibmcloud ce registry create-secret --name "$IBMCLOUD_REGISTRY_SECRET" \
     --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
@@ -201,7 +225,22 @@ else
       --port 4444 \
       --registry-secret "$IBMCLOUD_REGISTRY_SECRET"
 fi
+```
 
+### Verify application is running
+
+```bash
+# Check application status
+ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" | grep -E "Status|URL|Ready"
+# Expected: Status showing "Ready", URL showing the public endpoint
+
+# Quick health check
+APP_URL=$(ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url)
+curl -s "${APP_URL}/health" | jq .
+# Expected: {"status": "ok"} or similar health response
+```
+
+```bash
 # 8 - Status & logs
 ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP"
 ibmcloud ce application events --name "$IBMCLOUD_CODE_ENGINE_APP"
@@ -292,6 +331,20 @@ ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
     --env-from-secret mcpgw-db-url
 ```
 
+### Verify PostgreSQL connectivity
+
+```bash
+# Confirm the secret is mounted
+ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" | grep mcpgw-db-url
+# Expected: secret listed in environment references
+
+# Test the application can reach the database (wait ~30s for restart)
+APP_URL=$(ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url)
+curl -s "${APP_URL}/health" | jq .
+# Expected: health check passes — if it fails, check application logs:
+# ibmcloud ce application logs --name "$IBMCLOUD_CODE_ENGINE_APP" --tail 50
+```
+
 ### Choosing the right PostgreSQL size
 
 | Workload profile | Suggested plan | Members × RAM | Notes                                                 |
@@ -370,6 +423,19 @@ ibmcloud ce secret create --name mcpgw-redis-url \
 ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
     --env-from-secret mcpgw-redis-url \
     --env CACHE_TYPE=redis
+```
+
+### Verify Redis connectivity
+
+```bash
+# Confirm both secrets are mounted
+ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" | grep -E "mcpgw-(db|redis)"
+# Expected: both mcpgw-db-url and mcpgw-redis-url listed
+
+# Verify the application restarts and is healthy
+APP_URL=$(ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url)
+curl -s "${APP_URL}/health" | jq .
+# Expected: health check passes with Redis cache active
 ```
 
 ### Choosing the right Redis size
