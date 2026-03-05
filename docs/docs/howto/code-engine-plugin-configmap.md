@@ -164,7 +164,7 @@ ibmcloud ce application get --name mcpgateway | grep -E "Status|URL|Ready"
 
 ```bash
 APP_URL=$(ibmcloud ce application get --name mcpgateway --output url)
-curl -s "$APP_URL/health" | python3 -m json.tool
+curl -s "$APP_URL/health" | jq .
 ```
 
 Expected output includes `"status": "healthy"`.
@@ -176,7 +176,7 @@ the plugins endpoint:
 
 ```bash
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-  "$APP_URL/admin/plugins" | python3 -m json.tool
+  "$APP_URL/admin/plugins" | jq .
 ```
 
 You should see both `PIIFilterPlugin` and `UnifiedPDPPlugin` listed with

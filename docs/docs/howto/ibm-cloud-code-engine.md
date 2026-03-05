@@ -455,7 +455,7 @@ reducing latency and database load.
 
 ## 9 - Gunicorn configuration (optional tuning)
 
-The container starts `gunicorn` with the settings defined in **`gunicorn.conf.py`** found at the project root.
+The container starts `gunicorn` with the settings defined in **`gunicorn.config.py`** found at the project root.
 If you need to change worker counts, ports, or time-outs, edit this file **before** you build the image (`make podman` or `make docker`). The settings are baked into the container at build time.
 
 ```python

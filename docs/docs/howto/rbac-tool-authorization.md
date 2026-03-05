@@ -62,7 +62,7 @@ only analytics team members can discover them.
 === "API / CLI"
 
     ```bash
-    curl -X PATCH "$GATEWAY_URL/admin/tools/$TOOL_ID" \
+    curl -X PUT "$GATEWAY_URL/tools/$TOOL_ID" \
       -H "Authorization: Bearer $ADMIN_TOKEN" \
       -H "Content-Type: application/json" \
       -d '{"visibility": "team"}'
@@ -99,10 +99,10 @@ the analytics team but `viewer` on the infrastructure team.
 === "API / CLI"
 
     ```bash
-    curl -X POST "$GATEWAY_URL/admin/users/analyst@example.com/roles" \
+    curl -X POST "$GATEWAY_URL/rbac/users/analyst@example.com/roles" \
       -H "Authorization: Bearer $ADMIN_TOKEN" \
       -H "Content-Type: application/json" \
-      -d '{"role_name": "developer", "scope_type": "team", "scope_id": "<analytics-team-uuid>"}'
+      -d '{"role_id": "developer", "scope": "team", "scope_id": "<analytics-team-uuid>"}'
     ```
 
 === "Admin UI"
@@ -176,30 +176,31 @@ Expected result: the response includes the analytics team's tools such as `run-q
 
 ### Developer executes a tool
 
-The developer should be able to invoke a tool successfully:
+The developer should be able to invoke a tool successfully. Tool invocation uses
+JSON-RPC 2.0 via the `/rpc` endpoint:
 
 ```bash
-curl -X POST "$GATEWAY_URL/tools/call" \
+curl -X POST "$GATEWAY_URL/rpc" \
   -H "Authorization: Bearer $DEVELOPER_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "run-query", "arguments": {"sql": "SELECT count(*) FROM events"}}'
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run-query", "arguments": {"sql": "SELECT count(*) FROM events"}}}'
 ```
 
-Expected result: 200 OK with the tool's output.
+Expected result: a JSON-RPC response with the tool's output in the `result` field.
 
 ### Viewer attempts execution
 
 A viewer has `tools.read` but not `tools.execute`, so the same call should be rejected:
 
 ```bash
-curl -X POST "$GATEWAY_URL/tools/call" \
+curl -X POST "$GATEWAY_URL/rpc" \
   -H "Authorization: Bearer $VIEWER_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "run-query", "arguments": {"sql": "SELECT count(*) FROM events"}}'
-# Expected: 403 Forbidden
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run-query", "arguments": {"sql": "SELECT count(*) FROM events"}}}'
+# Expected: JSON-RPC error with code -32603 (403 Forbidden)
 ```
 
-Expected result: 403 Forbidden. The viewer can list tools but cannot invoke them.
+Expected result: a JSON-RPC error response. The viewer can list tools but cannot invoke them.
 
 ### User from another team
 
