@@ -2,3 +2,4 @@ nav:
   - index.md
   - rbac-tool-authorization.md
   - ibm-cloud-code-engine.md
+  - code-engine-plugin-configmap.md
