@@ -15058,7 +15058,27 @@ async function viewTool(toolId) {
           <div class="mt-1">Token: <span class="font-medium">********</span></div>
         </div>
       `;
+        } else if (
+            tool.auth?.authHeaders &&
+            Array.isArray(tool.auth.authHeaders) &&
+            tool.auth.authHeaders.length > 0
+        ) {
+            // Multi-header format
+            const headerRows = tool.auth.authHeaders
+                .map(
+                    (header) =>
+                        `<div class="mt-1"><span class="font-medium">${escapeHtml(header.key)}:</span> ********</div>`,
+                )
+                .join("");
+            authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
+          ${headerRows}
+        </div>
+      `;
         } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+            // Legacy single-header format (backward compatibility)
             authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">
