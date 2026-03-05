@@ -256,6 +256,18 @@ dev-echo:                        ## Run dev server with SQL query logging enable
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
+# help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
+PHONY: dev-remote
+dev-remote: DEBUG_IP = 127.0.0.1
+dev-remote: DEBUG_WAIT = --wait-for-client
+dev-remote:                      ## Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
+	# for remote debugging and in k8s use: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=
+	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/python -m debugpy \
+		--listen $(DEBUG_IP):5678 \
+		$(DEBUG_WAIT) \
+		$(VENV_DIR)/bin/uvicorn mcpgateway.main:app \
+		--host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
