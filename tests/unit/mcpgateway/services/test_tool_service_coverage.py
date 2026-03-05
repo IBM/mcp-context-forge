@@ -4280,6 +4280,84 @@ class TestUpdateToolBranches:
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
             with pytest.raises(ToolNameConflictError):
                 await tool_service.update_tool(db, "t1", tool_update)
+    @pytest.mark.asyncio
+    async def test_update_tool_visibility_none_uses_db_visibility_for_conflict_check(self, tool_service):
+        """When ToolUpdate.visibility is None, should use tool.visibility from DB for conflict check."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"  # This should be used when tool_update.visibility is None
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = "conflict_name"
+        tool_update.custom_name = "conflict_name"
+        tool_update.displayName = None
+        tool_update.url = None
+        tool_update.description = None
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = None  # None should fall back to tool.visibility
+        tool_update.team_id = "team-1"
+        tool_update.auth = None
+        tool_update.tags = None
+
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_visibility_none_public_conflict_check(self, tool_service):
+        """When ToolUpdate.visibility is None and tool.visibility is public, should check public conflicts."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = None
+        tool.visibility = "public"  # This should be used when tool_update.visibility is None
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = "conflict_name"
+        tool_update.custom_name = "conflict_name"
+        tool_update.displayName = None
+        tool_update.url = None
+        tool_update.description = None
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = None  # None should fall back to tool.visibility="public"
+        tool_update.team_id = None
+        tool_update.auth = None
+        tool_update.tags = None
+
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "public"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
 
     @pytest.mark.asyncio
     async def test_permission_check_on_update(self, tool_service):

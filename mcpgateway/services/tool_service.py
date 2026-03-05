@@ -4177,8 +4177,10 @@ class ToolService(BaseService):
 
             # Check for name change and ensure uniqueness
             if tool_update.name and tool_update.name != tool.name:
+                # tool visibility reference from database is used when ToolUpdate object doesn't send property "visibility"
+                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
                 # Check for existing tool with the same name and visibility
-                if tool_update.visibility.lower() == "public":
+                if tool_visibility_ref == "public":
                     # Check for existing public tool with the same name (row-locked)
                     existing_tool = get_for_update(
                         db,
@@ -4191,7 +4193,7 @@ class ToolService(BaseService):
                     )
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
-                elif tool_update.visibility.lower() == "team" and tool_update.team_id:
+                elif tool_visibility_ref == "team" and tool_update.team_id:
                     # Check for existing team tool with the same name
                     existing_tool = get_for_update(
                         db,
