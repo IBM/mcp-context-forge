@@ -866,14 +866,25 @@ class SSOService:
     def _is_email_verified_claim(user_info: Dict[str, Any]) -> bool:
         """Evaluate email verification claim when provided by the IdP.
 
+        When the ``email_verified`` claim is **absent** from ``user_info`` (e.g.
+        Microsoft Entra ID and GitHub do not include it for work / school
+        accounts) the function returns ``True`` so that those providers are not
+        incorrectly blocked.  The check is only enforced when the IdP
+        *explicitly* supplies the claim — a ``False``/``0``/``"false"`` value
+        means the provider has flagged the address as unverified and the user
+        should be rejected.
+
         Args:
             user_info: Normalized user-info payload from provider.
 
         Returns:
-            ``True`` only when email verification claim is explicitly verified.
+            ``True`` when the claim is absent (provider does not restrict) or
+            when it is explicitly set to a truthy value; ``False`` only when the
+            provider explicitly indicates the address is *not* verified.
         """
         if "email_verified" not in user_info:
-            return False
+            # Claim not provided by IdP — treat as no restriction (pass through).
+            return True
 
         claim_value = user_info.get("email_verified")
         if isinstance(claim_value, bool):
@@ -1402,9 +1413,13 @@ class SSOService:
                 if isinstance(roles_value, list):
                     groups.extend(roles_value)
 
-            return {
+            # Microsoft Entra ID work/school accounts do not include an
+            # ``email_verified`` claim in their userinfo/ID-token response.
+            # Only propagate the claim when it is explicitly present so that
+            # ``_is_email_verified_claim`` can apply its absent-means-pass-through
+            # logic and not block legitimate Entra logins.
+            entra_normalized: Dict[str, Any] = {
                 "email": email,
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name") or email,  # Fallback to email if name missing
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub") or user_data.get("oid"),
@@ -1412,6 +1427,9 @@ class SSOService:
                 "provider": "entra",
                 "groups": list(set(groups)),  # Deduplicate
             }
+            if "email_verified" in user_data:
+                entra_normalized["email_verified"] = user_data["email_verified"]
+            return entra_normalized
 
         # Generic OIDC format for all other providers
         return {

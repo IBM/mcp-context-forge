@@ -227,6 +227,59 @@ class TestEntraIDNormalization:
         assert normalized["username"] == "user@company.com"
         assert normalized["provider"] == "entra"
 
+    def test_entra_missing_email_verified_claim_is_omitted(self, sso_service, entra_provider):
+        """Entra ID work/school userinfo omits email_verified; key must not appear in normalized output.
+
+        Regression test for https://github.com/IBM/mcp-context-forge/issues/3253:
+        first-time Entra logins were rejected because a missing email_verified claim
+        was treated as unverified.  The fix mirrors the GitHub provider pattern —
+        only propagate the claim when the IdP explicitly includes it.
+        """
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            # No email_verified claim — typical Entra ID response
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert "email_verified" not in normalized, (
+            "email_verified must not be injected when Entra ID omits it; "
+            "_is_email_verified_claim treats absence as pass-through"
+        )
+        assert normalized["email"] == "user@company.com"
+        assert normalized["provider"] == "entra"
+
+    def test_entra_explicit_false_email_verified_is_preserved(self, sso_service, entra_provider):
+        """When Entra explicitly marks email_verified=False the claim must be kept so the user is blocked."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "email_verified": False,  # Explicit rejection by IdP
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
+    def test_entra_explicit_true_email_verified_is_preserved(self, sso_service, entra_provider):
+        """When Entra explicitly marks email_verified=True the claim is propagated normally."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "email_verified": True,
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is True
+
 
 class TestGitHubNormalization:
     """Test GitHub user info normalization."""
