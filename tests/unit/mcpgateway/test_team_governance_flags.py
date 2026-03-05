@@ -621,3 +621,70 @@ class TestInvitationServiceGetUserTeamCount:
         result = service._get_user_team_count("user@example.com")
         assert result == 3
         db.query.assert_called_once()
+
+
+class TestManagementServiceGetUserTeamCount:
+    """Test _get_user_team_count on TeamManagementService (covers team_management_service.py:195)."""
+
+    def test_get_user_team_count_returns_count(self):
+        """_get_user_team_count queries the database and returns an integer count."""
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        db = MagicMock(spec=Session)
+        db.query.return_value.filter.return_value.count.return_value = 7
+        service = TeamManagementService(db)
+
+        result = service._get_user_team_count("user@example.com")
+        assert result == 7
+        db.query.assert_called_once()
+
+
+class TestUpdateUserEmailVerified:
+    """Test email_verified parameter in EmailAuthService.update_user (covers email_auth_service.py:1567-1568)."""
+
+    @pytest.mark.asyncio
+    async def test_update_user_sets_email_verified(self):
+        """When email_verified=True, update_user sets email_verified_at."""
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        db = MagicMock(spec=Session)
+        service = EmailAuthService(db)
+
+        mock_user = MagicMock()
+        mock_user.email = "user@example.com"
+        mock_user.is_admin = False
+        mock_user.is_active = True
+        mock_user.email_verified_at = None
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        db.execute.return_value = mock_result
+
+        await service.update_user(email="user@example.com", email_verified=True)
+
+        assert mock_user.email_verified_at is not None
+
+    @pytest.mark.asyncio
+    async def test_update_user_clears_email_verified(self):
+        """When email_verified=False, update_user clears email_verified_at."""
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        db = MagicMock(spec=Session)
+        service = EmailAuthService(db)
+
+        mock_user = MagicMock()
+        mock_user.email = "user@example.com"
+        mock_user.is_admin = False
+        mock_user.is_active = True
+        mock_user.email_verified_at = datetime.now(timezone.utc)
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        db.execute.return_value = mock_result
+
+        await service.update_user(email="user@example.com", email_verified=False)
+
+        assert mock_user.email_verified_at is None
