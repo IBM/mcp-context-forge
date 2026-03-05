@@ -689,6 +689,9 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         HTTPException: If team not found, access denied, or invitation fails
     """
     try:
+        if not settings.allow_team_invitations:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team invitations are currently disabled")
+
         team_service = TeamManagementService(db)
         invitation_service = TeamInvitationService(db)
 

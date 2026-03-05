@@ -697,11 +697,6 @@ async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: di
             granted_by=current_user_ctx.get("email"),
         )
 
-        # Admin-created users are implicitly email-verified (the admin vouched for them)
-        if not user.email_verified_at:
-            user.email_verified_at = utc_now()
-            db.commit()
-
         # If the user was created with the default password, optionally force password change
         if (
             settings.password_change_enforcement_enabled

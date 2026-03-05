@@ -520,40 +520,90 @@ class TestAdminTeamCreationFlagDisabled:
 
 
 class TestAdminCreatedUserEmailVerified:
-    """Test that admin-created users get email_verified_at set (covers email_auth.py:702-703)."""
+    """Test that admin-created users get email_verified_at set via service (covers email_auth_service.py)."""
 
     @pytest.mark.asyncio
-    async def test_admin_created_user_gets_email_verified(self):
-        """Admin-created user should have email_verified_at set automatically."""
+    async def test_admin_created_user_gets_email_verified_via_service(self):
+        """When granted_by is provided, create_user sets email_verified_at before insert."""
         # First-Party
-        from mcpgateway.routers import email_auth
-        from mcpgateway.schemas import AdminCreateUserRequest
+        from mcpgateway.services.email_auth_service import EmailAuthService
 
-        user_request = AdminCreateUserRequest(email="newuser@example.com", password="P@ssw0rd123", full_name="New User", is_admin=False)
-        mock_db = MagicMock(spec=Session)
+        db = MagicMock(spec=Session)
+        service = EmailAuthService(db)
 
-        mock_user = MagicMock(spec=EmailUser)
-        mock_user.email = "newuser@example.com"
-        mock_user.full_name = "New User"
-        mock_user.is_admin = False
-        mock_user.is_active = True
-        mock_user.auth_provider = "local"
-        mock_user.created_at = datetime.now(timezone.utc)
-        mock_user.last_login = None
-        mock_user.password_change_required = False
-        mock_user.is_email_verified = MagicMock(return_value=False)
-        mock_user.email_verified_at = None  # Not yet verified
+        with (
+            patch.object(service, "validate_email"),
+            patch.object(service, "validate_password"),
+            patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)),
+            patch.object(service, "password_service") as mock_pw,
+            patch("mcpgateway.services.email_auth_service.settings") as mock_settings,
+            patch("mcpgateway.services.email_auth_service.EmailUser") as MockUser,
+        ):
+            mock_pw.hash_password_async = AsyncMock(return_value="hashed")
+            mock_settings.auto_create_personal_teams = False
 
-        with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
-            mock_settings.password_change_enforcement_enabled = False
+            mock_user_instance = MagicMock(spec=EmailUser)
+            mock_user_instance.email = "new@example.com"
+            mock_user_instance.email_verified_at = None
+            MockUser.return_value = mock_user_instance
 
-            with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
-                MockAuthService.return_value.create_user = AsyncMock(return_value=mock_user)
-                await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+            result = await service.create_user(email="new@example.com", password="P@ssw0rd123", granted_by="admin@example.com")
 
-        # Verify email_verified_at was set
-        assert mock_user.email_verified_at is not None
-        mock_db.commit.assert_called()
+        # email_verified_at should be set before db.add
+        assert mock_user_instance.email_verified_at is not None
+
+    @pytest.mark.asyncio
+    async def test_self_registered_user_not_auto_verified(self):
+        """When granted_by is None (self-registration), email_verified_at stays None."""
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        db = MagicMock(spec=Session)
+        service = EmailAuthService(db)
+
+        with (
+            patch.object(service, "validate_email"),
+            patch.object(service, "validate_password"),
+            patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)),
+            patch.object(service, "password_service") as mock_pw,
+            patch("mcpgateway.services.email_auth_service.settings") as mock_settings,
+            patch("mcpgateway.services.email_auth_service.EmailUser") as MockUser,
+        ):
+            mock_pw.hash_password_async = AsyncMock(return_value="hashed")
+            mock_settings.auto_create_personal_teams = False
+
+            mock_user_instance = MagicMock(spec=EmailUser)
+            mock_user_instance.email = "self@example.com"
+            mock_user_instance.email_verified_at = None
+            MockUser.return_value = mock_user_instance
+
+            result = await service.create_user(email="self@example.com", password="P@ssw0rd123")
+
+        # email_verified_at should remain None
+        assert mock_user_instance.email_verified_at is None
+
+
+class TestInvitationFlagReturns403:
+    """Test that ALLOW_TEAM_INVITATIONS=false returns 403 at router level."""
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.routers.teams.settings")
+    async def test_invite_team_member_returns_403_when_disabled(self, mock_settings):
+        """Router returns 403 (not 400) when allow_team_invitations=False."""
+        mock_settings.allow_team_invitations = False
+
+        # First-Party
+        from mcpgateway.routers.teams import invite_team_member
+        from mcpgateway.schemas import TeamInviteRequest
+
+        request = TeamInviteRequest(email="someone@example.com", role="member")
+        current_user = {"email": "owner@example.com", "is_admin": False}
+        db = MagicMock(spec=Session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await invite_team_member(team_id="team-1", request=request, current_user=current_user, db=db)
+        assert exc_info.value.status_code == 403
+        assert "disabled" in exc_info.value.detail.lower()
 
 
 class TestInvitationServiceGetUserTeamCount:

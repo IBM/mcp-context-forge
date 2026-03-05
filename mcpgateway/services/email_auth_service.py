@@ -576,6 +576,10 @@ class EmailAuthService:
             admin_origin="api" if is_admin else None,
         )
 
+        # Admin-created users are implicitly email-verified (the admin vouched for them)
+        if granted_by:
+            user.email_verified_at = utc_now()
+
         try:
             self.db.add(user)
             self.db.commit()
