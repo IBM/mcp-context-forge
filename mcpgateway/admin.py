@@ -49,6 +49,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
+import jwt
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
@@ -3776,7 +3777,7 @@ async def admin_login_page(request: Request) -> Response:
             if payload:
                 # User is authenticated, redirect to dashboard
                 return RedirectResponse(url=f"{root_path}/admin", status_code=303)
-        except Exception:
+        except (HTTPException, jwt.PyJWTError):
             # Token is invalid or expired, continue to show login page
             pass
 

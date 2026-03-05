@@ -14656,6 +14656,7 @@ class TestAuthLogin:
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
         request.query_params = {}
+        request.cookies = {}  # Explicitly set empty cookies to avoid JWT check path
         request.app = MagicMock()
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
@@ -14675,6 +14676,7 @@ class TestAuthLogin:
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
         request.query_params = {}
+        request.cookies = {}  # Explicitly set empty cookies to avoid JWT check path
         request.app = MagicMock()
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
@@ -14683,6 +14685,7 @@ class TestAuthLogin:
         assert isinstance(result, HTMLResponse)
         assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
         context = request.app.state.templates.TemplateResponse.call_args[0][2]
+        assert "secure cookies enabled" in (context.get("secure_cookie_warning") or "").lower()
 
     @pytest.mark.asyncio
     async def test_admin_login_page_redirects_authenticated_user(self, monkeypatch):
@@ -14756,6 +14759,93 @@ class TestAuthLogin:
         assert result.status_code == 303
 
     @pytest.mark.asyncio
+
+    @pytest.mark.asyncio
+    async def test_admin_login_page_access_token_cookie_valid_redirects(self, monkeypatch):
+        """Test that valid access_token cookie redirects to dashboard."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/app", raising=False)
+
+        # Mock request with valid JWT in access_token cookie (not jwt_token)
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.query_params = {}
+        request.cookies = {"access_token": "valid-access-token"}
+
+        # Mock verify_jwt_token_cached to return a valid payload
+        mock_verify = AsyncMock(return_value={"sub": "admin@test.com", "is_admin": True})
+        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+
+        result = await admin_login_page(request)
+
+        # Should redirect to admin dashboard
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers["location"] == "/app/admin"
+
+    @pytest.mark.asyncio
+    async def test_admin_login_page_access_token_cookie_invalid_shows_form(self, monkeypatch):
+        """Test that invalid access_token cookie shows login form."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/app", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.environment", "production", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+
+        # Mock request with invalid JWT in access_token cookie
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.query_params = {}
+        request.cookies = {"access_token": "invalid-access-token"}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
+
+        # Mock verify_jwt_token_cached to raise exception
+        mock_verify = AsyncMock(side_effect=jwt.PyJWTError("Invalid token"))
+        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+
+        # Mock load_sri_hashes
+        monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
+
+        result = await admin_login_page(request)
+
+        # Should show login page, not redirect
+        assert isinstance(result, HTMLResponse)
+        assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
+
+    @pytest.mark.asyncio
+    async def test_admin_login_page_verify_returns_none_shows_form(self, monkeypatch):
+        """Test that None/empty payload from verify_jwt_token_cached shows login form."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/app", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.environment", "production", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+
+        # Mock request with JWT token
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.query_params = {}
+        request.cookies = {"jwt_token": "some-token"}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
+
+        # Mock verify_jwt_token_cached to return None (falsy payload)
+        mock_verify = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+
+        # Mock load_sri_hashes
+        monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
+
+        result = await admin_login_page(request)
+
+        # Should show login page, not redirect
+        assert isinstance(result, HTMLResponse)
+        assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
+
+
     async def test_admin_login_handler_missing_fields(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         request = MagicMock(spec=Request)
