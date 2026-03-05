@@ -67,21 +67,13 @@ class BaseService(ABC):
             Query with visibility WHERE clauses applied, or unmodified
             if admin bypass or no auth context.
         """
-        # Standard
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        logger.warning(f"[ACCESS_CONTROL DEBUG] user_email={user_email}, token_teams={token_teams}, is_admin={is_admin}, team_id={team_id}")
-        
         # Admin bypass: requires BOTH token_teams=None AND is_admin=True
         # This prevents privilege escalation via token manipulation
         if token_teams is None and is_admin:
-            logger.warning(f"[ACCESS_CONTROL DEBUG] ADMIN BYPASS - returning unfiltered query")
             return query
 
         # No auth context: both user_email and token_teams are None
         if user_email is None and token_teams is None:
-            logger.warning(f"[ACCESS_CONTROL DEBUG] NO AUTH CONTEXT - returning unfiltered query")
             return query
 
         effective_teams: List[str] = []
@@ -94,8 +86,6 @@ class BaseService(ABC):
 
         # Public-only tokens (explicit token_teams=[]) must not get owner access
         filter_email = None if (token_teams is not None and not token_teams) else user_email
-        
-        logger.warning(f"[ACCESS_CONTROL DEBUG] APPLYING FILTER - filter_email={filter_email}, effective_teams={effective_teams}")
 
         return self._apply_visibility_filter(query, filter_email, effective_teams, team_id)
 

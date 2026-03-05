@@ -1284,11 +1284,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     s_id = server_id_var.get()
 
     # Check if user_context_var is populated with real data (not empty dict)
-    user_ctx = user_context_var.get()
-    logger.warning(f"[CONTEXT DEBUG] Step 1 - ContextVar: user_ctx={user_ctx}")
-    if user_ctx and user_ctx.get("is_authenticated"):
-        logger.warning(f"[CONTEXT DEBUG] Step 1 - Using ContextVar path")
-        return s_id, request_headers_var.get(), user_ctx
+    if s_id != "default_server_id":
+        return s_id, request_headers_var.get(), user_context_var.get()
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
@@ -1297,21 +1294,16 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         request = ctx.request
         if request:
             gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
-            logger.warning(f"[CONTEXT DEBUG] Step 2 - ASGI scope: gw_ctx={gw_ctx}")
             if isinstance(gw_ctx, dict):
-                result_ctx = gw_ctx.get("user_context", {})
-                logger.warning(f"[CONTEXT DEBUG] Step 2 - Using ASGI scope path, user_context={result_ctx}")
                 return (
                     gw_ctx.get("server_id") or s_id,
                     gw_ctx.get("request_headers", {}),
-                    result_ctx,
+                    gw_ctx.get("user_context", {}),
                 )
     except LookupError:
         # Not in a request context — fall through to ContextVar defaults
-        logger.warning(f"[CONTEXT DEBUG] Step 2 - LookupError, falling back to ContextVar")
         return s_id, request_headers_var.get(), user_context_var.get()
     except Exception as e:
-        logger.warning(f"[CONTEXT DEBUG] Step 2 - Exception: {e}")
         logger.debug("Failed to read %s from scope: %s", _MCPGATEWAY_CONTEXT_KEY, e)
 
     # 3. Re-authentication fallback (stateful session path)
@@ -1443,8 +1435,6 @@ async def list_tools() -> List[types.Tool]:
         >>> sig.return_annotation
         typing.List[mcp.types.Tool]
     """
-    import sys
-    
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Token scope cap: deny early if scoped permissions exclude tools.read

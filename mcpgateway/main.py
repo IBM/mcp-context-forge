@@ -433,7 +433,11 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
         if payload:
             # Check both top-level is_admin and nested user.is_admin in token
             is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-
+ 
+    # If token has empty teams array (public-only token), admin bypass is disabled
+    # This allows admins to create properly scoped tokens for restricted access
+    if token_teams is not None and len(token_teams) == 0:
+        is_admin = False
     return user_email, token_teams, is_admin
 
 
@@ -6112,12 +6116,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if is_admin:
                 user_email = None
                 token_teams = None  # Admin unrestricted
-                logger.warning(f"[TOOLS/LIST DEBUG] ADMIN BYPASS APPLIED - user_email={user_email}, token_teams={token_teams}")
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
-                logger.warning(f"[TOOLS/LIST DEBUG] Non-admin public-only - token_teams={token_teams}")
-            else:
-                logger.warning(f"[TOOLS/LIST DEBUG] No bypass - user_email={user_email}, token_teams={token_teams}")
             if server_id:
                 tools = await tool_service.list_server_tools(
                     db,
@@ -6144,12 +6144,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     requesting_user_is_admin=_req_is_admin,
                     requesting_user_team_roles=_req_team_roles,
                 )
-                logger.warning(f"[TOOLS/LIST DEBUG] Retrieved {len(tools)} tools from service")
                 # Release DB connection early to prevent idle-in-transaction under load
                 db.commit()
                 db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
-                logger.warning(f"[TOOLS/LIST DEBUG] Returning {len(result['tools'])} tools in result")
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
