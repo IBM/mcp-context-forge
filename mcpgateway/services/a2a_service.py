@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
-from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
@@ -1516,7 +1516,7 @@ class A2AAgentService(BaseService):
 
         return response or {"error": error_message}
 
-    async def aggregate_metrics(self, db: Session) -> "A2AAgentAggregateMetrics":
+    async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
         """Aggregate metrics for all A2A agents.
 
         Combines recent raw metrics (within retention period) with historical
@@ -1530,11 +1530,10 @@ class A2AAgentService(BaseService):
             A2AAgentAggregateMetrics: Aggregated metrics from raw + hourly rollup tables.
         """
         # First-Party
-        from mcpgateway.schemas import A2AAgentAggregateMetrics  # pylint: disable=import-outside-toplevel
-
         # Check cache first (if enabled)
-        # First-Party
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        # from mcpgateway.schemas import A2AAgentAggregateMetrics  # pylint: disable=import-outside-toplevel
 
         if is_cache_enabled():
             cached = metrics_cache.get("a2a")
