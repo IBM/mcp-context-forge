@@ -1276,7 +1276,7 @@
       "type": "boolean"
     },
     "personal_team_prefix": {
-      "default": "personal",
+      "default": "",
       "description": "Personal team naming prefix",
       "title": "Personal Team Prefix",
       "type": "string"

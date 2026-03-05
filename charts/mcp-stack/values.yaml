@@ -1024,7 +1024,7 @@ mcpContextForge:
 
     # ─ Personal Teams Configuration ─
     AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
-    PERSONAL_TEAM_PREFIX: personal         # personal team naming prefix
+    PERSONAL_TEAM_PREFIX: ""               # personal team naming prefix (e.g. "personal" for email-based slugs)
     MAX_TEAMS_PER_USER: "50"               # maximum number of teams a user can belong to
     MAX_MEMBERS_PER_TEAM: "100"            # maximum number of members per team
     INVITATION_EXPIRY_DAYS: "7"            # number of days before team invitations expire

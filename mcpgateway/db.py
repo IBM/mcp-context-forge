@@ -6379,7 +6379,8 @@ def set_email_team_slug(_mapper, _conn, target):
         _conn: Connection
         target: Target EmailTeam instance
     """
-    target.slug = slugify(target.name)
+    if not target.slug:
+        target.slug = slugify(target.name)
 
 
 @event.listens_for(Tool, "before_insert")

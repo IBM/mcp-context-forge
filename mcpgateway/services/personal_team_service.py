@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_slug import slugify
 
 # Initialize logging
 logging_service = LoggingService()
@@ -102,9 +103,16 @@ class PersonalTeamService:
             display_name = user.get_display_name()
             team_name = f"{display_name}'s Team"
 
-            # Create team slug from email to ensure uniqueness
-            email_slug = user.email.replace("@", "-").replace(".", "-").lower()
-            team_slug = f"personal-{email_slug}"
+            # Create team slug — use prefix from config if set, otherwise derive from display name
+            # First-Party
+            from mcpgateway.config import settings
+
+            prefix = slugify(settings.personal_team_prefix.strip()) if settings.personal_team_prefix.strip() else ""
+            if prefix:
+                email_slug = user.email.replace("@", "-").replace(".", "-").lower()
+                team_slug = f"{prefix}-{email_slug}"
+            else:
+                team_slug = slugify(team_name)
 
             # Create the personal team
             team = EmailTeam(
