@@ -6415,6 +6415,27 @@ async def test_admin_create_team_success(monkeypatch, mock_db, allow_permission)
 
 
 @pytest.mark.asyncio
+async def test_admin_create_team_with_max_members(monkeypatch, mock_db, allow_permission):
+    """Cover the max_members numeric coercion branch (line 5156) in admin_create_team."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Limited Team", "visibility": "private", "max_members": "3"}))
+    team = SimpleNamespace(id="team-2", name="Limited Team", slug="limited-team", visibility="private", description=None, is_personal=False)
+    team_service = MagicMock()
+    team_service.create_team = AsyncMock(return_value=team)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 201
+    # Verify max_members was passed through to the service
+    team_service.create_team.assert_awaited_once()
+    _, kwargs = team_service.create_team.call_args
+    assert kwargs.get("max_members") == 3
+
+
+@pytest.mark.asyncio
 async def test_admin_create_team_integrity_error(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
@@ -6681,6 +6702,28 @@ async def test_admin_update_team_success(monkeypatch, mock_db, allow_permission)
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_with_max_members(monkeypatch, mock_db, allow_permission):
+    """Cover the max_members numeric coercion branch in admin_update_team."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private", "max_members": "5"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.headers.get("HX-Trigger") is not None
+    # Verify max_members was passed through to the service
+    team_service.update_team.assert_awaited_once()
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("max_members") == 5
 
 
 @pytest.mark.asyncio
