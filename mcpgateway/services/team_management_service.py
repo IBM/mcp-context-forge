@@ -43,6 +43,19 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def get_user_team_count(db: Session, user_email: str) -> int:
+    """Get the number of active teams a user belongs to.
+
+    Args:
+        db: SQLAlchemy database session
+        user_email: Email address of the user
+
+    Returns:
+        int: Number of active team memberships
+    """
+    return db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).count()
+
+
 class TeamManagementError(Exception):
     """Base class for team management-related errors.
 
@@ -184,15 +197,8 @@ class TeamManagementService:
         return self._role_service
 
     def _get_user_team_count(self, user_email: str) -> int:
-        """Get the number of active teams a user belongs to.
-
-        Args:
-            user_email: Email address of the user
-
-        Returns:
-            int: Number of active team memberships
-        """
-        return self.db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).count()
+        """Get the number of active teams a user belongs to."""
+        return get_user_team_count(self.db, user_email)
 
     @staticmethod
     def _get_rbac_role_name(membership_role: str) -> str:

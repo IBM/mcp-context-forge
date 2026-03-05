@@ -30,6 +30,7 @@ from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.team_management_service import get_user_team_count
 
 # Initialize logging
 logging_service = LoggingService()
@@ -78,15 +79,8 @@ class TeamInvitationService:
         self.db = db
 
     def _get_user_team_count(self, user_email: str) -> int:
-        """Get the number of active teams a user belongs to.
-
-        Args:
-            user_email: Email address of the user
-
-        Returns:
-            int: Number of active team memberships
-        """
-        return self.db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).count()
+        """Get the number of active teams a user belongs to."""
+        return get_user_team_count(self.db, user_email)
 
     @staticmethod
     def _fire_and_forget(coro: Any) -> None:

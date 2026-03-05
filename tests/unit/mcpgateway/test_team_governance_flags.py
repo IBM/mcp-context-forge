@@ -623,21 +623,32 @@ class TestInvitationServiceGetUserTeamCount:
         db.query.assert_called_once()
 
 
-class TestManagementServiceGetUserTeamCount:
-    """Test _get_user_team_count on TeamManagementService (covers team_management_service.py:195)."""
+class TestGetUserTeamCount:
+    """Test the shared get_user_team_count function and service delegations."""
 
-    def test_get_user_team_count_returns_count(self):
-        """_get_user_team_count queries the database and returns an integer count."""
+    def test_standalone_function_returns_count(self):
+        """get_user_team_count queries the database and returns an integer count."""
+        # First-Party
+        from mcpgateway.services.team_management_service import get_user_team_count
+
+        db = MagicMock(spec=Session)
+        db.query.return_value.filter.return_value.count.return_value = 7
+
+        result = get_user_team_count(db, "user@example.com")
+        assert result == 7
+        db.query.assert_called_once()
+
+    def test_management_service_delegates(self):
+        """TeamManagementService._get_user_team_count delegates to standalone function."""
         # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService
 
         db = MagicMock(spec=Session)
-        db.query.return_value.filter.return_value.count.return_value = 7
+        db.query.return_value.filter.return_value.count.return_value = 3
         service = TeamManagementService(db)
 
         result = service._get_user_team_count("user@example.com")
-        assert result == 7
-        db.query.assert_called_once()
+        assert result == 3
 
 
 class TestUpdateUserEmailVerified:
