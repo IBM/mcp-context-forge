@@ -1515,6 +1515,7 @@ class EmailAuthService:
         full_name: Optional[str] = None,
         is_admin: Optional[bool] = None,
         is_active: Optional[bool] = None,
+        email_verified: Optional[bool] = None,
         password_change_required: Optional[bool] = None,
         password: Optional[str] = None,
         admin_origin_source: Optional[str] = None,
@@ -1526,6 +1527,7 @@ class EmailAuthService:
             full_name: New full name (optional)
             is_admin: New admin status (optional)
             is_active: New active status (optional)
+            email_verified: Set email verification status (optional)
             password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
             admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
@@ -1561,6 +1563,9 @@ class EmailAuthService:
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
+
+            if email_verified is not None:
+                user.email_verified_at = utc_now() if email_verified else None
 
             if is_admin is not None:
                 # Track admin_origin when status actually changes

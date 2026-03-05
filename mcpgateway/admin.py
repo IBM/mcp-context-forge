@@ -7296,6 +7296,12 @@ async def admin_get_user_edit(
                     </label>
                 </div>'''}
                 <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        <input type="checkbox" name="email_verified" {"checked" if user_obj.is_email_verified() else ""}
+                               class="mr-2"> Email Verified
+                    </label>
+                </div>
+                <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -7371,6 +7377,7 @@ async def admin_update_user(
         form = await request.form()
         full_name = form.get("full_name")
         is_admin = form.get("is_admin") == "on"
+        email_verified = form.get("email_verified") == "on"
         password = form.get("password")
         confirm_password = form.get("confirm_password")
 
@@ -7407,7 +7414,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, email_verified=email_verified, password=password, admin_origin_source="ui")
 
         # Return success message with auto-close and refresh
         success_html = """
