@@ -522,3 +522,33 @@ After changing the file, rebuild and redeploy:
 ```bash
 make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
 ```
+
+---
+
+## 10 - Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ibmcloud ce application get` shows "Failed" | Image pull error — wrong registry secret or image path | Verify `IBMCLOUD_IMAGE_NAME` matches the pushed image: `ibmcloud cr images` |
+| Application starts then crashes (OOMKilled) | Insufficient memory for gunicorn workers | Increase `IBMCLOUD_MEMORY` in `.env.ce` or reduce `workers` in `gunicorn.config.py` |
+| `connection refused` to PostgreSQL | Database not yet provisioned or wrong hostname | Verify with: `ibmcloud resource service-instance mcpgw-db` and check credentials JSON |
+| `SSL: CERTIFICATE_VERIFY_FAILED` on database connection | Missing `sslmode=require` in `DATABASE_URL` | Ensure `DATABASE_URL` ends with `?sslmode=require` |
+| Redis connection timeout | Security group or allowlist blocking Code Engine IPs | IBM Cloud Databases allowlist must include Code Engine's outbound IPs, or use private endpoints |
+| Application starts but `/tools` returns `[]` | Database is empty — first deploy needs bootstrap | Access `/admin` to configure gateways and virtual servers, or use the API |
+| `ibmcloud ce application logs` shows no output | Application scaled to zero — no instances running | Send a request to wake it: `curl $APP_URL/health` then retry logs |
+| Slow cold starts (>10s) | Code Engine scales from zero by default | Set `--min-scale 1` to keep at least one instance warm |
+
+!!! tip "Checking application logs"
+
+    Most deployment issues are visible in the application logs. Use these commands to investigate:
+
+    ```bash
+    # Recent logs (last 50 lines)
+    ibmcloud ce application logs --name "$IBMCLOUD_CODE_ENGINE_APP" --tail 50
+
+    # Follow logs in real-time
+    ibmcloud ce application logs --name "$IBMCLOUD_CODE_ENGINE_APP" --follow
+
+    # System events (scheduling, scaling, image pull)
+    ibmcloud ce application events --name "$IBMCLOUD_CODE_ENGINE_APP"
+    ```
