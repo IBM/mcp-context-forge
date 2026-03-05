@@ -484,7 +484,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
-| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only | `false` | bool |
+| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 

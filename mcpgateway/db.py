@@ -1066,6 +1066,10 @@ class Permissions:
     PROMPTS_DELETE = "prompts.delete"
     PROMPTS_EXECUTE = "prompts.execute"
 
+    # MCP method permission prefixes — used by token_catalog_service (generation-time)
+    # and token_scoping middleware (runtime) to auto-grant servers.use transport access.
+    MCP_METHOD_PREFIXES = ("tools.", "resources.", "prompts.")
+
     # LLM proxy permissions
     LLM_READ = "llm.read"
     LLM_INVOKE = "llm.invoke"
