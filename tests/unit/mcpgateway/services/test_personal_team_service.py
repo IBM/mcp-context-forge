@@ -417,7 +417,7 @@ class TestPersonalTeamService:
         with (
             patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.personal_team_service.EmailTeamMember"),
-            patch("mcpgateway.config.settings") as mock_settings,
+            patch("mcpgateway.services.personal_team_service.settings") as mock_settings,
         ):
             mock_settings.personal_team_prefix = "workspace"
             mock_team = MagicMock()
@@ -446,7 +446,7 @@ class TestPersonalTeamService:
         with (
             patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.personal_team_service.EmailTeamMember"),
-            patch("mcpgateway.config.settings") as mock_settings,
+            patch("mcpgateway.services.personal_team_service.settings") as mock_settings,
         ):
             mock_settings.personal_team_prefix = raw_prefix
             mock_team = MagicMock()

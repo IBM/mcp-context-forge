@@ -43,6 +43,19 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def get_user_team_count(db: Session, user_email: str) -> int:
+    """Get the number of active teams a user belongs to.
+
+    Args:
+        db: SQLAlchemy database session
+        user_email: Email address of the user
+
+    Returns:
+        int: Number of active team memberships
+    """
+    return db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).count()
+
+
 class TeamManagementError(Exception):
     """Base class for team management-related errors.
 
@@ -183,6 +196,17 @@ class TeamManagementService:
             self._role_service = RoleService(self.db)
         return self._role_service
 
+    def _get_user_team_count(self, user_email: str) -> int:
+        """Get the number of active teams a user belongs to.
+
+        Args:
+            user_email: Email address of the user
+
+        Returns:
+            int: Number of active team memberships
+        """
+        return get_user_team_count(self.db, user_email)
+
     @staticmethod
     def _get_rbac_role_name(membership_role: str) -> str:
         """Map a team membership role to the corresponding configurable RBAC role name.
@@ -243,7 +267,9 @@ class TeamManagementService:
         self.db.add(history)
         self.db.commit()
 
-    async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None) -> EmailTeam:
+    async def create_team(
+        self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None, skip_limits: bool = False
+    ) -> EmailTeam:
         """Create a new team.
 
         Args:
@@ -252,6 +278,7 @@ class TeamManagementService:
             created_by: Email of the user creating the team
             visibility: Team visibility (private, team, public)
             max_members: Maximum number of team members allowed
+            skip_limits: Skip max_teams_per_user check (for admin bypass)
 
         Returns:
             EmailTeam: The created team
@@ -312,6 +339,12 @@ class TeamManagementService:
             valid_visibilities = ["private", "public"]
             if visibility not in valid_visibilities:
                 raise ValueError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
+
+            # Check max teams per user
+            if not skip_limits:
+                max_teams = getattr(settings, "max_teams_per_user", 50)
+                if self._get_user_team_count(created_by) >= max_teams:
+                    raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
             # Apply default max members from settings
             if max_members is None:
@@ -619,6 +652,11 @@ class TeamManagementService:
         if not user:
             logger.warning(f"User {user_email} not found")
             raise UserNotFoundError("User not found")
+
+        # Check max teams per user
+        max_teams = getattr(settings, "max_teams_per_user", 50)
+        if self._get_user_team_count(user_email) >= max_teams:
+            raise TeamManagementError(f"User has reached the maximum team limit of {max_teams}")
 
         # Check if user is already a member
         existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
@@ -1518,6 +1556,11 @@ class TeamManagementService:
                 join_request.status = "expired"
                 self.db.commit()
                 raise ValueError("Join request has expired")
+
+            # Check max teams per user
+            max_teams = getattr(settings, "max_teams_per_user", 50)
+            if self._get_user_team_count(join_request.user_email) >= max_teams:
+                raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
             # Add user to team
             member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members

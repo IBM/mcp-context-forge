@@ -256,10 +256,12 @@ class TestVirtualServerCRUD:
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
 
-        admin_page.wait_for_timeout(2_000)
+        # Wait for HTMX partial to load (the partial's tbody has this id)
+        admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
+        admin_page.wait_for_timeout(1_000)
 
         # Step 2: Find delete button within catalog panel
-        server_rows = admin_page.locator('[data-testid="server-list"] [data-testid="server-item"]')
+        server_rows = admin_page.locator('#servers-table-body [data-testid="server-item"]')
         delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
 
         try:
@@ -269,13 +271,27 @@ class TestVirtualServerCRUD:
 
         initial_count = server_rows.count()
 
-        # Step 3 & 4: Accept native confirm() dialogs and click delete
+        # Step 3 & 4: Accept native confirm() dialogs and click delete.
+        # handleDeleteSubmit shows two native confirm() dialogs, then
+        # handleToggleSubmit does fetch(redirect:'manual') followed by
+        # _navigateAdmin() which reloads the page via location change.
         admin_page.on("dialog", lambda d: d.accept())
         delete_button.click()
 
-        # Step 5: Verify server removed (count decreases after page reload)
-        admin_page.wait_for_load_state("load", timeout=15_000)
-        expect(server_rows).to_have_count(initial_count - 1, timeout=10_000)
+        # Step 5: Wait for the async fetch to complete, then force a
+        # clean page reload.  The JS _navigateAdmin triggers a page
+        # reload, but it may race with HTMX partial rendering and
+        # produce stale counts.  Waiting briefly for the fetch, then
+        # performing an explicit reload guarantees fresh server-side
+        # data in the DOM.
+        admin_page.wait_for_timeout(3_000)
+        admin_page.reload(wait_until="domcontentloaded")
+        servers_tab = admin_page.locator('[data-testid="servers-tab"]')
+        expect(servers_tab).to_be_visible(timeout=10_000)
+        servers_tab.click()
+        admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
+        admin_page.wait_for_timeout(1_000)
+        expect(server_rows).to_have_count(initial_count - 1, timeout=15_000)
 
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])

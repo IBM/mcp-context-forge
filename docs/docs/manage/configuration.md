@@ -614,6 +614,9 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
+| `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
+| `ALLOW_TEAM_JOIN_REQUESTS`               | Allow users to request to join public teams | `true`  | bool    |
+| `ALLOW_TEAM_INVITATIONS`                 | Allow team owners to send invitations       | `true`  | bool    |
 
 ### MCP Server Catalog
 

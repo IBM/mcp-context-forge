@@ -5144,6 +5144,9 @@ async def admin_create_team(
         response = HTMLResponse(content=error_content, status_code=403)
         return response
 
+    if not getattr(settings, "allow_team_creation", True) and not (isinstance(user, dict) and user.get("is_admin")):
+        return HTMLResponse(content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team creation is currently disabled</div>', status_code=403)
+
     try:
         form = await request.form()
         name = form.get("name")
@@ -5169,7 +5172,8 @@ async def admin_create_team(
         # Extract user email from user dict
         user_email = get_user_email(user)
 
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
+        is_admin = isinstance(user, dict) and user.get("is_admin")
+        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, skip_limits=bool(is_admin))
 
         response = HTMLResponse(content="", status_code=201)
         return response
@@ -6225,6 +6229,9 @@ async def admin_create_join_request(
     """
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+
+    if not getattr(settings, "allow_team_join_requests", True):
+        return HTMLResponse(content='<div class="text-red-500">Team join requests are currently disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -7289,6 +7296,12 @@ async def admin_get_user_edit(
                     </label>
                 </div>'''}
                 <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        <input type="checkbox" name="email_verified" {"checked" if user_obj.is_email_verified() else ""}
+                               class="mr-2"> Email Verified
+                    </label>
+                </div>
+                <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -7364,6 +7377,7 @@ async def admin_update_user(
         form = await request.form()
         full_name = form.get("full_name")
         is_admin = form.get("is_admin") == "on"
+        email_verified = form.get("email_verified") == "on"
         password = form.get("password")
         confirm_password = form.get("confirm_password")
 
@@ -7400,7 +7414,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, email_verified=email_verified, password=password, admin_origin_source="ui")
 
         # Return success message with auto-close and refresh
         success_html = """

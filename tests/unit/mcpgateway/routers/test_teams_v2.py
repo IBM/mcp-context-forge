@@ -132,7 +132,7 @@ class TestTeamsRouterV2:
             assert result.name == mock_team.name
             assert result.description == mock_team.description
             mock_service.create_team.assert_called_once_with(
-                name=request.name, description=request.description, created_by=mock_user_context["email"], visibility=request.visibility, max_members=request.max_members
+                name=request.name, description=request.description, created_by=mock_user_context["email"], visibility=request.visibility, max_members=request.max_members, skip_limits=False
             )
 
     @pytest.mark.asyncio

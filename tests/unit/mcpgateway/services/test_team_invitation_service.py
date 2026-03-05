@@ -30,7 +30,10 @@ class TestTeamInvitationService:
     @pytest.fixture
     def service(self, mock_db):
         """Create team invitation service instance."""
-        return TeamInvitationService(mock_db)
+        svc = TeamInvitationService(mock_db)
+        # Default: user is below max teams limit (0 teams)
+        svc._get_user_team_count = MagicMock(return_value=0)
+        return svc
 
     @pytest.fixture
     def mock_team(self):

@@ -167,6 +167,19 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * User deletion now reassigns audit trail FK references (invitations, roles, revocations) to a replacement admin before deleting the user record
 * Nullable references (team memberships, join requests) are nullified instead of cascading
 
+#### **🏛️ Team Governance Feature Flags** ([#3483](https://github.com/IBM/mcp-context-forge/pull/3483), [#3473](https://github.com/IBM/mcp-context-forge/issues/3473))
+* Three new feature flags to control self-service team operations (all default `true` for backward compatibility):
+  * `ALLOW_TEAM_CREATION` — disable non-admin team creation (admins always bypass)
+  * `ALLOW_TEAM_JOIN_REQUESTS` — disable join requests on public teams
+  * `ALLOW_TEAM_INVITATIONS` — disable team invitations
+* `MAX_TEAMS_PER_USER` now enforced across all membership paths: team creation, member addition, invitation acceptance, and join-request approval (admins bypass in team creation)
+* `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` now enforced at both invitation creation and acceptance time (previously defined but never checked)
+* `PERSONAL_TEAM_PREFIX` now used when generating personal team slugs (previously hardcoded to `personal`)
+* `ensure_personal_team()` now respects `AUTO_CREATE_PERSONAL_TEAMS` flag (previously unconditionally created)
+* Admin-created users automatically get `email_verified_at` set (admin vouches for them)
+* Admins can now set email verification status on users via API (`PUT /auth/email/admin/users/{email}`) and Admin UI checkbox
+* `@require_permission("teams.join")` added to `accept_team_invitation`, `request_to_join_team`, and `leave_team` endpoints
+
 ### Fixed
 
 #### **🔐 Security** (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-05, O-10, O-17, U-05, C-03, C-04, C-07, C-09, C-10, C-11, C-14, C-15, C-28, C-29, EXTRA-01)

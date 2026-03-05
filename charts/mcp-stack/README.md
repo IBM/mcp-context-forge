@@ -822,6 +822,9 @@ retry the Helm upgrade.
 | mcpContextForge.secret.MAX_MEMBERS_PER_TEAM | string | `"100"` |  |
 | mcpContextForge.secret.INVITATION_EXPIRY_DAYS | string | `"7"` |  |
 | mcpContextForge.secret.REQUIRE_EMAIL_VERIFICATION_FOR_INVITES | string | `"true"` |  |
+| mcpContextForge.secret.ALLOW_TEAM_CREATION | string | `"true"` | Allow users to create organizational teams (admins always can) |
+| mcpContextForge.secret.ALLOW_TEAM_JOIN_REQUESTS | string | `"true"` | Allow users to request to join public teams |
+| mcpContextForge.secret.ALLOW_TEAM_INVITATIONS | string | `"true"` | Allow team owners to send invitations |
 | mcpContextForge.secret.ENABLE_ED25519_SIGNING | string | `"false"` |  |
 | mcpContextForge.secret.ED25519_PRIVATE_KEY | string | `""` |  |
 | mcpContextForge.secret.ED25519_PUBLIC_KEY | string | `""` |  |

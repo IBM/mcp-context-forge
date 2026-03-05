@@ -1105,6 +1105,11 @@ MAX_MEMBERS_PER_TEAM=100
 INVITATION_EXPIRY_DAYS=7
 REQUIRE_EMAIL_VERIFICATION_FOR_INVITES=true
 
+# Team Governance
+ALLOW_TEAM_CREATION=true
+ALLOW_TEAM_JOIN_REQUESTS=true
+ALLOW_TEAM_INVITATIONS=true
+
 # Visibility
 # NOTE: Resources default to 'private' (not configurable via env today)
 # Allowed visibility values: private | team | public

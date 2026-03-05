@@ -537,6 +537,9 @@ DOCS_ALLOW_BASIC_AUTH=false              # Keep disabled (use JWT instead)
 MCPGATEWAY_BULK_IMPORT_ENABLED=false
 MCPGATEWAY_A2A_ENABLED=false
 PUBLIC_REGISTRATION_ENABLED=false        # Disable user self-registration
+ALLOW_TEAM_CREATION=false               # Disable self-service team creation
+ALLOW_TEAM_JOIN_REQUESTS=false          # Disable self-service team joining
+ALLOW_TEAM_INVITATIONS=false            # Disable team invitations
 
 # Token Security
 REQUIRE_TOKEN_EXPIRATION=true            # Reject tokens without exp claim
@@ -605,6 +608,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    - Confirm `REQUIRE_JTI=true` for token tracking
    - Confirm `REQUIRE_TOKEN_EXPIRATION=true`
    - Confirm `PUBLIC_REGISTRATION_ENABLED=false`
+   - Confirm team governance flags are set appropriately
 
 3. **Test Security Controls**
 

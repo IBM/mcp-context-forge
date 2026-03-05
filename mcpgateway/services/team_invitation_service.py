@@ -30,6 +30,7 @@ from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.team_management_service import get_user_team_count
 
 # Initialize logging
 logging_service = LoggingService()
@@ -76,6 +77,17 @@ class TeamInvitationService:
             'TeamInvitationService'
         """
         self.db = db
+
+    def _get_user_team_count(self, user_email: str) -> int:
+        """Get the number of active teams a user belongs to.
+
+        Args:
+            user_email: Email address of the user
+
+        Returns:
+            int: Number of active team memberships
+        """
+        return get_user_team_count(self.db, user_email)
 
     @staticmethod
     def _fire_and_forget(coro: Any) -> None:
@@ -157,6 +169,10 @@ class TeamInvitationService:
             Team owners can send invitations to new members.
         """
         try:
+            # Check feature flag
+            if not getattr(settings, "allow_team_invitations", True):
+                raise ValueError("Team invitations are currently disabled")
+
             # Validate role
             valid_roles = ["owner", "member"]
             if role not in valid_roles:
@@ -179,6 +195,12 @@ class TeamInvitationService:
             if not inviter:
                 logger.warning(f"Inviter {invited_by} not found")
                 return None
+
+            # Check email verification requirement for invitee
+            if getattr(settings, "require_email_verification_for_invites", True):
+                invitee = self.db.query(EmailUser).filter(EmailUser.email == email).first()
+                if invitee and not invitee.email_verified_at:
+                    raise ValueError("Invitee email address has not been verified")
 
             # Check if inviter is a member of the team with appropriate permissions
             inviter_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == invited_by, EmailTeamMember.is_active.is_(True)).first()
@@ -303,6 +325,11 @@ class TeamInvitationService:
                     logger.warning(f"User {accepting_user_email} not found")
                     raise ValueError("User account not found")
 
+                # Check email verification at accept-time
+                if getattr(settings, "require_email_verification_for_invites", True):
+                    if not user.email_verified_at:
+                        raise ValueError("Email address has not been verified")
+
             # Check if team still exists
             team = self.db.query(EmailTeam).filter(EmailTeam.id == invitation.team_id, EmailTeam.is_active.is_(True)).first()
 
@@ -321,6 +348,12 @@ class TeamInvitationService:
                 invitation.is_active = False
                 self.db.commit()
                 raise ValueError("User is already a member of this team")
+
+            # Check max teams per user
+            max_teams = getattr(settings, "max_teams_per_user", 50)
+            accepting_email = accepting_user_email or invitation.email
+            if self._get_user_team_count(accepting_email) >= max_teams:
+                raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
             # Check team member limit
             if team.max_members:
