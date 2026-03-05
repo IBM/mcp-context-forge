@@ -601,11 +601,19 @@ After configuration, test role assignment:
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   http://localhost:8000/rbac/my/roles
 
-# Should return assigned roles:
+# Should return assigned roles (abbreviated):
 [
   {
+    "id": "...",
+    "user_email": "user@example.com",
+    "role_id": "...",
     "role_name": "developer",
     "scope": "team",
+    "scope_id": null,
+    "granted_by": "user@example.com",
+    "granted_at": "2026-02-20T21:20:20Z",
+    "expires_at": null,
+    "is_active": true,
     "grant_source": "sso"
   }
 ]
