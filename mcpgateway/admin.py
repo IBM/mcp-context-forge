@@ -7826,9 +7826,7 @@ async def admin_tools_partial_html(
             query = query.where(false())
     else:
         # All Teams view: apply standard access conditions
-        # Admin bypass: if user is admin, skip access control filters
         _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
-        
         if not _is_admin:
             # Non-admin: apply standard access conditions
             access_conditions = []

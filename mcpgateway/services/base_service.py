@@ -6,7 +6,6 @@
 # Standard
 from abc import ABC
 from typing import Any, List, Optional
-from asyncio.base_events import sys
 
 # Third-Party
 from sqlalchemy import and_, or_

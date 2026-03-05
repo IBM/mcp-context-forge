@@ -50,7 +50,6 @@ from mcpgateway.services.email_auth_service import AuthenticationError, EmailAut
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.services.team_management_service import TeamManagementService 
 
 # Initialize logging
 logging_service = LoggingService()
@@ -142,7 +141,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Create JWT payload — session token with teams claim for proper RBAC
+    # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
         # Standard JWT claims
         "sub": user.email,
@@ -161,7 +160,6 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
-
     }
 
     # Generate token using centralized token creation
