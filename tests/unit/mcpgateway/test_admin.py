@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.testclient import TestClient
+import jwt
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
 from pydantic_core import ValidationError as CoreValidationError
@@ -14733,7 +14734,7 @@ class TestAuthLogin:
         request.app.state.templates.TemplateResponse.return_value = mock_template_response
 
         # Mock verify_jwt_token_cached to raise exception (invalid token)
-        mock_verify = AsyncMock(side_effect=Exception("Invalid token"))
+        mock_verify = AsyncMock(side_effect=jwt.PyJWTError("Invalid token"))
         monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
 
         # Mock load_sri_hashes
