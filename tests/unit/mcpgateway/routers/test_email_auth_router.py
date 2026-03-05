@@ -41,8 +41,6 @@ class TestEmailAuthLoginPasswordChangeRequired:
         user.auth_provider = "local"
         user.is_account_locked = MagicMock(return_value=False)
         user.reset_failed_attempts = MagicMock()
-        user.get_teams = MagicMock(return_value=[])
-        user.team_memberships = []
         return user
 
     @pytest.fixture
@@ -60,8 +58,6 @@ class TestEmailAuthLoginPasswordChangeRequired:
         user.auth_provider = "local"
         user.is_account_locked = MagicMock(return_value=False)
         user.reset_failed_attempts = MagicMock()
-        user.get_teams = MagicMock(return_value=[])
-        user.team_memberships = []
         return user
 
     @pytest.mark.asyncio

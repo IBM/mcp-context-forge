@@ -1902,14 +1902,18 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=None)) as mock_resolve_teams,
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=None)) as mock_resolve_teams,
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
             response = await middleware.dispatch(request, call_next)
 
         assert response == "ok"
-        mock_resolve_teams.assert_awaited_once_with("admin@example.com", {"is_admin": True})
+        mock_resolve_teams.assert_awaited_once_with(
+            {"sub": "admin@example.com", "token_use": "session", "is_admin": True},
+            "admin@example.com",
+            {"is_admin": True},
+        )
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
@@ -2219,7 +2223,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2260,7 +2264,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2299,7 +2303,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2339,7 +2343,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2380,7 +2384,7 @@ class TestAdminAuthMiddleware:
                 new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
             ),
             # token_teams=None signals admin bypass
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2422,7 +2426,7 @@ class TestAdminAuthMiddleware:
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
             # DB stores hex format
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2462,7 +2466,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2506,7 +2510,7 @@ class TestAdminAuthMiddleware:
                 "mcpgateway.main.verify_jwt_token",
                 new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
             ),
-            patch("mcpgateway.main._resolve_teams_from_db", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
+            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
