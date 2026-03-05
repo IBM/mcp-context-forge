@@ -3517,6 +3517,24 @@ class GatewayRead(BaseModelWithConfigDict):
         return GatewayRead.model_validate(masked_data)
 
 
+class GatewayCredentialRevealResponse(BaseModelWithConfigDict):
+    """Response schema for the gateway credential reveal endpoint.
+
+    Returns plaintext credentials for a specific gateway, intended for
+    authorized administrative use only. Every call to this endpoint is
+    audit-logged.
+    """
+
+    gateway_id: str = Field(..., description="ID of the gateway whose credentials are revealed")
+    auth_type: Optional[str] = Field(None, description="Authentication type: basic, bearer, authheaders, etc.")
+    auth_token: Optional[str] = Field(None, description="Plaintext bearer token")
+    auth_username: Optional[str] = Field(None, description="Plaintext username for basic authentication")
+    auth_password: Optional[str] = Field(None, description="Plaintext password for basic authentication")
+    auth_header_key: Optional[str] = Field(None, description="Custom header key for authheaders authentication")
+    auth_header_value: Optional[str] = Field(None, description="Plaintext custom header value for authheaders authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="Plaintext list of custom authentication headers")
+
+
 class GatewayRefreshResponse(BaseModelWithConfigDict):
     """Response schema for manual gateway refresh API.
 

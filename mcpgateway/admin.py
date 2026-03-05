@@ -94,6 +94,7 @@ from mcpgateway.schemas import (
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
     GatewayCreate,
+    GatewayCredentialRevealResponse,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
@@ -11327,6 +11328,56 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Error getting gateway {gateway_id}: {e}")
+        raise e
+
+
+@admin_router.post("/gateways/{gateway_id}/reveal", response_model=GatewayCredentialRevealResponse)
+@require_permission("gateways.read", allow_admin_bypass=False)
+async def admin_reveal_gateway_credentials(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> GatewayCredentialRevealResponse:
+    """Reveal plaintext credentials for a gateway.
+
+    Returns the decrypted authentication credentials for the specified gateway.
+    This endpoint is restricted to authorized users and every call is recorded
+    in the audit trail.
+
+    Args:
+        gateway_id: Gateway ID.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        GatewayCredentialRevealResponse with plaintext credential fields.
+
+    Raises:
+        HTTPException: 404 if the gateway is not found.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> callable(admin_reveal_gateway_credentials)
+        True
+        >>> admin_reveal_gateway_credentials.__name__
+        'admin_reveal_gateway_credentials'
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} requested credential reveal for gateway ID {gateway_id}")
+
+    audit_service = get_audit_trail_service()
+    audit_service.log_action(
+        action="READ",
+        resource_type="gateway",
+        resource_id=gateway_id,
+        user_id=user_email,
+        user_email=user_email,
+        context={"action": "credential_reveal"},
+        db=db,
+    )
+
+    try:
+        return await gateway_service.get_gateway_with_credentials(db, gateway_id)
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error revealing credentials for gateway {gateway_id}: {e}")
         raise e
 
 
