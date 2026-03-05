@@ -177,10 +177,6 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
-        # CRITICAL: teams claim for token scoping and RBAC
-        # - None = admin bypass (sees all)
-        # - [] = public-only (sees only public resources)
-        # - [...] = team-scoped (sees public + team resources)
         "teams": teams_claim,
     }
 
