@@ -619,13 +619,13 @@ class TestTokenScopingMiddleware:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_session_token_with_teams_claim_uses_embedded_teams(self, middleware, mock_request):
-        """Test that session tokens with 'teams' claim use embedded teams instead of DB lookup."""
+    async def test_session_token_with_teams_claim_still_resolves_from_db(self, middleware, mock_request):
+        """Session tokens always resolve teams from DB even when a teams claim is present."""
         mock_request.url.path = "/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer session_token"}
 
-        # Session token with explicit single team claim
+        # Session token with explicit single team claim — should still go to DB
         session_payload = {
             "sub": "user@example.com",
             "token_use": "session",
@@ -634,25 +634,20 @@ class TestTokenScopingMiddleware:
         }
 
         with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["team-123"]) as mock_normalize:
-                    # Mock _check_team_membership to avoid DB query
-                    with patch.object(middleware, "_check_team_membership", return_value=True):
-                        # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
-                            call_next = AsyncMock(return_value="success")
+            with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["team-123"]) as mock_resolve_teams:
+                # Mock _check_team_membership to avoid DB query
+                with patch.object(middleware, "_check_team_membership", return_value=True):
+                    # Mock _check_resource_team_ownership to avoid DB query
+                    with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                        call_next = AsyncMock(return_value="success")
 
-                            result = await middleware(mock_request, call_next)
+                        result = await middleware(mock_request, call_next)
 
-                            # Verify request was allowed
-                            assert result == "success"
-                            call_next.assert_called_once()
+                        assert result == "success"
+                        call_next.assert_called_once()
 
-                            # Verify normalize_token_teams was called (teams came from token)
-                            mock_normalize.assert_called_once()
-
-                    # Verify _resolve_teams_from_db was NOT called
-                    mock_resolve_teams.assert_not_called()
+                        # Session tokens always resolve from DB for current membership
+                        mock_resolve_teams.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_session_token_without_teams_claim_resolves_from_db(self, middleware, mock_request):
@@ -788,6 +783,87 @@ class TestTokenScopingMiddleware:
 
                             # Verify _resolve_teams_from_db was NOT called
                             mock_resolve_teams.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_token_calls_resolve_session_teams(self, middleware, mock_request):
+        """Verify middleware calls the public resolve_session_teams policy point, not _resolve_teams_from_db directly."""
+        mock_request.url.path = "/servers"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer session_token"}
+
+        session_payload = {
+            "sub": "user@example.com",
+            "token_use": "session",
+            "teams": ["team-1"],
+            "scopes": {"permissions": ["*"]},
+        }
+
+        with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
+            with patch("mcpgateway.middleware.token_scoping.resolve_session_teams", new=AsyncMock(return_value=["team-1"])) as mock_resolve:
+                with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                    call_next = AsyncMock(return_value="success")
+
+                    result = await middleware(mock_request, call_next)
+
+                    assert result == "success"
+                    mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {"is_admin": False})
+
+    @pytest.mark.asyncio
+    async def test_session_token_skips_membership_check_on_stale_jwt_teams(self, middleware, mock_request):
+        """Session tokens skip _check_team_membership; stale JWT teams produce empty intersection (public-only)."""
+        mock_request.url.path = "/servers"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer session_token"}
+
+        # JWT claims stale team "revoked-team"; DB only has "db-team"
+        # Intersection is empty → resolve_session_teams returns []
+        session_payload = {
+            "sub": "user@example.com",
+            "token_use": "session",
+            "teams": ["revoked-team"],
+            "scopes": {"permissions": ["*"]},
+        }
+
+        with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
+            # resolve_session_teams returns [] (empty intersection)
+            with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team"]) as mock_resolve:
+                with patch.object(middleware, "_check_team_membership", return_value=False) as mock_membership:
+                    with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                        call_next = AsyncMock(return_value="success")
+
+                        result = await middleware(mock_request, call_next)
+
+                        # Request proceeds with public-only scope (token_teams=[])
+                        assert result == "success"
+                        call_next.assert_called_once()
+                        mock_resolve.assert_called_once()
+                        # Session tokens must NOT call _check_team_membership
+                        mock_membership.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_api_token_still_checks_membership(self, middleware, mock_request):
+        """API tokens must still go through _check_team_membership validation."""
+        mock_request.url.path = "/servers"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer api_token"}
+
+        api_payload = {
+            "sub": "user@example.com",
+            "token_use": "api",
+            "teams": ["stale-team"],
+            "scopes": {"permissions": ["*"]},
+        }
+
+        with patch.object(middleware, "_extract_token_scopes", return_value=api_payload):
+            with patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["stale-team"]):
+                with patch.object(middleware, "_check_team_membership", return_value=False) as mock_membership:
+                    call_next = AsyncMock(return_value="success")
+
+                    result = await middleware(mock_request, call_next)
+
+                    # Should be a 403 response, not "success"
+                    assert result != "success"
+                    mock_membership.assert_called_once()
 
     def test_check_team_membership_missing_user_email_denies(self, middleware):
         """Team-scoped tokens without a user email should be rejected."""
