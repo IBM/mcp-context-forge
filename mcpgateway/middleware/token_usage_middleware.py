@@ -155,7 +155,8 @@ class TokenUsageMiddleware:
 
             # Bug 3a fix: reflect the actual outcome — 4xx responses mark the attempt
             # as blocked (e.g. RBAC denied, rate-limited, or server-scoping violation).
-            blocked = status_code >= 400
+            # 5xx errors are backend failures, not security denials, so exclude them.
+            blocked = 400 <= status_code < 500
             if blocked:
                 block_reason = f"http_{status_code}"
 
@@ -182,6 +183,20 @@ class TokenUsageMiddleware:
                 user_email = unverified.get("sub") or unverified.get("email")
                 if not jti or not user_email:
                     return
+
+                # Verify JTI belongs to a real API token before logging.
+                # Without this check, an attacker can craft a JWT with fake
+                # jti/sub and auth_provider=api_token to pollute usage logs.
+                try:
+                    from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    with fresh_db_session() as verify_db:
+                        exists = verify_db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+                        if exists is None:
+                            return  # JTI not in DB — forged token, skip logging
+                except Exception:
+                    return  # DB error — skip logging rather than log unverified data
 
                 blocked = True
                 block_reason = "revoked_or_expired" if status_code == 401 else f"http_{status_code}"

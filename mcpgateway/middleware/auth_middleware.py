@@ -174,6 +174,16 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         except Exception as close_error:
                             logger.debug(f"Failed to close database session: {close_error}")
 
+                # Browser/admin requests with stale cookies: let the request continue
+                # without user context so the RBAC layer can redirect to /admin/login.
+                # API requests: return a hard JSON 401/403 deny.
+                accept_header = request.headers.get("accept", "")
+                is_htmx = request.headers.get("hx-request") == "true"
+                is_browser = "text/html" in accept_header or is_htmx
+                if is_browser:
+                    logger.debug("Browser request with rejected auth — continuing without user for redirect")
+                    return await call_next(request)
+
                 return JSONResponse(
                     status_code=e.status_code,
                     content={"detail": e.detail},
