@@ -79,7 +79,14 @@ class TeamInvitationService:
         self.db = db
 
     def _get_user_team_count(self, user_email: str) -> int:
-        """Get the number of active teams a user belongs to."""
+        """Get the number of active teams a user belongs to.
+
+        Args:
+            user_email: Email address of the user
+
+        Returns:
+            int: Number of active team memberships
+        """
         return get_user_team_count(self.db, user_email)
 
     @staticmethod
