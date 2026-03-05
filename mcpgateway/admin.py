@@ -5220,6 +5220,10 @@ async def admin_create_team(
         slug = form.get("slug") or None
         description = form.get("description") or None
         visibility = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             response = HTMLResponse(
@@ -5234,13 +5238,13 @@ async def admin_create_team(
 
         team_service = TeamManagementService(db)
 
-        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility)
+        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility, max_members=max_members)
 
         # Extract user email from user dict
         user_email = get_user_email(user)
 
         is_admin = isinstance(user, dict) and user.get("is_admin")
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, skip_limits=bool(is_admin))
+        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin))
 
         response = HTMLResponse(content="", status_code=201)
         return response
@@ -5695,10 +5699,14 @@ async def admin_update_team(
         name_val = form.get("name")
         desc_val = form.get("description")
         vis_val = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
         # Trim before presence check for consistent error messages
         name = name_val.strip() if isinstance(name_val, str) else None
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -5750,7 +5758,7 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email)
 
         if not updated:
             is_htmx = request.headers.get("HX-Request") == "true"
