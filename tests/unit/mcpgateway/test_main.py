@@ -32,6 +32,7 @@ from mcpgateway.config import settings
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 import mcpgateway.db as db_mod
 from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
     GatewayRead,
     PromptRead,
     ResourceRead,
@@ -2716,6 +2717,74 @@ class TestMetricsEndpoints:
         data = response.json()
         assert data["tools"]["totalExecutions"] == 4
         assert data["prompts"]["totalExecutions"] == 1
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
+    def test_get_metrics_with_a2a_agents_camelcase(self, mock_tool, mock_resource, mock_server, mock_prompt, mock_a2a_service, test_client, auth_headers):
+        """Test that A2A agent metrics are returned with consistent camelCase keys."""
+        mock_tool.return_value = ToolMetrics(total_executions=10, successful_executions=9, failed_executions=1, failure_rate=0.1)
+        mock_resource.return_value = ResourceMetrics(total_executions=5, successful_executions=5, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+        
+        # Mock A2A service to return A2AAgentAggregateMetrics
+        mock_a2a_metrics = A2AAgentAggregateMetrics(
+            total_agents=5,
+            active_agents=3,
+            total_interactions=100,
+            successful_interactions=90,
+            failed_interactions=10,
+            success_rate=90.0,
+            avg_response_time=1.5,
+            min_response_time=0.5,
+            max_response_time=3.0
+        )
+        mock_a2a_service.aggregate_metrics = AsyncMock(return_value=mock_a2a_metrics)
+        
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Verify all sections use camelCase
+        assert "tools" in data
+        assert "resources" in data
+        assert "servers" in data
+        assert "prompts" in data
+        assert "a2aAgents" in data or "a2a_agents" in data  # Handle both possible keys
+        
+        # Verify tools section uses camelCase
+        assert "totalExecutions" in data["tools"]
+        assert "successfulExecutions" in data["tools"]
+        assert "failedExecutions" in data["tools"]
+        
+        # Verify A2A agents section uses camelCase (not snake_case)
+        a2a_key = "a2aAgents" if "a2aAgents" in data else "a2a_agents"
+        if data.get(a2a_key):
+            a2a_data = data[a2a_key]
+            # These should be camelCase, not snake_case
+            assert "totalAgents" in a2a_data, "A2A metrics should use camelCase 'totalAgents'"
+            assert "activeAgents" in a2a_data, "A2A metrics should use camelCase 'activeAgents'"
+            assert "totalInteractions" in a2a_data, "A2A metrics should use camelCase 'totalInteractions'"
+            assert "successfulInteractions" in a2a_data, "A2A metrics should use camelCase 'successfulInteractions'"
+            assert "failedInteractions" in a2a_data, "A2A metrics should use camelCase 'failedInteractions'"
+            assert "successRate" in a2a_data, "A2A metrics should use camelCase 'successRate'"
+            assert "avgResponseTime" in a2a_data, "A2A metrics should use camelCase 'avgResponseTime'"
+            assert "minResponseTime" in a2a_data, "A2A metrics should use camelCase 'minResponseTime'"
+            assert "maxResponseTime" in a2a_data, "A2A metrics should use camelCase 'maxResponseTime'"
+            
+            # Verify no snake_case keys exist
+            assert "total_agents" not in a2a_data, "A2A metrics should not have snake_case 'total_agents'"
+            assert "active_agents" not in a2a_data, "A2A metrics should not have snake_case 'active_agents'"
+            assert "total_interactions" not in a2a_data, "A2A metrics should not have snake_case 'total_interactions'"
+            
+            # Verify values
+            assert a2a_data["totalAgents"] == 5
+            assert a2a_data["activeAgents"] == 3
+            assert a2a_data["totalInteractions"] == 100
+            assert a2a_data["successRate"] == 90.0
 
     #    @patch("mcpgateway.main.a2a_service")
     #    @patch("mcpgateway.main.prompt_service.reset_metrics")

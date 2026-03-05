@@ -248,6 +248,36 @@ class A2AAgentMetrics(BaseModelWithConfigDict):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent interaction")
 
 
+class A2AAgentAggregateMetrics(BaseModelWithConfigDict):
+    """
+    Represents aggregated metrics for all A2A agents in the system.
+
+    This model is used for the /metrics endpoint to provide system-wide A2A agent statistics
+    with consistent camelCase field naming.
+
+    Attributes:
+        total_agents (int): Total number of A2A agents registered.
+        active_agents (int): Number of currently active A2A agents.
+        total_interactions (int): Total number of agent interactions.
+        successful_interactions (int): Number of successful agent interactions.
+        failed_interactions (int): Number of failed agent interactions.
+        success_rate (float): Success rate as a percentage (0-100).
+        avg_response_time (float): Average response time in milliseconds.
+        min_response_time (float): Minimum response time in milliseconds.
+        max_response_time (float): Maximum response time in milliseconds.
+    """
+
+    total_agents: int = Field(..., description="Total number of A2A agents registered")
+    active_agents: int = Field(..., description="Number of currently active A2A agents")
+    total_interactions: int = Field(..., description="Total number of agent interactions")
+    successful_interactions: int = Field(..., description="Number of successful agent interactions")
+    failed_interactions: int = Field(..., description="Number of failed agent interactions")
+    success_rate: float = Field(..., description="Success rate as a percentage (0-100)")
+    avg_response_time: float = Field(..., description="Average response time in milliseconds")
+    min_response_time: float = Field(..., description="Minimum response time in milliseconds")
+    max_response_time: float = Field(..., description="Maximum response time in milliseconds")
+
+
 class MetricsResponse(BaseModelWithConfigDict):
     """
     Response model for the aggregated metrics endpoint.
@@ -259,7 +289,7 @@ class MetricsResponse(BaseModelWithConfigDict):
     resources: ResourceMetrics
     servers: ServerMetrics
     prompts: PromptMetrics
-    a2a_agents: Optional[Dict[str, Any]] = None
+    a2a_agents: Optional[A2AAgentAggregateMetrics] = None
 
 
 # --- JSON Path API modifier Schema

@@ -1516,7 +1516,7 @@ class A2AAgentService(BaseService):
 
         return response or {"error": error_message}
 
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: Session) -> "A2AAgentAggregateMetrics":
         """Aggregate metrics for all A2A agents.
 
         Combines recent raw metrics (within retention period) with historical
@@ -1527,8 +1527,11 @@ class A2AAgentService(BaseService):
             db: Database session.
 
         Returns:
-            Aggregated metrics from raw + hourly rollup tables.
+            A2AAgentAggregateMetrics: Aggregated metrics from raw + hourly rollup tables.
         """
+        # First-Party
+        from mcpgateway.schemas import A2AAgentAggregateMetrics  # pylint: disable=import-outside-toplevel
+
         # Check cache first (if enabled)
         # First-Party
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
@@ -1536,6 +1539,7 @@ class A2AAgentService(BaseService):
         if is_cache_enabled():
             cached = metrics_cache.get("a2a")
             if cached is not None:
+                # Cached value is already an A2AAgentAggregateMetrics instance
                 return cached
 
         # Get total/active agent counts from cache (avoids 2 COUNT queries per call)
@@ -1553,17 +1557,17 @@ class A2AAgentService(BaseService):
         successful_interactions = result.successful_executions
         failed_interactions = result.failed_executions
 
-        metrics = {
-            "total_agents": total_agents,
-            "active_agents": active_agents,
-            "total_interactions": total_interactions,
-            "successful_interactions": successful_interactions,
-            "failed_interactions": failed_interactions,
-            "success_rate": (successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            "avg_response_time": float(result.avg_response_time or 0.0),
-            "min_response_time": float(result.min_response_time or 0.0),
-            "max_response_time": float(result.max_response_time or 0.0),
-        }
+        metrics = A2AAgentAggregateMetrics(
+            total_agents=total_agents,
+            active_agents=active_agents,
+            total_interactions=total_interactions,
+            successful_interactions=successful_interactions,
+            failed_interactions=failed_interactions,
+            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
+            avg_response_time=float(result.avg_response_time or 0.0),
+            min_response_time=float(result.min_response_time or 0.0),
+            max_response_time=float(result.max_response_time or 0.0),
+        )
 
         # Cache the result (if enabled)
         if is_cache_enabled():

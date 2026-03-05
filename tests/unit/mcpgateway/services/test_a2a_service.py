@@ -739,6 +739,7 @@ class TestA2AAgentService:
         """Test metrics aggregation."""
         # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
 
         mock_metrics = AggregatedMetrics(
             total_executions=100,
@@ -763,14 +764,29 @@ class TestA2AAgentService:
             # Execute
             result = await service.aggregate_metrics(mock_db)
 
-        # Verify
-        assert result["total_agents"] == 5
-        assert result["active_agents"] == 3
-        assert result["total_interactions"] == 100
-        assert result["successful_interactions"] == 90
-        assert result["failed_interactions"] == 10
-        assert result["success_rate"] == 90.0
-        assert result["avg_response_time"] == 1.5
+        # Verify result is an A2AAgentAggregateMetrics instance
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 5
+        assert result.active_agents == 3
+        assert result.total_interactions == 100
+        assert result.successful_interactions == 90
+        assert result.failed_interactions == 10
+        assert result.success_rate == 90.0
+        assert result.avg_response_time == 1.5
+        assert result.min_response_time == 0.5
+        assert result.max_response_time == 3.0
+        
+        # Verify camelCase serialization
+        result_dict = result.model_dump(by_alias=True)
+        assert "totalAgents" in result_dict
+        assert "activeAgents" in result_dict
+        assert "totalInteractions" in result_dict
+        assert "successfulInteractions" in result_dict
+        assert "failedInteractions" in result_dict
+        assert "successRate" in result_dict
+        assert "avgResponseTime" in result_dict
+        assert "minResponseTime" in result_dict
+        assert "maxResponseTime" in result_dict
 
     async def test_reset_metrics_all(self, service, mock_db):
         """Test resetting all metrics."""
@@ -2352,7 +2368,19 @@ class TestAggregateMetricsEdgeCases:
 
     async def test_cache_hit(self, service, mock_db, monkeypatch):
         """Cached metrics are returned without DB query."""
-        cached_metrics = {"total_agents": 5, "active_agents": 3, "total_interactions": 100}
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
+        
+        cached_metrics = A2AAgentAggregateMetrics(
+            total_agents=5,
+            active_agents=3,
+            total_interactions=100,
+            successful_interactions=90,
+            failed_interactions=10,
+            success_rate=90.0,
+            avg_response_time=1.5,
+            min_response_time=0.5,
+            max_response_time=3.0
+        )
 
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.is_cache_enabled", lambda: True)
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", SimpleNamespace(
@@ -2361,10 +2389,12 @@ class TestAggregateMetricsEdgeCases:
 
         result = await service.aggregate_metrics(mock_db)
         assert result == cached_metrics
+        assert isinstance(result, A2AAgentAggregateMetrics)
 
     async def test_cache_write(self, service, mock_db, monkeypatch):
         """Computed metrics are written to cache."""
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
 
         mock_metrics = AggregatedMetrics(
             total_executions=10, successful_executions=8, failed_executions=2,
@@ -2387,5 +2417,8 @@ class TestAggregateMetricsEdgeCases:
         mock_db.execute.return_value.one.return_value = mock_counts_result
 
         result = await service.aggregate_metrics(mock_db)
-        assert result["total_agents"] == 3
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 3
+        assert result.active_agents == 2
+        assert result.total_interactions == 10
         mock_cache.set.assert_called_once()
