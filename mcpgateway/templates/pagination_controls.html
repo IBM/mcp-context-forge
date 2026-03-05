@@ -107,6 +107,23 @@
       }
     });
 
+    // Dynamically read current search query from search input (fixes #3128)
+    // This ensures pagination preserves the user's search filter across all pages
+    if (this.tableName) {
+      const searchInputId = this.tableName + '-search-input';
+      const searchInput = document.getElementById(searchInputId);
+      if (searchInput && searchInput.value.trim()) {
+        url.searchParams.set('q', searchInput.value.trim());
+      }
+      
+      // Also preserve tag filter if present
+      const tagInputId = this.tableName + '-tag-filter';
+      const tagInput = document.getElementById(tagInputId);
+      if (tagInput && tagInput.value.trim()) {
+        url.searchParams.set('tags', tagInput.value.trim());
+      }
+    }
+
     // Also pick up team_id if the parent app injects it into the browser URL
     // (e.g. when the gateway is embedded in an iframe).
     const currentUrlParams = new URLSearchParams(window.location.search);
