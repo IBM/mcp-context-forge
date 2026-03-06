@@ -13,6 +13,7 @@ in auth_user_ctx, so check_any_team is never True.
 """
 
 # Standard
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -115,6 +116,87 @@ async def test_check_streamable_permission_no_token_use_defaults_false():
 
     call_kwargs = mock_ps.check_permission.call_args.kwargs
     assert call_kwargs.get("check_any_team", False) is False
+
+
+@pytest.mark.asyncio
+async def test_servers_use_check_passes_check_any_team_for_session_token():
+    """servers.use in handle_streamable_http must pass check_any_team=True for session tokens.
+
+    The servers.use check at the ASGI handler level gates access to /servers/{id}/mcp.
+    Since developer and team_admin roles grant servers.use as a team-scoped permission,
+    session tokens must use check_any_team=True — otherwise they are denied at the
+    transport level before even reaching call_tool.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @contextlib.asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    dummy_manager = DummySessionManager()
+    dummy_manager.handle_request = AsyncMock()
+
+    session_user_ctx = {
+        "email": "dev@example.com",
+        "teams": ["team-abc"],
+        "is_admin": False,
+        "is_authenticated": True,
+        "token_use": "session",
+    }
+
+    mock_perm = AsyncMock(return_value=True)
+
+    with patch("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: dummy_manager):
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            mock_settings.use_stateful_sessions = False
+            wrapper = SessionManagerWrapper()
+            await wrapper.initialize()
+
+            token = user_context_var.set(session_user_ctx)
+            try:
+                with patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", mock_perm):
+                    path = "/servers/abc123def456/mcp"
+                    scope = {
+                        "type": "http",
+                        "method": "POST",
+                        "path": path,
+                        "modified_path": path,
+                        "scheme": "https",
+                        "server": ("localhost", 4444),
+                        "client": ("127.0.0.1", 0),
+                        "headers": [(b"mcp-session-id", b"sess-1")],
+                    }
+                    body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": "1"})
+
+                    async def receive():
+                        return {"type": "http.request", "body": body}
+
+                    sent = []
+
+                    async def send(msg):
+                        sent.append(msg)
+
+                    await wrapper.handle_streamable_http(scope, receive, send)
+
+                    # Verify _check_streamable_permission was called with check_any_team=True
+                    mock_perm.assert_called_once()
+                    call_kwargs = mock_perm.call_args.kwargs
+                    assert call_kwargs.get("check_any_team") is True, (
+                        f"servers.use check must pass check_any_team=True for session tokens; got {call_kwargs}"
+                    )
+                    assert call_kwargs.get("permission") == "servers.use"
+            finally:
+                user_context_var.reset(token)
+                await wrapper.shutdown()
 
 
 @pytest.mark.asyncio
