@@ -1206,3 +1206,145 @@ class TestRBACRestAPIEntityCreate:
             logger.info("Viewer API create prompt: status=%d — correctly denied", resp.status)
         finally:
             ctx.dispose()
+
+
+# ==================== #3515 Regression: Session-token RPC tool execution ====================
+
+
+@pytest.mark.ui
+@pytest.mark.rbac
+@pytest.mark.flaky(reruns=1, reason="Browser cookie auth intermittently returns 401")
+class TestRPCToolExecutionRBAC:
+    """Regression tests for #3515: session tokens denied tools.execute on /rpc and /mcp.
+
+    Before the fix, _ensure_rpc_permission called has_permission without check_any_team=True,
+    so users with tools.execute only in a team-scoped role got -32003 on /rpc tools/call
+    while the same user succeeded on REST endpoints.
+    """
+
+    def test_developer_rpc_tools_call_not_denied(self, playwright: Playwright, admin_api: APIRequestContext, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer with team-scoped role must not receive -32003 on /rpc tools/call (#3515).
+
+        Sends tools/call via /rpc as a session-token developer.  The tool URL will fail
+        (network error), but RBAC must pass — any error code other than -32003 confirms
+        the permission check no longer incorrectly denies the request.
+        """
+        team_id = rbac_test_team["id"]
+        tool_name = f"{RBAC_TEST_PREFIX}-rpc-exec-{uuid.uuid4().hex[:8]}"
+
+        # Create a team-scoped REST tool via admin API (JSON body required)
+        import json as _json  # noqa: PLC0415
+        create_resp = admin_api.post(
+            "/tools",
+            data=_json.dumps({"tool": {"name": tool_name, "description": "RPC RBAC regression test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}}, "team_id": team_id, "visibility": "team"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert create_resp.status in (200, 201), f"Failed to create test tool: {create_resp.status} {create_resp.text()}"
+        tool_id = create_resp.json().get("id")
+        logger.info("Created team-scoped tool %s (id=%s) for #3515 regression test", tool_name, tool_id)
+
+        try:
+            # Developer calls /rpc tools/call as a session token
+            token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
+            dev_ctx = playwright.request.new_context(
+                base_url=BASE_URL,
+                extra_http_headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
+            try:
+                rpc_resp = dev_ctx.post(
+                    "/rpc",
+                    data='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' + tool_name + '","arguments":{}}}',
+                )
+                body = rpc_resp.json()
+                error_code = body.get("error", {}).get("code")
+                assert error_code != -32003, (
+                    f"Developer session token was denied tools.execute with -32003 — #3515 regression. "
+                    f"Full response: {body}"
+                )
+                logger.info("Developer /rpc tools/call: HTTP %d, error_code=%s — RBAC passed", rpc_resp.status, error_code)
+            finally:
+                dev_ctx.dispose()
+        finally:
+            if tool_id:
+                admin_api.delete(f"/tools/{tool_id}")
+
+    def test_viewer_rpc_tools_call_denied(self, playwright: Playwright, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer (no tools.execute) must still be denied -32003 on /rpc tools/call (deny-path).
+
+        Ensures the fix doesn't inadvertently grant execute to roles that should not have it.
+        """
+        team_id = rbac_test_team["id"]
+        tool_name = f"{RBAC_TEST_PREFIX}-rpc-viewer-{uuid.uuid4().hex[:8]}"
+
+        import json as _json  # noqa: PLC0415
+        create_resp = admin_api.post(
+            "/tools",
+            data=_json.dumps({"tool": {"name": tool_name, "description": "RPC RBAC deny-path test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}}, "team_id": team_id, "visibility": "team"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert create_resp.status in (200, 201), f"Failed to create test tool: {create_resp.status}"
+        tool_id = create_resp.json().get("id")
+
+        try:
+            token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
+            viewer_ctx = playwright.request.new_context(
+                base_url=BASE_URL,
+                extra_http_headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
+            try:
+                rpc_resp = viewer_ctx.post(
+                    "/rpc",
+                    data='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' + tool_name + '","arguments":{}}}',
+                )
+                body = rpc_resp.json()
+                error_code = body.get("error", {}).get("code")
+                assert error_code == -32003, (
+                    f"Viewer should be denied tools.execute with -32003 but got error_code={error_code}. "
+                    f"Full response: {body}"
+                )
+                logger.info("Viewer /rpc tools/call: HTTP %d, error_code=%s — correctly denied", rpc_resp.status, error_code)
+            finally:
+                viewer_ctx.dispose()
+        finally:
+            if tool_id:
+                admin_api.delete(f"/tools/{tool_id}")
+
+    def test_developer_can_list_team_tool(self, playwright: Playwright, admin_api: APIRequestContext, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer must see their team-scoped tool in GET /tools (Layer 1 visibility check).
+
+        Confirms that token scoping correctly surfaces team tools to team members,
+        which is what allows the Tools screen to show the tool and the user to invoke it.
+        """
+        team_id = rbac_test_team["id"]
+        tool_name = f"{RBAC_TEST_PREFIX}-list-vis-{uuid.uuid4().hex[:8]}"
+
+        import json as _json  # noqa: PLC0415
+        create_resp = admin_api.post(
+            "/tools",
+            data=_json.dumps({"tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}}, "team_id": team_id, "visibility": "team"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert create_resp.status in (200, 201), f"Failed to create test tool: {create_resp.status}"
+        tool_id = create_resp.json().get("id")
+
+        try:
+            token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
+            dev_ctx = playwright.request.new_context(
+                base_url=BASE_URL,
+                extra_http_headers={"Authorization": f"Bearer {token}"},
+            )
+            try:
+                list_resp = dev_ctx.get(f"/tools?team_id={team_id}")
+                assert list_resp.status == 200, f"Developer GET /tools failed: {list_resp.status}"
+                tools = list_resp.json()
+                names = [t.get("name") for t in (tools if isinstance(tools, list) else tools.get("tools", []))]
+                assert tool_name in names, (
+                    f"Developer cannot see team-scoped tool '{tool_name}' in GET /tools response. "
+                    f"Visible tools: {names}"
+                )
+                logger.info("Developer GET /tools: tool '%s' visible — Layer 1 scoping correct", tool_name)
+            finally:
+                dev_ctx.dispose()
+        finally:
+            if tool_id:
+                admin_api.delete(f"/tools/{tool_id}")
