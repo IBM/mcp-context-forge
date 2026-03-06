@@ -132,3 +132,57 @@ async def test_ensure_rpc_permission_unauthenticated_raises():
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
 
     assert exc_info.value.code == -32003
+
+
+# ---------------------------------------------------------------------------
+# Deny-path regression tests (Task 6)
+# Guard against the fix accidentally granting access it shouldn't.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_rpc_permission_denies_user_with_no_qualifying_role():
+    """User whose team roles don't include tools.execute must still be denied."""
+    user = _make_session_user()
+    db = MagicMock(spec=Session)
+    mock_checker = _make_mock_checker(grants=False)  # RBAC returns False
+
+    with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
+        with pytest.raises(JSONRPCError) as exc_info:
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+
+    assert exc_info.value.code == -32003
+
+
+@pytest.mark.asyncio
+async def test_ensure_rpc_permission_admin_bypass_still_works():
+    """is_admin=True user bypasses RBAC — checker must grant."""
+    user = _make_session_user(is_admin=True)
+    db = MagicMock(spec=Session)
+    mock_checker = _make_mock_checker(grants=True)
+
+    with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
+        await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+
+
+@pytest.mark.asyncio
+async def test_ensure_rpc_permission_token_scope_cap_blocks_at_layer1():
+    """Explicit scopes.permissions=['tools.read'] blocks tools.execute at Layer 1."""
+    user = _make_session_user()
+    db = MagicMock(spec=Session)
+    mock_checker = _make_mock_checker(grants=True)  # RBAC would grant
+
+    mock_request = MagicMock()
+    mock_request.state._jwt_verified_payload = (
+        None,
+        {"scopes": {"permissions": ["tools.read"]}},
+    )
+
+    with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
+        with pytest.raises(JSONRPCError) as exc_info:
+            await _ensure_rpc_permission(
+                user, db, "tools.execute", "tools/call", request=mock_request
+            )
+
+    assert exc_info.value.code == -32003
+    assert "tools.execute" in exc_info.value.message
