@@ -114,7 +114,7 @@ async def test_ensure_rpc_permission_non_session_token_uses_check_any_team_false
         await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
 
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is not True, (
+    assert call_kwargs.get("check_any_team", False) is False, (
         "Non-session tokens must not use check_any_team=True; "
         "got call_kwargs=%r" % call_kwargs
     )
@@ -128,5 +128,7 @@ async def test_ensure_rpc_permission_unauthenticated_raises():
     mock_checker = _make_mock_checker(grants=False)
 
     with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
-        with pytest.raises(JSONRPCError):
+        with pytest.raises(JSONRPCError) as exc_info:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+
+    assert exc_info.value.code == -32003
