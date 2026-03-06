@@ -73,7 +73,7 @@ services:
       - AUTH_REQUIRED=true
       - EMAIL_AUTH_ENABLED=true
       - MCP_CLIENT_AUTH_ENABLED=true
-      - JWT_SECRET_KEY=jwt-secret-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=Changeme123!
       - PLATFORM_ADMIN_FULL_NAME=Platform Administrator
@@ -149,7 +149,7 @@ services:
   register_benchmark:
     image: ghcr.io/ibm/mcp-context-forge:1ba8130f7fb82e6f393435be8d064879f234ace1
     environment:
-      - JWT_SECRET_KEY=jwt-secret-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     command:
@@ -209,11 +209,3 @@ services:
         print(f'Registration complete: {registered}/{server_count} benchmark servers')
         "
 
-  # NOTE: register_fast_time uses hardcoded secret in its command script.
-  # It will fail with 401 when JWT_SECRET_KEY differs from base compose.
-  # This is non-critical — benchmark servers provide the bulk test data.
-  # To also register fast_time, manually run:
-  #   curl -X POST http://localhost:8080/gateways \
-  #     -H "Authorization: Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret jwt-secret-key --algo HS256)" \
-  #     -H "Content-Type: application/json" \
-  #     -d '{"name":"fast_time","url":"http://fast_time_server:8080/http","transport":"STREAMABLEHTTP"}'

@@ -495,3 +495,404 @@ async def test_uses_user_email_from_state_fallback():
     call_args = mock_token_service.log_token_usage.call_args
     assert call_args.kwargs["jti"] == "jti-opaque-123"
     assert call_args.kwargs["user_email"] == "opaque@example.com"
+
+
+@pytest.mark.asyncio
+async def test_logs_blocked_api_token_on_4xx():
+    """Middleware marks usage as blocked and sets block_reason when an api_token request returns a 4xx status."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 429, "headers": []})
+        await send({"type": "http.response.body", "body": b"rate limited"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    user_mock = MagicMock()
+    user_mock.email = "user@example.com"
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {
+            "auth_method": "api_token",
+            "jti": "jti-blocked-789",
+            "user": user_mock,
+        },
+        "client": ("192.168.1.100", 12345),
+        "headers": [],
+    }
+
+    mock_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+        await _make_asgi_call(middleware, scope)
+
+    mock_token_service.log_token_usage.assert_awaited_once()
+    call_args = mock_token_service.log_token_usage.call_args
+    assert call_args.kwargs["blocked"] is True
+    assert call_args.kwargs["block_reason"] == "http_429"
+
+
+@pytest.mark.asyncio
+async def test_logs_revoked_api_token_on_401():
+    """Middleware logs a blocked attempt using the DB-stored owner email, not the JWT claim."""
+    # Standard
+    import jwt as _jwt_lib
+    from collections import namedtuple
+
+    token_payload = {
+        "jti": "jti-revoked-abc",
+        "sub": "revoked@example.com",
+        "user": {"auth_provider": "api_token"},
+    }
+    raw_token = _jwt_lib.encode(token_payload, "test-secret-key-for-unit-tests-only", algorithm="HS256")
+
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
+    }
+
+    # Mock the JTI verification to return a DB row with the real owner email
+    TokenRow = namedtuple("TokenRow", ["id", "user_email"])
+    mock_verify_db = MagicMock()
+    mock_verify_db.execute.return_value.first.return_value = TokenRow(id="tok-1", user_email="real-owner@example.com")
+    mock_log_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    call_count = [0]
+
+    def fresh_session_factory():
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=mock_verify_db if call_count[0] == 0 else mock_log_db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        call_count[0] += 1
+        return ctx
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session", side_effect=fresh_session_factory),
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        await _make_asgi_call(middleware, scope)
+
+    mock_token_service.log_token_usage.assert_awaited_once()
+    call_args = mock_token_service.log_token_usage.call_args
+    assert call_args.kwargs["jti"] == "jti-revoked-abc"
+    # Must use the DB-stored email, NOT the unverified JWT "sub" claim
+    assert call_args.kwargs["user_email"] == "real-owner@example.com"
+    assert call_args.kwargs["blocked"] is True
+    assert call_args.kwargs["block_reason"] == "revoked_or_expired"
+
+
+@pytest.mark.asyncio
+async def test_logs_rejected_api_token_on_403():
+    """Middleware logs a blocked attempt with http_403 reason using DB-stored email."""
+    # Standard
+    import jwt as _jwt_lib
+    from collections import namedtuple
+
+    token_payload = {
+        "jti": "jti-rejected-def",
+        "sub": "rejected@example.com",
+        "user": {"auth_provider": "api_token"},
+    }
+    raw_token = _jwt_lib.encode(token_payload, "test-secret-key-for-unit-tests-only", algorithm="HS256")
+
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 403, "headers": []})
+        await send({"type": "http.response.body", "body": b"forbidden"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
+    }
+
+    TokenRow = namedtuple("TokenRow", ["id", "user_email"])
+    mock_verify_db = MagicMock()
+    mock_verify_db.execute.return_value.first.return_value = TokenRow(id="tok-2", user_email="db-owner@example.com")
+    mock_log_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    call_count = [0]
+
+    def fresh_session_factory():
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=mock_verify_db if call_count[0] == 0 else mock_log_db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        call_count[0] += 1
+        return ctx
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session", side_effect=fresh_session_factory),
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        await _make_asgi_call(middleware, scope)
+
+    mock_token_service.log_token_usage.assert_awaited_once()
+    call_args = mock_token_service.log_token_usage.call_args
+    assert call_args.kwargs["blocked"] is True
+    assert call_args.kwargs["block_reason"] == "http_403"
+    assert call_args.kwargs["user_email"] == "db-owner@example.com"
+
+
+@pytest.mark.asyncio
+async def test_skips_rejected_api_token_missing_jti():
+    """Middleware skips logging when a rejected API token payload has no jti or sub/email."""
+    # Standard
+    import jwt as _jwt_lib
+
+    token_payload = {
+        # No jti, no sub/email
+        "user": {"auth_provider": "api_token"},
+    }
+    raw_token = _jwt_lib.encode(token_payload, "test-secret-key-for-unit-tests-only", algorithm="HS256")
+
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
+    }
+
+    mock_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+        await _make_asgi_call(middleware, scope)
+
+    mock_token_service.log_token_usage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_skips_rejected_request_without_bearer_header():
+    """Middleware skips logging when a 401/403 response has no Bearer authorization header."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [],  # No authorization header
+    }
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_session:
+        await _make_asgi_call(middleware, scope)
+
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skips_rejected_non_api_token_jwt():
+    """Middleware skips logging when a 401/403 response carries a JWT that is not an API token."""
+    # Standard
+    import jwt as _jwt_lib
+
+    token_payload = {
+        "jti": "jti-jwt-session",
+        "sub": "user@example.com",
+        "user": {"auth_provider": "email"},  # Not an API token
+    }
+    raw_token = _jwt_lib.encode(token_payload, "test-secret-key-for-unit-tests-only", algorithm="HS256")
+
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 403, "headers": []})
+        await send({"type": "http.response.body", "body": b"forbidden"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
+    }
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_session:
+        await _make_asgi_call(middleware, scope)
+
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skips_rejected_request_with_malformed_token():
+    """Middleware skips logging when a 401/403 response carries a malformed token that cannot be decoded."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", b"Bearer not-a-valid-jwt-at-all")],
+    }
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_session:
+        await _make_asgi_call(middleware, scope)
+
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skips_forged_jwt_with_unknown_jti():
+    """Middleware skips logging when a rejected API token's JTI doesn't exist in the database."""
+    # Standard
+    import jwt as _jwt_lib
+
+    token_payload = {
+        "jti": "forged-jti-not-in-db",
+        "sub": "attacker@evil.com",
+        "user": {"auth_provider": "api_token"},
+    }
+    raw_token = _jwt_lib.encode(token_payload, "test-secret-key-for-unit-tests-only", algorithm="HS256")
+
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
+    }
+
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    # Mock fresh_db_session: first call (JTI verify) returns no match, second would be for logging
+    mock_verify_db = MagicMock()
+    mock_verify_db.execute.return_value.first.return_value = None
+
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__ = MagicMock(return_value=mock_verify_db)
+    mock_ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session", return_value=mock_ctx),
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        await _make_asgi_call(middleware, scope)
+
+    # Should NOT log usage because JTI was not found in DB
+    mock_token_service.log_token_usage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_skips_logging_on_jti_verification_db_error():
+    """Middleware skips logging when the JTI verification DB query fails."""
+    # Standard
+    import jwt as _jwt_lib
+
+    token_payload = {
+        "jti": "jti-db-error",
+        "sub": "user@example.com",
+        "user": {"auth_provider": "api_token"},
+    }
+    raw_token = _jwt_lib.encode(token_payload, "test-secret-key-for-unit-tests-only", algorithm="HS256")
+
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"unauthorized"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {},
+        "client": ("10.0.0.1", 9000),
+        "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
+    }
+
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session", side_effect=Exception("DB down")),
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        await _make_asgi_call(middleware, scope)
+
+    # Should NOT log usage because DB verification failed
+    mock_token_service.log_token_usage.assert_not_awaited()

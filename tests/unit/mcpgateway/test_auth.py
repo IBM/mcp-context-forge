@@ -231,32 +231,22 @@ class TestGetCurrentUser:
                 assert exc_info.value.detail == "Token has been revoked"
 
     @pytest.mark.asyncio
-    async def test_token_revocation_check_failure_logs_warning(self, caplog):
-        """Test that token revocation check failure logs warning but doesn't fail auth."""
+    async def test_token_revocation_check_failure_denies_access(self, caplog):
+        """Test that token revocation check failure denies access (fail-secure)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_456", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
-
-        mock_user = EmailUser(
-            email="test@example.com",
-            password_hash="hash",
-            full_name="Test User",
-            is_admin=False,
-            is_active=True,
-            email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
 
         caplog.set_level(logging.WARNING)
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", side_effect=Exception("Database error")):
-                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
-                        user = await get_current_user(credentials=credentials)
+                        with pytest.raises(HTTPException) as exc_info:
+                            await get_current_user(credentials=credentials)
 
-                        assert user.email == mock_user.email
+                        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
                         assert "Token revocation check failed for JTI token_id_456" in caplog.text
 
     @pytest.mark.asyncio
@@ -1205,20 +1195,21 @@ class TestUpdateApiTokenLastUsed:
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
-                        with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
-                            user = await get_current_user(credentials=credentials, request=request)
+                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                user = await get_current_user(credentials=credentials, request=request)
 
-                            # Verify user was authenticated
-                            assert user.email == "api@example.com"
+                                # Verify user was authenticated
+                                assert user.email == "api@example.com"
 
-                            # Verify auth_method was set to api_token
-                            assert request.state.auth_method == "api_token"
+                                # Verify auth_method was set to api_token
+                                assert request.state.auth_method == "api_token"
 
-                            # Verify JTI was stored in request.state
-                            assert request.state.jti == "jti-api-456"
+                                # Verify JTI was stored in request.state
+                                assert request.state.jti == "jti-api-456"
 
-                            # Verify last_used update was called
-                            mock_update.assert_called_once_with("jti-api-456")
+                                # Verify last_used update was called
+                                mock_update.assert_called_once_with("jti-api-456")
 
     @pytest.mark.asyncio
     async def test_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
@@ -1298,14 +1289,15 @@ class TestUpdateApiTokenLastUsed:
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value="team_123"):
-                    user = await get_current_user(credentials=credentials, request=request)
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        user = await get_current_user(credentials=credentials, request=request)
 
-                    # Verify user was authenticated
-                    assert user.email == "test@example.com"
+                        # Verify user was authenticated
+                        assert user.email == "test@example.com"
 
-                    # Verify JTI was stored in request.state
-                    assert hasattr(request.state, "jti")
-                    assert request.state.jti == "jti-store-test-789"
+                        # Verify JTI was stored in request.state
+                        assert hasattr(request.state, "jti")
+                        assert request.state.jti == "jti-store-test-789"
 
     @pytest.mark.asyncio
     async def test_legacy_api_token_last_used_updated(self, monkeypatch):
@@ -1340,18 +1332,19 @@ class TestUpdateApiTokenLastUsed:
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
                         with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
-                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
-                                user = await get_current_user(credentials=credentials, request=request)
+                            with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                                with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                    user = await get_current_user(credentials=credentials, request=request)
 
-                                # Verify user was authenticated
-                                assert user.email == "legacy@example.com"
+                                    # Verify user was authenticated
+                                    assert user.email == "legacy@example.com"
 
-                                # Verify auth_method was set to api_token
-                                assert request.state.auth_method == "api_token"
+                                    # Verify auth_method was set to api_token
+                                    assert request.state.auth_method == "api_token"
 
-                                # Verify last_used update was called for legacy token
-                                assert mock_update.call_count == 1
-                                mock_update.assert_called_with("jti-legacy-999")
+                                    # Verify last_used update was called for legacy token
+                                    assert mock_update.call_count == 1
+                                    mock_update.assert_called_with("jti-legacy-999")
 
     @pytest.mark.asyncio
     async def test_legacy_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
@@ -1767,6 +1760,7 @@ class TestSetAuthMethodFromPayload:
             patch("mcpgateway.auth._is_api_token_jti_sync", return_value=False),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials, request=request)
 
@@ -2136,6 +2130,7 @@ class TestCachePathBranches:
             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials, request=request)
 
@@ -2159,6 +2154,7 @@ class TestCachePathBranches:
             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(side_effect=RuntimeError("cache down"))),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials)
 

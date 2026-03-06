@@ -1286,8 +1286,15 @@ async def get_current_user(
             except HTTPException:
                 raise
             except Exception as revoke_check_error:
-                # Log the error but don't fail authentication for admin tokens
-                logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
+                # Fail-secure: if the revocation check itself errors, reject the token.
+                # Allowing through on error would let revoked tokens bypass enforcement
+                # when the DB is unreachable or the table is missing.
+                logger.warning(f"Token revocation check failed for JTI {jti} — denying access (fail-secure): {revoke_check_error}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token validation failed",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         # Resolve teams based on token_use
         token_use = payload.get("token_use")

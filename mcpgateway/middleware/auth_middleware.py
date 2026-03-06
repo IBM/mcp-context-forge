@@ -20,10 +20,11 @@ import logging
 from typing import Callable
 
 # Third-Party
+from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 # First-Party
 from mcpgateway.auth import get_current_user
@@ -34,6 +35,12 @@ from mcpgateway.services.security_logger import get_security_logger
 
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
+
+# HTTPException detail strings that indicate security-critical rejections
+# (revoked tokens, disabled accounts, fail-secure validation errors).
+# Only these trigger a hard JSON deny in the auth middleware; all other
+# 401/403s fall through to route-level auth for backwards compatibility.
+_HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "Token validation failed"})
 
 
 def _should_log_auth_success() -> bool:
@@ -144,8 +151,60 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     except Exception as close_error:
                         logger.debug(f"Failed to close database session: {close_error}")
 
+        except HTTPException as e:
+            if e.status_code in (401, 403) and e.detail in _HARD_DENY_DETAILS:
+                logger.info(f"✗ Auth rejected ({e.status_code}): {e.detail}")
+
+                if log_failure:
+                    db = SessionLocal()
+                    try:
+                        security_logger.log_authentication_attempt(
+                            user_id="unknown",
+                            user_email=None,
+                            auth_method="bearer_token",
+                            success=False,
+                            client_ip=request.client.host if request.client else "unknown",
+                            user_agent=request.headers.get("user-agent"),
+                            failure_reason=str(e.detail),
+                            db=db,
+                        )
+                        db.commit()
+                    except Exception as log_error:
+                        logger.debug(f"Failed to log auth failure: {log_error}")
+                    finally:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.debug(f"Failed to close database session: {close_error}")
+
+                # Browser/admin requests with stale cookies: let the request continue
+                # without user context so the RBAC layer can redirect to /admin/login.
+                # API requests: return a hard JSON 401/403 deny.
+                # Detection must match rbac.py's is_browser_request logic (Accept,
+                # HX-Request, and Referer: /admin) to avoid breaking admin UI flows.
+                accept_header = request.headers.get("accept", "")
+                is_htmx = request.headers.get("hx-request") == "true"
+                referer = request.headers.get("referer", "")
+                is_browser = "text/html" in accept_header or is_htmx or "/admin" in referer
+                if is_browser:
+                    logger.debug("Browser request with rejected auth — continuing without user for redirect")
+                    return await call_next(request)
+
+                # Include essential security headers since this response bypasses
+                # SecurityHeadersMiddleware (it returns before call_next).
+                resp_headers = dict(e.headers) if e.headers else {}
+                resp_headers.setdefault("X-Content-Type-Options", "nosniff")
+                resp_headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+                return JSONResponse(
+                    status_code=e.status_code,
+                    content={"detail": e.detail},
+                    headers=resp_headers,
+                )
+
+            # Non-security HTTP errors (e.g. 500 from a downstream service) — continue as anonymous
+            logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
         except Exception as e:
-            # Silently fail - let route handlers enforce auth if needed
+            # Non-HTTP errors (network, decode, etc.) — continue as anonymous
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
 
             # Log failed authentication attempt (based on logging level)

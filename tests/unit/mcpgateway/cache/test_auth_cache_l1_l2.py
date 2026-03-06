@@ -589,6 +589,7 @@ async def test_auth_cache_redis_error_paths(monkeypatch):
 
     redis = AsyncMock()
     redis.get = AsyncMock(side_effect=RuntimeError("boom"))
+    redis.exists = AsyncMock(side_effect=RuntimeError("boom"))
     redis.setex = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=redis))
 
@@ -611,6 +612,48 @@ def test_auth_cache_team_membership_sync_hit():
     cache = AuthCache(enabled=True)
     cache._team_cache["user@example.com:team-1"] = CacheEntry(value=True, expiry=time.time() + 10)
     assert cache.get_team_membership_valid_sync("user@example.com", ["team-1"]) is True
+
+
+@pytest.mark.asyncio
+async def test_redis_revocation_marker_detected(monkeypatch):
+    """When Redis has a revocation marker for a JTI, get_auth_context returns revoked and promotes to local set."""
+    cache = AuthCache(enabled=True)
+    jti = "revoked-cross-worker-jti"
+
+    redis = AsyncMock()
+    redis.exists = AsyncMock(return_value=1)  # Revocation marker exists
+    monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=redis))
+
+    # Also seed L1 with a stale non-revoked entry to prove Redis check wins
+    cache_key = f"user@example.com:{jti}"
+    cache._context_cache[cache_key] = CacheEntry(
+        value=CachedAuthContext(user={"email": "user@example.com"}, is_token_revoked=False),
+        expiry=time.time() + 60,
+    )
+
+    result = await cache.get_auth_context("user@example.com", jti)
+
+    assert result is not None
+    assert result.is_token_revoked is True
+    # JTI should be promoted to local set for fast subsequent lookups
+    assert jti in cache._revoked_jtis
+    # Stale L1 entry should be evicted
+    assert cache_key not in cache._context_cache
+
+
+@pytest.mark.asyncio
+async def test_redis_revocation_check_error_falls_through(monkeypatch):
+    """When the Redis revocation check errors, fall through to L1/L2 cache."""
+    cache = AuthCache(enabled=True)
+
+    redis = AsyncMock()
+    redis.exists = AsyncMock(side_effect=RuntimeError("Redis timeout"))
+    redis.get = AsyncMock(return_value=None)
+    monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=redis))
+
+    # No L1 entry, no Redis context → should return None (cache miss)
+    result = await cache.get_auth_context("user@example.com", "some-jti")
+    assert result is None
 
 
 @pytest.mark.asyncio
