@@ -884,6 +884,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_value = None
                 oauth_config = None
 
+            # DbTool.auth_value is Mapped[Optional[str]] (Text), so encode the dict before
+            # storing it there. DbGateway.auth_value is Mapped[Optional[Dict]] (JSON) and
+            # receives the plain dict directly (see assignment above).
+            tool_auth_value = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
+
             tools = [
                 DbTool(
                     original_name=tool.name,
@@ -901,7 +906,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     annotations=tool.annotations,
                     jsonpath_filter=tool.jsonpath_filter,
                     auth_type=auth_type,
-                    auth_value=auth_value,
+                    auth_value=tool_auth_value,
                     # Federation metadata
                     created_by=created_by or "system",
                     created_from_ip=created_from_ip,

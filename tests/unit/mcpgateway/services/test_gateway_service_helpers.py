@@ -181,9 +181,14 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
         gateway_mode="cache",
     )
 
+    # First-Party
+    from mcpgateway.schemas import ToolCreate
+
+    fake_tool = ToolCreate(name="echo", integration_type="REST", request_type="POST", url="http://localhost:8000/mcp")
+
     service = GatewayService()
     service._check_gateway_uniqueness = MagicMock(return_value=None)
-    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [], []))
+    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [fake_tool], [], []))
     service._notify_gateway_added = AsyncMock()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_a, **_kw: None)
@@ -196,25 +201,39 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     db.flush = Mock()
     db.refresh = Mock()
 
-    # Capture auth_value at the exact moment db.add() is called.
-    # _prepare_gateway_for_read() later mutates db_gateway.auth_value to an encrypted string
-    # for the GatewayRead response; checking call_args AFTER the method returns would see
-    # the mutated value, giving a false-negative even though the DB write is correct.
-    captured: dict = {}
+    # Snapshot at db.add() time — tools flow through the gateway relationship (gateway.tools=tools),
+    # not separate db.add() calls. _prepare_gateway_for_read() later mutates db_gateway.auth_value
+    # to an encoded string for the GatewayRead response; we capture before that mutation.
+    from mcpgateway.db import Gateway as DbGateway
+
+    captured_gw: dict = {}
+    captured_tool_auth_values: list = []
 
     def _capture_add(obj):
-        if hasattr(obj, "auth_value"):
-            captured["auth_value"] = obj.auth_value  # snapshot before any mutation
+        if isinstance(obj, DbGateway):
+            captured_gw["auth_value"] = obj.auth_value  # snapshot before any mutation
+            for t in obj.tools or []:
+                captured_tool_auth_values.append(t.auth_value)
 
     db.add = Mock(side_effect=_capture_add)
 
     await service.register_gateway(db, gateway)
 
-    assert "auth_value" in captured, "db.add was never called with a Gateway object"
-
+    # --- DbGateway assertion ---
     # auth_value must be a plain dict — NOT a string.
     # A string stored in a Mapped[Optional[Dict[str, str]]] JSON column is written as JSON null.
-    assert isinstance(captured["auth_value"], dict), (
-        f"auth_value must be dict for authheaders auth type, got {type(captured['auth_value'])}: {captured['auth_value']!r}"
+    assert "auth_value" in captured_gw, "db.add was never called with a DbGateway object"
+    assert isinstance(captured_gw["auth_value"], dict), (
+        f"DbGateway.auth_value must be dict for authheaders auth type, got {type(captured_gw['auth_value'])}: {captured_gw['auth_value']!r}"
     )
-    assert captured["auth_value"] == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
+    assert captured_gw["auth_value"] == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
+
+    # --- DbTool assertion ---
+    # DbTool.auth_value is Mapped[Optional[str]] (Text), so it must be an encoded string,
+    # not a raw dict. tool_service.py calls decode_auth() on it at read-time.
+    assert len(captured_tool_auth_values) == 1, "expected exactly one DbTool to be added"
+    assert isinstance(captured_tool_auth_values[0], str), (
+        f"DbTool.auth_value must be an encoded string for Text column, got {type(captured_tool_auth_values[0])}: {captured_tool_auth_values[0]!r}"
+    )
+    # Decoding must recover the original headers dict
+    assert decode_auth(captured_tool_auth_values[0]) == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
