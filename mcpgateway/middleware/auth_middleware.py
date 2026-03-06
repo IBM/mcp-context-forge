@@ -36,6 +36,12 @@ from mcpgateway.services.security_logger import get_security_logger
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
 
+# HTTPException detail strings that indicate security-critical rejections
+# (revoked tokens, disabled accounts, fail-secure validation errors).
+# Only these trigger a hard JSON deny in the auth middleware; all other
+# 401/403s fall through to route-level auth for backwards compatibility.
+_HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "Token validation failed"})
+
 
 def _should_log_auth_success() -> bool:
     """Check if successful authentication should be logged based on settings.
@@ -146,12 +152,6 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         logger.debug(f"Failed to close database session: {close_error}")
 
         except HTTPException as e:
-            # Only hard-deny for security-critical rejections (revoked tokens,
-            # disabled accounts).  Other 401s (e.g. malformed tokens, missing
-            # claims) fall through so route-level auth can handle them — this
-            # preserves backwards compatibility with registration scripts and
-            # other callers that use minimal JWT claims.
-            _HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "Token validation failed"})
             if e.status_code in (401, 403) and e.detail in _HARD_DENY_DETAILS:
                 logger.info(f"✗ Auth rejected ({e.status_code}): {e.detail}")
 
