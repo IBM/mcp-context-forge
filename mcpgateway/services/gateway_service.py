@@ -4136,8 +4136,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_tool.jsonpath_filter != tool.jsonpath_filter
                     )
 
-                    # Check authentication and visibility changes
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway.auth_value or existing_tool.visibility != gateway.visibility
+                    # Check authentication and visibility changes.
+                    # DbTool.auth_value is Text (encoded str); DbGateway.auth_value is JSON (dict).
+                    # Encode gateway.auth_value for comparison and assignment to keep types consistent.
+                    gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
+                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway_tool_auth_value or existing_tool.visibility != gateway.visibility
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4155,7 +4158,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
-                        existing_tool.auth_value = gateway.auth_value
+                        existing_tool.auth_value = gateway_tool_auth_value
                         existing_tool.visibility = gateway.visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:

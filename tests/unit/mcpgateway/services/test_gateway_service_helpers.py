@@ -237,3 +237,61 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     )
     # Decoding must recover the original headers dict
     assert decode_auth(captured_tool_auth_values[0]) == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
+
+
+def test_update_or_create_tools_authheaders_encodes_for_dbtool():
+    """Verify _update_or_create_tools encodes DbGateway.auth_value (dict) into an encoded
+    string before writing to DbTool.auth_value (Text column), and that the comparison
+    against the existing tool's auth_value does not produce a spurious no-op update.
+    """
+    from types import SimpleNamespace as NS
+
+    service = GatewayService()
+
+    auth_dict = {"X-My-Header": "secret-val"}
+    encoded = encode_auth(auth_dict)
+
+    # Existing tool already has the correctly encoded auth_value stored
+    existing = MagicMock()
+    existing.original_name = "my-tool"
+    existing.url = "http://gw.example.com/mcp"
+    existing.description = "desc"
+    existing.original_description = "desc"
+    existing.integration_type = "MCP"
+    existing.request_type = "POST"
+    existing.headers = {}
+    existing.input_schema = {}
+    existing.output_schema = None
+    existing.jsonpath_filter = None
+    existing.auth_type = "authheaders"
+    existing.auth_value = encoded  # Text column — already encoded
+    existing.visibility = "public"
+
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [existing]
+
+    tool = NS(
+        name="my-tool",
+        description="desc",
+        input_schema={},
+        output_schema=None,
+        request_type="POST",
+        headers={},
+        annotations=None,
+        jsonpath_filter=None,
+    )
+
+    gateway = MagicMock()
+    gateway.id = "gw-1"
+    gateway.url = "http://gw.example.com/mcp"
+    gateway.auth_type = "authheaders"
+    gateway.auth_value = auth_dict  # JSON column — plain dict
+    gateway.visibility = "public"
+
+    result = service._update_or_create_tools(db, [tool], gateway, "update")
+
+    # No new tools: the existing tool was not meaningfully changed
+    assert result == []
+    # auth_value on DbTool must remain an encoded string (not overwritten with the raw dict)
+    assert isinstance(existing.auth_value, str)
+    assert decode_auth(existing.auth_value) == auth_dict
