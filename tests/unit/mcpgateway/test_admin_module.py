@@ -900,6 +900,27 @@ async def test_admin_ui_no_team_id_returns_public_items(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_ui_admin_bypasses_team_membership_check(monkeypatch):
+    """Platform admins can select any team_id without being a member."""
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "is_admin": True, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+
+    # Admin user is NOT a member of "other-team", but should still be allowed
+    response = await admin.admin_ui(request, "other-team", False, mock_db, user=user)
+    assert isinstance(response, HTMLResponse)
+    context = request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["selected_team_id"] == "other-team"
+
+
+@pytest.mark.asyncio
 async def test_admin_ui_refresh_uses_dict_user_auth_provider(monkeypatch):
     request = _make_request(root_path="/root")
     mock_db = MagicMock()

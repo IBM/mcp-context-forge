@@ -3752,7 +3752,7 @@ class TestAdminUIRoute:
     @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
-    async def test_admin_ui_team_loading_failure_ignores_team_id(
+    async def test_admin_ui_team_loading_failure_rejects_team_id(
         self,
         mock_roots,
         mock_gateways,
@@ -3764,7 +3764,7 @@ class TestAdminUIRoute:
         mock_db,
         monkeypatch,
     ):
-        """Cover admin_ui when team loading fails, and team_id selection is dropped."""
+        """Cover admin_ui when team loading fails and team_id is rejected with 403."""
         team_service = MagicMock()
         team_service.get_user_teams = AsyncMock(side_effect=RuntimeError("db down"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)

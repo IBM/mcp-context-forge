@@ -3236,14 +3236,16 @@ async def admin_ui(
     selected_team_id = team_id
     user_email = get_user_email(user)
     if team_id and getattr(settings, "email_auth_enabled", False):
-        if not user_teams:
-            LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
-            raise HTTPException(status_code=403, detail="Unable to verify team membership")
+        _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+        if not _is_admin:
+            if not user_teams:
+                LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
+                raise HTTPException(status_code=403, detail="Unable to verify team membership")
 
-        valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
-        if str(team_id) not in valid_team_ids:
-            LOGGER.warning("Requested team_id is not in user's teams; rejecting (team_id=%s)", team_id)
-            raise HTTPException(status_code=403, detail="Not a member of the requested team")
+            valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
+            if str(team_id) not in valid_team_ids:
+                LOGGER.warning("Requested team_id is not in user's teams; rejecting (team_id=%s)", team_id)
+                raise HTTPException(status_code=403, detail="Not a member of the requested team")
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
