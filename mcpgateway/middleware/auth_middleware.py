@@ -146,10 +146,13 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         logger.debug(f"Failed to close database session: {close_error}")
 
         except HTTPException as e:
-            if e.status_code in (401, 403):
-                # Security-critical rejections (revoked tokens, disabled accounts) must NOT
-                # be swallowed — propagate as a hard deny so revoked/expired tokens cannot
-                # fall through to public-access endpoints.
+            # Only hard-deny for security-critical rejections (revoked tokens,
+            # disabled accounts).  Other 401s (e.g. malformed tokens, missing
+            # claims) fall through so route-level auth can handle them — this
+            # preserves backwards compatibility with registration scripts and
+            # other callers that use minimal JWT claims.
+            _HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "Token validation failed"})
+            if e.status_code in (401, 403) and e.detail in _HARD_DENY_DETAILS:
                 logger.info(f"✗ Auth rejected ({e.status_code}): {e.detail}")
 
                 if log_failure:

@@ -344,7 +344,7 @@ async def test_http_403_returns_json_deny_for_api_request():
 
     with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
          patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden"))):
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=403, detail="Account disabled"))):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
@@ -427,7 +427,7 @@ async def test_http_401_logging_db_error_handled():
          patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
          patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
          patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Revoked"))):
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
         response = await middleware.dispatch(request, call_next)
 
     # Should still return 401 despite logging failure
@@ -457,7 +457,7 @@ async def test_http_401_logging_db_close_error_handled():
          patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
          patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
          patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Revoked"))):
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -483,6 +483,30 @@ async def test_non_401_403_http_exception_continues_as_anonymous():
         response = await middleware.dispatch(request, call_next)
 
     # Non-security error: continue as anonymous
+    call_next.assert_awaited_once_with(request)
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_non_revocation_401_falls_through_as_anonymous():
+    """Non-revocation 401 (e.g. malformed token) continues as anonymous for route-level auth."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "minimal_jwt"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid authentication credentials"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # Non-revocation 401 should fall through, not hard-deny
     call_next.assert_awaited_once_with(request)
     assert response.status_code == 200
 
@@ -527,7 +551,7 @@ async def test_http_401_json_deny_includes_security_headers():
 
     with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
          patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Revoked"))):
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
