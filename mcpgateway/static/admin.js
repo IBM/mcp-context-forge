@@ -8718,6 +8718,7 @@ function showTab(tabName) {
                             {
                                 method: "GET",
                                 credentials: "same-origin",
+                                cache: "no-store",
                                 headers: {
                                     Accept: "text/html",
                                 },
@@ -25236,9 +25237,9 @@ function initializePluginFunctions() {
     function updateBadgeHighlighting(type, value) {
         // Define selectors for each type
         const selectors = {
-            hook: "[onclick^='filterByHook']",
-            tag: "[onclick^='filterByTag']",
-            author: "[onclick^='filterByAuthor']",
+            hook: "[data-filter-hook]",
+            tag: "[data-filter-tag]",
+            author: "[data-filter-author]",
         };
 
         const selector = selectors[type];
@@ -25251,12 +25252,16 @@ function initializePluginFunctions() {
 
         badges.forEach((badge) => {
             // Check if this is the "All" badge (empty value)
-            const isAllBadge = badge.getAttribute("onclick").includes("('')");
+            const isAllBadge =
+                badge.dataset.filterHook === "" ||
+                badge.dataset.filterTag === "" ||
+                badge.dataset.filterAuthor === "";
 
             // Check if this badge matches the selected value
-            const badgeValue = badge
-                .getAttribute("onclick")
-                .match(/'([^']*)'/)?.[1];
+            const badgeValue =
+                badge.dataset.filterHook ??
+                badge.dataset.filterTag ??
+                badge.dataset.filterAuthor;
             const isSelected =
                 value === ""
                     ? isAllBadge
@@ -25444,6 +25449,44 @@ function initializePluginFunctions() {
             modal.classList.add("hidden");
         }
     };
+
+    // Single listener on the filter section — catches input/change from all child controls
+    const filtersSection = document.getElementById("plugin-filters");
+    if (filtersSection) {
+        filtersSection.addEventListener("input", () => window.filterPlugins());
+        filtersSection.addEventListener("change", () => window.filterPlugins());
+    }
+
+    // Single delegated click/keydown listener for badges, View Details, and modal close.
+    // Returns true if an action was dispatched, false otherwise.
+    function dispatchPluginAction(target) {
+        const hookEl = target.closest("[data-filter-hook]");
+        const tagEl = target.closest("[data-filter-tag]");
+        const authorEl = target.closest("[data-filter-author]");
+        const detailEl = target.closest("[data-show-plugin]");
+        const closeEl = target.closest("[data-close-plugin-modal]");
+
+        if (hookEl) window.filterByHook(hookEl.dataset.filterHook);
+        else if (tagEl) window.filterByTag(tagEl.dataset.filterTag);
+        else if (authorEl) window.filterByAuthor(authorEl.dataset.filterAuthor);
+        else if (detailEl) {
+            window.showPluginDetails(detailEl.dataset.showPlugin);
+        } else if (closeEl) window.closePluginDetails();
+        else return false;
+        return true;
+    }
+
+    const pluginsPanel = document.getElementById("plugins-panel");
+    if (pluginsPanel) {
+        pluginsPanel.addEventListener("click", (e) =>
+            dispatchPluginAction(e.target),
+        );
+        pluginsPanel.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            if (!dispatchPluginAction(e.target)) return;
+            e.preventDefault();
+        });
+    }
 }
 
 // Initialize plugin functions if plugins panel exists
