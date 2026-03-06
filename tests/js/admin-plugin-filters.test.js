@@ -11,15 +11,7 @@
  *   G. Enter/Space on a focused badge calls the filter (keyboard navigation)
  */
 
-import {
-    describe,
-    test,
-    expect,
-    beforeAll,
-    beforeEach,
-    afterAll,
-    vi,
-} from "vitest";
+import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -36,6 +28,8 @@ beforeAll(() => {
             window.buildTableUrl = (tableName, baseUrl) => baseUrl;
             window.safeReplaceState = () => {};
             window.IS_ADMIN = true;
+            // JSDOM does not implement scrollIntoView
+            window.HTMLElement.prototype.scrollIntoView = () => {};
         },
     });
     doc = win.document;
@@ -239,7 +233,7 @@ function buildPluginsDOM() {
 
 describe("A. initializePluginFunctions() sets up listeners", () => {
     test("input event on search box triggers filterPlugins", () => {
-        const { searchInput, card1, card2 } = buildPluginsDOM();
+        const { searchInput } = buildPluginsDOM();
         win.initializePluginFunctions();
 
         // Spy AFTER init; arrow-function wrapper in listener looks up win.filterPlugins
@@ -492,7 +486,7 @@ describe("F. Keyboard navigation — Enter/Space on badges", () => {
     });
 
     test("pressing other keys on a badge does not trigger the filter", () => {
-        const { hookBadgeRequest, hookFilter } = buildPluginsDOM();
+        const { hookBadgeRequest } = buildPluginsDOM();
         win.initializePluginFunctions();
 
         const spy = vi.spyOn(win, "filterByHook");
