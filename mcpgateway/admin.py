@@ -1135,7 +1135,7 @@ def _request_origin_matches(request: Request) -> bool:
         if not allowed_normalized or allowed_normalized == "*" or allowed_normalized.casefold() == "null":
             continue
         try:
-            allowed_parsed = urllib.parse.urlparse(allowed_normalized)
+            allowed_parsed = urllib.parse.urlparse(allowed_normalized if "://" in allowed_normalized else f"https://{allowed_normalized}")
             if not allowed_parsed.scheme or not allowed_parsed.netloc:
                 continue
             if candidate_parts == _normalize_origin_parts(allowed_parsed.scheme, allowed_parsed.netloc):

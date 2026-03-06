@@ -17945,6 +17945,69 @@ class TestAdminCsrfProtection:
             await admin_mod.enforce_admin_csrf(request)
 
     @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_null_allowed_origin(self, monkeypatch):
+        """'null' in allowed_origins must not bypass CSRF origin check."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"null"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://evil.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_rejects_blank_allowed_origin(self, monkeypatch):
+        """Blank string in allowed_origins must not bypass CSRF origin check."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {""})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://evil.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_accepts_schemeless_allowed_origin(self, monkeypatch):
+        """Bare hostname in allowed_origins gets https:// prepended (consistent with SSO)."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"external.com"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://external.com",
+                "x-forwarded-proto": "http",
+                "x-forwarded-host": "internal:4444",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
     async def test_enforce_admin_csrf_rejects_unlisted_origin(self, monkeypatch):
         """Origin not in allowed_origins must be rejected."""
         # First-Party
@@ -17986,13 +18049,13 @@ class TestAdminCsrfProtection:
         await admin_mod.enforce_admin_csrf(request)
 
     @pytest.mark.asyncio
-    async def test_enforce_admin_csrf_skips_schemeless_allowed_origin(self, monkeypatch):
-        """Allowed-origins entry without scheme/netloc (e.g. bare path) is silently skipped."""
+    async def test_enforce_admin_csrf_rejects_non_matching_bare_host(self, monkeypatch):
+        """Bare hostname gets https:// prepended but still rejects non-matching origin."""
         # First-Party
         from mcpgateway import admin as admin_mod
 
-        # "just-a-path" is parsed by urlparse as a path component with no scheme/netloc,
-        # so the guard on line 1139-1140 must skip it and the request must be rejected.
+        # "just-a-path" gets https:// prepended → https://just-a-path, which
+        # does not match the attacker origin and must be rejected.
         monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"just-a-path"})
 
         request = self._make_request(
