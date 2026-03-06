@@ -25457,7 +25457,8 @@ function initializePluginFunctions() {
         filtersSection.addEventListener("change", () => window.filterPlugins());
     }
 
-    // Single delegated click/keydown listener for badges, View Details, and modal close
+    // Single delegated click/keydown listener for badges, View Details, and modal close.
+    // Returns true if an action was dispatched, false otherwise.
     function dispatchPluginAction(target) {
         const hookEl = target.closest("[data-filter-hook]");
         const tagEl = target.closest("[data-filter-tag]");
@@ -25471,6 +25472,8 @@ function initializePluginFunctions() {
         else if (detailEl) {
             window.showPluginDetails(detailEl.dataset.showPlugin);
         } else if (closeEl) window.closePluginDetails();
+        else return false;
+        return true;
     }
 
     const pluginsPanel = document.getElementById("plugins-panel");
@@ -25480,8 +25483,8 @@ function initializePluginFunctions() {
         );
         pluginsPanel.addEventListener("keydown", (e) => {
             if (e.key !== "Enter" && e.key !== " ") return;
+            if (!dispatchPluginAction(e.target)) return;
             e.preventDefault();
-            dispatchPluginAction(e.target);
         });
     }
 }

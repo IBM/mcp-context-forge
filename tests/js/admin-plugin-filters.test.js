@@ -511,4 +511,32 @@ describe("F. Keyboard navigation — Enter/Space on badges", () => {
 
         expect(spy).toHaveBeenCalledWith("http-header-filter");
     });
+
+    test("Space in search box is not swallowed by delegated handler", () => {
+        const { searchInput } = buildPluginsDOM();
+        win.initializePluginFunctions();
+
+        const evt = new win.KeyboardEvent("keydown", {
+            key: " ",
+            bubbles: true,
+            cancelable: true,
+        });
+        searchInput.dispatchEvent(evt);
+
+        expect(evt.defaultPrevented).toBe(false);
+    });
+
+    test("Enter on select dropdown is not swallowed by delegated handler", () => {
+        const { modeFilter } = buildPluginsDOM();
+        win.initializePluginFunctions();
+
+        const evt = new win.KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+        });
+        modeFilter.dispatchEvent(evt);
+
+        expect(evt.defaultPrevented).toBe(false);
+    });
 });
