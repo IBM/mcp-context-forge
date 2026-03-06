@@ -3164,6 +3164,9 @@ async def admin_ui(
     Returns:
         Any: Rendered HTML template for the admin dashboard.
 
+    Raises:
+        HTTPException: 403 if a non-admin user supplies a team_id they do not belong to.
+
     Examples:
         >>> callable(admin_ui)
         True
