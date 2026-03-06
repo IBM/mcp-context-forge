@@ -987,9 +987,13 @@ async def call_tool(name: str, arguments: dict) -> Union[
         if not _check_scoped_permission(user_context, "tools.execute"):
             raise PermissionError("Insufficient permissions. Required: tools.execute")
         # Layer 2: RBAC check
+        # Session tokens have no explicit team_id; check across all team-scoped roles.
+        # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
+        _is_session_token = user_context.get("token_use") == "session" if user_context else False
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
+            check_any_team=_is_session_token,
         )
         if not has_execute_permission:
             raise PermissionError("Insufficient permissions. Required: tools.execute")
@@ -3014,6 +3018,7 @@ class _StreamableHttpAuthHandler:
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
+                "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
             # Extract scoped permissions from JWT for per-method enforcement
             jwt_scopes = user_payload.get("scopes") or {}
