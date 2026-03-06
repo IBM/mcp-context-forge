@@ -5552,7 +5552,7 @@ class EmailUserResponse(BaseModel):
             password_change_required=user.password_change_required,
             failed_login_attempts=failed_attempts,
             locked_until=locked_until,
-            is_locked=bool(locked_until and locked_until > datetime.now(timezone.utc)),
+            is_locked=user.is_account_locked(),
         )
 
 

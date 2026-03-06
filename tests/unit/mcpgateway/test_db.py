@@ -1277,6 +1277,54 @@ def test_email_user_account_helpers():
     assert user.get_display_name() == "user"
 
 
+def test_email_user_is_account_locked_naive_datetime():
+    """Test is_account_locked handles naive datetime (SQLite timezone handling)."""
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+
+    # Active lock: naive future datetime should be normalised to UTC and return True
+    user.locked_until = datetime.now() + timedelta(minutes=10)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is True
+    assert user.locked_until.tzinfo == timezone.utc
+    # Counter must not be touched while the lock is still active
+    assert user.failed_login_attempts == 3
+
+    # Expired lock: should reset counters and return False
+    user.locked_until = datetime.now() - timedelta(minutes=1)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is False
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+
+def test_email_user_is_account_locked_aware_datetime():
+    """Test is_account_locked with timezone-aware datetimes (PostgreSQL path)."""
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+
+    # Active lock: aware datetime, no mutation expected
+    user.locked_until = db.utc_now() + timedelta(minutes=10)
+    original = user.locked_until
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is True
+    assert user.locked_until is original  # object not replaced
+    assert user.failed_login_attempts == 3
+
+    # Expired lock: should reset counters and return False
+    user.locked_until = db.utc_now() - timedelta(minutes=1)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is False
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+    # No lock at all
+    user.locked_until = None
+    assert user.is_account_locked() is False
+
+
 def test_email_user_failed_attempts_flow():
     user = db.EmailUser(email="user@example.com", password_hash="hash", failed_login_attempts=2)
     user.locked_until = db.utc_now() + timedelta(minutes=5)

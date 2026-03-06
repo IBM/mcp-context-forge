@@ -15695,6 +15695,7 @@ class TestMaintenanceMisc:
             is_admin=True,
             is_active=True,
             password_change_required=False,
+            is_account_locked=lambda: False,
         )
         html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=2, root_path="")
         assert "Admin User" in html_output
@@ -15711,6 +15712,7 @@ class TestMaintenanceMisc:
             is_admin=False,
             is_active=True,
             password_change_required=False,
+            is_account_locked=lambda: False,
         )
         html_output = _render_user_card_html(user_obj, "me@test.com", admin_count=1, root_path="")
         assert "You" in html_output
@@ -15724,6 +15726,7 @@ class TestMaintenanceMisc:
             is_admin=True,
             is_active=True,
             password_change_required=False,
+            is_account_locked=lambda: False,
         )
         html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=1, root_path="")
         assert "Last Admin" in html_output
@@ -15737,6 +15740,7 @@ class TestMaintenanceMisc:
             is_admin=False,
             is_active=False,
             password_change_required=False,
+            is_account_locked=lambda: False,
         )
         html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=1, root_path="")
         assert "Inactive" in html_output
@@ -15751,6 +15755,7 @@ class TestMaintenanceMisc:
             is_admin=False,
             is_active=True,
             password_change_required=True,
+            is_account_locked=lambda: False,
         )
         html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=1, root_path="")
         assert "Password Change Required" in html_output
@@ -18121,6 +18126,7 @@ class TestAdminTokensPartialSearch:
             password_change_required=False,
             failed_login_attempts=5,
             locked_until=datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=5),
+            is_account_locked=lambda: True,
         )
         html_output = _render_user_card_html(locked_user, "other@test.com", admin_count=2, root_path="")
         assert "Locked" in html_output
@@ -18150,6 +18156,7 @@ class TestAdminTokensPartialSearch:
             password_change_required=False,
             failed_login_attempts=0,
             locked_until=None,
+            is_account_locked=lambda: False,
         )
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = True

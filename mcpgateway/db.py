@@ -1274,7 +1274,12 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        if utc_now() >= self.locked_until:
+        locked_until = self.locked_until
+        if locked_until.tzinfo is None:
+            # Add timezone info when using SQLite (stores naive datetimes)
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+            self.locked_until = locked_until
+        if utc_now() >= locked_until:
             # Lockout expired: reset counters so users get a fresh attempt window.
             self.failed_login_attempts = 0
             self.locked_until = None

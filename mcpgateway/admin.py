@@ -6627,7 +6627,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
     is_current_user = user_obj.email == current_user_email
     is_last_admin = bool(user_obj.is_admin and user_obj.is_active and admin_count == 1)
     locked_until = getattr(user_obj, "locked_until", None)
-    is_locked = bool(locked_until and locked_until > utc_now())
+    is_locked = user_obj.is_account_locked()
     failed_attempts = int(getattr(user_obj, "failed_login_attempts", 0) or 0)
     lock_until_text = locked_until.strftime("%Y-%m-%d %H:%M") if locked_until else "N/A"
 
