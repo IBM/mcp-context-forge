@@ -155,14 +155,27 @@ async def test_ensure_rpc_permission_denies_user_with_no_qualifying_role():
 
 
 @pytest.mark.asyncio
-async def test_ensure_rpc_permission_admin_bypass_still_works():
-    """is_admin=True user bypasses RBAC — checker must grant."""
+async def test_ensure_rpc_permission_admin_session_token_calls_has_permission():
+    """Admin session-token users still go through has_permission in _ensure_rpc_permission.
+
+    The admin bypass lives inside PermissionService, not in _ensure_rpc_permission itself.
+    This test verifies:
+    - has_permission IS called (no early exit at this layer for admin users)
+    - check_any_team=True because the user carries a session token
+    """
     user = _make_session_user(is_admin=True)
     db = MagicMock(spec=Session)
     mock_checker = _make_mock_checker(grants=True)
 
     with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
         await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+
+    mock_checker.has_permission.assert_called_once()
+    call_kwargs = mock_checker.has_permission.call_args.kwargs
+    assert call_kwargs.get("check_any_team") is True, (
+        "Admin session tokens are still session tokens — expected check_any_team=True; "
+        "got call_kwargs=%r" % call_kwargs
+    )
 
 
 @pytest.mark.asyncio

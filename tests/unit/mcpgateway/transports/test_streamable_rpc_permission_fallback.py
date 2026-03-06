@@ -115,3 +115,42 @@ async def test_check_streamable_permission_no_token_use_defaults_false():
 
     call_kwargs = mock_ps.check_permission.call_args.kwargs
     assert call_kwargs.get("check_any_team", False) is False
+
+
+@pytest.mark.asyncio
+async def test_call_tool_raises_permission_error_when_session_token_denied():
+    """call_tool must raise PermissionError when _check_streamable_permission returns False.
+
+    Deny-path regression test: even with check_any_team=True for a session token,
+    if PermissionService denies the request, call_tool must raise PermissionError
+    and not proceed to tool execution.
+    """
+    # Standard
+    from mcpgateway.transports.streamablehttp_transport import call_tool
+
+    session_user_ctx = {
+        "email": "user@example.com",
+        "is_admin": False,
+        "is_authenticated": True,
+        "token_use": "session",
+        "teams": ["team-abc123"],
+    }
+
+    with patch(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        new=AsyncMock(return_value=(None, {}, session_user_ctx)),
+    ):
+        with patch(
+            "mcpgateway.transports.streamablehttp_transport._should_enforce_streamable_rbac",
+            return_value=True,
+        ):
+            with patch(
+                "mcpgateway.transports.streamablehttp_transport._check_scoped_permission",
+                return_value=True,
+            ):
+                with patch(
+                    "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+                    new=AsyncMock(return_value=False),
+                ):
+                    with pytest.raises(PermissionError, match="tools.execute"):
+                        await call_tool("some_tool", {})

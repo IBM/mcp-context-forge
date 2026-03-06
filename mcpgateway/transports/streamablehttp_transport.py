@@ -989,7 +989,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
         # Layer 2: RBAC check
         # Session tokens have no explicit team_id; check across all team-scoped roles.
         # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
-        _is_session_token = user_context.get("token_use") == "session" if user_context else False
+        _is_session_token = user_context.get("token_use") == "session"
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
