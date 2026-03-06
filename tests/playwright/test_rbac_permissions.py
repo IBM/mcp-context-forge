@@ -1348,3 +1348,189 @@ class TestRPCToolExecutionRBAC:
         finally:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
+
+
+# ==================== #3515 Regression: Browser cookie session-token paths ====================
+
+
+@pytest.mark.ui
+@pytest.mark.rbac
+@pytest.mark.flaky(reruns=1, reason="Browser cookie auth intermittently returns 401")
+class TestSessionTokenCookieRBAC:
+    """Regression tests for #3515 exercising session tokens via browser cookies.
+
+    The TestRPCToolExecutionRBAC class above uses Bearer-header API contexts.
+    These tests inject JWT cookies (the actual browser auth path) and issue
+    fetch() calls from the page, matching how the Admin UI invokes /rpc.
+    """
+
+    def test_developer_cookie_rpc_tools_call(self, page: Page, base_url: str, admin_api: APIRequestContext, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer cookie session must pass RBAC on /rpc tools/call (#3515).
+
+        Injects a session-token JWT cookie and uses page.evaluate(fetch(...))
+        to call /rpc, exactly matching the Admin UI Tools screen flow.
+        """
+        team_id = rbac_test_team["id"]
+        tool_name = f"{RBAC_TEST_PREFIX}-cookie-exec-{uuid.uuid4().hex[:8]}"
+
+        import json as _json  # noqa: PLC0415
+
+        create_resp = admin_api.post(
+            "/tools",
+            data=_json.dumps({
+                "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
+                "team_id": team_id,
+                "visibility": "team",
+            }),
+            headers={"Content-Type": "application/json"},
+        )
+        assert create_resp.status in (200, 201), f"Failed to create tool: {create_resp.status} {create_resp.text()}"
+        tool_id = create_resp.json().get("id")
+
+        try:
+            _inject_jwt_cookie(page, rbac_developer_user["email"], token_use="session")
+            page.goto(f"{base_url}/admin/tools")
+
+            result = page.evaluate(
+                """async (toolName) => {
+                    const resp = await fetch('/rpc', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: toolName, arguments: {}}})
+                    });
+                    return {status: resp.status, body: await resp.json()};
+                }""",
+                tool_name,
+            )
+            error_code = result["body"].get("error", {}).get("code")
+            assert error_code != -32003, (
+                f"Developer cookie session denied tools.execute with -32003 — #3515 regression. "
+                f"Response: {result['body']}"
+            )
+            logger.info("Developer cookie /rpc tools/call: error_code=%s — RBAC passed", error_code)
+        finally:
+            if tool_id:
+                admin_api.delete(f"/tools/{tool_id}")
+
+    def test_viewer_cookie_rpc_tools_call_denied(self, page: Page, base_url: str, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer cookie session must be denied -32003 on /rpc tools/call (deny-path)."""
+        team_id = rbac_test_team["id"]
+        tool_name = f"{RBAC_TEST_PREFIX}-cookie-deny-{uuid.uuid4().hex[:8]}"
+
+        import json as _json  # noqa: PLC0415
+
+        create_resp = admin_api.post(
+            "/tools",
+            data=_json.dumps({
+                "tool": {"name": tool_name, "description": "Cookie deny test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
+                "team_id": team_id,
+                "visibility": "team",
+            }),
+            headers={"Content-Type": "application/json"},
+        )
+        assert create_resp.status in (200, 201), f"Failed to create tool: {create_resp.status}"
+        tool_id = create_resp.json().get("id")
+
+        try:
+            _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
+            page.goto(f"{base_url}/admin/tools")
+
+            result = page.evaluate(
+                """async (toolName) => {
+                    const resp = await fetch('/rpc', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: toolName, arguments: {}}})
+                    });
+                    return {status: resp.status, body: await resp.json()};
+                }""",
+                tool_name,
+            )
+            error_code = result["body"].get("error", {}).get("code")
+            assert error_code == -32003, (
+                f"Viewer cookie session should get -32003 but got error_code={error_code}. "
+                f"Response: {result['body']}"
+            )
+            logger.info("Viewer cookie /rpc tools/call: error_code=%s — correctly denied", error_code)
+        finally:
+            if tool_id:
+                admin_api.delete(f"/tools/{tool_id}")
+
+    def test_developer_cookie_rpc_tools_list(self, page: Page, base_url: str, rbac_developer_user: Dict):
+        """Developer cookie session must pass RBAC on /rpc tools/list (tools.read).
+
+        Verifies that the check_any_team fix applies to all permissions routed
+        through _ensure_rpc_permission, not just tools.execute.
+        """
+        _inject_jwt_cookie(page, rbac_developer_user["email"], token_use="session")
+        page.goto(f"{base_url}/admin/tools")
+
+        result = page.evaluate(
+            """async () => {
+                const resp = await fetch('/rpc', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/list', params: {}})
+                });
+                return {status: resp.status, body: await resp.json()};
+            }"""
+        )
+        error_code = result["body"].get("error", {}).get("code")
+        assert error_code != -32003, (
+            f"Developer cookie session denied tools.read on tools/list with -32003. "
+            f"Response: {result['body']}"
+        )
+        assert "result" in result["body"] or error_code is None, (
+            f"Expected tools/list result, got: {result['body']}"
+        )
+        logger.info("Developer cookie /rpc tools/list: error_code=%s — RBAC passed", error_code)
+
+    def test_cross_team_tool_not_visible(self, playwright: Playwright, admin_api: APIRequestContext, rbac_developer_user: Dict):
+        """Developer must NOT see tools scoped to a different team (cross-team isolation).
+
+        Creates a tool in a fresh team the developer does NOT belong to.
+        Verifies Layer 1 (token scoping) denies visibility even though
+        check_any_team=True grants the RBAC permission.
+        """
+        import json as _json  # noqa: PLC0415
+
+        other_team_name = f"{RBAC_TEST_PREFIX}-other-{uuid.uuid4().hex[:8]}"
+        team_resp = admin_api.post("/teams/", data={"name": other_team_name, "description": "Cross-team isolation test"})
+        assert team_resp.status in (200, 201), f"Failed to create other team: {team_resp.status}"
+        other_team_id = team_resp.json()["id"]
+
+        tool_name = f"{RBAC_TEST_PREFIX}-xteam-{uuid.uuid4().hex[:8]}"
+        create_resp = admin_api.post(
+            "/tools",
+            data=_json.dumps({
+                "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
+                "team_id": other_team_id,
+                "visibility": "team",
+            }),
+            headers={"Content-Type": "application/json"},
+        )
+        assert create_resp.status in (200, 201), f"Failed to create tool: {create_resp.status}"
+        tool_id = create_resp.json().get("id")
+
+        try:
+            token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
+            dev_ctx = playwright.request.new_context(
+                base_url=BASE_URL,
+                extra_http_headers={"Authorization": f"Bearer {token}"},
+            )
+            try:
+                list_resp = dev_ctx.get(f"/tools?team_id={other_team_id}")
+                assert list_resp.status == 200
+                tools = list_resp.json()
+                names = [t.get("name") for t in (tools if isinstance(tools, list) else tools.get("tools", []))]
+                assert tool_name not in names, (
+                    f"Developer can see cross-team tool '{tool_name}' — Layer 1 isolation broken. "
+                    f"Visible: {names}"
+                )
+                logger.info("Cross-team tool '%s' correctly NOT visible to developer", tool_name)
+            finally:
+                dev_ctx.dispose()
+        finally:
+            if tool_id:
+                admin_api.delete(f"/tools/{tool_id}")
+            admin_api.delete(f"/teams/{other_team_id}")
