@@ -954,7 +954,7 @@ class PermissionChecker:
         self.user_context = user_context
         self.db_session = user_context.get("db")
 
-    async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None) -> bool:
+    async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None, check_any_team: bool = False) -> bool:
         """Check if user has specific permission.
 
         Args:
@@ -962,6 +962,7 @@ class PermissionChecker:
             resource_type: Optional resource type
             resource_id: Optional resource ID
             team_id: Optional team context
+            check_any_team: If True, check across all teams the user belongs to
 
         Returns:
             bool: True if user has permission
@@ -978,6 +979,7 @@ class PermissionChecker:
                 token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
+                check_any_team=check_any_team,
             )
         # Create fresh db session
         with fresh_db_session() as db:
@@ -991,6 +993,7 @@ class PermissionChecker:
                 token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
+                check_any_team=check_any_team,
             )
 
     async def has_admin_permission(self) -> bool:

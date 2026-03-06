@@ -9113,7 +9113,7 @@ def test_normalize_jwt_payload_api_token(monkeypatch):
 
     raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"]}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True}
+    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True, "token_use": "api"}
 
 
 def test_normalize_jwt_payload_session_token_admin(monkeypatch):
@@ -9123,7 +9123,7 @@ def test_normalize_jwt_payload_session_token_admin(monkeypatch):
 
     raw = {"sub": "admin@example.com", "token_use": "session", "is_admin": True}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True}
+    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True, "token_use": "session"}
 
 
 def test_normalize_jwt_payload_session_token_non_admin(monkeypatch):
@@ -9135,7 +9135,7 @@ def test_normalize_jwt_payload_session_token_non_admin(monkeypatch):
 
     raw = {"sub": "dev@example.com", "token_use": "session"}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True}
+    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 def test_normalize_jwt_payload_nested_is_admin():
@@ -9166,7 +9166,7 @@ def test_normalize_jwt_payload_session_no_email():
 
     raw = {"token_use": "session"}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True}
+    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 # ---------------------------------------------------------------------------

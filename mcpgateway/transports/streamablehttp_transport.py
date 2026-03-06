@@ -987,9 +987,13 @@ async def call_tool(name: str, arguments: dict) -> Union[
         if not _check_scoped_permission(user_context, "tools.execute"):
             raise PermissionError("Insufficient permissions. Required: tools.execute")
         # Layer 2: RBAC check
+        # Session tokens have no explicit team_id; check across all team-scoped roles.
+        # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
+        _is_session_token = user_context.get("token_use") == "session"
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
+            check_any_team=_is_session_token,
         )
         if not has_execute_permission:
             raise PermissionError("Insufficient permissions. Required: tools.execute")
@@ -1360,7 +1364,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
-    canonical ``{email, teams, is_admin, is_authenticated}`` dict that MCP
+    canonical ``{email, teams, is_admin, is_authenticated, token_use}`` dict that MCP
     handlers expect.  This mirrors the normalization performed by
     ``streamable_http_auth`` so that the stateful-session fallback path in
     ``_get_request_context_or_default`` returns an identical shape.
@@ -1369,7 +1373,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload: Raw JWT payload dict from ``require_auth_header_first``.
 
     Returns:
-        Canonical user context dict with keys email, teams, is_admin, is_authenticated.
+        Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
     email = payload.get("sub") or payload.get("email")
     is_admin = payload.get("is_admin", False)
@@ -1401,6 +1405,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "teams": final_teams,
         "is_admin": is_admin,
         "is_authenticated": True,
+        "token_use": token_use,
     }
     # Extract scoped permissions from JWT for per-method enforcement
     scopes = payload.get("scopes") or {}
@@ -2346,9 +2351,11 @@ class SessionManagerWrapper:
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
+            _is_session = user_context.get("token_use") == "session" if user_context else False
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
+                check_any_team=_is_session,
             )
             if not has_server_access:
                 response = ORJSONResponse(
@@ -3014,6 +3021,7 @@ class _StreamableHttpAuthHandler:
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
+                "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
             # Extract scoped permissions from JWT for per-method enforcement
             jwt_scopes = user_payload.get("scopes") or {}
