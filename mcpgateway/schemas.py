@@ -332,7 +332,6 @@ class AuthenticationValues(BaseModelWithConfigDict):
     auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication (legacy single header)")
     auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication (legacy single header)")
     authHeaders: Optional[List[Dict[str, str]]] = Field(None, alias="authHeaders", description="List of custom headers for authentication (multi-header format)")  # noqa: N815
-    authHeadersUnmasked: Optional[List[Dict[str, str]]] = Field(None, alias="authHeadersUnmasked", description="Unmasked list of custom headers (for edit forms)")  # noqa: N815
 
 
 class ToolCreate(BaseModel):

@@ -1498,7 +1498,11 @@ class TestAdminToolRoutes:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert mock_register_tool.called
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_custom_headers_legacy(self, mock_register_tool, mock_request, mock_db):
@@ -1523,7 +1527,11 @@ class TestAdminToolRoutes:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert mock_register_tool.called
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
 
     @patch.object(ToolService, "update_tool")
     async def test_admin_edit_tool_with_basic_auth(self, mock_update_tool, mock_request, mock_db):
@@ -1599,7 +1607,11 @@ class TestAdminToolRoutes:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert mock_update_tool.called
+        mock_update_tool.assert_called_once()
+        call_tool = mock_update_tool.call_args[0][2]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
 
     @patch.object(ToolService, "update_tool")
     async def test_admin_edit_tool_with_custom_headers_legacy(self, mock_update_tool, mock_request, mock_db):
@@ -1625,7 +1637,11 @@ class TestAdminToolRoutes:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert mock_update_tool.called
+        mock_update_tool.assert_called_once()
+        call_tool = mock_update_tool.call_args[0][2]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
 
 
     @patch.object(ToolService, "set_tool_state")

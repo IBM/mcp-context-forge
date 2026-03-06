@@ -886,8 +886,7 @@ class ToolService(BaseService):
                     first_key = next(iter(decoded_auth_value))
                     tool_dict["auth"] = {
                         "auth_type": "authheaders",
-                        "authHeaders": auth_headers,  # Multi-header format
-                        "authHeadersUnmasked": auth_headers,  # For edit form (already masked)
+                        "authHeaders": auth_headers,  # Multi-header format (masked)
                         "auth_header_key": first_key,  # Legacy format
                         "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,  # Legacy format
                     }

@@ -3890,18 +3890,13 @@ async function editTool(toolId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
-                    const unmaskedHeaders =
-                        Array.isArray(tool.auth.authHeadersUnmasked) &&
-                        tool.auth.authHeadersUnmasked.length > 0
-                            ? tool.auth.authHeadersUnmasked
-                            : tool.auth.authHeaders;
                     if (
-                        Array.isArray(unmaskedHeaders) &&
-                        unmaskedHeaders.length > 0
+                        Array.isArray(tool.auth.authHeaders) &&
+                        tool.auth.authHeaders.length > 0
                     ) {
                         loadAuthHeaders(
                             "edit-auth-headers-container",
-                            unmaskedHeaders,
+                            tool.auth.authHeaders,
                             { maskValues: true },
                         );
                     } else {
@@ -6324,18 +6319,13 @@ async function editGateway(gatewayId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
-                    const unmaskedHeaders =
-                        Array.isArray(gateway.authHeadersUnmasked) &&
-                        gateway.authHeadersUnmasked.length > 0
-                            ? gateway.authHeadersUnmasked
-                            : gateway.authHeaders;
                     if (
-                        Array.isArray(unmaskedHeaders) &&
-                        unmaskedHeaders.length > 0
+                        Array.isArray(gateway.authHeaders) &&
+                        gateway.authHeaders.length > 0
                     ) {
                         loadAuthHeaders(
                             "auth-headers-container-gw-edit",
-                            unmaskedHeaders,
+                            gateway.authHeaders,
                             { maskValues: true },
                         );
                     } else {
