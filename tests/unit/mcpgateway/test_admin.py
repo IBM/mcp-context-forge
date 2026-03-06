@@ -17987,6 +17987,27 @@ class TestAdminCsrfProtection:
             await admin_mod.enforce_admin_csrf(request)
 
     @pytest.mark.asyncio
+    async def test_enforce_admin_csrf_skips_empty_scheme_netloc_origin(self, monkeypatch):
+        """Entry like '://' that has separator but empty scheme/netloc is skipped."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"://"})
+
+        request = self._make_request(
+            method="POST",
+            headers={
+                "origin": "https://evil.com",
+                "host": "example.com",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
+            form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
+        )
+        with pytest.raises(HTTPException, match="CSRF origin validation failed"):
+            await admin_mod.enforce_admin_csrf(request)
+
+    @pytest.mark.asyncio
     async def test_enforce_admin_csrf_accepts_schemeless_allowed_origin(self, monkeypatch):
         """Bare hostname in allowed_origins gets https:// prepended (consistent with SSO)."""
         # First-Party
