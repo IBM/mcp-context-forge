@@ -187,6 +187,147 @@ class EmailAuthService:
             self._role_service = RoleService(self.db)
         return self._role_service
 
+    async def verify_required_roles_exist(self) -> None:
+        """Verify that required RBAC roles exist in the database.
+
+        This should be called during application startup to ensure the system
+        can properly assign roles to admin and regular users.
+
+        Raises:
+            ValueError: If required roles are missing from the database
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock, AsyncMock, patch
+            >>> service = EmailAuthService(Mock())
+            >>> # Test when all roles exist
+            >>> with patch.object(service, 'role_service', new=Mock()):
+            ...     service.role_service.get_role_by_name = AsyncMock(return_value=Mock())
+            ...     asyncio.run(service.verify_required_roles_exist())  # Should not raise
+            >>> # Test when admin role is missing
+            >>> with patch.object(service, 'role_service', new=Mock()):
+            ...     service.role_service.get_role_by_name = AsyncMock(return_value=None)
+            ...     try:
+            ...         asyncio.run(service.verify_required_roles_exist())
+            ...     except ValueError as e:
+            ...         'platform_admin' in str(e)
+            True
+        """
+        missing_roles = []
+
+        # Check admin role
+        admin_role_name = settings.default_admin_role
+        admin_role = await self.role_service.get_role_by_name(admin_role_name, "global")
+        if not admin_role:
+            missing_roles.append(f"'{admin_role_name}' (global scope)")
+
+        # Check user role
+        user_role_name = settings.default_user_role
+        user_role = await self.role_service.get_role_by_name(user_role_name, "global")
+        if not user_role:
+            missing_roles.append(f"'{user_role_name}' (global scope)")
+
+        # Check team owner role
+        team_owner_role_name = settings.default_team_owner_role
+        team_owner_role = await self.role_service.get_role_by_name(team_owner_role_name, "team")
+        if not team_owner_role:
+            missing_roles.append(f"'{team_owner_role_name}' (team scope)")
+
+        if missing_roles:
+            logger.warning(
+                f"Required RBAC roles are missing from the database: {', '.join(missing_roles)}. "
+                f"User creation and admin promotion may fail. Please run database bootstrap to create these roles."
+            )
+        else:
+            logger.info("All required RBAC roles verified present in database")
+
+    async def check_and_repair_admin_role_consistency(self, dry_run: bool = False) -> dict:
+        """Check for and optionally repair admin users without proper RBAC role assignments.
+
+        This detects users where is_admin=True but they don't have the platform_admin role assigned.
+        This can happen due to:
+        - Database migration issues
+        - Manual database edits
+        - Bugs in role assignment logic (now fixed)
+
+        Args:
+            dry_run: If True, only report issues without fixing them
+
+        Returns:
+            dict: Summary of findings and repairs with keys:
+                - 'checked': Number of admin users checked
+                - 'inconsistent': List of users with is_admin=True but no admin role
+                - 'repaired': List of users that were repaired (empty if dry_run=True)
+                - 'failed': List of users that failed to repair
+                - 'skipped': True if check was skipped due to missing role
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock, AsyncMock, patch
+            >>> service = EmailAuthService(Mock())
+            >>> # Test dry run with no issues
+            >>> with patch.object(service.db, 'execute', return_value=Mock(scalars=lambda: Mock(all=lambda: []))):
+            ...     result = asyncio.run(service.check_and_repair_admin_role_consistency(dry_run=True))
+            ...     result['checked'] == 0
+            True
+        """
+        # First-Party
+        from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+        summary = {"checked": 0, "inconsistent": [], "repaired": [], "failed": [], "skipped": False}
+
+        try:
+            # Get admin role
+            admin_role_name = settings.default_admin_role
+            admin_role = await self.role_service.get_role_by_name(admin_role_name, "global")
+
+            if not admin_role:
+                # This is expected on fresh databases before bootstrap
+                logger.debug(f"Skipping admin consistency check: admin role '{admin_role_name}' not found (expected on fresh database)")
+                summary["skipped"] = True
+                return summary
+
+            # Find all users with is_admin=True
+            stmt = select(EmailUser).where(EmailUser.is_admin.is_(True))
+            result = self.db.execute(stmt)
+            admin_users = result.scalars().all()
+
+            summary["checked"] = len(admin_users)
+            logger.info(f"Checking {len(admin_users)} admin users for role consistency")
+
+            for user in admin_users:
+                # Check if user has the admin role assigned
+                role_assignment = await self.role_service.get_user_role_assignment(user_email=user.email, role_id=admin_role.id, scope="global", scope_id=None)
+
+                if not role_assignment or not role_assignment.is_active:
+                    # Inconsistency detected
+                    summary["inconsistent"].append(user.email)
+                    logger.warning(f"Inconsistency detected: User {user.email} has is_admin=True but no active {admin_role_name} role")
+
+                    if not dry_run:
+                        # Attempt to repair by assigning the missing role
+                        try:
+                            await self.role_service.assign_role_to_user(
+                                user_email=user.email, role_id=admin_role.id, scope="global", scope_id=None, granted_by="system_repair", grant_source="auto"
+                            )
+                            summary["repaired"].append(user.email)
+                            logger.info(f"Repaired: Assigned {admin_role_name} role to {user.email}")
+                        except Exception as e:
+                            summary["failed"].append({"email": user.email, "error": str(e)})
+                            logger.error(f"Failed to repair {user.email}: {e}")
+
+            if dry_run and summary["inconsistent"]:
+                logger.warning(f"DRY RUN: Found {len(summary['inconsistent'])} admin users without proper role assignments. Run with dry_run=False to repair.")
+            elif summary["repaired"]:
+                logger.info(f"Repaired {len(summary['repaired'])} admin users by assigning missing roles")
+            elif not summary["inconsistent"]:
+                logger.info("All admin users have consistent role assignments")
+
+        except Exception as e:
+            logger.error(f"Error during admin role consistency check: {e}")
+
+        return summary
+
     def validate_email(self, email: str) -> bool:
         """Validate email address format.
 
@@ -513,6 +654,7 @@ class EmailAuthService:
         auth_provider: str = "local",
         skip_password_validation: bool = False,
         granted_by: Optional[str] = None,
+        skip_role_validation: bool = False,
     ) -> EmailUser:
         """Create a new user with email authentication.
 
@@ -526,6 +668,7 @@ class EmailAuthService:
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
             granted_by: Email of user creating this user (for role assignment audit trail)
+            skip_role_validation: Skip role existence check (for bootstrap only - roles created after user)
 
         Returns:
             EmailUser: The created user object
@@ -534,6 +677,7 @@ class EmailAuthService:
             EmailValidationError: If email format is invalid
             PasswordValidationError: If password doesn't meet policy
             UserExistsError: If user already exists
+            ValueError: If admin role assignment fails when is_admin=True (unless skip_role_validation=True)
 
         Examples:
             # user = await service.create_user(
@@ -562,6 +706,19 @@ class EmailAuthService:
 
         # Hash the password
         password_hash = await self.password_service.hash_password_async(password)
+
+        # CRITICAL: If creating an admin user, verify the admin role exists BEFORE creating the user
+        # This ensures atomicity - we don't create a user with is_admin=True if role assignment will fail
+        # EXCEPTION: During bootstrap, roles are created after the admin user, so skip this check
+        if is_admin and not skip_role_validation:
+            admin_role_name = settings.default_admin_role
+            admin_role = await self.role_service.get_role_by_name(admin_role_name, "global")
+            if not admin_role:
+                raise ValueError(
+                    f"Cannot create admin user: required role '{admin_role_name}' does not exist. "
+                    f"Please ensure the role is created in the database before creating admin users."
+                )
+            logger.debug(f"Verified admin role '{admin_role_name}' exists before creating admin user {email}")
 
         # Create new user (record password change timestamp)
         user = EmailUser(
@@ -604,6 +761,8 @@ class EmailAuthService:
                     # Don't fail user creation if personal team creation fails
 
             # Auto-assign dual roles using RoleService (after personal team creation)
+            # CRITICAL: For admin users, role assignment MUST succeed or we rollback the entire user creation
+            # EXCEPTION: During bootstrap (skip_role_validation=True), allow admin creation without role (roles assigned later)
             try:
                 granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
 
@@ -616,9 +775,20 @@ class EmailAuthService:
                         await self.role_service.assign_role_to_user(user_email=email, role_id=global_role.id, scope="global", scope_id=None, granted_by=granter)
                         logger.info(f"Assigned {global_role_name} role (global scope) to user {email}")
                     except ValueError as e:
-                        logger.warning(f"Could not assign {global_role_name} role to {email}: {e}")
+                        # CRITICAL: If this is an admin user and role assignment fails, we must fail the entire operation
+                        # EXCEPTION: During bootstrap, allow failure (roles will be assigned later)
+                        if is_admin and not skip_role_validation:
+                            logger.error(f"CRITICAL: Failed to assign admin role to {email}: {e}")
+                            raise ValueError(f"Failed to assign admin role '{global_role_name}' to user {email}: {e}") from e
+                        else:
+                            logger.warning(f"Could not assign {global_role_name} role to {email}: {e}")
                 else:
-                    logger.warning(f"{global_role_name} role not found. User {email} created without global role.")
+                    # CRITICAL: If admin role doesn't exist, fail the operation for admin users
+                    # EXCEPTION: During bootstrap, allow missing role (will be created later)
+                    if is_admin and not skip_role_validation:
+                        raise ValueError(f"Admin role '{global_role_name}' not found. Cannot create admin user without role assignment.")
+                    else:
+                        logger.warning(f"{global_role_name} role not found. User {email} created without global role.")
 
                 # Assign team owner role with team scope (if personal team exists)
                 if personal_team_id:
@@ -635,9 +805,16 @@ class EmailAuthService:
                         logger.warning(f"{team_owner_role_name} role not found. User {email} created without team owner role.")
 
             except Exception as role_error:
-                logger.error(f"Failed to assign roles to user {email}: {role_error}")
-                # Don't fail user creation if role assignment fails
-                # User can be assigned roles manually later
+                # CRITICAL: For admin users, role assignment failure means we must rollback the user creation
+                # EXCEPTION: During bootstrap (skip_role_validation=True), allow admin creation without role (roles assigned later)
+                if is_admin and not skip_role_validation:
+                    logger.error(f"CRITICAL: Admin role assignment failed for {email}, rolling back user creation: {role_error}")
+                    self.db.rollback()
+                    raise ValueError(f"Failed to create admin user {email}: admin role assignment failed. {role_error}") from role_error
+                else:
+                    logger.error(f"Failed to assign roles to user {email}: {role_error}")
+                    # For non-admin users (or bootstrap admin), don't fail user creation if role assignment fails
+                    # User can be assigned roles manually later (or during bootstrap_default_roles for bootstrap admin)
 
             # Log registration event
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
@@ -1127,8 +1304,11 @@ class EmailAuthService:
             logger.info(f"Updated platform admin user: {email}")
             return existing_admin
 
-        # Create new admin user - skip password validation during bootstrap
-        admin_user = await self.create_user(email=email, password=password, full_name=full_name, is_admin=True, auth_provider="local", skip_password_validation=True)
+        # Create new admin user - skip password and role validation during bootstrap
+        # Role validation is skipped because roles are created AFTER the admin user during bootstrap
+        admin_user = await self.create_user(
+            email=email, password=password, full_name=full_name, is_admin=True, auth_provider="local", skip_password_validation=True, skip_role_validation=True
+        )
 
         logger.info(f"Created platform admin user: {email}")
         return admin_user
@@ -1570,8 +1750,17 @@ class EmailAuthService:
             if is_admin is not None:
                 # Track admin_origin when status actually changes
                 if is_admin != user.is_admin:
-                    user.is_admin = is_admin
-                    user.admin_origin = admin_origin_source if is_admin else None
+                    # CRITICAL: For admin promotion, verify the admin role exists BEFORE updating is_admin flag
+                    # This ensures atomicity - we don't set is_admin=True if role assignment will fail
+                    if is_admin:
+                        admin_role_name = settings.default_admin_role
+                        admin_role = await self.role_service.get_role_by_name(admin_role_name, "global")
+                        if not admin_role:
+                            raise ValueError(
+                                f"Cannot promote user to admin: required role '{admin_role_name}' does not exist. "
+                                f"Please ensure the role is created in the database before promoting users to admin."
+                            )
+                        logger.debug(f"Verified admin role '{admin_role_name}' exists before promoting {email} to admin")
 
                     # Sync global role assignment with is_admin flag:
                     # Promotion: revoke default_user_role, assign default_admin_role
@@ -1590,7 +1779,8 @@ class EmailAuthService:
                                     await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=email)
                                     logger.info(f"Assigned {admin_role_name} role to {email}")
                             else:
-                                logger.warning(f"{admin_role_name} role not found, cannot assign to {email}")
+                                # CRITICAL: This should never happen due to pre-check above, but handle defensively
+                                raise ValueError(f"Admin role '{admin_role_name}' not found, cannot promote {email} to admin")
 
                             if user_role:
                                 revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
@@ -1611,9 +1801,23 @@ class EmailAuthService:
                             else:
                                 logger.warning(f"{user_role_name} role not found, cannot assign to {email}")
 
+                        # CRITICAL: Only update is_admin flag AFTER successful role assignment
+                        # This ensures atomicity - if role assignment fails, is_admin stays unchanged
+                        user.is_admin = is_admin
+                        user.admin_origin = admin_origin_source if is_admin else None
+                        logger.info(f"Updated is_admin flag for {email} to {is_admin} after successful role sync")
+
                     except Exception as e:
-                        logger.warning(f"Failed to sync global roles for {email}: {e}")
-                        # Don't fail user update if role sync fails
+                        # CRITICAL: For admin promotion, role sync failure means we must fail the entire operation
+                        if is_admin:
+                            logger.error(f"CRITICAL: Admin role assignment failed for {email}, aborting promotion: {e}")
+                            raise ValueError(f"Failed to promote user {email} to admin: role assignment failed. {e}") from e
+                        else:
+                            # For demotion, log warning but allow the operation to continue
+                            logger.warning(f"Failed to sync global roles for {email}: {e}")
+                            # Still update is_admin flag for demotion even if role sync fails
+                            user.is_admin = is_admin
+                            user.admin_origin = admin_origin_source if is_admin else None
 
             if is_active is not None:
                 user.is_active = is_active

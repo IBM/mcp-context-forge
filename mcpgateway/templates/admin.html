@@ -12022,8 +12022,15 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               messagesDiv.innerHTML = '<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200">✅ User created successfully!</div>';
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
             } else {
-              messagesDiv.innerHTML = '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ Failed to create user. Please check your input.</div>';
-              setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
+              // Show the actual error message from the server response
+              // Server returns HTML with error details, so display it directly
+              const serverResponse = event.detail.xhr.responseText;
+              if (serverResponse && serverResponse.trim()) {
+                messagesDiv.innerHTML = serverResponse;
+              } else {
+                messagesDiv.innerHTML = '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ Failed to create user. Please check your input.</div>';
+              }
+              setTimeout(() => { messagesDiv.innerHTML = ''; }, 8000);  // Longer timeout for detailed errors
             }
           });
         }

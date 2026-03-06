@@ -983,6 +983,28 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         refresh_slugs_on_startup()
 
+        # Verify required RBAC roles exist (for admin user creation/promotion)
+        if settings.email_auth_enabled:
+            try:
+                # First-Party
+                from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+
+                with SessionLocal() as db:
+                    auth_service = EmailAuthService(db)
+                    await auth_service.verify_required_roles_exist()
+
+                    # Check and repair admin/role consistency (auto-repair on startup)
+                    consistency_result = await auth_service.check_and_repair_admin_role_consistency(dry_run=False)
+                    if not consistency_result.get("skipped"):
+                        if consistency_result["repaired"]:
+                            logger.info(f"Startup consistency check: Repaired {len(consistency_result['repaired'])} admin users with missing role assignments")
+                        if consistency_result["failed"]:
+                            logger.warning(f"Startup consistency check: Failed to repair {len(consistency_result['failed'])} admin users")
+                        if not consistency_result["inconsistent"]:
+                            logger.debug("Startup consistency check: All admin users have consistent role assignments")
+            except Exception as e:
+                logger.warning(f"Failed to verify required RBAC roles or check consistency: {e}")
+
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
             await attempt_to_bootstrap_sso_providers()
