@@ -831,8 +831,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             elif hasattr(gateway, "auth_headers") and gateway.auth_headers:
                 # Convert list of {key, value} to dict
                 header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
-                # Keep encoded form for persistence, but pass raw headers for initialization
-                auth_value = encode_auth(header_dict)  # Encode the dict for consistency
+                auth_value = header_dict  # store plain dict, consistent with update path and DB column type
                 authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
 
             elif isinstance(auth_value, str) and auth_value:

@@ -4,6 +4,7 @@
 # Standard
 import tempfile
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 # Third-Party
 import pytest
@@ -12,7 +13,7 @@ import pytest
 from mcpgateway.config import settings
 from mcpgateway.schemas import GatewayRead
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayService, OAuthToolValidationError
-from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
 
@@ -133,3 +134,87 @@ def test_gateway_service_validate_tools_valueerror(monkeypatch):
     with pytest.raises(GatewayConnectionError) as excinfo:
         service._validate_tools([{"name": "tool-other"}])
     assert "ValueError" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
+    """Verify that registering a gateway with authheaders stores auth_value as a plain dict.
+
+    auth_value DB column is Mapped[Optional[Dict[str, str]]] (JSON). Storing a string
+    in that column causes the driver to write JSON null, which breaks health checks
+    and the auto-refresh loop. The creation path must store the plain dict, consistent
+    with the update path and the column type annotation.
+    """
+    # Verify the type contract: encode_auth() returns str, NOT a dict.
+    # This is why storing its result in a Dict-typed JSON column produces null.
+    encoded = encode_auth({"X-Key": "value"})
+    assert isinstance(encoded, str), "encode_auth must return str — storing it in a dict JSON column yields null"
+
+    # Build a minimal gateway with authheaders
+    from types import SimpleNamespace as NS
+
+    gateway = NS(
+        name="test-gw",
+        url="http://localhost:8000/mcp",
+        description=None,
+        transport="sse",
+        tags=[],
+        passthrough_headers=None,
+        auth_type="authheaders",
+        auth_value=None,
+        auth_headers=[
+            {"key": "X-Custom-Auth-Header", "value": "my-token"},
+            {"key": "X-Custom-User-ID", "value": "user-123"},
+        ],
+        auth_query_param_key=None,
+        auth_query_param_value=None,
+        auth_query_params=None,
+        oauth_config=None,
+        one_time_auth=False,
+        ca_certificate=None,
+        ca_certificate_sig=None,
+        signing_algorithm=None,
+        visibility="public",
+        enabled=True,
+        team_id=None,
+        owner_email=None,
+        gateway_mode="cache",
+    )
+
+    service = GatewayService()
+    service._check_gateway_uniqueness = MagicMock(return_value=None)
+    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [], []))
+    service._notify_gateway_added = AsyncMock()
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+        lambda x: MagicMock(masked=lambda: x),
+    )
+
+    db = MagicMock()
+    db.flush = Mock()
+    db.refresh = Mock()
+
+    # Capture auth_value at the exact moment db.add() is called.
+    # _prepare_gateway_for_read() later mutates db_gateway.auth_value to an encrypted string
+    # for the GatewayRead response; checking call_args AFTER the method returns would see
+    # the mutated value, giving a false-negative even though the DB write is correct.
+    captured: dict = {}
+
+    def _capture_add(obj):
+        if hasattr(obj, "auth_value"):
+            captured["auth_value"] = obj.auth_value  # snapshot before any mutation
+
+    db.add = Mock(side_effect=_capture_add)
+
+    await service.register_gateway(db, gateway)
+
+    assert "auth_value" in captured, "db.add was never called with a Gateway object"
+
+    # auth_value must be a plain dict — NOT a string.
+    # A string stored in a Mapped[Optional[Dict[str, str]]] JSON column is written as JSON null.
+    assert isinstance(captured["auth_value"], dict), (
+        f"auth_value must be dict for authheaders auth type, got {type(captured['auth_value'])}: {captured['auth_value']!r}"
+    )
+    assert captured["auth_value"] == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
