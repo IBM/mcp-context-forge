@@ -6088,10 +6088,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if init_session_id:
                 effective_owner = await session_registry.claim_session_owner(init_session_id, requester_email)
                 if effective_owner is None:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership unavailable.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, "Access denied", {"method": method})
 
                 if effective_owner and not requester_is_admin and requester_email != effective_owner:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, "Access denied", {"method": method})
 
             # Pass server_id to advertise OAuth capability if configured per RFC 9728
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
@@ -6293,7 +6293,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             try:
                 await resource_service.subscribe_resource(db, subscription, user_email=access_user_email, token_teams=access_token_teams)
             except PermissionError:
-                raise JSONRPCError(-32003, "Insufficient permissions for resource subscription", {"uri": uri})
+                raise JSONRPCError(-32003, "Access denied", {"method": method})
             db.commit()
             db.close()
             result = {}
@@ -6796,7 +6796,7 @@ async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[s
     if user_context:
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return auth_token, proxy_user
 

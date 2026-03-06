@@ -1066,4 +1066,5 @@ class PermissionChecker:
             HTTPException: If permission is not granted
         """
         if not await self.has_permission(permission, resource_type, resource_id, team_id):
+            logger.warning(f"Access denied: user '{self.user_context.get('email')}' missing permission '{permission}'")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")

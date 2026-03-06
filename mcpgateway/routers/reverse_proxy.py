@@ -229,7 +229,7 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optiona
     if user_context:
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_REVERSE_PROXY_CONNECT_PERMISSIONS):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         return user_context["email"]
 
     return None

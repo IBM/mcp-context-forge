@@ -3370,7 +3370,7 @@ class TestUtilityFunctions:
             await main_mod._authenticate_websocket_user(websocket)
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Insufficient permissions"
+        assert exc_info.value.detail == "Access denied"
 
     @pytest.mark.asyncio
     async def test_websocket_bearer_auth_invalid_token_closes(self, monkeypatch):
@@ -4808,7 +4808,7 @@ class TestRpcHandling:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "ownership mismatch" in result["error"]["message"].lower()
+        assert result["error"]["message"] == "Access denied"
 
     async def test_handle_rpc_initialize_claims_unowned_session(self, monkeypatch):
         payload = {"jsonrpc": "2.0", "id": "aff-init-claim", "method": "initialize", "params": {"session_id": "init-2"}}
@@ -4833,7 +4833,7 @@ class TestRpcHandling:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "ownership unavailable" in result["error"]["message"].lower()
+        assert result["error"]["message"] == "Access denied"
 
     async def test_handle_rpc_list_tools_legacy_token_teams_none_becomes_public_only(self):
         """Cover legacy list_tools branch when token_teams is explicitly None for non-admin."""

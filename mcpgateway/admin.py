@@ -10530,7 +10530,7 @@ async def admin_unified_search(
         if not can_search_users:
             selected_entity_types = [entity_type for entity_type in selected_entity_types if entity_type != "users"]
             if users_explicitly_requested and not selected_entity_types:
-                raise HTTPException(status_code=403, detail="Insufficient permissions. Required: admin.user_management")
+                raise HTTPException(status_code=403, detail="Access denied")
 
     if not selected_entity_types:
         raise HTTPException(status_code=400, detail="No valid entity_types requested")

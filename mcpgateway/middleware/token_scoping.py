@@ -1265,7 +1265,7 @@ class TokenScopingMiddleware:
             permissions = scopes.get("permissions", [])
             if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this operation")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
             # Check optional token usage limits.
             usage_limits = scopes.get("usage_limits", {})
