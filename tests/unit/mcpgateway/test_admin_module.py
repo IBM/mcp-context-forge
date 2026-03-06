@@ -901,23 +901,65 @@ async def test_admin_ui_no_team_id_returns_public_items(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_admin_ui_admin_bypasses_team_membership_check(monkeypatch):
-    """Platform admins can select any team_id without being a member."""
+    """Platform admins with unrestricted tokens can select any team_id."""
     request = _make_request(root_path="/root")
     request.cookies = {"jwt_token": "existing-jwt"}
     mock_db = MagicMock()
     mock_db.commit = MagicMock()
-    user = {"email": "admin@example.com", "is_admin": True, "db": mock_db}
+    user = {"email": "admin@example.com", "is_admin": True, "token_teams": None, "db": mock_db}
 
     _configure_admin_ui_test_dependencies(monkeypatch)
 
     monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
     monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
 
-    # Admin user is NOT a member of "other-team", but should still be allowed
+    # Admin with token_teams=None (unrestricted) is NOT a member of "other-team",
+    # but should still be allowed through the gate.
     response = await admin.admin_ui(request, "other-team", False, mock_db, user=user)
     assert isinstance(response, HTMLResponse)
     context = request.app.state.templates.TemplateResponse.call_args[0][2]
     assert context["selected_team_id"] == "other-team"
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_team_scoped_admin_rejected_for_other_team(monkeypatch):
+    """Team-scoped admin tokens must still pass membership validation."""
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "is_admin": True, "token_teams": ["team-1"], "db": mock_db}
+
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr(admin.settings, "mcpgateway_grpc_enabled", False)
+    monkeypatch.setattr(admin.settings, "app_root_path", "/root")
+    monkeypatch.setattr(admin.settings, "token_expiry", 60)
+    monkeypatch.setattr(admin.settings, "secure_cookies", False)
+    monkeypatch.setattr(admin.settings, "cookie_samesite", "lax")
+
+    class FakeTeamService:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_user_teams(self, email):
+            return [SimpleNamespace(id="team-1", name="Team One", type="organization", is_personal=False)]
+
+        async def get_member_counts_batch_cached(self, team_ids):
+            return {"team-1": 3}
+
+        def get_user_roles_batch(self, email, team_ids):
+            return {"team-1": "admin"}
+
+    monkeypatch.setattr(admin, "TeamManagementService", FakeTeamService)
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+
+    # Admin with team-scoped token requesting a team they're not a member of -> 403
+    with pytest.raises(HTTPException) as exc_info:
+        await admin.admin_ui(request, "other-team", False, mock_db, user=user)
+    assert exc_info.value.status_code == 403
+    assert "Not a member" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

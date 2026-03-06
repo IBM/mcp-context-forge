@@ -3232,8 +3232,9 @@ async def admin_ui(
     # --------------------------------------------------------------------------------
     # Validate team_id if provided (only when email-based teams are enabled).
     # Non-admin users get 403 when they supply a team_id they do not belong to.
-    # Platform admins bypass the membership check (consistent with token scoping,
-    # RBAC middleware, and permission service admin bypass conventions).
+    # Platform admins with unrestricted tokens (is_admin AND token_teams is None)
+    # bypass the membership check, consistent with the codebase admin bypass
+    # convention. Team-scoped admin tokens are still subject to membership checks.
     # When team_id is None (not sent), selected_team_id stays None and the
     # unscoped/public path works as expected.
     # --------------------------------------------------------------------------------
@@ -3241,7 +3242,8 @@ async def admin_ui(
     user_email = get_user_email(user)
     if team_id and getattr(settings, "email_auth_enabled", False):
         _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
-        if not _is_admin:
+        _token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
+        if not (_is_admin and _token_teams is None):
             if not user_teams:
                 LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
                 raise HTTPException(status_code=403, detail="Unable to verify team membership")
