@@ -177,17 +177,25 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 # Browser/admin requests with stale cookies: let the request continue
                 # without user context so the RBAC layer can redirect to /admin/login.
                 # API requests: return a hard JSON 401/403 deny.
+                # Detection must match rbac.py's is_browser_request logic (Accept,
+                # HX-Request, and Referer: /admin) to avoid breaking admin UI flows.
                 accept_header = request.headers.get("accept", "")
                 is_htmx = request.headers.get("hx-request") == "true"
-                is_browser = "text/html" in accept_header or is_htmx
+                referer = request.headers.get("referer", "")
+                is_browser = "text/html" in accept_header or is_htmx or "/admin" in referer
                 if is_browser:
                     logger.debug("Browser request with rejected auth — continuing without user for redirect")
                     return await call_next(request)
 
+                # Include essential security headers since this response bypasses
+                # SecurityHeadersMiddleware (it returns before call_next).
+                resp_headers = dict(e.headers) if e.headers else {}
+                resp_headers.setdefault("X-Content-Type-Options", "nosniff")
+                resp_headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
                 return JSONResponse(
                     status_code=e.status_code,
                     content={"detail": e.detail},
-                    headers=e.headers or {},
+                    headers=resp_headers,
                 )
 
             # Non-security HTTP errors (e.g. 500 from a downstream service) — continue as anonymous

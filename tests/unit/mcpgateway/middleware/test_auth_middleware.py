@@ -485,3 +485,51 @@ async def test_non_401_403_http_exception_continues_as_anonymous():
     # Non-security error: continue as anonymous
     call_next.assert_awaited_once_with(request)
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_http_401_referer_admin_continues_for_redirect():
+    """HTTPException 401 with Referer: /admin continues for RBAC redirect (not JSON deny)."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("login page", status_code=200))
+    request = MagicMock(spec=Request)
+    request.url.path = "/admin/tools/partial"
+    request.cookies = {"jwt_token": "stale_cookie"}
+    request.headers = {"accept": "*/*", "referer": "http://localhost:8080/admin/"}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # Referer-based admin detection should let the request through for redirect
+    call_next.assert_awaited_once_with(request)
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_http_401_json_deny_includes_security_headers():
+    """JSON 401 response includes essential security headers (X-Content-Type-Options, Referrer-Policy)."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"

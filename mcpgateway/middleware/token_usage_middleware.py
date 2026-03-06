@@ -187,6 +187,10 @@ class TokenUsageMiddleware:
                 # Verify JTI belongs to a real API token before logging.
                 # Without this check, an attacker can craft a JWT with fake
                 # jti/sub and auth_provider=api_token to pollute usage logs.
+                # Verify JTI belongs to a real API token and use the DB-stored
+                # owner email instead of the unverified JWT claim.  Without this,
+                # an attacker who knows a valid JTI could forge a JWT with an
+                # arbitrary sub/email to poison another user's usage stats.
                 try:
                     # Third-Party
                     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
@@ -195,9 +199,11 @@ class TokenUsageMiddleware:
                     from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
 
                     with fresh_db_session() as verify_db:
-                        exists = verify_db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti)).scalar_one_or_none()
-                        if exists is None:
+                        token_row = verify_db.execute(select(EmailApiToken.id, EmailApiToken.user_email).where(EmailApiToken.jti == jti)).first()
+                        if token_row is None:
                             return  # JTI not in DB — forged token, skip logging
+                        # Use the DB-stored owner, not the unverified JWT claim
+                        user_email = token_row.user_email
                 except Exception:
                     return  # DB error — skip logging rather than log unverified data
 

@@ -544,9 +544,10 @@ async def test_logs_blocked_api_token_on_4xx():
 
 @pytest.mark.asyncio
 async def test_logs_revoked_api_token_on_401():
-    """Middleware logs a blocked attempt when a revoked API token receives a 401 response."""
+    """Middleware logs a blocked attempt using the DB-stored owner email, not the JWT claim."""
     # Standard
     import jwt as _jwt_lib
+    from collections import namedtuple
 
     token_payload = {
         "jti": "jti-revoked-abc",
@@ -573,30 +574,44 @@ async def test_logs_revoked_api_token_on_401():
         "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
     }
 
-    mock_db = MagicMock()
+    # Mock the JTI verification to return a DB row with the real owner email
+    TokenRow = namedtuple("TokenRow", ["id", "user_email"])
+    mock_verify_db = MagicMock()
+    mock_verify_db.execute.return_value.first.return_value = TokenRow(id="tok-1", user_email="real-owner@example.com")
+    mock_log_db = MagicMock()
     mock_token_service = MagicMock()
     mock_token_service.log_token_usage = AsyncMock()
 
+    call_count = [0]
+
+    def fresh_session_factory():
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=mock_verify_db if call_count[0] == 0 else mock_log_db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        call_count[0] += 1
+        return ctx
+
     with (
-        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session", side_effect=fresh_session_factory),
         patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
     ):
-        mock_fresh_session.return_value.__enter__.return_value = mock_db
         await _make_asgi_call(middleware, scope)
 
     mock_token_service.log_token_usage.assert_awaited_once()
     call_args = mock_token_service.log_token_usage.call_args
     assert call_args.kwargs["jti"] == "jti-revoked-abc"
-    assert call_args.kwargs["user_email"] == "revoked@example.com"
+    # Must use the DB-stored email, NOT the unverified JWT "sub" claim
+    assert call_args.kwargs["user_email"] == "real-owner@example.com"
     assert call_args.kwargs["blocked"] is True
     assert call_args.kwargs["block_reason"] == "revoked_or_expired"
 
 
 @pytest.mark.asyncio
 async def test_logs_rejected_api_token_on_403():
-    """Middleware logs a blocked attempt with http_403 reason when a rejected API token receives a 403 response."""
+    """Middleware logs a blocked attempt with http_403 reason using DB-stored email."""
     # Standard
     import jwt as _jwt_lib
+    from collections import namedtuple
 
     token_payload = {
         "jti": "jti-rejected-def",
@@ -623,21 +638,33 @@ async def test_logs_rejected_api_token_on_403():
         "headers": [(b"authorization", f"Bearer {raw_token}".encode())],
     }
 
-    mock_db = MagicMock()
+    TokenRow = namedtuple("TokenRow", ["id", "user_email"])
+    mock_verify_db = MagicMock()
+    mock_verify_db.execute.return_value.first.return_value = TokenRow(id="tok-2", user_email="db-owner@example.com")
+    mock_log_db = MagicMock()
     mock_token_service = MagicMock()
     mock_token_service.log_token_usage = AsyncMock()
 
+    call_count = [0]
+
+    def fresh_session_factory():
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=mock_verify_db if call_count[0] == 0 else mock_log_db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        call_count[0] += 1
+        return ctx
+
     with (
-        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session", side_effect=fresh_session_factory),
         patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
     ):
-        mock_fresh_session.return_value.__enter__.return_value = mock_db
         await _make_asgi_call(middleware, scope)
 
     mock_token_service.log_token_usage.assert_awaited_once()
     call_args = mock_token_service.log_token_usage.call_args
     assert call_args.kwargs["blocked"] is True
     assert call_args.kwargs["block_reason"] == "http_403"
+    assert call_args.kwargs["user_email"] == "db-owner@example.com"
 
 
 @pytest.mark.asyncio
@@ -811,7 +838,7 @@ async def test_skips_forged_jwt_with_unknown_jti():
 
     # Mock fresh_db_session: first call (JTI verify) returns no match, second would be for logging
     mock_verify_db = MagicMock()
-    mock_verify_db.execute.return_value.scalar_one_or_none.return_value = None
+    mock_verify_db.execute.return_value.first.return_value = None
 
     mock_ctx = MagicMock()
     mock_ctx.__enter__ = MagicMock(return_value=mock_verify_db)
