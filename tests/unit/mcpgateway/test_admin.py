@@ -606,9 +606,10 @@ class TestAdminServerRoutes:
         assert result.status_code == 200
 
         server_create = mock_register_server.call_args.args[1]
-        assert server_create.associated_tools == ["tool-1", "tool-2"]
-        assert server_create.associated_resources == ["res-1"]
-        assert server_create.associated_prompts == ["prompt-1", "prompt-2"]
+        # Merge of allToolIds + associatedTools (public items from UI are preserved)
+        assert set(server_create.associated_tools) == {"tool-1", "tool-2", "tool-x"}
+        assert set(server_create.associated_resources) == {"res-1", "res-x"}
+        assert set(server_create.associated_prompts) == {"prompt-1", "prompt-2", "prompt-x"}
         assert server_create.oauth_enabled is True
         assert server_create.oauth_config["authorization_servers"] == ["https://idp.example.com"]
         assert server_create.oauth_config["scopes_supported"] == ["openid", "profile"]
@@ -880,9 +881,10 @@ class TestAdminServerRoutes:
         assert result.status_code == 200
 
         server_update = mock_update_server.call_args[0][2]
-        assert server_update.associated_tools == ["tool-1", "tool-2"]
-        assert server_update.associated_resources == ["res-1"]
-        assert server_update.associated_prompts == ["prompt-1", "prompt-2"]
+        # Merge of allToolIds + associatedTools (public items from UI are preserved)
+        assert set(server_update.associated_tools) == {"tool-1", "tool-2", "tool-x"}
+        assert set(server_update.associated_resources) == {"res-1", "res-x"}
+        assert set(server_update.associated_prompts) == {"prompt-1", "prompt-2", "prompt-x"}
 
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_select_all_json_decode_error(self, mock_update_server, mock_request, mock_db, monkeypatch):
@@ -10321,6 +10323,38 @@ async def test_admin_get_all_tool_ids_gateway_and_team_filters(monkeypatch, mock
     mock_db.execute.return_value.all.return_value = []
     result = await admin_get_all_tool_ids(include_inactive=False, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, mock_db):
+    """When team_id is set, the SQL query must include a standalone visibility='public'
+    condition (not gated by team_id) so that platform-public tools from public MCP
+    servers appear in team-scoped Select All fetches and can be associated with
+    team-owned virtual servers.  Regression test for issue #3446."""
+    import re
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+    setup_team_service(monkeypatch, ["team-1"])
+    mock_db.execute.return_value.all.return_value = []
+
+    await admin_get_all_tool_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    executed_query = mock_db.execute.call_args[0][0]
+    sql = str(executed_query.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
+
+    # A standalone `visibility = 'public'` condition must be present as a top-level
+    # OR alternative — not wrapped inside `team_id = '...' AND visibility IN (...)`.
+    # This is what makes platform-public tools visible to team-scoped queries.
+    assert re.search(r"tools\.visibility\s*=\s*'public'", sql), (
+        "Expected a standalone visibility='public' condition in team-scoped tool IDs query. "
+        "Platform-public tools must be accessible when associating with team-owned virtual servers."
+    )
 
 
 @pytest.mark.asyncio

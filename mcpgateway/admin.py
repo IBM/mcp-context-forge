@@ -1383,6 +1383,42 @@ def _owner_access_condition(owner_column, team_column, *, user_email: str, team_
     return owner_column == user_email
 
 
+def _merge_select_all_ids(form: Any, flag_key: str, all_ids_key: str, checked_list: list[str]) -> list[str]:
+    """Merge server-fetched IDs with UI-checked IDs when "Select All" is active.
+
+    When the user clicks "Select All" in a paginated list, the browser populates
+    *all_ids_key* with IDs fetched from the corresponding /ids endpoint. Because
+    that endpoint may be team-scoped, it can miss platform-public items that are
+    still visible (and checked) in the UI. Taking the union of both sources
+    ensures every explicitly selected item is preserved.
+
+    Note: both sources are client-supplied form values. Downstream persistence
+    code is responsible for enforcing final access control on the merged IDs.
+
+    Args:
+        form: Starlette form object.
+        flag_key (str): Form field that signals "Select All" mode (e.g. ``"selectAllTools"``).
+        all_ids_key (str): Form field holding the JSON-encoded server-fetched IDs.
+        checked_list (list[str]): IDs collected from checked checkboxes in the form.
+
+    Returns:
+        list[str]: Merged, deduplicated list of string IDs; or *checked_list* unchanged
+        when Select All is not active or the JSON payload cannot be parsed.
+    """
+    if form.get(flag_key) != "true":
+        return checked_list
+    raw = form.get(all_ids_key) or "[]"
+    try:
+        server_ids = orjson.loads(raw)
+        # Normalise to str to avoid silent int/str duplicates from different sources.
+        merged = list({str(i) for i in server_ids} | set(checked_list))
+        LOGGER.info("Select All (%s): %d items after merge", all_ids_key, len(merged))
+        return merged
+    except orjson.JSONDecodeError:
+        LOGGER.warning("Failed to parse %s JSON, falling back to checked items", all_ids_key)
+        return checked_list
+
+
 async def _has_permission(
     *,
     db: Session,
@@ -2531,39 +2567,13 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
 
-        # Handle "Select All" for tools
-        associated_tools_list = form.getlist("associatedTools")
-        if form.get("selectAllTools") == "true":
-            # User clicked "Select All" - get all tool IDs from hidden field
-            all_tool_ids_json = str(form.get("allToolIds", "[]"))
-            try:
-                all_tool_ids = orjson.loads(all_tool_ids_json)
-                associated_tools_list = all_tool_ids
-                LOGGER.info(f"Select All tools enabled: {len(all_tool_ids)} tools selected")
-            except orjson.JSONDecodeError:
-                LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
-
-        # Handle "Select All" for resources
-        associated_resources_list = form.getlist("associatedResources")
-        if form.get("selectAllResources") == "true":
-            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
-            try:
-                all_resource_ids = orjson.loads(all_resource_ids_json)
-                associated_resources_list = all_resource_ids
-                LOGGER.info(f"Select All resources enabled: {len(all_resource_ids)} resources selected")
-            except orjson.JSONDecodeError:
-                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
-
-        # Handle "Select All" for prompts
-        associated_prompts_list = form.getlist("associatedPrompts")
-        if form.get("selectAllPrompts") == "true":
-            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
-            try:
-                all_prompt_ids = orjson.loads(all_prompt_ids_json)
-                associated_prompts_list = all_prompt_ids
-                LOGGER.info(f"Select All prompts enabled: {len(all_prompt_ids)} prompts selected")
-            except orjson.JSONDecodeError:
-                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+        # Handle "Select All" for tools, resources, and prompts.
+        # _merge_select_all_ids takes the union of the server-fetched paginated IDs
+        # (allToolIds etc.) with the explicitly checked form values so that
+        # platform-public items visible in the UI are never silently dropped.
+        associated_tools_list = _merge_select_all_ids(form, "selectAllTools", "allToolIds", form.getlist("associatedTools"))
+        associated_resources_list = _merge_select_all_ids(form, "selectAllResources", "allResourceIds", form.getlist("associatedResources"))
+        associated_prompts_list = _merge_select_all_ids(form, "selectAllPrompts", "allPromptIds", form.getlist("associatedPrompts"))
 
         # Handle OAuth 2.0 configuration (RFC 9728)
         oauth_enabled = form.get("oauth_enabled") == "on"
@@ -2709,39 +2719,13 @@ async def admin_edit_server(
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
-        # Handle "Select All" for tools
-        associated_tools_list = form.getlist("associatedTools")
-        if form.get("selectAllTools") == "true":
-            # User clicked "Select All" - get all tool IDs from hidden field
-            all_tool_ids_json = str(form.get("allToolIds", "[]"))
-            try:
-                all_tool_ids = orjson.loads(all_tool_ids_json)
-                associated_tools_list = all_tool_ids
-                LOGGER.info(f"Select All tools enabled for edit: {len(all_tool_ids)} tools selected")
-            except orjson.JSONDecodeError:
-                LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
-
-        # Handle "Select All" for resources
-        associated_resources_list = form.getlist("associatedResources")
-        if form.get("selectAllResources") == "true":
-            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
-            try:
-                all_resource_ids = orjson.loads(all_resource_ids_json)
-                associated_resources_list = all_resource_ids
-                LOGGER.info(f"Select All resources enabled for edit: {len(all_resource_ids)} resources selected")
-            except orjson.JSONDecodeError:
-                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
-
-        # Handle "Select All" for prompts
-        associated_prompts_list = form.getlist("associatedPrompts")
-        if form.get("selectAllPrompts") == "true":
-            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
-            try:
-                all_prompt_ids = orjson.loads(all_prompt_ids_json)
-                associated_prompts_list = all_prompt_ids
-                LOGGER.info(f"Select All prompts enabled for edit: {len(all_prompt_ids)} prompts selected")
-            except orjson.JSONDecodeError:
-                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+        # Handle "Select All" for tools, resources, and prompts.
+        # _merge_select_all_ids takes the union of the server-fetched paginated IDs
+        # (allToolIds etc.) with the explicitly checked form values so that
+        # platform-public items visible in the UI are never silently dropped.
+        associated_tools_list = _merge_select_all_ids(form, "selectAllTools", "allToolIds", form.getlist("associatedTools"))
+        associated_resources_list = _merge_select_all_ids(form, "selectAllResources", "allResourceIds", form.getlist("associatedResources"))
+        associated_prompts_list = _merge_select_all_ids(form, "selectAllPrompts", "allPromptIds", form.getlist("associatedPrompts"))
 
         # Handle OAuth 2.0 configuration (RFC 9728)
         oauth_enabled = form.get("oauth_enabled") == "on"
@@ -8288,14 +8272,19 @@ async def admin_get_all_tool_ids(
                 LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
 
     # Build access conditions
-    # When team_id is specified, show ONLY items from that team (team-scoped view)
-    # Otherwise, show all accessible items (All Teams view)
+    # When team_id is specified, show items from that team plus all platform-public tools
+    # (visibility="public") so the "Select All" count and payload match what is actually
+    # visible in the edit UI. Public visibility is platform-wide regardless of team ownership.
+    # Otherwise, show all accessible items (All Teams view).
     if team_id:
         if team_id in team_ids:
             # Apply visibility check: team/public resources + user's own resources (including private)
+            # Also include all platform-public tools so they can be associated with team-owned
+            # virtual servers.
             team_access = [
                 and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
                 and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+                DbTool.visibility == "public",
             ]
             query = query.where(or_(*team_access))
             LOGGER.debug(f"Filtering tool IDs by team_id: {team_id}")
@@ -9526,15 +9515,20 @@ async def admin_get_all_prompt_ids(
         query = query.where(DbPrompt.enabled.is_(True))
 
     # Build access conditions
-    # When team_id is specified, show ONLY items from that team (team-scoped view)
-    # Otherwise, show all accessible items (All Teams view)
+    # When team_id is specified, show items from that team plus all platform-public prompts
+    # (visibility="public") so the "Select All" count and payload match what is actually
+    # visible in the edit UI. Public visibility is platform-wide regardless of team ownership.
+    # Otherwise, show all accessible items (All Teams view).
     if team_id:
-        # Team-specific view: only show prompts from the specified team
+        # Team-specific view: show prompts from the specified team plus platform-public prompts
         if team_id in team_ids:
             # Apply visibility check: team/public resources + user's own resources (including private)
+            # Also include all platform-public prompts so they can be associated with team-owned
+            # virtual servers.
             team_access = [
                 and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
                 and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
+                DbPrompt.visibility == "public",
             ]
             query = query.where(or_(*team_access))
             LOGGER.debug(f"Filtering prompt IDs by team_id: {team_id}")
@@ -9606,15 +9600,20 @@ async def admin_get_all_resource_ids(
         query = query.where(DbResource.enabled.is_(True))
 
     # Build access conditions
-    # When team_id is specified, show ONLY items from that team (team-scoped view)
-    # Otherwise, show all accessible items (All Teams view)
+    # When team_id is specified, show items from that team plus all platform-public resources
+    # (visibility="public") so the "Select All" count and payload match what is actually
+    # visible in the edit UI. Public visibility is platform-wide regardless of team ownership.
+    # Otherwise, show all accessible items (All Teams view).
     if team_id:
-        # Team-specific view: only show resources from the specified team
+        # Team-specific view: show resources from the specified team plus platform-public resources
         if team_id in team_ids:
             # Apply visibility check: team/public resources + user's own resources (including private)
+            # Also include all platform-public resources so they can be associated with team-owned
+            # virtual servers.
             team_access = [
                 and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
                 and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
+                DbResource.visibility == "public",
             ]
             query = query.where(or_(*team_access))
             LOGGER.debug(f"Filtering resource IDs by team_id: {team_id}")
