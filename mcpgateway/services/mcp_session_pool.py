@@ -838,12 +838,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 logger.warning(f"Failed to create session for {sanitize_url_for_logging(url)}: {e}")
             raise
 
-    async def release(self, pooled: PooledSession) -> None:
+    async def release(self, pooled: PooledSession, *, discard: bool = False) -> None:
         """
-        Return a session to the pool for reuse.
+        Return a session to the pool for reuse, or discard it.
 
         Args:
             pooled: The session to release.
+            discard: If True, close the session instead of returning it to the
+                pool.  Used when the caller detected a transport error
+                (e.g. ``ClosedResourceError``) to prevent recycling a
+                broken session.
         """
         if pooled.is_closed:
             logger.warning("Attempted to release already-closed session")
@@ -867,6 +871,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # eviction sees recent activity.
             self._pool_last_used[pool_key] = time.time()
             self._active.get(pool_key, set()).discard(pooled)
+
+        # Discard broken sessions instead of recycling them
+        if discard:
+            logger.debug(f"Discarding broken session for {sanitize_url_for_logging(pooled.url)}")
+            await self._close_session(pooled)
+            if pool_key in self._semaphores:
+                self._semaphores[pool_key].release()
+            self._evictions += 1
+            return
 
         # Check if session should be returned to pool
         if self._closed or pooled.age_seconds > self._session_ttl:
@@ -1864,10 +1877,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             PooledSession ready for use.
         """
         pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity, gateway_id)
+        failed = False
         try:
             yield pooled
+        except BaseException:
+            # Session encountered an error (e.g. ClosedResourceError) — evict it
+            # instead of returning a broken session to the pool.
+            failed = True
+            raise
         finally:
-            await self.release(pooled)
+            await self.release(pooled, discard=failed)
 
 
 # Global pool instance - initialized by FastAPI lifespan
