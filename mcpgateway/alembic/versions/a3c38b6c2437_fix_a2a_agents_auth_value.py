@@ -2,7 +2,7 @@
 """fix_a2a_agents_auth_value
 
 Revision ID: a3c38b6c2437
-Revises: d9e0f1a2b3c4
+Revises: e1f2a3b4c5d6
 Create Date: 2026-02-25 13:27:40.837193
 
 Fix auth_value column type in a2a_agents table from JSON to TEXT.
@@ -29,7 +29,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "a3c38b6c2437"
-down_revision: Union[str, Sequence[str], None] = "d9e0f1a2b3c4"
+down_revision: Union[str, Sequence[str], None] = "e1f2a3b4c5d6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
