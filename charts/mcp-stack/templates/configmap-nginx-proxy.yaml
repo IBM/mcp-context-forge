@@ -29,6 +29,13 @@ data:
       proxy_cache_path {{ .Values.nginxProxy.config.cache.path }} levels=1:2 keys_zone=mcp_cache:100m max_size={{ .Values.nginxProxy.config.cache.maxSize }} inactive={{ .Values.nginxProxy.config.cache.inactive }} use_temp_path=off;
       {{- end }}
 
+      # Preserve X-Forwarded-Proto from upstream proxy (e.g. ALB, ingress
+      # controller); fall back to $scheme when nginx is the outermost proxy.
+      map $http_x_forwarded_proto $forwarded_proto {
+        default $http_x_forwarded_proto;
+        ""      $scheme;
+      }
+
       upstream gateway_upstream {
         server {{ $gatewayServiceName }}:{{ $gatewayServicePort }};
         keepalive 32;
@@ -51,10 +58,11 @@ data:
 
         location / {
           proxy_http_version 1.1;
-          proxy_set_header Host $host;
+          proxy_set_header Host $http_host;
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header X-Forwarded-Proto $forwarded_proto;
+          proxy_set_header X-Forwarded-Host $http_host;
           proxy_set_header Connection "";
 
           proxy_connect_timeout 30s;

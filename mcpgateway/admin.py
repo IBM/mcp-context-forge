@@ -1080,16 +1080,20 @@ def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
 def _request_origin_matches(request: Request) -> bool:
     """Return ``True`` when Origin/Referer matches this request origin.
 
+    The function first performs an exact same-origin comparison using the
+    request's forwarded headers (``X-Forwarded-Proto`` / ``X-Forwarded-Host``).
+    When that fails — common behind layered reverse proxies where forwarded
+    headers reflect internal hops rather than the external scheme — it falls
+    back to checking whether the candidate origin is explicitly listed in
+    ``settings.allowed_origins``.  Wildcard entries (``*``, ``null``, ``""``)
+    are excluded from the fallback to preserve fail-closed behavior.
+
     Args:
         request: Incoming request carrying Origin/Referer and host headers.
 
     Returns:
-        ``True`` when candidate origin exactly matches request origin; otherwise ``False``.
-
-    Note:
-        When the service is deployed behind a reverse proxy, this check relies on
-        ``X-Forwarded-Proto`` / ``X-Forwarded-Host`` values emitted by that proxy.
-        The deployment boundary must sanitize and overwrite forwarded headers.
+        ``True`` when candidate origin matches either the request origin or an
+        entry in ``settings.allowed_origins``; otherwise ``False``.
     """
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
@@ -1117,7 +1121,29 @@ def _request_origin_matches(request: Request) -> bool:
 
     candidate_parts = _normalize_origin_parts(parsed_candidate.scheme, parsed_candidate.netloc)
     request_parts = _normalize_origin_parts(request_scheme, request_netloc)
-    return candidate_parts == request_parts
+    if candidate_parts == request_parts:
+        return True
+
+    # Fallback: accept origins explicitly listed in settings.allowed_origins.
+    # Handles reverse-proxy deployments where forwarded headers may not
+    # accurately reflect the external scheme/host.
+    for allowed in settings.allowed_origins:
+        # Normalize each allowed origin to avoid config surprises such as
+        # ["https://a.com "] or [" null "], which could otherwise be
+        # mis-parsed or skipped.
+        allowed_normalized = str(allowed).strip()
+        if not allowed_normalized or allowed_normalized == "*" or allowed_normalized.casefold() == "null":
+            continue
+        try:
+            allowed_parsed = urllib.parse.urlparse(allowed_normalized if "://" in allowed_normalized else f"https://{allowed_normalized}")
+            if not allowed_parsed.scheme or not allowed_parsed.netloc:
+                continue
+            if candidate_parts == _normalize_origin_parts(allowed_parsed.scheme, allowed_parsed.netloc):
+                return True
+        except Exception:  # nosec B112 - malformed allowed_origins entry should not crash
+            continue
+
+    return False
 
 
 def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
