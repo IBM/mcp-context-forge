@@ -25,6 +25,7 @@ from sqlalchemy import and_, func, select
 # First-Party
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.db import Permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -1265,7 +1266,7 @@ class TokenScopingMiddleware:
             permissions = scopes.get("permissions", [])
             if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Check optional token usage limits.
             usage_limits = scopes.get("usage_limits", {})
