@@ -3908,12 +3908,12 @@ async function editTool(toolId) {
                     }
                     if (authHeaderValueField) {
                         if (
-                            Array.isArray(unmaskedHeaders) &&
-                            unmaskedHeaders.length === 1
+                            Array.isArray(tool.auth.authHeaders) &&
+                            tool.auth.authHeaders.length === 1
                         ) {
                             authHeaderValueField.dataset.isMasked = "true";
                             authHeaderValueField.dataset.realValue =
-                                unmaskedHeaders[0].value ?? "";
+                                tool.auth.authHeaders[0].value ?? "";
                         }
                         authHeaderValueField.value = "*****"; // masked
                     }
@@ -6336,12 +6336,12 @@ async function editGateway(gatewayId) {
                     }
                     if (authHeaderValueField) {
                         if (
-                            Array.isArray(unmaskedHeaders) &&
-                            unmaskedHeaders.length === 1
+                            Array.isArray(gateway.authHeaders) &&
+                            gateway.authHeaders.length === 1
                         ) {
                             authHeaderValueField.dataset.isMasked = "true";
                             authHeaderValueField.dataset.realValue =
-                                unmaskedHeaders[0].value ?? "";
+                                gateway.authHeaders[0].value ?? "";
                         }
                         authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
