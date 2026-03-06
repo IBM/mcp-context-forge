@@ -167,9 +167,17 @@ def parse_verify_output(stdout: str, stderr: str, return_code: int) -> Verificat
     # Rekor transparency log verification
     rekor_verified: Optional[bool] = None
     bundle = optional.get("Bundle")
+
+    stderr_lower = stderr.lower()
+    stdout_lower = stdout.lower()
+
     if bundle is not None:
         rekor_verified = True
-    elif "rekor" in stderr.lower() and "verified" in stderr.lower():
+    elif (
+        ("rekor" in stderr_lower and "verified" in stderr_lower)
+        or ("transparency log" in stderr_lower and "verified" in stderr_lower)
+        or ("transparency log" in stdout_lower and "verified" in stdout_lower)
+    ):
         rekor_verified = True
 
     return VerificationResult(

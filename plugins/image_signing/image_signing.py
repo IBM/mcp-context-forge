@@ -38,8 +38,8 @@ from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
-    AssessmentPostContainerScanPayload,
-    AssessmentPostContainerScanResult,
+#    AssessmentPostContainerScanPayload,
+#    AssessmentPostContainerScanResult,
     PluginViolation,
 )
 from plugins.image_signing.config import ImageSigningConfig, TrustedSignerConfig
@@ -55,6 +55,7 @@ from plugins.image_signing.types import (
     SlsaResult,
     TrustedSigner,
     VerificationResult,
+    SignerType,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,24 +112,47 @@ class ImageSigningPlugin(Plugin):
         """
         logger.info("Verifying image: %s", image_ref)
 
+
         # Step 1: Gather trusted signers (config + DB)
-        trusted_signers = list(self._config_signers)
+        trusted_signers = list(self._config_signers)      
         # TODO: Merge DB signers when repository is implemented:
         #   db_signers = await repository.list_trusted_signers(session)
         #   trusted_signers.extend(db_signers)
 
         # Step 2: Run cosign verify
-        verification = await self._verifier.verify(
-            image_ref=image_ref,
-            image_digest=image_digest,
-        )
+        verification: Optional[VerificationResult] = None
+        matched_config_signer: Optional[TrustedSigner] = None
+
+        for signer in trusted_signers:
+            if signer.type in {SignerType.PUBLIC_KEY, SignerType.KMS}:
+                verification = await self._verifier.verify(
+                    image_ref=image_ref,
+                    image_digest=image_digest,
+                    signer=signer,
+                )
+                if verification.signature_valid:
+                    matched_config_signer = signer
+                    break
+
+        if verification is None:
+            verification = await self._verifier.verify(
+                image_ref=image_ref,
+                image_digest=image_digest,
+            )
 
         # Step 3: Match signer identity
-        signer_match = match_signer(
-            signer_identity=verification.signer_identity,
-            signer_issuer=verification.signer_issuer,
-            trusted_signers=trusted_signers,
-        )
+        if matched_config_signer is not None:
+            signer_match = MatchResult(
+                matched=True,
+                matched_signer_id=matched_config_signer.id,
+                matched_signer_name=matched_config_signer.name,
+            )
+        else:
+            signer_match = match_signer(
+                signer_identity=verification.signer_identity,
+                signer_issuer=verification.signer_issuer,
+                trusted_signers=trusted_signers,
+            )
 
         # Step 4: Run SLSA attestation (if configured)
         attestation: Optional[AttestationResult] = None
@@ -167,6 +191,7 @@ class ImageSigningPlugin(Plugin):
             result.signature_found,
             result.blocked,
         )
+
 
         return result
 
