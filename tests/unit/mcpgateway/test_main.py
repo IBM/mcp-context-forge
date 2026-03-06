@@ -1790,7 +1790,7 @@ class TestRPCEndpoints:
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-deny", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
 
-        async def _has_permission(_self, permission):
+        async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
@@ -1804,7 +1804,7 @@ class TestRPCEndpoints:
     def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
 
-        async def _has_permission(_self, permission):
+        async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
