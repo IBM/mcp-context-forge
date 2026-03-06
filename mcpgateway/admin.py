@@ -3227,9 +3227,10 @@ async def admin_ui(
             user_teams = []
 
     # --------------------------------------------------------------------------------
-    # Validate team_id if provided (only when email-based teams are enabled)
-    # Reject with 403 when the caller supplies a team_id they do not belong to
-    # rather than silently falling back to unscoped (public) visibility.
+    # Validate team_id if provided (only when email-based teams are enabled).
+    # Non-admin users get 403 when they supply a team_id they do not belong to.
+    # Platform admins bypass the membership check (consistent with token scoping,
+    # RBAC middleware, and permission service admin bypass conventions).
     # When team_id is None (not sent), selected_team_id stays None and the
     # unscoped/public path works as expected.
     # --------------------------------------------------------------------------------
