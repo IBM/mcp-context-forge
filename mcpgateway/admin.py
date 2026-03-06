@@ -3239,6 +3239,7 @@ async def admin_ui(
     selected_team_id = team_id
     user_email = get_user_email(user)
     is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    admin_viewing_non_member_team = False
 
     if team_id and getattr(settings, "email_auth_enabled", False):
         _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
@@ -3250,12 +3251,14 @@ async def admin_ui(
 
             valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
             if str(team_id) not in valid_team_ids:
-                # Admins can view non-member teams for governance purposes
                 if not is_admin_user:
                     LOGGER.warning("Non-admin requested team_id not in their teams; ignoring team filter (team_id=%s)", team_id)
                     selected_team_id = None
                 else:
+                    # Admin selected a team they don't belong to; show banner and default content to All Teams
                     LOGGER.info("Admin viewing non-member team for governance (team_id=%s)", team_id)
+                    admin_viewing_non_member_team = True
+                    selected_team_id = None
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
@@ -3604,7 +3607,7 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
             "selected_team_id": selected_team_id,
-            "admin_viewing_non_member_team": (is_admin_user and selected_team_id is not None and selected_team_id != "" and not any(t.get("id") == selected_team_id for t in user_teams)),
+            "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "ui_hidden_sections": ui_visibility_config["hidden_sections"],
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],

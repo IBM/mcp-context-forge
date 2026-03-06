@@ -946,18 +946,32 @@ class TestTeamManagementService:
             mock_paginate.assert_called()
 
     @pytest.mark.asyncio
-    async def test_list_teams_personal_owner_email(self, service, mock_db):
-        """Test list_teams with personal_owner_email builds OR clause for admin's personal team."""
-        with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
-            mock_paginate.return_value = ([], None)
+    async def test_list_teams_personal_owner_email(self):
+        """personal_owner_email includes admin's own personal team but excludes other users'."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
 
-            await service.list_teams(include_personal=False, personal_owner_email="admin@example.com")
+        from mcpgateway.db import Base
 
-            mock_paginate.assert_called_once()
-            query = mock_paginate.call_args.kwargs.get("query")
-            compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
-            assert "is_personal" in compiled
-            assert "created_by" in compiled
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-admin-personal", name="admin-personal", slug="admin-personal", created_by="admin@example.com", is_personal=True),
+                    EmailTeam(id="id-other-personal", name="other-personal", slug="other-personal", created_by="other@example.com", is_personal=True),
+                    EmailTeam(id="id-shared", name="shared-team", slug="shared-team", created_by="admin@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            teams, _ = await svc.list_teams(include_personal=False, personal_owner_email="admin@example.com")
+            names = {t.name for t in teams}
+
+        assert "admin-personal" in names
+        assert "shared-team" in names
+        assert "other-personal" not in names
 
     @pytest.mark.asyncio
     async def test_list_teams_with_search_query_page(self, service, mock_db):
@@ -996,16 +1010,31 @@ class TestTeamManagementService:
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_all_team_ids_personal_owner_email(self, service, mock_db):
-        """Test get_all_team_ids with personal_owner_email builds OR clause for admin's personal team."""
-        mock_result = MagicMock()
-        mock_result.all.return_value = [("team-1",), ("personal-team",)]
-        mock_db.execute.return_value = mock_result
+    async def test_get_all_team_ids_personal_owner_email(self):
+        """personal_owner_email includes admin's own personal team ID but excludes other users'."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
 
-        result = await service.get_all_team_ids(include_personal=False, personal_owner_email="admin@example.com")
+        from mcpgateway.db import Base
 
-        assert result == ["team-1", "personal-team"]
-        mock_db.commit.assert_called_once()
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-admin-personal", name="admin-personal", slug="admin-personal", created_by="admin@example.com", is_personal=True),
+                    EmailTeam(id="id-other-personal", name="other-personal", slug="other-personal", created_by="other@example.com", is_personal=True),
+                    EmailTeam(id="id-shared", name="shared-team", slug="shared-team", created_by="admin@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            team_ids = await svc.get_all_team_ids(include_personal=False, personal_owner_email="admin@example.com")
+
+        assert "id-admin-personal" in team_ids
+        assert "id-shared" in team_ids
+        assert "id-other-personal" not in team_ids
 
     @pytest.mark.asyncio
     async def test_get_teams_count_with_filters(self, service, mock_db):

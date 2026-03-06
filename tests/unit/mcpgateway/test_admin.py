@@ -5607,10 +5607,10 @@ class TestAdminNonMemberTeamBanner:
         template_call = mock_request.app.state.templates.TemplateResponse.call_args
         context = template_call[0][2]
 
-        # Verify the flag is True (admin viewing non-member team)
+        # Verify the flag is True (admin viewing non-member team) and content defaults to All Teams
         assert context["admin_viewing_non_member_team"] is True
         assert context["is_admin"] is True
-        assert context["selected_team_id"] == "team-2"
+        assert context["selected_team_id"] is None
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
