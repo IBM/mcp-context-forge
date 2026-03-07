@@ -487,6 +487,8 @@ class ToolNameConflictError(ToolError):
         self.tool_id = tool_id
         if visibility == "team":
             vis_label = "Team-level"
+        elif visibility == "private":
+            vis_label = "Private"
         else:
             vis_label = "Public"
         message = f"{vis_label} Tool already exists with name: {name}"
@@ -4105,6 +4107,59 @@ class ToolService(BaseService):
                 with perf_tracker.track_operation("tool_invocation", name):
                     pass  # Duration already captured above
 
+    @staticmethod
+    def _check_tool_name_conflict(db: Session, custom_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
+        """Raise ToolNameConflictError if another tool with the same name exists in the target visibility scope.
+
+        Args:
+            db: The SQLAlchemy database session.
+            custom_name: The custom name to check for conflicts.
+            visibility: The target visibility scope (``public``, ``team``, or ``private``).
+            tool_id: The ID of the tool being updated (excluded from the conflict search).
+            team_id: Required when *visibility* is ``team``; scopes the uniqueness check to this team.
+            owner_email: Required when *visibility* is ``private``; scopes the uniqueness check to this owner.
+
+        Raises:
+            ToolNameConflictError: If a conflicting tool already exists in the target scope.
+        """
+        if visibility == "public":
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(
+                    DbTool.custom_name == custom_name,
+                    DbTool.visibility == "public",
+                    DbTool.id != tool_id,
+                ),
+            )
+        elif visibility == "team" and team_id:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(
+                    DbTool.custom_name == custom_name,
+                    DbTool.visibility == "team",
+                    DbTool.team_id == team_id,
+                    DbTool.id != tool_id,
+                ),
+            )
+        elif visibility == "private" and owner_email:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(
+                    DbTool.custom_name == custom_name,
+                    DbTool.visibility == "private",
+                    DbTool.owner_email == owner_email,
+                    DbTool.id != tool_id,
+                ),
+            )
+        else:
+            logger.warning("Skipping conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
+            return
+        if existing_tool:
+            raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+
     async def update_tool(
         self,
         db: Session,
@@ -4175,39 +4230,28 @@ class ToolService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can update this tool")
 
+            # Track whether a name change occurred (before tool.name is mutated)
+            name_is_changing = bool(tool_update.name and tool_update.name != tool.name)
+
             # Check for name change and ensure uniqueness
-            if tool_update.name and tool_update.name != tool.name:
-                # Check for existing tool with the same name and visibility
-                if tool_update.visibility.lower() == "public":
-                    # Check for existing public tool with the same name (row-locked)
-                    existing_tool = get_for_update(
-                        db,
-                        DbTool,
-                        where=and_(
-                            DbTool.custom_name == tool_update.custom_name,
-                            DbTool.visibility == "public",
-                            DbTool.id != tool.id,
-                        ),
-                    )
-                    if existing_tool:
-                        raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
-                elif tool_update.visibility.lower() == "team" and tool_update.team_id:
-                    # Check for existing team tool with the same name
-                    existing_tool = get_for_update(
-                        db,
-                        DbTool,
-                        where=and_(
-                            DbTool.custom_name == tool_update.custom_name,
-                            DbTool.visibility == "team",
-                            DbTool.team_id == tool_update.team_id,
-                            DbTool.id != tool.id,
-                        ),
-                    )
-                    if existing_tool:
-                        raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+            if name_is_changing:
+                # Always derive ownership fields from the DB record — never trust client-provided team_id/owner_email
+                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                if tool_update.custom_name is not None:
+                    custom_name_ref = tool_update.custom_name
+                elif tool.name == tool.custom_name:
+                    custom_name_ref = tool_update.name  # custom_name will track the rename
+                else:
+                    custom_name_ref = tool.custom_name  # custom_name stays unchanged
+                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
+
+            # Check for conflicts when visibility changes without a name change
+            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
+                new_visibility = tool_update.visibility.lower()
+                self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
@@ -4239,8 +4283,6 @@ class ToolService(BaseService):
                     tool.auth_type = tool_update.auth.auth_type
                 if tool_update.auth.auth_value is not None:
                     tool.auth_value = tool_update.auth.auth_value
-            else:
-                tool.auth_type = None
 
             # Update tags if provided
             if tool_update.tags is not None:

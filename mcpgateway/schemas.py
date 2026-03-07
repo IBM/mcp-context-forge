@@ -877,7 +877,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
