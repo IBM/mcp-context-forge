@@ -572,7 +572,7 @@ ContextForge can be deployed to any major cloud platform:
 | **AWS** | [ECS/EKS Deployment](deployment/aws.md) |
 | **Azure** | [AKS Deployment](deployment/azure.md) |
 | **Google Cloud** | [Cloud Run](deployment/google-cloud-run.md) |
-| **IBM Cloud** | [Code Engine](deployment/ibm-code-engine.md) |
+| **IBM Cloud** | [Code Engine](howto/ibm-cloud-code-engine.md) |
 | **Kubernetes** | [Helm Charts](deployment/minikube.md) |
 | **OpenShift** | [OpenShift Deployment](deployment/openshift.md) |
 
