@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import PermissionChecker
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_auth
 
@@ -229,7 +229,8 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optiona
     if user_context:
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_REVERSE_PROXY_CONNECT_PERMISSIONS):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            LOGGER.warning("Reverse proxy permission denied: user=%s", user_context.get("email"))
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
         return user_context["email"]
 
     return None

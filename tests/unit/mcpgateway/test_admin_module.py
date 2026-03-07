@@ -801,6 +801,172 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_ui_rejects_invalid_team_id(monkeypatch):
+    """When team_id is provided but the user is not a member, return 403."""
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "user@example.com", "is_admin": False, "db": mock_db}
+
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr(admin.settings, "mcpgateway_grpc_enabled", False)
+    monkeypatch.setattr(admin.settings, "app_root_path", "/root")
+    monkeypatch.setattr(admin.settings, "token_expiry", 60)
+    monkeypatch.setattr(admin.settings, "secure_cookies", False)
+    monkeypatch.setattr(admin.settings, "cookie_samesite", "lax")
+
+    class FakeTeamService:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_user_teams(self, email):
+            return [SimpleNamespace(id="team-1", name="Team One", type="organization", is_personal=False)]
+
+        async def get_member_counts_batch_cached(self, team_ids):
+            return {"team-1": 3}
+
+        def get_user_roles_batch(self, email, team_ids):
+            return {"team-1": "member"}
+
+    monkeypatch.setattr(admin, "TeamManagementService", FakeTeamService)
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+
+    # Non-admin requesting non-member team: selected_team_id silently reset to None
+    response = await admin.admin_ui(request, "not-a-member-team", True, mock_db, user=user)
+    assert isinstance(response, HTMLResponse)
+    template_call = request.app.state.templates.TemplateResponse.call_args
+    context = template_call[0][2]
+    assert context["selected_team_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_rejects_team_id_when_teams_unavailable(monkeypatch):
+    """When team_id is provided but user_teams failed to load, return 403."""
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "user@example.com", "is_admin": False, "db": mock_db}
+
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr(admin.settings, "mcpgateway_grpc_enabled", False)
+    monkeypatch.setattr(admin.settings, "app_root_path", "/root")
+    monkeypatch.setattr(admin.settings, "token_expiry", 60)
+    monkeypatch.setattr(admin.settings, "secure_cookies", False)
+    monkeypatch.setattr(admin.settings, "cookie_samesite", "lax")
+
+    class FailingTeamService:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_user_teams(self, email):
+            raise RuntimeError("DB unavailable")
+
+        async def get_member_counts_batch_cached(self, team_ids):
+            return {}
+
+        def get_user_roles_batch(self, email, team_ids):
+            return {}
+
+    monkeypatch.setattr(admin, "TeamManagementService", FailingTeamService)
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await admin.admin_ui(request, "some-team-id", True, mock_db, user=user)
+    assert exc_info.value.status_code == 403
+    assert "verify team membership" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_no_team_id_returns_public_items(monkeypatch):
+    """When no team_id is sent, the page renders with public items (200)."""
+    request = _make_request(root_path="/root")
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "user@example.com", "is_admin": False, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+
+    response = await admin.admin_ui(request, None, False, mock_db, user=user)
+    assert isinstance(response, HTMLResponse)
+    context = request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["selected_team_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_admin_bypasses_team_membership_check(monkeypatch):
+    """Platform admins with unrestricted tokens can select any team_id."""
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "is_admin": True, "token_teams": None, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+
+    # Admin with token_teams=None (unrestricted) is NOT a member of "other-team",
+    # but should still be allowed through the gate.
+    response = await admin.admin_ui(request, "other-team", False, mock_db, user=user)
+    assert isinstance(response, HTMLResponse)
+    context = request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["selected_team_id"] == "other-team"
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_team_scoped_admin_rejected_for_other_team(monkeypatch):
+    """Team-scoped admin tokens must still pass membership validation."""
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "is_admin": True, "token_teams": ["team-1"], "db": mock_db}
+
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr(admin.settings, "mcpgateway_grpc_enabled", False)
+    monkeypatch.setattr(admin.settings, "app_root_path", "/root")
+    monkeypatch.setattr(admin.settings, "token_expiry", 60)
+    monkeypatch.setattr(admin.settings, "secure_cookies", False)
+    monkeypatch.setattr(admin.settings, "cookie_samesite", "lax")
+
+    class FakeTeamService:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_user_teams(self, email):
+            return [SimpleNamespace(id="team-1", name="Team One", type="organization", is_personal=False)]
+
+        async def get_member_counts_batch_cached(self, team_ids):
+            return {"team-1": 3}
+
+        def get_user_roles_batch(self, email, team_ids):
+            return {"team-1": "admin"}
+
+    monkeypatch.setattr(admin, "TeamManagementService", FakeTeamService)
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+
+    # Admin with team-scoped token requesting a non-member team: banner shown, content defaults to All Teams
+    response = await admin.admin_ui(request, "other-team", False, mock_db, user=user)
+    assert isinstance(response, HTMLResponse)
+    template_call = request.app.state.templates.TemplateResponse.call_args
+    context = template_call[0][2]
+    assert context["admin_viewing_non_member_team"] is True
+    assert context["selected_team_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_admin_ui_refresh_uses_dict_user_auth_provider(monkeypatch):
     request = _make_request(root_path="/root")
     mock_db = MagicMock()
@@ -1212,6 +1378,7 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
                 SimpleNamespace(id="team-4", name="Beta", slug="beta", is_active=False, visibility="private"),
             ]
 
+
     class _StubAuthService:
         def __init__(self, _db):
             self._user = None
@@ -1270,6 +1437,7 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
                 SimpleNamespace(id="t-2", name="Beta", slug="beta", description="desc", visibility="public", is_active=True),
                 SimpleNamespace(id="t-3", name="Gamma", slug="gamma", description="desc", visibility="private", is_active=False),
             ]
+
 
     class _StubAuthService:
         def __init__(self, _db):

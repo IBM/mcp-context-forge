@@ -28,7 +28,7 @@ ContextForge supports multiple deployment strategies:
 | [Minikube](minikube.md)               | Launch a local single-node Kubernetes cluster and deploy the Gateway stack                |
 | [Kubernetes](kubernetes.md)           | Generic manifests or Helm chart for any K8s-compliant platform                            |
 | [OpenShift](openshift.md)             | OpenShift-specific deployment using Routes, SCCs, and Operator-managed back-ends          |
-| [IBM Code Engine](ibm-code-engine.md) | Serverless container build & run on IBM Cloud                                             |
+| [IBM Code Engine](../howto/ibm-cloud-code-engine.md) | Serverless container build & run on IBM Cloud (moved to How-To Guides)                    |
 | [AWS](aws.md)                         | Deploy on ECS Fargate, EKS, or EC2-hosted containers                                      |
 | [Azure](azure.md)                     | Run on Azure Container Apps, App Service, or AKS                                          |
 | [**Security Guide**](../manage/securing.md)     | **Essential security configurations and best practices for production deployments**        |

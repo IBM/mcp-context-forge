@@ -580,7 +580,7 @@ class TestAssignRoleToUser:
                         user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at
                     )
 
-                    MockUserRole.assert_called_once_with(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at)
+                    MockUserRole.assert_called_once_with(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at, grant_source=None)
 
     @pytest.mark.asyncio
     async def test_assign_personal_role_with_scope_id(self, role_service, sample_role):

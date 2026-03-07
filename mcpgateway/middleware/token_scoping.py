@@ -26,6 +26,7 @@ from sqlalchemy import and_, func, select
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
@@ -1221,7 +1222,7 @@ class TokenScopingMiddleware:
                     # Check resource team ownership with shared session
                     if not self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email):
                         logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
                 finally:
                     # Ensure session cleanup even if checks raise exceptions
                     try:
@@ -1236,7 +1237,7 @@ class TokenScopingMiddleware:
 
                 if not self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email):
                     logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Extract scopes from payload
             scopes = payload.get("scopes", {})
@@ -1245,7 +1246,7 @@ class TokenScopingMiddleware:
             server_id = scopes.get("server_id")
             if not self._check_server_restriction(normalized_path, server_id):
                 logger.warning(f"Token not authorized for this server. Required: {server_id}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Token not authorized for this server. Required: {server_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Check IP restrictions
             ip_restrictions = scopes.get("ip_restrictions", [])
@@ -1253,7 +1254,7 @@ class TokenScopingMiddleware:
                 client_ip = self._get_client_ip(request)
                 if not self._check_ip_restrictions(client_ip, ip_restrictions):
                     logger.warning(f"Request from IP {client_ip} not allowed by token restrictions")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Request from IP {client_ip} not allowed by token restrictions")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Check time restrictions
             time_restrictions = scopes.get("time_restrictions", {})
@@ -1265,7 +1266,7 @@ class TokenScopingMiddleware:
             permissions = scopes.get("permissions", [])
             if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this operation")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Check optional token usage limits.
             usage_limits = scopes.get("usage_limits", {})

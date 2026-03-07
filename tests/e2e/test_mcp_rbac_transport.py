@@ -645,7 +645,7 @@ class TestMcpToolCallByRole:
         result = resp.get("result", {})
         assert result.get("isError", False), f"Developer should be denied tools.execute on default endpoint: {result}"
         text = result.get("content", [{}])[0].get("text", "")
-        assert "tools.execute" in text.lower() or "permission" in text.lower()
+        assert "access denied" in text.lower()
         print(f"    -> Developer denied tools.execute (expected): {text}")
 
     def test_team_admin_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:

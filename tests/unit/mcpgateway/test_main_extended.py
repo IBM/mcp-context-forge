@@ -3370,7 +3370,7 @@ class TestUtilityFunctions:
             await main_mod._authenticate_websocket_user(websocket)
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Insufficient permissions"
+        assert exc_info.value.detail == "Access denied"
 
     @pytest.mark.asyncio
     async def test_websocket_bearer_auth_invalid_token_closes(self, monkeypatch):
@@ -4128,7 +4128,7 @@ class TestRpcHandling:
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
-            assert "admin.system_config" in result["error"]["message"]
+            assert "Access denied" in result["error"]["message"]
 
     async def test_handle_rpc_roots_list_requires_admin_permission(self):
         payload = {"jsonrpc": "2.0", "id": "roots-2", "method": "roots/list", "params": {}}
@@ -4292,7 +4292,7 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
 
         assert result["error"]["code"] == -32003
-        assert "tools.execute" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
         invoke_tool.assert_not_awaited()
 
     async def test_handle_rpc_backward_compat_tool_requires_execute_permission(self):
@@ -4307,7 +4307,7 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
 
         assert result["error"]["code"] == -32003
-        assert "tools.execute" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
         invoke_tool.assert_not_awaited()
 
     async def test_handle_rpc_backward_compat_tool_allows_when_authorized(self):
@@ -4412,7 +4412,7 @@ class TestRpcHandling:
         ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
-            assert "admin.system_config" in result["error"]["message"]
+            assert "Access denied" in result["error"]["message"]
             set_level.assert_not_awaited()
 
     async def test_handle_rpc_logging_set_level_populates_email_when_missing(self):
@@ -4808,7 +4808,7 @@ class TestRpcHandling:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "ownership mismatch" in result["error"]["message"].lower()
+        assert result["error"]["message"] == "Access denied"
 
     async def test_handle_rpc_initialize_claims_unowned_session(self, monkeypatch):
         payload = {"jsonrpc": "2.0", "id": "aff-init-claim", "method": "initialize", "params": {"session_id": "init-2"}}
@@ -4833,7 +4833,7 @@ class TestRpcHandling:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "ownership unavailable" in result["error"]["message"].lower()
+        assert result["error"]["message"] == "Access denied"
 
     async def test_handle_rpc_list_tools_legacy_token_teams_none_becomes_public_only(self):
         """Cover legacy list_tools branch when token_teams is explicitly None for non-admin."""
@@ -6849,7 +6849,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "tools.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_tools_list_allowed_with_tools_read_scope(self):
         """Token with tools.read scope should be allowed tools/list."""
@@ -6922,7 +6922,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "resources.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_resources_read_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied resources/read."""
@@ -6931,7 +6931,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "resources.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_prompts_list_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied prompts/list."""
@@ -6940,7 +6940,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "prompts.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_prompts_get_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied prompts/get."""
@@ -6949,7 +6949,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "prompts.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_list_gateways_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied list_gateways."""
@@ -6958,7 +6958,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "gateways.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_tools_call_denied_with_tools_read_only(self):
         """Token with tools.read but not tools.execute should be denied tools/call."""
@@ -6967,7 +6967,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "tools.execute" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_resources_templates_list_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied resources/templates/list."""
@@ -6976,7 +6976,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "resources.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_completion_complete_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied completion/complete."""
@@ -6985,7 +6985,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "tools.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_tools_list_allowed_with_non_dict_jwt_payload(self):
         """Cached JWT payload that is not a dict should defer to RBAC."""
@@ -7039,7 +7039,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "admin.system_config" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_resources_subscribe_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied resources/subscribe."""
@@ -7048,7 +7048,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "resources.read" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
     async def test_logging_set_level_denied_with_servers_use_only(self):
         """Token scoped to servers.use only should be denied logging/setLevel."""
@@ -7057,7 +7057,7 @@ class TestRpcScopedPermissions:
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
-        assert "admin.system_config" in result["error"]["message"]
+        assert "Access denied" in result["error"]["message"]
 
 
 @pytest.fixture

@@ -266,6 +266,26 @@ class AuthCache:
             self._hit_count += 1
             return CachedAuthContext(is_token_revoked=True)
 
+        # Cross-worker revocation check: when a token is revoked on another worker,
+        # the revoking worker writes a Redis revocation marker.  Check it BEFORE the
+        # L1 in-memory cache so that stale L1 entries cannot bypass revocation.
+        if jti:
+            redis = await self._get_redis_client()
+            if redis:
+                try:
+                    revoke_key = self._get_redis_key("revoke", jti)
+                    if await redis.exists(revoke_key):
+                        # Promote to local set so subsequent requests skip the Redis call
+                        with self._lock:
+                            self._revoked_jtis.add(jti)
+                            # Evict any stale L1 context entries for this JTI
+                            for k in [k for k in self._context_cache if k.endswith(f":{jti}")]:
+                                self._context_cache.pop(k, None)
+                        self._hit_count += 1
+                        return CachedAuthContext(is_token_revoked=True)
+                except Exception as exc:
+                    logger.debug(f"AuthCache: Redis revocation check failed for {jti[:8]}: {exc}")
+
         cache_key = f"{email}:{jti or 'no-jti'}"
 
         # Check L1 in-memory cache first (no network I/O)

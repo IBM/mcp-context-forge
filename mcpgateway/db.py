@@ -978,6 +978,7 @@ class UserRole(Base):
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="user_assignments")
@@ -6379,7 +6380,8 @@ def set_email_team_slug(_mapper, _conn, target):
         _conn: Connection
         target: Target EmailTeam instance
     """
-    target.slug = slugify(target.name)
+    if not target.slug:
+        target.slug = slugify(target.name)
 
 
 @event.listens_for(Tool, "before_insert")

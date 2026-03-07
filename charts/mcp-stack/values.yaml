@@ -1024,11 +1024,14 @@ mcpContextForge:
 
     # ─ Personal Teams Configuration ─
     AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
-    PERSONAL_TEAM_PREFIX: personal         # personal team naming prefix
+    PERSONAL_TEAM_PREFIX: ""               # personal team naming prefix (e.g. "personal" for email-based slugs)
     MAX_TEAMS_PER_USER: "50"               # maximum number of teams a user can belong to
     MAX_MEMBERS_PER_TEAM: "100"            # maximum number of members per team
     INVITATION_EXPIRY_DAYS: "7"            # number of days before team invitations expire
     REQUIRE_EMAIL_VERIFICATION_FOR_INVITES: "true" # require email verification for team invitations
+    ALLOW_TEAM_CREATION: "true"              # allow users to create organizational teams (admins always can)
+    ALLOW_TEAM_JOIN_REQUESTS: "true"         # allow users to request to join public teams
+    ALLOW_TEAM_INVITATIONS: "true"           # allow team owners to send invitations
 
     # ─ Ed25519 Certificate Signing ─
     ENABLE_ED25519_SIGNING: "false"        # enable Ed25519 signing for certificates

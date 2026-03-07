@@ -125,7 +125,6 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_scalar_tool.scalars.return_value = mock_scalar_tool
     mock_scalar_tool.all.return_value = [mock_tool] if mock_tool else []
 
-
     test_db.execute = Mock(return_value=mock_scalar_tool)
 
     # Mock db.query() for GlobalConfig cache (Issue #1715)
@@ -216,6 +215,7 @@ class TestToolServiceHelpersExtended:
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag should override settings."""
+        # First-Party
         import mcpgateway.plugins.framework as pf_mod  # pylint: disable=import-outside-toplevel
         from mcpgateway.plugins.framework.settings import settings as plugin_settings  # pylint: disable=import-outside-toplevel
 
@@ -498,6 +498,28 @@ class TestToolService:
         assert tool_read.auth.auth_type == "authheaders"
         assert tool_read.auth.auth_header_key == "test-api-key"
         assert tool_read.auth.auth_header_value == settings.masked_auth_value
+        # Verify multi-header format (authHeaders array)
+        assert tool_read.auth.authHeaders is not None
+        assert len(tool_read.auth.authHeaders) == 1
+        assert tool_read.auth.authHeaders[0]["key"] == "test-api-key"
+        assert tool_read.auth.authHeaders[0]["value"] == settings.masked_auth_value
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_authheaders_multi(self, tool_service, mock_tool):
+        """Check auth for authheaders with multiple headers returns all headers."""
+        mock_tool.auth_type = "authheaders"
+        mock_tool.auth_value = encode_auth({"X-API-Key": "secret1", "X-Custom": "secret2"})
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
+
+        assert tool_read.auth.auth_type == "authheaders"
+        assert tool_read.auth.authHeaders is not None
+        assert len(tool_read.auth.authHeaders) == 2
+        header_keys = [h["key"] for h in tool_read.auth.authHeaders]
+        assert "X-API-Key" in header_keys
+        assert "X-Custom" in header_keys
+        # All values should be masked
+        for h in tool_read.auth.authHeaders:
+            assert h["value"] == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_authheaders_empty(self, tool_service, mock_tool):
@@ -2103,12 +2125,7 @@ class TestToolService:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
             patch(
                 "mcpgateway.services.tool_service.decode_auth",
-                side_effect=lambda value: (
-                    {"value": "Bearer runtime-secret"}
-                    if value
-                    == mock_tool.headers["Authorization"]["_mcpgateway_encrypted_header_value_v1"]
-                    else {}
-                ),
+                side_effect=lambda value: {"value": "Bearer runtime-secret"} if value == mock_tool.headers["Authorization"]["_mcpgateway_encrypted_header_value_v1"] else {},
             ),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
         ):
@@ -2617,8 +2634,10 @@ class TestToolService:
             class Result:
                 def scalar_one_or_none(self_inner):
                     return value
+
                 def scalars(self_inner):
                     return self_inner
+
                 def all(self_inner):
                     return [value] if value else []
 
@@ -2880,6 +2899,7 @@ class TestToolService:
 
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         cache_module.metrics_cache.invalidate("tools")
@@ -2905,16 +2925,15 @@ class TestToolService:
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(mock_db)
 
-        assert result == {
-            "total_executions": 10,
-            "successful_executions": 8,
-            "failed_executions": 2,
-            "failure_rate": 0.2,
-            "min_response_time": 0.5,
-            "max_response_time": 5.0,
-            "avg_response_time": 2.3,
-            "last_execution_time": "2025-01-10T12:00:00",
-        }
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 10
+        assert result.successful_executions == 8
+        assert result.failed_executions == 2
+        assert result.failure_rate == 0.2
+        assert result.min_response_time == 0.5
+        assert result.max_response_time == 5.0
+        assert result.avg_response_time == 2.3
+        assert str(result.last_execution_time) == "2025-01-10 12:00:00"
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_no_data(self, tool_service, monkeypatch):
@@ -2924,6 +2943,7 @@ class TestToolService:
 
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         cache_module.metrics_cache.invalidate("tools")
@@ -2949,16 +2969,15 @@ class TestToolService:
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(mock_db)
 
-        assert result == {
-            "total_executions": 0,
-            "successful_executions": 0,
-            "failed_executions": 0,
-            "failure_rate": 0.0,
-            "min_response_time": None,
-            "max_response_time": None,
-            "avg_response_time": None,
-            "last_execution_time": None,
-        }
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 0
+        assert result.successful_executions == 0
+        assert result.failed_executions == 0
+        assert result.failure_rate == 0.0
+        assert result.min_response_time is None
+        assert result.max_response_time is None
+        assert result.avg_response_time is None
+        assert result.last_execution_time is None
 
     async def test_validate_tool_url_success(self, tool_service):
         """Test successful tool URL validation."""
@@ -4064,7 +4083,6 @@ class TestToolListingGracefulErrorHandling:
         # Use patch.object to properly mock the instance method
         # Also patch _get_registry_cache to ensure we don't hit polluted cache
         with patch.object(service, "convert_tool_to_read", side_effect=mock_convert), patch("mcpgateway.services.tool_service._get_registry_cache") as mock_get_cache:
-
             # Setup mock cache to miss and handle async set
             mock_get_cache.return_value.get = AsyncMock(return_value=None)
             mock_get_cache.return_value.set = AsyncMock()

@@ -180,7 +180,7 @@ class TestTeamsRouter:
             assert result.name == mock_team.name
             assert result.description == mock_team.description
             mock_service.create_team.assert_called_once_with(
-                name=request.name, description=request.description, created_by=mock_user_context["email"], visibility=request.visibility, max_members=request.max_members
+                name=request.name, description=request.description, created_by=mock_user_context["email"], visibility=request.visibility, max_members=request.max_members, skip_limits=False
             )
 
     @pytest.mark.asyncio
@@ -368,7 +368,7 @@ class TestTeamsRouter:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
                 user_role = await mock_service.get_user_role_in_team(current_user["email"], team_id)
                 if not user_role:
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
                 return TeamResponse(
                     id=team.id,
                     name=team.name,
@@ -427,7 +427,7 @@ class TestTeamsRouter:
                 await get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "Access denied to team" in str(exc_info.value.detail)
+            assert "Access denied" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_update_team_success(self, mock_user_context, mock_db, mock_team):
@@ -466,7 +466,7 @@ class TestTeamsRouter:
                 await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "Insufficient permissions" in str(exc_info.value.detail)
+            assert "Access denied" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_update_team_not_found(self, mock_user_context, mock_db):
@@ -598,7 +598,7 @@ class TestTeamsRouter:
                 await list_team_members(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "Access denied to team" in str(exc_info.value.detail)
+            assert "Access denied" in str(exc_info.value.detail)
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio
@@ -642,7 +642,7 @@ class TestTeamsRouter:
                 await update_team_member(team_id, user_email, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "Insufficient permissions" in str(exc_info.value.detail)
+            assert "Access denied" in str(exc_info.value.detail)
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio
@@ -720,7 +720,7 @@ class TestTeamsRouter:
                 await remove_team_member(team_id, user_email, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "Insufficient permissions" in str(exc_info.value.detail)
+            assert "Access denied" in str(exc_info.value.detail)
 
     # =========================================================================
     # Team Invitation Tests
@@ -768,7 +768,7 @@ class TestTeamsRouter:
                 await invite_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "Insufficient permissions" in str(exc_info.value.detail)
+            assert "Access denied" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_list_team_invitations_success(self, mock_user_context, mock_db, mock_invitation, mock_team):
