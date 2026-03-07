@@ -19,6 +19,7 @@ underlying data.
 
 # Standard
 import asyncio
+import base64
 import binascii
 from collections import defaultdict
 import csv
@@ -153,7 +154,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
-from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
@@ -10764,6 +10765,53 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
 
 
+def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
+    """Parse auth fields from a form and return a serialized auth object, or None.
+
+    Args:
+        form: Multipart form data containing auth_type and credential fields.
+
+    Returns:
+        A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+    """
+    auth_headers_json = form.get("auth_headers") or ""
+    auth_headers: list[dict[str, Any]] = []
+    if auth_headers_json:
+        try:
+            auth_headers = orjson.loads(auth_headers_json)
+        except (orjson.JSONDecodeError, ValueError):
+            auth_headers = []
+
+    auth_type = form.get("auth_type", "")
+    auth_obj: Optional[dict[str, Any]] = None
+    if auth_type:
+        if auth_type == "basic":
+            username = form.get("auth_username", "")
+            password = form.get("auth_password", "")
+            if username and password:
+                creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
+                auth_value = encode_auth({"Authorization": f"Basic {creds}"})
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+        elif auth_type == "bearer":
+            token = form.get("auth_token", "")
+            if token:
+                auth_value = encode_auth({"Authorization": f"Bearer {token}"})
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+        elif auth_type == "authheaders":
+            if auth_headers:
+                header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
+                if header_dict:
+                    auth_value = encode_auth(header_dict)
+                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+            else:
+                header_key = form.get("auth_header_key", "")
+                header_value = form.get("auth_header_value", "")
+                if header_key and header_value:
+                    auth_value = encode_auth({header_key: header_value})
+                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+    return auth_obj
+
+
 @admin_router.post("/tools/")
 @admin_router.post("/tools")
 @require_permission("tools.create", allow_admin_bypass=False)
@@ -10835,6 +10883,10 @@ async def admin_add_tool(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+    # Build auth object from form fields
+    auth_obj = _build_auth_obj_from_form(form)
+
     # Safely parse potential JSON strings from form
     headers_raw = form.get("headers")
     input_schema_raw = form.get("input_schema")
@@ -10852,12 +10904,7 @@ async def admin_add_tool(
         "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
         "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
-        "auth_type": form.get("auth_type", ""),
-        "auth_username": form.get("auth_username", ""),
-        "auth_password": form.get("auth_password", ""),
-        "auth_token": form.get("auth_token", ""),
-        "auth_header_key": form.get("auth_header_key", ""),
-        "auth_header_value": form.get("auth_header_value", ""),
+        "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "team_id": team_id,
@@ -10967,6 +11014,10 @@ async def admin_edit_tool(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+    # Build auth object from form fields
+    auth_obj = _build_auth_obj_from_form(form)
+
     visibility = str(form.get("visibility", "private"))
     _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
@@ -10993,12 +11044,7 @@ async def admin_edit_tool(
         "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
         "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
-        "auth_type": form.get("auth_type", ""),
-        "auth_username": form.get("auth_username", ""),
-        "auth_password": form.get("auth_password", ""),
-        "auth_token": form.get("auth_token", ""),
-        "auth_header_key": form.get("auth_header_key", ""),
-        "auth_header_value": form.get("auth_header_value", ""),
+        "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "owner_email": user_email,
@@ -11231,7 +11277,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
@@ -11495,7 +11541,7 @@ async def admin_edit_gateway(
         _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers = []
         if auth_headers_json:
             try:
@@ -14421,7 +14467,7 @@ async def admin_add_a2a_agent(
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
@@ -14665,7 +14711,7 @@ async def admin_edit_a2a_agent(
                 config = {}
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers = []
         if auth_headers_json:
             try:

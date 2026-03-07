@@ -3890,11 +3890,31 @@ async function editTool(toolId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
+                    if (
+                        Array.isArray(tool.auth.authHeaders) &&
+                        tool.auth.authHeaders.length > 0
+                    ) {
+                        loadAuthHeaders(
+                            "edit-auth-headers-container",
+                            tool.auth.authHeaders,
+                            { maskValues: true },
+                        );
+                    } else {
+                        updateAuthHeadersJSON("edit-auth-headers-container");
+                    }
                     if (authHeaderKeyField) {
                         authHeaderKeyField.value =
                             tool.auth.authHeaderKey || "";
                     }
                     if (authHeaderValueField) {
+                        if (
+                            Array.isArray(tool.auth.authHeaders) &&
+                            tool.auth.authHeaders.length === 1
+                        ) {
+                            authHeaderValueField.dataset.isMasked = "true";
+                            authHeaderValueField.dataset.realValue =
+                                tool.auth.authHeaders[0].value ?? "";
+                        }
                         authHeaderValueField.value = "*****"; // masked
                     }
                 }
@@ -6299,18 +6319,13 @@ async function editGateway(gatewayId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
-                    const unmaskedHeaders =
-                        Array.isArray(gateway.authHeadersUnmasked) &&
-                        gateway.authHeadersUnmasked.length > 0
-                            ? gateway.authHeadersUnmasked
-                            : gateway.authHeaders;
                     if (
-                        Array.isArray(unmaskedHeaders) &&
-                        unmaskedHeaders.length > 0
+                        Array.isArray(gateway.authHeaders) &&
+                        gateway.authHeaders.length > 0
                     ) {
                         loadAuthHeaders(
                             "auth-headers-container-gw-edit",
-                            unmaskedHeaders,
+                            gateway.authHeaders,
                             { maskValues: true },
                         );
                     } else {
@@ -6321,12 +6336,12 @@ async function editGateway(gatewayId) {
                     }
                     if (authHeaderValueField) {
                         if (
-                            Array.isArray(unmaskedHeaders) &&
-                            unmaskedHeaders.length === 1
+                            Array.isArray(gateway.authHeaders) &&
+                            gateway.authHeaders.length === 1
                         ) {
                             authHeaderValueField.dataset.isMasked = "true";
                             authHeaderValueField.dataset.realValue =
-                                unmaskedHeaders[0].value ?? "";
+                                gateway.authHeaders[0].value ?? "";
                         }
                         authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
@@ -15033,7 +15048,27 @@ async function viewTool(toolId) {
           <div class="mt-1">Token: <span class="font-medium">********</span></div>
         </div>
       `;
+        } else if (
+            tool.auth?.authHeaders &&
+            Array.isArray(tool.auth.authHeaders) &&
+            tool.auth.authHeaders.length > 0
+        ) {
+            // Multi-header format
+            const headerRows = tool.auth.authHeaders
+                .map(
+                    (header) =>
+                        `<div class="mt-1"><span class="font-medium">${escapeHtml(header.key)}:</span> ********</div>`,
+                )
+                .join("");
+            authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
+          ${headerRows}
+        </div>
+      `;
         } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+            // Legacy single-header format (backward compatibility)
             authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">

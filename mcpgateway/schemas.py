@@ -329,8 +329,9 @@ class AuthenticationValues(BaseModelWithConfigDict):
     username: Optional[str] = Field("", description="Username for basic authentication")
     password: Optional[str] = Field("", description="Password for basic authentication")
     token: Optional[str] = Field("", description="Bearer token for authentication")
-    auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication")
-    auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication")
+    auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication (legacy single header)")
+    auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication (legacy single header)")
+    authHeaders: Optional[List[Dict[str, str]]] = Field(None, alias="authHeaders", description="List of custom headers for authentication (multi-header format)")  # noqa: N815
 
 
 class ToolCreate(BaseModel):
