@@ -63,8 +63,8 @@ class DcrService:
         """Discover AS metadata via RFC 8414.
 
         Tries:
-        1. {issuer}/.well-known/oauth-authorization-server (RFC 8414)
-        2. {issuer}/.well-known/openid-configuration (OIDC fallback)
+        1. RFC 8414: /.well-known/oauth-authorization-server inserted between host and path
+        2. OIDC fallback: {issuer}/.well-known/openid-configuration
 
         Args:
             issuer: The AS issuer URL
