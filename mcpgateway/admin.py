@@ -79,7 +79,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -10530,7 +10530,7 @@ async def admin_unified_search(
         if not can_search_users:
             selected_entity_types = [entity_type for entity_type in selected_entity_types if entity_type != "users"]
             if users_explicitly_requested and not selected_entity_types:
-                raise HTTPException(status_code=403, detail="Insufficient permissions. Required: admin.user_management")
+                raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
 
     if not selected_entity_types:
         raise HTTPException(status_code=400, detail="No valid entity_types requested")
@@ -13772,7 +13772,7 @@ async def admin_get_log_file(
             file_path = file_path.resolve()
             log_dir_resolved = log_dir.resolve()
             if not str(file_path).startswith(str(log_dir_resolved)):
-                raise HTTPException(403, "Access denied")
+                raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception:
             raise HTTPException(400, "Invalid file path")
 

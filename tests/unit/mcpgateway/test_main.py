@@ -1795,7 +1795,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "tools.execute" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
@@ -1809,7 +1809,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "tools.execute" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")
@@ -2076,7 +2076,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "admin.system_config" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)

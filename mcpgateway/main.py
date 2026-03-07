@@ -79,7 +79,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -573,7 +573,8 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     if request is not None:
         scoped = _extract_scoped_permissions(request)
         if scoped is not None and "*" not in scoped and permission not in scoped:
-            raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+            logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
     # Layer 2: RBAC check
     # Session tokens have no explicit team_id, so check across all team-scoped roles.
@@ -581,7 +582,8 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     check_any_team = isinstance(user, dict) and user.get("token_use") == "session"
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
     if not await checker.has_permission(permission, check_any_team=check_any_team):
-        raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+        logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
+        raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 
 def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:
@@ -611,7 +613,8 @@ def _enforce_scoped_resource_access(request: Request, db: Session, user, resourc
         db=db,
         _user_email=scoped_user_email,
     ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied for requested resource")
+        logger.warning("Scoped resource access denied: user=%s, resource=%s", scoped_user_email, resource_path)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
 
 async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
@@ -6088,10 +6091,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if init_session_id:
                 effective_owner = await session_registry.claim_session_owner(init_session_id, requester_email)
                 if effective_owner is None:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership unavailable.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
                 if effective_owner and not requester_is_admin and requester_email != effective_owner:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
             # Pass server_id to advertise OAuth capability if configured per RFC 9728
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
@@ -6293,7 +6296,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             try:
                 await resource_service.subscribe_resource(db, subscription, user_email=access_user_email, token_teams=access_token_teams)
             except PermissionError:
-                raise JSONRPCError(-32003, "Insufficient permissions for resource subscription", {"uri": uri})
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
             db.commit()
             db.close()
             result = {}
@@ -6796,7 +6799,8 @@ async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[s
     if user_context:
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            logger.warning("WebSocket relay permission denied: user=%s", user_context.get("email"))
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
     return auth_token, proxy_user
 

@@ -234,5 +234,5 @@ async def test_call_tool_raises_permission_error_when_session_token_denied():
                     "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
                     new=AsyncMock(return_value=False),
                 ):
-                    with pytest.raises(PermissionError, match="tools.execute"):
+                    with pytest.raises(PermissionError, match="Access denied"):
                         await call_tool("some_tool", {})

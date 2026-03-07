@@ -320,7 +320,7 @@ async def test_call_tool_requires_tools_execute_permission(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock())
 
-    with pytest.raises(PermissionError, match="tools.execute"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await call_tool("mytool", {"foo": "bar"})
 
     tool_service.invoke_tool.assert_not_called()
@@ -3419,7 +3419,7 @@ async def test_set_logging_level_requires_admin_system_config(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.logging_service", mock_logging_service)
 
     # Should raise PermissionError for non-admin user without admin.system_config
-    with pytest.raises(PermissionError, match="admin.system_config"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await set_logging_level("info")
     mock_logging_service.set_level.assert_not_called()
 
@@ -10626,7 +10626,7 @@ async def test_call_tool_denied_by_token_scope(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock())
 
-    with pytest.raises(PermissionError, match="tools.execute"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await call_tool("mytool", {"foo": "bar"})
 
     tool_service.invoke_tool.assert_not_called()
@@ -11033,7 +11033,7 @@ async def test_list_tools_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="tools.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_tools()
 
 
@@ -11044,7 +11044,7 @@ async def test_list_resources_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="resources.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_resources()
 
 
@@ -11055,7 +11055,7 @@ async def test_read_resource_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="resources.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await read_resource("resource://test")
 
 
@@ -11066,7 +11066,7 @@ async def test_list_prompts_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="prompts.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_prompts()
 
 
@@ -11077,7 +11077,7 @@ async def test_get_prompt_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="prompts.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await get_prompt("test-prompt")
 
 
@@ -11088,7 +11088,7 @@ async def test_list_resource_templates_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="resources.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_resource_templates()
 
 
@@ -11143,7 +11143,7 @@ async def test_set_logging_level_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use", "tools.read"]))
 
-    with pytest.raises(PermissionError, match="admin.system_config"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await set_logging_level("error")
 
 
@@ -11195,7 +11195,7 @@ async def test_complete_denied_by_token_scope(monkeypatch):
         params=mcp_types.CompleteRequestParams(ref=ref, argument=mcp_types.CompletionArgument(name="arg", value="val")),
     )
 
-    with pytest.raises(PermissionError, match="tools.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await complete(ref, argument)
 
 
@@ -11263,3 +11263,61 @@ async def test_call_tool_skips_rbac_for_unauthenticated_context(monkeypatch):
     # Should succeed without hitting the permission check
     result = await call_tool("mytool", {"foo": "bar"})
     assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_rbac_gate_denies_missing_servers_use(monkeypatch):
+    """SessionManagerWrapper RBAC gate returns 403 Access denied when servers.use permission is absent."""
+    import json
+    from contextlib import asynccontextmanager
+
+    class DummySessionManager:
+        def __init__(self):
+            self._server_instances = {}
+
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Session manager must not be reached after RBAC deny")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled",
+        False,
+    )
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    scope = _make_scope("/servers/123/mcp")
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg):
+        sent.append(msg)
+
+    token = tr.user_context_var.set({"email": "user@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        tr.user_context_var.reset(token)
+        await wrapper.shutdown()
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 403
+    body = json.loads(sent[1]["body"])
+    assert body["detail"] == "Access denied"

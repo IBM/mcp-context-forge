@@ -306,7 +306,7 @@ class TestTeamsRouterV2:
                 await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "Insufficient permissions" in str(exc_info.value.detail)
+            assert "Access denied" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_add_team_member_add_fails(self, mock_user_context, mock_db):

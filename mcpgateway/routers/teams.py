@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
     PaginatedTeamMembersResponse,
@@ -312,7 +312,7 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
         # Check if user has access to the team
         user_role = await service.get_user_role_in_team(current_user["email"], team_id)
         if not user_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         team_obj = cast(Any, team)
         # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
@@ -363,7 +363,7 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         # Check if user is team owner
         role = await service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         success = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
 
@@ -480,7 +480,7 @@ async def list_team_members(
         # Check if user has access to the team
         user_role = await service.get_user_role_in_team(current_user["email"], team_id)
         if not user_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         # Get members - service returns different types based on parameters:
         # - cursor=None, limit=None: List[Tuple] (backward compat)
@@ -548,7 +548,7 @@ async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_u
         # Check if user is team owner
         role = await service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         # Add member to team and get the created member directly
         member = await service.add_member_to_team(team_id, request.email, request.role, invited_by=current_user["email"])
@@ -603,7 +603,7 @@ async def update_team_member(
         # Check if user is team owner
         role = await service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         success = await service.update_member_role(team_id, user_email, request.role)
         if not success:
@@ -650,7 +650,7 @@ async def remove_team_member(team_id: str, user_email: str, current_user: dict =
         # Users can remove themselves, or owners can remove others
         current_user_role = await service.get_user_role_in_team(current_user["email"], team_id)
         if current_user["email"] != user_email and current_user_role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         success = await service.remove_member_from_team(team_id, user_email)
         if not success:
@@ -698,7 +698,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         # Check if user is team owner
         role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         invitation = await invitation_service.create_invitation(team_id=team_id, email=str(request.email), role=request.role, invited_by=current_user["email"])
         if not invitation:
@@ -756,7 +756,7 @@ async def list_team_invitations(team_id: str, current_user: dict = Depends(get_c
         # Check if user is team owner
         role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         invitations = await invitation_service.get_team_invitations(team_id)
 
@@ -859,7 +859,7 @@ async def cancel_team_invitation(invitation_id: str, current_user: dict = Depend
         # Check if user is team owner or the inviter
         role = await team_service.get_user_role_in_team(current_user["email"], invitation.team_id)
         if role != "owner" and current_user["email"] != invitation.invited_by:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         success = await invitation_service.revoke_invitation(invitation_id, current_user["email"])
         if not success:

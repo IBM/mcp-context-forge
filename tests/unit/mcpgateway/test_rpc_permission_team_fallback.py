@@ -87,7 +87,7 @@ async def test_ensure_rpc_permission_denies_when_rbac_denies():
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
 
     assert exc_info.value.code == -32003
-    assert "tools.execute" in exc_info.value.message
+    assert "Access denied" in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -198,4 +198,4 @@ async def test_ensure_rpc_permission_token_scope_cap_blocks_at_layer1():
             )
 
     assert exc_info.value.code == -32003
-    assert "tools.execute" in exc_info.value.message
+    assert "Access denied" in exc_info.value.message
